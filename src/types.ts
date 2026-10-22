@@ -5,7 +5,11 @@ export type ActiveTimerMode = 'pomo' | 'countdown' | 'stopwatch';
 export type TimerPhase = 'work' | 'break';
 export type SoundscapeMode = 'off' | 'brown' | 'pink' | 'rain';
 export type PiPPreference = 'video' | 'doc';
-export type AppTab = 'today' | 'planner' | 'focus' | 'stats' | 'more';
+export type TimerAesthetic = 'neon' | 'minimal' | 'retro';
+export type AppTab = 'today' | 'prep' | 'focus' | 'stats' | 'more' | 'planner';
+export type PrepSubTab = 'syllabus' | 'mocks';
+export type StatsSubTab = 'summary' | 'timeline';
+export type ChapterStatus = 'notStarted' | 'inProgress' | 'completed';
 
 export interface Habit {
   id: string;
@@ -94,6 +98,42 @@ export interface ActiveTimer {
   chimeFired: boolean;
 }
 
+export interface MockSubjectScore {
+  correct: number;
+  wrong: number;
+  unattempted: number;
+}
+
+export interface MockTest {
+  id: string;
+  name: string;
+  dayKey: string;
+  durationMins?: number;
+  subjects: Record<string, MockSubjectScore>;
+  marksPerCorrect: number;
+  marksPerWrong: number;
+  maxMarks: number;
+  note: string;
+  updatedAt: number;
+}
+
+export interface ChapterRevision {
+  id: string;
+  date: string;
+  done: boolean;
+  doneOn?: string;
+}
+
+export interface Chapter {
+  id: string;
+  subjectId: string;
+  name: string;
+  status: ChapterStatus;
+  completedOn?: string;
+  revisions: ChapterRevision[];
+  note?: string;
+}
+
 export interface AppSettings {
   theme: 'auto' | 'dark' | 'light';
   ac: string;
@@ -106,8 +146,10 @@ export interface AppSettings {
   countdownMins: number;
   defaultMode?: ActiveTimerMode;
   pipPref: PiPPreference;
+  timerAesthetic?: TimerAesthetic;
   soundscape: SoundscapeMode;
   soundVol: number;
+  targetMockScore?: number;
 }
 
 export interface PulseHabitState {
@@ -118,6 +160,8 @@ export interface PulseHabitState {
   sessions: StudySession[];
   plans: PlansMap;
   ddays: DDay[];
+  mocks: MockTest[];
+  chapters: Chapter[];
   activeTimer: ActiveTimer | null;
   notes: Record<string, string>;
   mood: Record<string, number>;

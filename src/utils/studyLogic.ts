@@ -1,7 +1,12 @@
 import type {
-  ActiveTimerMode,
+  Chapter,
+  ChapterRevision,
+  ChapterStatus,
   Habit,
   HabitCategory,
+  HabitLogMap,
+  MockSubjectScore,
+  MockTest,
   PulseHabitState,
   StudySession,
   Subject,
@@ -19,13 +24,13 @@ export const CC: Record<HabitCategory, string> = {
   Social: '#f472b6',
   Other: '#94a3b8',
 };
-export const ACS = ['#6366f1', '#10b981', '#8b7bff', '#ff7eb6', '#fbbf24', '#38bdf8'];
+export const ACS = ['#38bdf8', '#10b981', '#6366f1', '#a855f7', '#f43f5e', '#f59e0b'];
 export const SUB_COLORS = [
-  '#6366f1',
-  '#10b981',
-  '#f59e0b',
-  '#ec4899',
   '#3b82f6',
+  '#f59e0b',
+  '#10b981',
+  '#ec4899',
+  '#6366f1',
   '#a855f7',
   '#14b8a6',
   '#f97316',
@@ -42,7 +47,7 @@ export const DAILY_FOCUS_TIPS: DailyFocusTip[] = [
   {
     id: 'tip_1',
     title: 'Active Recall Over Re-Reading',
-    tip: 'Close your notes after every 25-minute block and write down everything you remember from scratch. Retrieval strengthens neural pathways 3× faster than passive highlighting.',
+    tip: 'Close your NCERT or notes after every 25-minute block and write down everything you remember from scratch. Retrieval strengthens neural pathways 3× faster than passive highlighting.',
     tag: 'Memory Science',
   },
   {
@@ -54,7 +59,7 @@ export const DAILY_FOCUS_TIPS: DailyFocusTip[] = [
   {
     id: 'tip_3',
     title: 'Single-Task Context Locking',
-    tip: 'Give every study session one specific, concrete heading (e.g., "Graph Shortest Path Practice" instead of "Study"). Clear scope eliminates mid-session decision fatigue.',
+    tip: 'Give every study session one specific, concrete heading (e.g., "Rotational Mechanics PYQs" instead of "Study"). Clear scope eliminates mid-session decision fatigue.',
     tag: 'Deep Work',
   },
   {
@@ -66,13 +71,13 @@ export const DAILY_FOCUS_TIPS: DailyFocusTip[] = [
   {
     id: 'tip_5',
     title: 'Interleaving Practice Problems',
-    tip: 'Mix three different problem types in one session rather than grinding 20 identical drills. Your brain learns how to select the right strategy, not just repeat a pattern.',
+    tip: 'Mix three different problem types in one session rather than grinding 20 identical drills. Your brain learns how to select the right strategy under exam pressure.',
     tag: 'Problem Solving',
   },
   {
     id: 'tip_6',
     title: 'Feynman Summary Note',
-    tip: 'When ending your session, write a 1-sentence summary of what you completed as if explaining it to a beginner. Any gap in your explanation reveals what to review next.',
+    tip: 'When ending your session, write a 1-sentence summary of what you completed as if explaining it to a classmate. Any gap in your explanation reveals what to revise next.',
     tag: 'Retention',
   },
   {
@@ -99,54 +104,74 @@ export function getDailyFocusTip(dayKey: string, offset = 0): DailyFocusTip {
 }
 
 export const STARTERS: Array<Partial<Habit> & { name: string; e: string; c: HabitCategory }> = [
-  { name: 'Deep Study (2 hrs)', e: '📚', c: 'Learn', tn: 120, tu: 'min', subjectId: 'any', autoMins: 120 },
+  {
+    name: 'Deep Study (3 hrs)',
+    e: '📚',
+    c: 'Learn',
+    tn: 180,
+    tu: 'min',
+    subjectId: 'any',
+    autoMins: 180,
+  },
+  { name: 'NCERT Line-by-Line Reading', e: '📖', c: 'Learn', tn: 1, tu: '' },
+  {
+    name: 'Physics Numericals Practice',
+    e: '⚛️',
+    c: 'Learn',
+    tn: 60,
+    tu: 'min',
+    subjectId: 'sub_phy',
+    autoMins: 60,
+  },
   { name: 'Drink water', e: '💧', c: 'Health', tn: 8, tu: 'glasses' },
-  { name: 'Problem Solving Practice', e: '💻', c: 'Work', tn: 90, tu: 'min', subjectId: 'any', autoMins: 90 },
-  { name: 'Exercise', e: '🏋️', c: 'Health', sch: 'week', n: 3 },
-  { name: 'Review Session Notes', e: '📝', c: 'Learn' },
+  { name: 'Mistake Notebook Review', e: '📝', c: 'Learn', tn: 1, tu: '' },
 ];
 
 export const DEFAULT_SUBJECTS: Subject[] = [
   {
-    id: 'sub_code',
-    name: 'Deep Focus Block',
-    e: '⚡',
-    color: '#6366f1',
-    dailyGoalMins: 0,
-    arch: 0,
-    todos: [
-      { id: 'td_1', text: 'Complete Lecture 7 notes & summary', done: true },
-      { id: 'td_2', text: 'Solve 5 practice problems without hints', done: false },
-    ],
-  },
-  {
-    id: 'sub_math',
-    name: 'Problem Solving & Drills',
-    e: '📐',
-    color: '#10b981',
+    id: 'sub_phy',
+    name: 'Physics',
+    e: '⚛️',
+    color: '#3b82f6',
     dailyGoalMins: 0,
     arch: 0,
     todos: [],
   },
   {
-    id: 'sub_lec',
-    name: 'Lectures & Video Course',
-    e: '🎧',
+    id: 'sub_chem',
+    name: 'Chemistry',
+    e: '🧪',
     color: '#f59e0b',
     dailyGoalMins: 0,
     arch: 0,
     todos: [],
   },
   {
-    id: 'sub_read',
-    name: 'Reading & Synthesis',
-    e: '📖',
+    id: 'sub_bot',
+    name: 'Botany',
+    e: '🌿',
+    color: '#10b981',
+    dailyGoalMins: 0,
+    arch: 0,
+    todos: [],
+  },
+  {
+    id: 'sub_zoo',
+    name: 'Zoology',
+    e: '🧬',
     color: '#ec4899',
     dailyGoalMins: 0,
     arch: 0,
     todos: [],
   },
 ];
+
+const LEGACY_SUBJECT_FALLBACKS: Record<string, { name: string; e: string; color: string }> = {
+  sub_code: { name: 'Coding & CS', e: '💻', color: '#6366f1' },
+  sub_math: { name: 'Mathematics', e: '📐', color: '#10b981' },
+  sub_lec: { name: 'Lectures', e: '🎧', color: '#f59e0b' },
+  sub_read: { name: 'Reading & Review', e: '📖', color: '#ec4899' },
+};
 
 export const pad = (n: number): string => String(Math.floor(Math.abs(n))).padStart(2, '0');
 
@@ -165,13 +190,19 @@ export function logicalKey(tsOrDate: number | Date = new Date(), dayResetHour = 
 
 export function parseKey(k: string): Date {
   const [a, b, c] = k.split('-').map(Number);
-  return new Date(a, b - 1, c);
+  return new Date(a, (b || 1) - 1, c || 1);
 }
 
 export function addD(k: string, n: number): string {
   const d = parseKey(k);
   d.setDate(d.getDate() + n);
   return keyFromDate(d);
+}
+
+export function daysBetweenKeys(laterKey: string, earlierKey: string): number {
+  const t1 = parseKey(laterKey).getTime();
+  const t0 = parseKey(earlierKey).getTime();
+  return Math.round((t1 - t0) / 86400000);
 }
 
 export function fmtHMS(ms: number): string {
@@ -198,11 +229,15 @@ export function fmtHMShort(ms: number): string {
 
 export function fmtHoursDecimal(ms: number): string {
   const hrs = ms / 3600000;
-  return hrs >= 10 ? hrs.toFixed(1) + 'h' : hrs.toFixed(1) + 'h';
+  return hrs.toFixed(1) + 'h';
 }
 
 export function fmtClockTime(ts: number): string {
-  return new Date(ts).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', hour12: false });
+  return new Date(ts).toLocaleTimeString([], {
+    hour: '2-digit',
+    minute: '2-digit',
+    hour12: false,
+  });
 }
 
 export function getHeadingColor(heading?: string): string {
@@ -215,36 +250,74 @@ export function getHeadingColor(heading?: string): string {
   return SUB_COLORS[hash % SUB_COLORS.length];
 }
 
+export function getSubject(state: PulseHabitState, id?: string): Subject {
+  if (id) {
+    const found = state.subjects?.find((x) => x.id === id);
+    if (found) return found;
+    const legacy = LEGACY_SUBJECT_FALLBACKS[id];
+    if (legacy) {
+      return {
+        id,
+        name: legacy.name,
+        e: legacy.e,
+        color: legacy.color,
+        dailyGoalMins: 0,
+        arch: 0,
+        todos: [],
+      };
+    }
+    return {
+      id,
+      name: id.replace(/^sub_/, '').replace(/_/g, ' ') || 'General Study',
+      e: '📚',
+      color: getHeadingColor(id),
+      dailyGoalMins: 0,
+      arch: 0,
+      todos: [],
+    };
+  }
+  return state.subjects?.[0] || DEFAULT_SUBJECTS[0];
+}
+
 export function getSessionHeading(state: PulseHabitState, session: StudySession): string {
   if (session.heading && session.heading.trim()) {
     return session.heading.trim();
   }
-  const found = state.subjects?.find((x) => x.id === session.subjectId);
-  if (found && found.name) return found.name;
-  return 'Study Session';
+  const sub = getSubject(state, session.subjectId);
+  return sub.name || 'Study Session';
 }
 
-export function createBlankState(nowDate = new Date()): PulseHabitState {
-  const curKey = logicalKey(nowDate, 4);
+export function cloneLog(log: HabitLogMap | undefined): HabitLogMap {
+  const out: HabitLogMap = {};
+  if (!log || typeof log !== 'object') return out;
+  for (const hId of Object.keys(log)) {
+    const dayMap = log[hId];
+    if (!dayMap || typeof dayMap !== 'object') continue;
+    out[hId] = {};
+    for (const dKey of Object.keys(dayMap)) {
+      const entry = dayMap[dKey];
+      if (entry && typeof entry === 'object') {
+        out[hId][dKey] = {
+          v: Number(entry.v) || 0,
+          s: Number(entry.s) || 0,
+        };
+      }
+    }
+  }
+  return out;
+}
+
+export function createBlankState(): PulseHabitState {
   return {
     habits: [],
     log: {},
     subjects: JSON.parse(JSON.stringify(DEFAULT_SUBJECTS)),
-    todos: [
-      { id: 'td_1', text: 'Complete Lecture 7 notes & summary', done: true },
-      { id: 'td_2', text: 'Solve 5 practice problems without hints', done: false },
-    ],
+    todos: [],
     sessions: [],
     plans: {},
-    ddays: [
-      {
-        id: 'dd_1',
-        title: 'Final Systems Exam',
-        date: addD(curKey, 24),
-        e: '🎓',
-        color: '#10b981',
-      },
-    ],
+    ddays: [],
+    mocks: [],
+    chapters: [],
     activeTimer: null,
     notes: {},
     mood: {},
@@ -264,253 +337,340 @@ export function createBlankState(nowDate = new Date()): PulseHabitState {
       countdownMins: 45,
       defaultMode: 'pomo',
       pipPref: 'video',
+      timerAesthetic: 'neon',
       soundscape: 'off',
       soundVol: 0.35,
+      targetMockScore: 650,
     },
   };
 }
 
-export function createDefaultState(nowDate = new Date()): PulseHabitState {
-  const curKey = logicalKey(nowDate, 4);
-  const [yr, mo, dy] = curKey.split('-').map(Number);
-  const morningStartTs = new Date(yr, mo - 1, dy, 9, 0, 0).getTime();
-  const morningEndTs = morningStartTs + 5400000; // 10:30 AM (90m wall clock, 85m active, 5m paused)
-  const yestKey = addD(curKey, -1);
-  const twoDaysAgoKey = addD(curKey, -2);
+export function createDefaultState(): PulseHabitState {
+  return createBlankState();
+}
 
+export function mkHabit(p: Partial<Habit>, todayKey = logicalKey(new Date(), 4)): Habit {
+  const isAuto = Boolean(p.subjectId || p.autoMins);
+  const rawTarget = Number(p.autoMins || p.tn) || (isAuto ? 60 : 1);
+  const targetVal = Math.max(1, rawTarget);
   return {
-    habits: [
-      {
-        id: 'h_1',
-        name: 'Study 3 hours today',
-        e: '📚',
-        c: 'Learn',
-        sch: 'daily',
-        days: [0, 1, 2, 3, 4, 5, 6],
-        n: 3,
-        tn: 180,
-        tu: 'min',
-        rem: '09:00',
-        arch: 0,
-        created: addD(curKey, -21),
-        subjectId: 'any',
-        autoMins: 180,
-      },
-      {
-        id: 'h_2',
-        name: 'Drink water',
-        e: '💧',
-        c: 'Health',
-        sch: 'daily',
-        days: [0, 1, 2, 3, 4, 5, 6],
-        n: 3,
-        tn: 8,
-        tu: 'glasses',
-        rem: '',
-        arch: 0,
-        created: addD(curKey, -14),
-      },
-      {
-        id: 'h_3',
-        name: 'Review Session Notes',
-        e: '📝',
-        c: 'Learn',
-        sch: 'daily',
-        days: [0, 1, 2, 3, 4, 5, 6],
-        n: 3,
-        tn: 1,
-        tu: '',
-        rem: '',
-        arch: 0,
-        created: addD(curKey, -10),
-      },
-    ],
-    log: {
-      h_1: {
-        [twoDaysAgoKey]: { v: 120, s: 0 },
-        [yestKey]: { v: 195, s: 0 },
-        [curKey]: { v: 85, s: 0 },
-      },
-      h_2: {
-        [twoDaysAgoKey]: { v: 8, s: 0 },
-        [yestKey]: { v: 8, s: 0 },
-        [curKey]: { v: 5, s: 0 },
-      },
-      h_3: {
-        [twoDaysAgoKey]: { v: 1, s: 0 },
-        [yestKey]: { v: 1, s: 0 },
-        [curKey]: { v: 1, s: 0 },
-      },
-    },
-    subjects: JSON.parse(JSON.stringify(DEFAULT_SUBJECTS)),
-    todos: [
-      { id: 'td_1', text: 'Complete Lecture 7 notes & summary', done: true },
-      { id: 'td_2', text: 'Solve 5 practice problems without hints', done: false },
-    ],
-    sessions: [
-      {
-        id: 'ses_prev2',
-        subjectId: 'sub_math',
-        heading: 'Linear Algebra — Eigenvalues & Eigenvectors',
-        dayKey: twoDaysAgoKey,
-        startTs: morningStartTs - 2 * 86400000 + 5 * 3600000,
-        endTs: morningStartTs - 2 * 86400000 + 7 * 3600000,
-        activeMs: 7200000,
-        pausedMs: 0,
-        pauseCount: 0,
-        overtimeMs: 900000,
-        purity: 100,
-        mode: 'countdown',
-        rating: 5,
-        note: 'Completed problem set 4 and verified matrix diagonalization proofs.',
-        updatedAt: morningStartTs - 2 * 86400000 + 7 * 3600000,
-      },
-      {
-        id: 'ses_prev1',
-        subjectId: 'sub_code',
-        heading: 'Graph Algorithms & Dynamic Programming',
-        dayKey: yestKey,
-        startTs: morningStartTs - 86400000 + 2 * 3600000,
-        endTs: morningStartTs - 86400000 + 5.25 * 3600000,
-        activeMs: 11700000,
-        pausedMs: 0,
-        pauseCount: 0,
-        overtimeMs: 1200000,
-        purity: 98,
-        mode: 'stopwatch',
-        rating: 5,
-        note: 'Implemented Dijkstra and Bellman-Ford from scratch and analyzed complexity.',
-        updatedAt: morningStartTs - 86400000 + 5.25 * 3600000,
-      },
-      {
-        id: 'ses_m2k9x',
-        subjectId: 'sub_code',
-        heading: 'Systems Architecture — Lecture 7 & Trees',
-        dayKey: curKey,
-        startTs: morningStartTs,
-        endTs: morningEndTs,
-        activeMs: 5100000,
-        pausedMs: 300000,
-        pauseCount: 1,
-        overtimeMs: 600000,
-        purity: 94,
-        mode: 'pomo',
-        rating: 5,
-        note: 'Finished lecture 7 and implemented B-tree traversal routines.',
-        updatedAt: morningEndTs,
-      },
-    ],
-    plans: {
-      [curKey]: {
-        '54': 'sub_code',
-        '55': 'sub_code',
-        '56': 'sub_code',
-        '57': 'sub_code',
-        '58': 'sub_code',
-        '59': 'sub_code',
-        '66': 'sub_math',
-        '67': 'sub_math',
-        '68': 'sub_math',
-      },
-    },
-    ddays: [
-      {
-        id: 'dd_1',
-        title: 'Final Systems Exam',
-        date: addD(curKey, 24),
-        e: '🎓',
-        color: '#10b981',
-      },
-    ],
-    activeTimer: null,
-    notes: { [curKey]: 'Great flow state in the morning.' },
-    mood: { [curKey]: 5 },
-    bonus: 45,
-    exp: 0,
-    ob: 1,
-    del: [],
-    set: {
-      theme: 'dark',
-      ac: ACS[0],
-      snd: 1,
-      ws: 1,
-      notif: 0,
-      dayResetHour: 4,
-      pomoWork: 25,
-      pomoBreak: 5,
-      countdownMins: 45,
-      defaultMode: 'pomo',
-      pipPref: 'video',
-      soundscape: 'off',
-      soundVol: 0.35,
-    },
+    id: p.id || uid('h'),
+    name: p.name || 'Habit',
+    e: p.e || '✨',
+    c: p.c || 'Other',
+    sch: p.sch || 'daily',
+    days: Array.isArray(p.days) && p.days.length ? p.days : [0, 1, 2, 3, 4, 5, 6],
+    n: p.n || 3,
+    tn: targetVal,
+    tu: isAuto ? 'min' : p.tu || '',
+    rem: p.rem || '',
+    arch: p.arch || 0,
+    created: p.created || todayKey,
+    subjectId: p.subjectId || (p.autoMins ? 'any' : ''),
+    autoMins: isAuto ? targetVal : 0,
+    u: Date.now(),
   };
 }
 
-export function mkHabit(o: Partial<Habit>, todayKey: string): Habit {
-  return {
-    id: 'h' + Date.now().toString(36) + Math.random().toString(36).slice(2, 5),
-    name: '',
-    e: '✨',
-    c: 'Other',
-    sch: 'daily',
-    days: [0, 1, 2, 3, 4, 5, 6],
-    n: 3,
-    tn: 1,
-    tu: '',
-    rem: '',
-    arch: 0,
-    subjectId: '',
-    autoMins: 0,
-    created: todayKey,
-    ...o,
-  };
-}
+export function norm(raw: unknown): PulseHabitState {
+  const d = createBlankState();
+  const src = raw && typeof raw === 'object' ? (raw as Record<string, unknown>) : {};
+  const s = Object.assign({}, d, src) as PulseHabitState;
 
-export function norm(raw: unknown, nowDate = new Date()): PulseHabitState {
-  const isEmptyBoot = raw === null || raw === undefined;
-  const d = isEmptyBoot ? createDefaultState(nowDate) : createBlankState(nowDate);
-  const s = Object.assign(d, raw && typeof raw === 'object' ? raw : {}) as PulseHabitState;
-  s.set = Object.assign(createBlankState(nowDate).set, s.set || {});
+  // Settings
+  s.set = Object.assign({}, d.set, src.set && typeof src.set === 'object' ? src.set : {});
   if (!s.set.defaultMode) s.set.defaultMode = 'pomo';
-  if (!Array.isArray(s.habits)) s.habits = [];
-  if (!s.log || typeof s.log !== 'object') s.log = {};
-  if (!Array.isArray(s.subjects) || !s.subjects.length) {
+  if (
+    s.set.timerAesthetic !== 'neon' &&
+    s.set.timerAesthetic !== 'minimal' &&
+    s.set.timerAesthetic !== 'retro'
+  ) {
+    s.set.timerAesthetic = 'neon';
+  }
+  if (!Number.isFinite(s.set.dayResetHour)) s.set.dayResetHour = 4;
+  if (!Number.isFinite(s.set.targetMockScore)) s.set.targetMockScore = 650;
+
+  // Subjects: preserve existing user subjects if non-empty
+  if (Array.isArray(src.subjects) && src.subjects.length > 0) {
+    s.subjects = src.subjects
+      .filter(
+        (sub): sub is Subject =>
+          Boolean(sub) &&
+          typeof sub === 'object' &&
+          typeof (sub as Subject).id === 'string' &&
+          Boolean((sub as Subject).id.trim()) &&
+          typeof (sub as Subject).name === 'string' &&
+          Boolean((sub as Subject).name.trim())
+      )
+      .map((sub) => ({
+        ...sub,
+        e: sub.e || '📚',
+        color: sub.color || getHeadingColor(sub.name),
+        arch: sub.arch || 0,
+        todos: Array.isArray(sub.todos) ? sub.todos : [],
+      }));
+    if (!s.subjects.length) {
+      s.subjects = JSON.parse(JSON.stringify(DEFAULT_SUBJECTS));
+    }
+  } else {
     s.subjects = JSON.parse(JSON.stringify(DEFAULT_SUBJECTS));
   }
-  s.subjects.forEach((sub) => {
-    if (!Array.isArray(sub.todos)) sub.todos = [];
-  });
-  if (!Array.isArray(s.todos)) {
-    const mergedTodos = s.subjects.flatMap((sub) => sub.todos || []);
-    s.todos = mergedTodos.length
-      ? mergedTodos
-      : [
-          { id: 'td_1', text: 'Complete Lecture 7 notes & summary', done: true },
-          { id: 'td_2', text: 'Solve 5 practice problems without hints', done: false },
-        ];
-  }
-  if (!Array.isArray(s.sessions)) s.sessions = [];
-  s.sessions.forEach((ses) => {
-    if (!ses.heading) {
-      const sub = s.subjects.find((x) => x.id === ses.subjectId);
-      ses.heading = sub ? sub.name : 'Study Session';
-    }
-  });
-  if (!s.plans || typeof s.plans !== 'object') s.plans = {};
-  if (!Array.isArray(s.ddays)) s.ddays = [];
-  if (!s.notes || typeof s.notes !== 'object') s.notes = {};
-  if (!s.mood || typeof s.mood !== 'object') s.mood = {};
-  if (!Array.isArray(s.del)) s.del = [];
-  return s;
-}
 
-export function getSubject(state: PulseHabitState, id?: string): Subject {
-  return (
-    state.subjects.find((x) => x.id === id) ||
-    state.subjects[0] ||
-    DEFAULT_SUBJECTS[0]
-  );
+  // Habits (A8 + A11 validation: drop habits without string id/name, keep autoMins & tn in sync)
+  if (Array.isArray(src.habits)) {
+    s.habits = src.habits
+      .filter(
+        (h): h is Habit =>
+          Boolean(h) &&
+          typeof h === 'object' &&
+          typeof (h as Habit).id === 'string' &&
+          Boolean((h as Habit).id.trim()) &&
+          typeof (h as Habit).name === 'string' &&
+          Boolean((h as Habit).name.trim())
+      )
+      .map((h) => {
+        const isAuto = Boolean(h.subjectId || h.autoMins);
+        const syncedTarget = isAuto
+          ? Math.max(1, Number(h.tn || h.autoMins) || 60)
+          : Math.max(1, Number(h.tn) || 1);
+        return {
+          ...h,
+          e: typeof h.e === 'string' && h.e.trim() ? h.e : '✨',
+          c: CATS.includes(h.c) ? h.c : 'Other',
+          sch: h.sch === 'days' || h.sch === 'week' ? h.sch : 'daily',
+          days: Array.isArray(h.days) && h.days.length ? h.days : [0, 1, 2, 3, 4, 5, 6],
+          n: Math.max(1, Number(h.n) || 3),
+          tn: syncedTarget,
+          tu: isAuto ? 'min' : typeof h.tu === 'string' ? h.tu : '',
+          rem: typeof h.rem === 'string' ? h.rem : '',
+          arch: h.arch ? 1 : 0,
+          created:
+            typeof h.created === 'string' && /^\d{4}-\d{2}-\d{2}$/.test(h.created)
+              ? h.created
+              : logicalKey(new Date(), s.set.dayResetHour),
+          subjectId: isAuto ? h.subjectId || 'any' : '',
+          autoMins: isAuto ? syncedTarget : 0,
+        };
+      });
+  } else {
+    s.habits = [];
+  }
+
+  // Log
+  s.log = cloneLog(src.log as HabitLogMap | undefined);
+
+  // Todos
+  if (Array.isArray(src.todos)) {
+    s.todos = src.todos.filter(
+      (td): td is NonNullable<PulseHabitState['todos']>[number] =>
+        Boolean(td) &&
+        typeof td === 'object' &&
+        typeof (td as { id?: unknown }).id === 'string' &&
+        typeof (td as { text?: unknown }).text === 'string'
+    );
+  } else {
+    const mergedTodos = s.subjects.flatMap((sub) => sub.todos || []);
+    s.todos = mergedTodos;
+  }
+
+  // Sessions (A8 validation: drop sessions without string id or finite startTs/endTs)
+  const fallbackSubId = s.subjects[0]?.id || 'sub_phy';
+  if (Array.isArray(src.sessions)) {
+    s.sessions = src.sessions
+      .filter(
+        (ses): ses is StudySession =>
+          Boolean(ses) &&
+          typeof ses === 'object' &&
+          typeof (ses as StudySession).id === 'string' &&
+          Boolean((ses as StudySession).id.trim()) &&
+          Number.isFinite((ses as StudySession).startTs) &&
+          Number.isFinite((ses as StudySession).endTs)
+      )
+      .map((ses) => {
+        const subjectId =
+          typeof ses.subjectId === 'string' && ses.subjectId.trim()
+            ? ses.subjectId
+            : fallbackSubId;
+        const sub = getSubject(s, subjectId);
+        const heading =
+          typeof ses.heading === 'string' && ses.heading.trim()
+            ? ses.heading.trim()
+            : sub.name || 'Study Session';
+        const wallMs = Math.max(0, ses.endTs - ses.startTs);
+        const activeMs = Number.isFinite(ses.activeMs) ? Math.max(0, ses.activeMs) : wallMs;
+        const dayKey =
+          typeof ses.dayKey === 'string' && /^\d{4}-\d{2}-\d{2}$/.test(ses.dayKey)
+            ? ses.dayKey
+            : logicalKey(ses.startTs, s.set.dayResetHour);
+        return {
+          ...ses,
+          subjectId,
+          heading,
+          dayKey,
+          activeMs,
+          pausedMs: Number.isFinite(ses.pausedMs) ? Math.max(0, ses.pausedMs) : 0,
+          pauseCount: Number.isFinite(ses.pauseCount) ? Math.max(0, ses.pauseCount) : 0,
+          overtimeMs: Number.isFinite(ses.overtimeMs) ? Math.max(0, ses.overtimeMs) : 0,
+          purity: Number.isFinite(ses.purity) ? Math.min(100, Math.max(0, ses.purity)) : 100,
+          mode:
+            ses.mode === 'pomo' ||
+            ses.mode === 'countdown' ||
+            ses.mode === 'stopwatch' ||
+            ses.mode === 'manual'
+              ? ses.mode
+              : 'pomo',
+          rating: Number.isFinite(ses.rating) ? Math.min(5, Math.max(1, ses.rating)) : 5,
+          note: typeof ses.note === 'string' ? ses.note : '',
+          updatedAt: Number.isFinite(ses.updatedAt) ? ses.updatedAt : ses.endTs,
+        };
+      });
+  } else {
+    s.sessions = [];
+  }
+
+  // Plans
+  s.plans = src.plans && typeof src.plans === 'object' ? (src.plans as PulseHabitState['plans']) : {};
+
+  // D-Days
+  if (Array.isArray(src.ddays)) {
+    s.ddays = src.ddays.filter(
+      (dd): dd is PulseHabitState['ddays'][number] =>
+        Boolean(dd) &&
+        typeof dd === 'object' &&
+        typeof (dd as { id?: unknown }).id === 'string' &&
+        typeof (dd as { title?: unknown }).title === 'string' &&
+        typeof (dd as { date?: unknown }).date === 'string'
+    );
+  } else {
+    s.ddays = [];
+  }
+
+  // Mock Tests (B1 + A8 validation)
+  if (Array.isArray(src.mocks)) {
+    s.mocks = src.mocks
+      .filter(
+        (m): m is MockTest =>
+          Boolean(m) &&
+          typeof m === 'object' &&
+          typeof (m as MockTest).id === 'string' &&
+          Boolean((m as MockTest).id.trim()) &&
+          typeof (m as MockTest).name === 'string' &&
+          Boolean((m as MockTest).name.trim()) &&
+          typeof (m as MockTest).dayKey === 'string' &&
+          Boolean((m as MockTest).dayKey.trim())
+      )
+      .map((m) => {
+        const cleanSubs: Record<string, MockSubjectScore> = {};
+        if (m.subjects && typeof m.subjects === 'object') {
+          for (const [subId, sc] of Object.entries(m.subjects)) {
+            if (sc && typeof sc === 'object') {
+              cleanSubs[subId] = {
+                correct: Math.max(0, Math.floor(Number(sc.correct) || 0)),
+                wrong: Math.max(0, Math.floor(Number(sc.wrong) || 0)),
+                unattempted: Math.max(0, Math.floor(Number(sc.unattempted) || 0)),
+              };
+            }
+          }
+        }
+        return {
+          id: m.id,
+          name: m.name.trim(),
+          dayKey: m.dayKey,
+          durationMins:
+            Number.isFinite(m.durationMins) && (m.durationMins || 0) > 0
+              ? Number(m.durationMins)
+              : undefined,
+          subjects: cleanSubs,
+          marksPerCorrect: Number.isFinite(m.marksPerCorrect) ? Number(m.marksPerCorrect) : 4,
+          marksPerWrong: Number.isFinite(m.marksPerWrong) ? Number(m.marksPerWrong) : -1,
+          maxMarks:
+            Number.isFinite(m.maxMarks) && m.maxMarks > 0 ? Number(m.maxMarks) : 720,
+          note: typeof m.note === 'string' ? m.note : '',
+          updatedAt: Number.isFinite(m.updatedAt) ? Number(m.updatedAt) : Date.now(),
+        };
+      });
+  } else {
+    s.mocks = [];
+  }
+
+  // Chapters (B2 + A8 validation)
+  if (Array.isArray(src.chapters)) {
+    s.chapters = src.chapters
+      .filter(
+        (ch): ch is Chapter =>
+          Boolean(ch) &&
+          typeof ch === 'object' &&
+          typeof (ch as Chapter).id === 'string' &&
+          Boolean((ch as Chapter).id.trim()) &&
+          typeof (ch as Chapter).subjectId === 'string' &&
+          Boolean((ch as Chapter).subjectId.trim()) &&
+          typeof (ch as Chapter).name === 'string' &&
+          Boolean((ch as Chapter).name.trim())
+      )
+      .map((ch) => {
+        const status: ChapterStatus =
+          ch.status === 'completed' || ch.status === 'inProgress'
+            ? ch.status
+            : 'notStarted';
+        const revisions: ChapterRevision[] = Array.isArray(ch.revisions)
+          ? ch.revisions
+              .filter(
+                (r): r is ChapterRevision =>
+                  Boolean(r) &&
+                  typeof r === 'object' &&
+                  typeof (r as ChapterRevision).id === 'string' &&
+                  Boolean((r as ChapterRevision).id.trim()) &&
+                  typeof (r as ChapterRevision).date === 'string' &&
+                  /^\d{4}-\d{2}-\d{2}$/.test((r as ChapterRevision).date)
+              )
+              .map((r) => ({
+                id: r.id,
+                date: r.date,
+                done: Boolean(r.done),
+                doneOn: typeof r.doneOn === 'string' ? r.doneOn : undefined,
+              }))
+          : [];
+        return {
+          id: ch.id,
+          subjectId: ch.subjectId,
+          name: ch.name.trim(),
+          status,
+          completedOn: typeof ch.completedOn === 'string' ? ch.completedOn : undefined,
+          revisions,
+          note: typeof ch.note === 'string' ? ch.note : '',
+        };
+      });
+  } else {
+    s.chapters = [];
+  }
+
+  // ActiveTimer
+  if (
+    src.activeTimer &&
+    typeof src.activeTimer === 'object' &&
+    Number.isFinite((src.activeTimer as { startTs?: unknown }).startTs) &&
+    Number.isFinite((src.activeTimer as { sliceStartTs?: unknown }).sliceStartTs)
+  ) {
+    const at = src.activeTimer as NonNullable<PulseHabitState['activeTimer']>;
+    s.activeTimer = {
+      ...at,
+      subjectId:
+        typeof at.subjectId === 'string' && at.subjectId.trim()
+          ? at.subjectId
+          : fallbackSubId,
+    };
+  } else {
+    s.activeTimer = null;
+  }
+
+  s.notes = src.notes && typeof src.notes === 'object' ? (src.notes as Record<string, string>) : {};
+  s.mood = src.mood && typeof src.mood === 'object' ? (src.mood as Record<string, number>) : {};
+  s.bonus = Number.isFinite(src.bonus) ? Number(src.bonus) : 0;
+  s.exp = Number.isFinite(src.exp) ? Number(src.exp) : 0;
+  s.ob = src.ob ? 1 : 0;
+  s.del = Array.isArray(src.del) ? src.del.filter((x): x is string => typeof x === 'string') : [];
+
+  return s;
 }
 
 export function getTimerMetrics(state: PulseHabitState, now = Date.now()): TimerMetrics | null {
@@ -548,17 +708,12 @@ export function getTimerMetrics(state: PulseHabitState, now = Date.now()): Timer
   const purity = denom > 0 ? Math.round((totalActiveMs / denom) * 100) : 100;
   const baseSub = getSubject(state, t.subjectId);
   const heading = (t.heading && t.heading.trim()) || baseSub.name || 'Study Session';
-  const color = t.heading && t.heading.trim() ? getHeadingColor(heading) : baseSub.color;
 
   return {
     status: t.status,
     mode: t.mode,
     phase: t.phase || 'work',
-    subject: {
-      ...baseSub,
-      name: heading,
-      color,
-    },
+    subject: baseSub,
     heading,
     totalActiveMs,
     totalPausedMs,
@@ -580,7 +735,9 @@ export function getTodaySubjectMs(
   now = Date.now()
 ): number {
   let ms = state.sessions
-    .filter((s) => s.dayKey === dayKey && (!subId || subId === 'any' || s.subjectId === subId))
+    .filter(
+      (s) => s.dayKey === dayKey && (!subId || subId === 'any' || s.subjectId === subId)
+    )
     .reduce((acc, s) => acc + (s.activeMs || 0), 0);
 
   if (state.activeTimer && dayKey === todayKey) {
@@ -605,25 +762,86 @@ export function getDayTotalStudyMs(
   return getTodaySubjectMs(state, 'any', dayKey, todayKey, now);
 }
 
+export function isAutoStudyHabit(h: Habit): boolean {
+  return Boolean(h.subjectId || h.autoMins);
+}
+
+/**
+ * Pure-safe habit sync: clones `state.log` before mutating any habit day entry
+ * so `prev.log` references are never mutated in place (A4).
+ */
 export function syncStudyHabitsInPlace(
   state: PulseHabitState,
   dayKey: string,
   todayKey: string,
   now = Date.now()
 ): boolean {
+  return syncStudyHabitsForDays(state, [dayKey], todayKey, now);
+}
+
+export function syncStudyHabitsForDays(
+  state: PulseHabitState,
+  dayKeys: Iterable<string | undefined>,
+  todayKey: string,
+  now = Date.now()
+): boolean {
+  const uniqueDays = Array.from(
+    new Set(Array.from(dayKeys).filter((x): x is string => Boolean(x)))
+  );
+  if (!uniqueDays.length) return false;
+
   let changed = false;
+  let clonedLog: HabitLogMap | null = null;
+
   state.habits.forEach((h) => {
     if (!h.subjectId && !h.autoMins) return;
     const targetSub = h.subjectId || 'any';
-    const mins = Math.floor(getTodaySubjectMs(state, targetSub, dayKey, todayKey, now) / 60000);
-    const L = (state.log[h.id] ??= {});
-    const prev = L[dayKey]?.v || 0;
-    if (mins !== prev) {
-      L[dayKey] = { v: mins, s: L[dayKey]?.s || 0 };
-      changed = true;
-    }
+    uniqueDays.forEach((dayKey) => {
+      const mins = Math.floor(getTodaySubjectMs(state, targetSub, dayKey, todayKey, now) / 60000);
+      const currentLog = clonedLog || state.log;
+      const prev = currentLog[h.id]?.[dayKey]?.v || 0;
+      const prevSkip = currentLog[h.id]?.[dayKey]?.s || 0;
+      if (mins !== prev) {
+        if (!clonedLog) {
+          clonedLog = cloneLog(state.log);
+        }
+        const L = (clonedLog[h.id] ??= {});
+        if (mins > 0 || prevSkip > 0) {
+          L[dayKey] = { v: mins, s: prevSkip };
+        } else {
+          delete L[dayKey];
+        }
+        changed = true;
+      }
+    });
   });
+
+  if (changed && clonedLog) {
+    state.log = clonedLog;
+  }
   return changed;
+}
+
+/**
+ * Computes average clock time (HH:MM) measured relative to `dayResetHour`
+ * so late-night times (e.g. 00:30) average properly with evening times (e.g. 22:00),
+ * and rounds total minutes BEFORE modulo 60 so "xx:60" can never occur (A2).
+ */
+export function computeAvgClockTime(tsList: number[], dayResetHour = 4): string {
+  if (!tsList.length) return '--:--';
+  const resetMins = (Number.isFinite(dayResetHour) ? dayResetHour : 4) * 60;
+  const avgOffset =
+    tsList.reduce((acc, ts) => {
+      const d = new Date(ts);
+      const clockMins = d.getHours() * 60 + d.getMinutes() + d.getSeconds() / 60;
+      const offsetFromReset = (((clockMins - resetMins) % 1440) + 1440) % 1440;
+      return acc + offsetFromReset;
+    }, 0) / tsList.length;
+  const roundedOffset = Math.round(avgOffset);
+  const totalClockMins = (((roundedOffset + resetMins) % 1440) + 1440) % 1440;
+  const hh = Math.floor(totalClockMins / 60);
+  const mm = totalClockMins % 60;
+  return `${pad(hh)}:${pad(mm)}`;
 }
 
 export interface StudySummaryReport {
@@ -671,6 +889,15 @@ export interface StudySummaryReport {
     count: number;
     pct: number;
   }>;
+  subjectBreakdown: Array<{
+    subjectId: string;
+    name: string;
+    e: string;
+    color: string;
+    ms: number;
+    count: number;
+    pct: number;
+  }>;
   headingBreakdown: Array<{
     heading: string;
     color: string;
@@ -686,6 +913,7 @@ export function computeStudySummary(
   todayKey: string,
   now = Date.now()
 ): StudySummaryReport {
+  const dayResetHour = state.set.dayResetHour ?? 4;
   const todayMs = getDayTotalStudyMs(state, todayKey, todayKey, now);
 
   // Last 7 days (this week window)
@@ -747,13 +975,17 @@ export function computeStudySummary(
     });
   }
 
-  const allTimeTotalMs =
-    state.sessions.reduce((acc, s) => acc + (s.activeMs || 0), 0) +
-    (state.activeTimer ? getTimerMetrics(state, now)?.sliceActiveMs || 0 : 0);
+  const completedSessionsMs = state.sessions.reduce((acc, s) => acc + (s.activeMs || 0), 0);
+  const runningSliceMs =
+    state.activeTimer && state.activeTimer.phase !== 'break'
+      ? getTimerMetrics(state, now)?.sliceActiveMs || 0
+      : 0;
+  const allTimeTotalMs = completedSessionsMs + runningSliceMs;
 
   const totalSessionsCount = state.sessions.length;
+  // A2: avgSessionMs divides completed-session time only (excluding running timer)
   const avgSessionMs =
-    totalSessionsCount > 0 ? Math.round(allTimeTotalMs / totalSessionsCount) : 0;
+    totalSessionsCount > 0 ? Math.round(completedSessionsMs / totalSessionsCount) : 0;
   const avgPurity =
     totalSessionsCount > 0
       ? Math.round(
@@ -761,12 +993,13 @@ export function computeStudySummary(
         )
       : 100;
 
-  // 24-hour activity distribution (exact overlap per clock hour)
+  // 24-hour activity distribution (A2: use s.activeMs ?? wallDuration)
   const hourlyMs = new Array(24).fill(0);
   state.sessions.forEach((s) => {
     if (!s.startTs || !s.endTs || s.endTs <= s.startTs) return;
     const wallDuration = s.endTs - s.startTs;
-    const ratio = wallDuration > 0 ? Math.min(1, (s.activeMs || wallDuration) / wallDuration) : 1;
+    const ratio =
+      wallDuration > 0 ? Math.min(1, (s.activeMs ?? wallDuration) / wallDuration) : 1;
 
     let cur = s.startTs;
     while (cur < s.endTs) {
@@ -788,19 +1021,20 @@ export function computeStudySummary(
     }
   });
 
-  // Find peak 2-hour study window and peak single hour
+  // A2: Find peak 2-hour window by summing consecutive hours (hour i + hour (i+1)%24)
   let peakHourIndex = 9;
-  let maxHourMs = -1;
-  hourlyMs.forEach((ms, hr) => {
-    if (ms > maxHourMs) {
-      maxHourMs = ms;
+  let maxTwoHourMs = 0;
+  for (let hr = 0; hr < 24; hr++) {
+    const twoHrMs = hourlyMs[hr] + hourlyMs[(hr + 1) % 24];
+    if (twoHrMs > maxTwoHourMs) {
+      maxTwoHourMs = twoHrMs;
       peakHourIndex = hr;
     }
-  });
+  }
 
   const endPeakHr = (peakHourIndex + 2) % 24;
   const peakHourWindowLabel =
-    maxHourMs > 0
+    maxTwoHourMs > 0
       ? `${pad(peakHourIndex)}:00 – ${pad(endPeakHr)}:00`
       : 'No study sessions yet';
 
@@ -810,10 +1044,10 @@ export function computeStudySummary(
   else if (peakHourIndex >= 17 && peakHourIndex < 22) peakPeriodLabel = 'Evening Focus Peak';
   else peakPeriodLabel = 'Late-Night Focus Peak';
 
-  // Earliest start & latest wrap-up per active day
+  // Earliest start & latest wrap-up per logical day (measured from dayResetHour)
   const byDay: Record<string, { minStart: number; maxEnd: number }> = {};
   state.sessions.forEach((s) => {
-    if (!s.startTs || !s.endTs) return;
+    if (!Number.isFinite(s.startTs) || !Number.isFinite(s.endTs)) return;
     if (!byDay[s.dayKey]) {
       byDay[s.dayKey] = { minStart: s.startTs, maxEnd: s.endTs };
     } else {
@@ -822,17 +1056,14 @@ export function computeStudySummary(
     }
   });
   const dayRecords = Object.values(byDay);
-  const avgMinsOfDay = (tsList: number[]) => {
-    if (!tsList.length) return null;
-    const avg =
-      tsList.reduce((a, ts) => {
-        const d = new Date(ts);
-        return a + d.getHours() * 60 + d.getMinutes();
-      }, 0) / tsList.length;
-    return `${pad(Math.floor(avg / 60))}:${pad(Math.round(avg % 60))}`;
-  };
-  const avgStartHourLabel = avgMinsOfDay(dayRecords.map((x) => x.minStart)) || '--:--';
-  const avgEndHourLabel = avgMinsOfDay(dayRecords.map((x) => x.maxEnd)) || '--:--';
+  const avgStartHourLabel = computeAvgClockTime(
+    dayRecords.map((x) => x.minStart),
+    dayResetHour
+  );
+  const avgEndHourLabel = computeAvgClockTime(
+    dayRecords.map((x) => x.maxEnd),
+    dayResetHour
+  );
 
   // Mode breakdown
   const modeLabels: Record<TimerMode, string> = {
@@ -857,8 +1088,68 @@ export function computeStudySummary(
     label: modeLabels[mode],
     ms: modeMap[mode].ms,
     count: modeMap[mode].count,
-    pct: allTimeTotalMs > 0 ? Math.round((modeMap[mode].ms / allTimeTotalMs) * 100) : 0,
+    pct: completedSessionsMs > 0 ? Math.round((modeMap[mode].ms / completedSessionsMs) * 100) : 0,
   }));
+
+  // Subject breakdown (A10: includes configured subjects + any legacy/unknown subjectIds)
+  const subMap = new Map<
+    string,
+    { subjectId: string; name: string; e: string; color: string; ms: number; count: number }
+  >();
+  state.subjects
+    .filter((sub) => !sub.arch)
+    .forEach((sub) => {
+      subMap.set(sub.id, {
+        subjectId: sub.id,
+        name: sub.name,
+        e: sub.e,
+        color: sub.color,
+        ms: 0,
+        count: 0,
+      });
+    });
+
+  state.sessions.forEach((s) => {
+    const sub = getSubject(state, s.subjectId);
+    const existing = subMap.get(sub.id);
+    if (!existing) {
+      subMap.set(sub.id, {
+        subjectId: sub.id,
+        name: sub.name,
+        e: sub.e,
+        color: sub.color,
+        ms: s.activeMs || 0,
+        count: 1,
+      });
+    } else {
+      existing.ms += s.activeMs || 0;
+      existing.count += 1;
+    }
+  });
+
+  if (state.activeTimer && state.activeTimer.phase !== 'break' && runningSliceMs > 0) {
+    const activeSub = getSubject(state, state.activeTimer.subjectId);
+    const existing = subMap.get(activeSub.id);
+    if (!existing) {
+      subMap.set(activeSub.id, {
+        subjectId: activeSub.id,
+        name: activeSub.name,
+        e: activeSub.e,
+        color: activeSub.color,
+        ms: runningSliceMs,
+        count: 1,
+      });
+    } else {
+      existing.ms += runningSliceMs;
+    }
+  }
+
+  const subjectBreakdown = Array.from(subMap.values())
+    .sort((a, b) => b.ms - a.ms)
+    .map((item) => ({
+      ...item,
+      pct: allTimeTotalMs > 0 ? Math.round((item.ms / allTimeTotalMs) * 100) : 0,
+    }));
 
   // Heading breakdown
   const headingMap = new Map<
@@ -887,7 +1178,7 @@ export function computeStudySummary(
     .map((item) => ({
       ...item,
       color: getHeadingColor(item.heading),
-      pct: allTimeTotalMs > 0 ? Math.round((item.ms / allTimeTotalMs) * 100) : 0,
+      pct: completedSessionsMs > 0 ? Math.round((item.ms / completedSessionsMs) * 100) : 0,
     }));
 
   return {
@@ -914,8 +1205,286 @@ export function computeStudySummary(
     last7Days,
     last30Days,
     modeBreakdown,
+    subjectBreakdown,
     headingBreakdown,
   };
+}
+
+// ==========================================
+// PART B1: MOCK TEST & SCORE LOG ANALYTICS
+// ==========================================
+
+export interface MockSubjectComputed {
+  subjectId: string;
+  name: string;
+  e: string;
+  color: string;
+  correct: number;
+  wrong: number;
+  unattempted: number;
+  attempted: number;
+  totalQuestions: number;
+  score: number;
+  accuracyPct: number;
+  attemptRatePct: number;
+}
+
+export interface MockScoreReport {
+  totalScore: number;
+  maxMarks: number;
+  totalCorrect: number;
+  totalWrong: number;
+  totalUnattempted: number;
+  totalAttempted: number;
+  totalQuestions: number;
+  accuracyPct: number;
+  attemptRatePct: number;
+  bySubject: MockSubjectComputed[];
+}
+
+export function computeMockScore(mock: MockTest, subjects: Subject[] = DEFAULT_SUBJECTS): MockScoreReport {
+  const marksPerCorrect = Number.isFinite(mock.marksPerCorrect) ? mock.marksPerCorrect : 4;
+  const marksPerWrong = Number.isFinite(mock.marksPerWrong) ? mock.marksPerWrong : -1;
+  const maxMarks = Number.isFinite(mock.maxMarks) && mock.maxMarks > 0 ? mock.maxMarks : 720;
+
+  const subjectOrder: Subject[] = [...subjects];
+  for (const subId of Object.keys(mock.subjects || {})) {
+    if (!subjectOrder.some((s) => s.id === subId)) {
+      const legacy = LEGACY_SUBJECT_FALLBACKS[subId];
+      subjectOrder.push({
+        id: subId,
+        name: legacy?.name || subId,
+        e: legacy?.e || '📚',
+        color: legacy?.color || getHeadingColor(subId),
+        arch: 0,
+        todos: [],
+      });
+    }
+  }
+
+  let totalScore = 0;
+  let totalCorrect = 0;
+  let totalWrong = 0;
+  let totalUnattempted = 0;
+
+  const bySubject: MockSubjectComputed[] = subjectOrder.map((sub) => {
+    const raw = mock.subjects?.[sub.id] || { correct: 0, wrong: 0, unattempted: 0 };
+    const correct = Math.max(0, Math.floor(Number(raw.correct) || 0));
+    const wrong = Math.max(0, Math.floor(Number(raw.wrong) || 0));
+    const unattempted = Math.max(0, Math.floor(Number(raw.unattempted) || 0));
+    const attempted = correct + wrong;
+    const totalQuestions = attempted + unattempted;
+    const score = correct * marksPerCorrect + wrong * marksPerWrong;
+    const accuracyPct = attempted > 0 ? Math.round((correct / attempted) * 100) : 0;
+    const attemptRatePct = totalQuestions > 0 ? Math.round((attempted / totalQuestions) * 100) : 0;
+
+    totalScore += score;
+    totalCorrect += correct;
+    totalWrong += wrong;
+    totalUnattempted += unattempted;
+
+    return {
+      subjectId: sub.id,
+      name: sub.name,
+      e: sub.e,
+      color: sub.color,
+      correct,
+      wrong,
+      unattempted,
+      attempted,
+      totalQuestions,
+      score,
+      accuracyPct,
+      attemptRatePct,
+    };
+  });
+
+  const totalAttempted = totalCorrect + totalWrong;
+  const totalQuestions = totalAttempted + totalUnattempted;
+  const accuracyPct = totalAttempted > 0 ? Math.round((totalCorrect / totalAttempted) * 100) : 0;
+  const attemptRatePct =
+    totalQuestions > 0 ? Math.round((totalAttempted / totalQuestions) * 100) : 0;
+
+  return {
+    totalScore,
+    maxMarks,
+    totalCorrect,
+    totalWrong,
+    totalUnattempted,
+    totalAttempted,
+    totalQuestions,
+    accuracyPct,
+    attemptRatePct,
+    bySubject,
+  };
+}
+
+export interface MocksOverviewSummary {
+  newestFirst: Array<{ mock: MockTest; report: MockScoreReport }>;
+  chronological: Array<{ mock: MockTest; report: MockScoreReport }>;
+  avgLast5Score: number;
+  bestScore: number;
+  lowestAccuracySubject: {
+    subjectId: string;
+    name: string;
+    e: string;
+    color: string;
+    accuracyPct: number;
+  } | null;
+}
+
+export function computeMocksOverview(state: PulseHabitState): MocksOverviewSummary {
+  const enriched = (state.mocks || []).map((mock) => ({
+    mock,
+    report: computeMockScore(mock, state.subjects),
+  }));
+
+  const newestFirst = enriched.slice().sort((a, b) => {
+    if (b.mock.dayKey !== a.mock.dayKey) return b.mock.dayKey.localeCompare(a.mock.dayKey);
+    return (b.mock.updatedAt || 0) - (a.mock.updatedAt || 0);
+  });
+
+  const chronological = newestFirst.slice().reverse();
+
+  const last5 = newestFirst.slice(0, 5);
+  const avgLast5Score =
+    last5.length > 0
+      ? Math.round(last5.reduce((acc, x) => acc + x.report.totalScore, 0) / last5.length)
+      : 0;
+
+  const bestScore =
+    enriched.length > 0 ? Math.max(...enriched.map((x) => x.report.totalScore)) : 0;
+
+  // Aggregate per-subject accuracy across all mocks to find "needs attention" subject
+  const subTotals = new Map<
+    string,
+    { subject: Subject; correct: number; attempted: number }
+  >();
+  state.subjects.forEach((sub) => {
+    subTotals.set(sub.id, { subject: sub, correct: 0, attempted: 0 });
+  });
+
+  enriched.forEach(({ report }) => {
+    report.bySubject.forEach((bs) => {
+      const entry = subTotals.get(bs.subjectId) || {
+        subject: getSubject(state, bs.subjectId),
+        correct: 0,
+        attempted: 0,
+      };
+      entry.correct += bs.correct;
+      entry.attempted += bs.attempted;
+      subTotals.set(bs.subjectId, entry);
+    });
+  });
+
+  let lowestAccuracySubject: MocksOverviewSummary['lowestAccuracySubject'] = null;
+  for (const { subject, correct, attempted } of subTotals.values()) {
+    if (attempted <= 0) continue;
+    const acc = Math.round((correct / attempted) * 100);
+    if (!lowestAccuracySubject || acc < lowestAccuracySubject.accuracyPct) {
+      lowestAccuracySubject = {
+        subjectId: subject.id,
+        name: subject.name,
+        e: subject.e,
+        color: subject.color,
+        accuracyPct: acc,
+      };
+    }
+  }
+
+  return {
+    newestFirst,
+    chronological,
+    avgLast5Score,
+    bestScore,
+    lowestAccuracySubject,
+  };
+}
+
+// ==========================================
+// PART B2: CHAPTER SYLLABUS & REVISIONS
+// ==========================================
+
+export interface LabeledRevision extends ChapterRevision {
+  revNumber: number;
+  label: string;
+}
+
+export function getSortedChapterRevisions(chapter: Chapter): LabeledRevision[] {
+  return (chapter.revisions || [])
+    .slice()
+    .sort((a, b) => {
+      if (a.date !== b.date) return a.date.localeCompare(b.date);
+      return a.id.localeCompare(b.id);
+    })
+    .map((r, idx) => ({
+      ...r,
+      revNumber: idx + 1,
+      label: `R${idx + 1}`,
+    }));
+}
+
+export interface RevisionDueItem {
+  chapterId: string;
+  chapterName: string;
+  subject: Subject;
+  revisionId: string;
+  date: string;
+  label: string;
+  revNumber: number;
+  daysLate: number;
+  isOverdue: boolean;
+}
+
+export function getDueAndOverdueRevisions(
+  state: PulseHabitState,
+  sel: string,
+  todayKey: string
+): {
+  dueOnSel: RevisionDueItem[];
+  overdue: RevisionDueItem[];
+} {
+  const dueOnSel: RevisionDueItem[] = [];
+  const overdue: RevisionDueItem[] = [];
+
+  (state.chapters || []).forEach((ch) => {
+    const subject = getSubject(state, ch.subjectId);
+    const sortedRevs = getSortedChapterRevisions(ch);
+    sortedRevs.forEach((rev) => {
+      if (rev.done) return;
+      if (rev.date === sel) {
+        dueOnSel.push({
+          chapterId: ch.id,
+          chapterName: ch.name,
+          subject,
+          revisionId: rev.id,
+          date: rev.date,
+          label: rev.label,
+          revNumber: rev.revNumber,
+          daysLate: rev.date < todayKey ? Math.max(1, daysBetweenKeys(todayKey, rev.date)) : 0,
+          isOverdue: rev.date < todayKey,
+        });
+      }
+      if (rev.date < todayKey) {
+        overdue.push({
+          chapterId: ch.id,
+          chapterName: ch.name,
+          subject,
+          revisionId: rev.id,
+          date: rev.date,
+          label: rev.label,
+          revNumber: rev.revNumber,
+          daysLate: Math.max(1, daysBetweenKeys(todayKey, rev.date)),
+          isOverdue: true,
+        });
+      }
+    });
+  });
+
+  dueOnSel.sort((a, b) => a.chapterName.localeCompare(b.chapterName));
+  overdue.sort((a, b) => b.daysLate - a.daysLate || a.date.localeCompare(b.date));
+
+  return { dueOnSel, overdue };
 }
 
 export const ent = (state: PulseHabitState, h: Habit, k: string) => state.log[h.id]?.[k];
@@ -1025,33 +1594,112 @@ export function badges(state: PulseHabitState, todayKey: string): Array<[string,
   ];
 }
 
-export function mergeStates(a: PulseHabitState, b: PulseHabitState): PulseHabitState {
-  const m = norm(JSON.parse(JSON.stringify(b)));
-  const D = new Set([...(a.del || []), ...(m.del || [])]);
-  m.del = [...D];
-  a.habits.forEach((h) => {
-    if (!m.habits.some((x) => x.id === h.id)) m.habits.push(h);
-  });
-  m.habits = m.habits
-    .filter((h) => !D.has(h.id))
-    .map((r) => {
-      const l = a.habits.find((x) => x.id === r.id);
-      return l && (l.u || 0) > (r.u || 0) ? l : r;
+export interface ConsistencyDay {
+  key: string;
+  shortDate: string;
+  dayName: string;
+  monthShort: string;
+  dayOfWeek: number;
+  dueCount: number;
+  doneCount: number;
+  pct: number;
+  densityLevel: 0 | 1 | 2 | 3 | 4;
+  studyMs: number;
+}
+
+export interface ConsistencyCalendarSummary {
+  days: ConsistencyDay[];
+  weeks: Array<Array<ConsistencyDay | null>>;
+  avgPct: number;
+  perfectDays: number;
+  activeDays: number;
+}
+
+export function computeConsistencyCalendar(
+  state: PulseHabitState,
+  todayKey: string,
+  numDays = 90
+): ConsistencyCalendarSummary {
+  const days: ConsistencyDay[] = [];
+  let sumPct = 0;
+  let scheduledDays = 0;
+  let perfectDays = 0;
+  let activeDays = 0;
+
+  for (let i = numDays - 1; i >= 0; i--) {
+    const k = addD(todayKey, -i);
+    const d = parseKey(k);
+    const dueHabits = dueOn(state, k);
+    const dueCount = dueHabits.length;
+    const doneCount = dueHabits.filter((h) => done(state, h, k)).length;
+    const dayPct = dueCount > 0 ? Math.round((doneCount / dueCount) * 100) : 0;
+    const studyMs = getTodaySubjectMs(state, 'any', k, todayKey);
+
+    let densityLevel: 0 | 1 | 2 | 3 | 4 = 0;
+    if (dayPct >= 100 && dueCount > 0) {
+      densityLevel = 4;
+    } else if (dayPct >= 67) {
+      densityLevel = 3;
+    } else if (dayPct >= 34) {
+      densityLevel = 2;
+    } else if (dayPct > 0) {
+      densityLevel = 1;
+    }
+
+    if (dueCount > 0) {
+      sumPct += dayPct;
+      scheduledDays++;
+    }
+    if (dueCount > 0 && doneCount === dueCount) {
+      perfectDays++;
+    }
+    if (doneCount > 0 || studyMs > 0) {
+      activeDays++;
+    }
+
+    days.push({
+      key: k,
+      shortDate: d.toLocaleDateString(undefined, { month: 'short', day: 'numeric' }),
+      dayName: d.toLocaleDateString(undefined, { weekday: 'short' }),
+      monthShort: d.toLocaleDateString(undefined, { month: 'short' }),
+      dayOfWeek: d.getDay(),
+      dueCount,
+      doneCount,
+      pct: dayPct,
+      densityLevel,
+      studyMs,
     });
-  (a.subjects || []).forEach((s) => {
-    if (!m.subjects.some((x) => x.id === s.id)) m.subjects.push(s);
-  });
-  (a.sessions || []).forEach((s) => {
-    if (!m.sessions.some((x) => x.id === s.id)) m.sessions.push(s);
-  });
-  for (const id in a.log) {
-    if (D.has(id)) continue;
-    const L = (m.log[id] ??= {});
-    for (const k in a.log[id]) {
-      const x = a.log[id][k];
-      const y = L[k];
-      if (!y || x.v >= y.v) L[k] = x;
+  }
+
+  // Build GitHub-style weekly columns (7 rows per column, aligned to week start state.set.ws)
+  const ws = state.set.ws ?? 1;
+  const weeks: Array<Array<ConsistencyDay | null>> = [];
+  if (days.length > 0) {
+    const firstDow = (days[0].dayOfWeek - ws + 7) % 7;
+    let currentWeek: Array<ConsistencyDay | null> = new Array(firstDow).fill(null);
+    for (const day of days) {
+      currentWeek.push(day);
+      if (currentWeek.length === 7) {
+        weeks.push(currentWeek);
+        currentWeek = [];
+      }
+    }
+    if (currentWeek.length > 0) {
+      while (currentWeek.length < 7) {
+        currentWeek.push(null);
+      }
+      weeks.push(currentWeek);
     }
   }
-  return m;
+
+  const avgPct = scheduledDays > 0 ? Math.round(sumPct / scheduledDays) : 0;
+
+  return {
+    days,
+    weeks,
+    avgPct,
+    perfectDays,
+    activeDays,
+  };
 }
+

@@ -1,229 +1,304 @@
-import test from 'node:test';
+import { describe, it } from 'node:test';
 import assert from 'node:assert/strict';
+import type { Chapter, MockTest } from '../types';
 import {
-  addD,
+  computeAvgClockTime,
+  computeConsistencyCalendar,
+  computeMockScore,
+  computeMocksOverview,
   computeStudySummary,
-  DAILY_FOCUS_TIPS,
-  done,
-  fmtHMS,
-  fmtHMShort,
-  fmtMS,
-  getDailyFocusTip,
-  getTimerMetrics,
-  getTodaySubjectMs,
+  createBlankState,
+  getDueAndOverdueRevisions,
+  getSortedChapterRevisions,
   logicalKey,
+  mkHabit,
   norm,
-  streak,
-  syncStudyHabitsInPlace,
-  xp,
+  syncStudyHabitsForDays,
 } from './studyLogic';
 
-test('logicalKey respects Night-Owl dayResetHour', () => {
-  // 2026-10-22 at 02:30 AM local time with 4 AM reset -> belongs to 2026-10-21
-  const earlyMorning = new Date(2026, 9, 22, 2, 30, 0);
-  assert.equal(logicalKey(earlyMorning, 4), '2026-10-21');
+describe('Part C: Deep Hours NEET Study & Habit Logger Unit Tests', () => {
+  it('1. logicalKey around midnight and the reset hour (04:00 AM)', () => {
+    const resetHour = 4;
+    // 2026-10-22 23:59 -> belongs to 2026-10-22
+    const ts2359 = new Date(2026, 9, 22, 23, 59, 0).getTime();
+    assert.equal(logicalKey(ts2359, resetHour), '2026-10-22');
 
-  // 2026-10-22 at 04:15 AM local time with 4 AM reset -> belongs to 2026-10-22
-  const afterReset = new Date(2026, 9, 22, 4, 15, 0);
-  assert.equal(logicalKey(afterReset, 4), '2026-10-22');
-});
+    // 2026-10-23 00:30 -> before 4 AM reset, belongs to 2026-10-22
+    const ts0030 = new Date(2026, 9, 23, 0, 30, 0).getTime();
+    assert.equal(logicalKey(ts0030, resetHour), '2026-10-22');
 
-test('time formatters format milliseconds accurately', () => {
-  assert.equal(fmtHMS(3661000), '01:01:01');
-  assert.equal(fmtMS(600000), '10:00');
-  assert.equal(fmtHMShort(5100000), '1h 25m');
-  assert.equal(fmtHMShort(2700000), '45m');
-});
+    // 2026-10-23 03:59 -> before 4 AM reset, belongs to 2026-10-22
+    const ts0359 = new Date(2026, 9, 23, 3, 59, 59).getTime();
+    assert.equal(logicalKey(ts0359, resetHour), '2026-10-22');
 
-test('getDailyFocusTip returns deterministic daily tip and cycles with offset', () => {
-  assert.ok(DAILY_FOCUS_TIPS.length >= 8);
-  const tipA = getDailyFocusTip('2026-10-22', 0);
-  const tipA2 = getDailyFocusTip('2026-10-22', 0);
-  const tipNext = getDailyFocusTip('2026-10-22', 1);
-  assert.equal(tipA.id, tipA2.id);
-  assert.notEqual(tipA.id, tipNext.id);
-});
+    // 2026-10-23 04:00 -> at/after 4 AM reset, belongs to 2026-10-23
+    const ts0400 = new Date(2026, 9, 23, 4, 0, 0).getTime();
+    assert.equal(logicalKey(ts0400, resetHour), '2026-10-23');
+  });
 
-test('norm preserves existing schema and initializes missing collections', () => {
-  const sample = {
-    habits: [
-      {
-        id: 'h_1',
-        name: 'Study 3 hours of Coding',
-        e: '💻',
-        c: 'Work',
-        sch: 'daily',
-        days: [0, 1, 2, 3, 4, 5, 6],
-        n: 3,
-        tn: 180,
-        tu: 'min',
-        rem: '09:00',
-        arch: 0,
-        created: '2026-10-01',
-        subjectId: 'sub_code',
-        autoMins: 180,
-      },
-    ],
-    log: {
-      h_1: {
-        '2026-10-22': { v: 185, s: 0 },
-      },
-    },
-    bonus: 45,
-  };
-  const s = norm(sample);
-  assert.equal(s.habits.length, 1);
-  assert.equal(s.habits[0].subjectId, 'sub_code');
-  assert.equal(s.log.h_1['2026-10-22'].v, 185);
-  assert.equal(s.bonus, 45);
-  assert.ok(s.subjects.length >= 4);
-  assert.equal(s.set.dayResetHour, 4);
-});
+  it('2. computeStudySummary average start time with sessions at 22:00 and 00:30 equals 23:15 and never formats xx:60', () => {
+    const resetHour = 4;
+    const s2200 = new Date(2026, 9, 21, 22, 0, 0).getTime();
+    const s0030 = new Date(2026, 9, 23, 0, 30, 0).getTime();
+    assert.equal(computeAvgClockTime([s2200, s0030], resetHour), '23:15');
 
-test('getTimerMetrics computes countdown, purity, flow overtime, and stopwatch count-up', () => {
-  const s = norm({});
-  const startTs = 1761130000000;
-  s.activeTimer = {
-    status: 'running',
-    mode: 'pomo',
-    phase: 'work',
-    subjectId: 'sub_code',
-    heading: 'Distributed Consensus Algorithms',
-    startTs,
-    sliceStartTs: startTs,
-    pauseStartTs: null,
-    pausedDurationMs: 300000, // 5 min paused
-    slicePausedMs: 300000,
-    pauseCount: 1,
-    slicePauseCount: 1,
-    targetMs: 1500000, // 25 min target
-    chimeFired: false,
-  };
+    // Verify rounding edge case where fractional minutes could round to 60 (e.g. 10:59.6)
+    const t1 = new Date(2026, 9, 21, 10, 59, 0).getTime();
+    const t2 = new Date(2026, 9, 22, 11, 0, 0).getTime();
+    const avgRounding = computeAvgClockTime([t1, t2, t2], resetHour);
+    assert.equal(avgRounding, '11:00');
+    assert.ok(!avgRounding.endsWith(':60'));
 
-  // At +20 mins wall clock: 15 mins active, 5 mins paused -> 10 mins remaining, 75% purity
-  const m1 = getTimerMetrics(s, startTs + 20 * 60000);
-  assert.ok(m1);
-  assert.equal(m1.heading, 'Distributed Consensus Algorithms');
-  assert.equal(m1.totalActiveMs, 15 * 60000);
-  assert.equal(m1.displayMs, 10 * 60000);
-  assert.equal(m1.overtimeMs, 0);
-  assert.equal(m1.purity, 75);
-
-  // At +35 mins wall clock: 30 mins active, 5 mins paused -> 5 mins overtime!
-  const m2 = getTimerMetrics(s, startTs + 35 * 60000);
-  assert.ok(m2);
-  assert.equal(m2.totalActiveMs, 30 * 60000);
-  assert.equal(m2.displayMs, 0);
-  assert.equal(m2.overtimeMs, 5 * 60000);
-  assert.equal(m2.progressPct, 100);
-
-  // Stopwatch mode counts up from 00:00:00
-  s.activeTimer.mode = 'stopwatch';
-  s.activeTimer.pausedDurationMs = 0;
-  s.activeTimer.slicePausedMs = 0;
-  const mSw = getTimerMetrics(s, startTs + 75000); // 1m 15s elapsed
-  assert.ok(mSw);
-  assert.equal(mSw.mode, 'stopwatch');
-  assert.equal(mSw.displayMs, 75000);
-  assert.equal(mSw.overtimeMs, 0);
-});
-
-test('computeStudySummary calculates weekly, monthly, peak hours, last30Days, and heading breakdown', () => {
-  const s = norm(null, new Date(2026, 9, 22, 12, 0, 0));
-  const summary = computeStudySummary(s, '2026-10-22', new Date(2026, 9, 22, 12, 0, 0).getTime());
-  assert.ok(summary.weekTotalMs > 0);
-  assert.ok(summary.monthTotalMs >= summary.weekTotalMs);
-  assert.equal(summary.last7Days.length, 7);
-  assert.equal(summary.last30Days.length, 30);
-  const todayPoint = summary.last30Days[summary.last30Days.length - 1];
-  assert.equal(todayPoint.key, '2026-10-22');
-  assert.equal(todayPoint.minutes, 85);
-  assert.equal(todayPoint.formatted, '1h 25m');
-  assert.ok(todayPoint.hours > 1.4);
-  assert.ok(summary.peakHourWindowLabel.includes(':00'));
-  assert.ok(summary.headingBreakdown.length >= 3);
-});
-
-test('syncStudyHabitsInPlace auto-completes study habits', () => {
-  const s = norm({
-    habits: [
-      {
-        id: 'h_code',
-        name: 'Study 3 hours today',
-        e: '💻',
-        c: 'Work',
-        sch: 'daily',
-        days: [0, 1, 2, 3, 4, 5, 6],
-        n: 3,
-        tn: 180,
-        tu: 'min',
-        rem: '',
-        arch: 0,
-        created: '2026-10-20',
-        subjectId: 'any',
-        autoMins: 180,
-      },
-    ],
-    sessions: [
+    // Full computeStudySummary integration check
+    const state = createBlankState();
+    state.sessions = [
       {
         id: 'ses_1',
-        subjectId: 'sub_code',
-        heading: 'Operating Systems Kernel Lab',
-        dayKey: '2026-10-22',
-        startTs: 1000,
-        endTs: 1000 + 185 * 60000,
-        activeMs: 185 * 60000,
+        subjectId: 'sub_phy',
+        heading: 'Electrostatics',
+        dayKey: '2026-10-21',
+        startTs: s2200,
+        endTs: s2200 + 3600000,
+        activeMs: 3600000,
         pausedMs: 0,
         pauseCount: 0,
         overtimeMs: 0,
         purity: 100,
-        mode: 'stopwatch',
+        mode: 'pomo',
         rating: 5,
-        note: 'Deep work',
-        updatedAt: 2000,
+        note: '',
+        updatedAt: s2200 + 3600000,
       },
-    ],
+      {
+        id: 'ses_2',
+        subjectId: 'sub_chem',
+        heading: 'Thermodynamics',
+        dayKey: '2026-10-22',
+        startTs: s0030,
+        endTs: s0030 + 5400000,
+        activeMs: 5400000,
+        pausedMs: 0,
+        pauseCount: 0,
+        overtimeMs: 0,
+        purity: 100,
+        mode: 'pomo',
+        rating: 5,
+        note: '',
+        updatedAt: s0030 + 5400000,
+      },
+    ];
+    const summary = computeStudySummary(state, '2026-10-22', s0030 + 6000000);
+    assert.equal(summary.avgStartHourLabel, '23:15');
+    // Peak 2-hour window must sum 2 consecutive hours
+    assert.equal(summary.peakHourWindowLabel, '00:00 – 02:00');
+    // avgSessionMs divides completed sessions only ((60m + 90m) / 2 = 75m)
+    assert.equal(summary.avgSessionMs, 4500000);
   });
 
-  const totalMs = getTodaySubjectMs(s, 'any', '2026-10-22', '2026-10-22');
-  assert.equal(totalMs, 185 * 60000);
-
-  const changed = syncStudyHabitsInPlace(s, '2026-10-22', '2026-10-22');
-  assert.equal(changed, true);
-  assert.equal(done(s, s.habits[0], '2026-10-22'), true);
-});
-
-test('streak calculation forgives skipped days', () => {
-  const s = norm({
-    habits: [
-      {
-        id: 'h_1',
-        name: 'Read',
-        e: '📖',
-        c: 'Learn',
-        sch: 'daily',
-        days: [0, 1, 2, 3, 4, 5, 6],
-        n: 3,
-        tn: 1,
-        tu: '',
-        rem: '',
-        arch: 0,
-        created: '2026-10-19',
+  it('3. Mock score, accuracy %, and attempt rate % calculation', () => {
+    const mock: MockTest = {
+      id: 'mock_1',
+      name: 'NEET Full Syllabus Mock #1',
+      dayKey: '2026-10-22',
+      marksPerCorrect: 4,
+      marksPerWrong: -1,
+      maxMarks: 720,
+      subjects: {
+        sub_phy: { correct: 35, wrong: 10, unattempted: 5 }, // 35*4 - 10 = 130, acc = 35/45 = 78%
+        sub_chem: { correct: 40, wrong: 5, unattempted: 5 }, // 40*4 - 5 = 155, acc = 40/45 = 89%
+        sub_bot: { correct: 42, wrong: 3, unattempted: 5 }, // 42*4 - 3 = 165, acc = 42/45 = 93%
+        sub_zoo: { correct: 43, wrong: 2, unattempted: 5 }, // 43*4 - 2 = 170, acc = 43/45 = 96%
       },
-    ],
-    log: {
-      h_1: {
-        '2026-10-19': { v: 1, s: 0 },
-        '2026-10-20': { v: 0, s: 1 }, // skipped day
+      note: 'Revise AC & Ray Optics',
+      updatedAt: 1761123600000,
+    };
+
+    const score = computeMockScore(mock);
+    // Total correct = 160 (640), total wrong = 20 (-20) => 620
+    assert.equal(score.totalScore, 620);
+    assert.equal(score.totalCorrect, 160);
+    assert.equal(score.totalWrong, 20);
+    assert.equal(score.totalUnattempted, 20);
+    assert.equal(score.totalAttempted, 180);
+    assert.equal(score.totalQuestions, 200);
+    // Accuracy = Math.round((160 / 180) * 100) = 89%
+    assert.equal(score.accuracyPct, 89);
+    // Attempt rate = Math.round((180 / 200) * 100) = 90%
+    assert.equal(score.attemptRatePct, 90);
+
+    const state = createBlankState();
+    state.mocks = [mock];
+    const overview = computeMocksOverview(state);
+    assert.equal(overview.bestScore, 620);
+    assert.equal(overview.avgLast5Score, 620);
+    assert.equal(overview.lowestAccuracySubject?.subjectId, 'sub_phy');
+  });
+
+  it('4. Revision due/overdue selection and R1/R2/R3 date ordering', () => {
+    const ch1: Chapter = {
+      id: 'ch_1',
+      subjectId: 'sub_phy',
+      name: 'Current Electricity',
+      status: 'completed',
+      completedOn: '2026-10-15',
+      revisions: [
+        { id: 'r3', date: '2026-10-25', done: false },
+        { id: 'r1', date: '2026-10-18', done: true, doneOn: '2026-10-18' },
+        { id: 'r2', date: '2026-10-20', done: false },
+      ],
+    };
+    const sorted = getSortedChapterRevisions(ch1);
+    assert.deepEqual(
+      sorted.map((r) => ({ id: r.id, label: r.label })),
+      [
+        { id: 'r1', label: 'R1' },
+        { id: 'r2', label: 'R2' },
+        { id: 'r3', label: 'R3' },
+      ]
+    );
+
+    const state = createBlankState();
+    state.chapters = [
+      ch1,
+      {
+        id: 'ch_2',
+        subjectId: 'sub_bot',
+        name: 'Cell: The Unit of Life',
+        status: 'inProgress',
+        revisions: [{ id: 'r_today', date: '2026-10-22', done: false }],
+      },
+    ];
+
+    const { dueOnSel, overdue } = getDueAndOverdueRevisions(
+      state,
+      '2026-10-22',
+      '2026-10-22'
+    );
+    // r1 is done, r3 is on 2026-10-25 (future), so r2 is overdue by 2 days (R2) and r_today is due on sel (R1)
+    assert.equal(overdue.length, 1);
+    assert.equal(overdue[0].revisionId, 'r2');
+    assert.equal(overdue[0].label, 'R2');
+    assert.equal(overdue[0].daysLate, 2);
+
+    assert.equal(dueOnSel.length, 1);
+    assert.equal(dueOnSel[0].revisionId, 'r_today');
+    assert.equal(dueOnSel[0].label, 'R1');
+    assert.equal(dueOnSel[0].daysLate, 0);
+  });
+
+  it('5. norm() safely loads legacy saved state with no new fields and drops corrupted entries', () => {
+    const legacyRaw = {
+      habits: [
+        {
+          id: 'h_old',
+          name: 'Study 120 mins',
+          e: '📚',
+          c: 'Work',
+          sch: 'daily',
+          days: [0, 1, 2, 3, 4, 5, 6],
+          n: 3,
+          tn: 120,
+          tu: 'min',
+          rem: '',
+          arch: 0,
+          created: '2026-10-01',
+          subjectId: 'any',
+          autoMins: 90, // mismatched with tn, norm() should sync to 120
+        },
+        // Corrupted habit (missing name) -> should be dropped per A8
+        { id: 'h_bad', name: '' },
+      ],
+      log: {
+        h_old: { '2026-10-21': { v: 120, s: 0 } },
+      },
+      subjects: [
+        {
+          id: 'sub_code',
+          name: 'Coding & CS',
+          e: '💻',
+          color: '#6366f1',
+          dailyGoalMins: 180,
+          arch: 0,
+          todos: [],
+        },
+      ],
+      sessions: [
+        {
+          id: 'ses_valid',
+          subjectId: 'sub_code',
+          heading: 'Graphs',
+          dayKey: '2026-10-21',
+          startTs: 1761050000000,
+          endTs: 1761053600000,
+          activeMs: 3600000,
+          pausedMs: 0,
+          pauseCount: 0,
+          overtimeMs: 0,
+          purity: 100,
+          mode: 'pomo',
+          rating: 5,
+          note: 'Good session',
+          updatedAt: 1761053600000,
+        },
+        // Corrupted session (missing startTs / negative activeMs) -> should be dropped per A8
+        { id: 'ses_bad', dayKey: 'not-a-date', activeMs: -50 },
+      ],
+      notes: { '2026-10-21': 'Kept note' },
+      mood: { '2026-10-21': 5 },
+      bonus: 45,
+      ob: 1,
+    };
+
+    const normalized = norm(legacyRaw);
+    assert.equal(normalized.habits.length, 1);
+    assert.equal(normalized.habits[0].id, 'h_old');
+    // A11: tn and autoMins synced
+    assert.equal(normalized.habits[0].tn, 120);
+    assert.equal(normalized.habits[0].autoMins, 120);
+
+    // Existing user's custom subjects preserved
+    assert.equal(normalized.subjects.length, 1);
+    assert.equal(normalized.subjects[0].id, 'sub_code');
+
+    // Valid session preserved, corrupted session dropped
+    assert.equal(normalized.sessions.length, 1);
+    assert.equal(normalized.sessions[0].id, 'ses_valid');
+
+    // New collections safely initialized
+    assert.deepEqual(normalized.mocks, []);
+    assert.deepEqual(normalized.chapters, []);
+    assert.equal(normalized.notes['2026-10-21'], 'Kept note');
+    assert.equal(normalized.bonus, 45);
+
+    // Multi-day habit sync updates past day when session is edited/deleted
+    syncStudyHabitsForDays(normalized, ['2026-10-21'], '2026-10-22');
+    assert.equal(normalized.log.h_old['2026-10-21']?.v, 60);
+    assert.equal(normalized.set.timerAesthetic, 'neon');
+  });
+
+  it('6. computeConsistencyCalendar calculates 90-day habit completion percentages and density levels', () => {
+    const state = createBlankState();
+    const h1 = mkHabit({ id: 'h1', name: 'Habit 1', tn: 1 }, '2026-07-01');
+    const h2 = mkHabit({ id: 'h2', name: 'Habit 2', tn: 1 }, '2026-07-01');
+    state.habits = [h1, h2];
+    state.log = {
+      h1: {
+        '2026-10-22': { v: 1, s: 0 },
         '2026-10-21': { v: 1, s: 0 },
+      },
+      h2: {
         '2026-10-22': { v: 1, s: 0 },
       },
-    },
+    };
+    const cal = computeConsistencyCalendar(state, '2026-10-22', 90);
+    assert.equal(cal.days.length, 90);
+    assert.equal(cal.perfectDays, 1);
+    const todayCell = cal.days[cal.days.length - 1];
+    const yesterdayCell = cal.days[cal.days.length - 2];
+    assert.equal(todayCell.pct, 100);
+    assert.equal(todayCell.densityLevel, 4);
+    assert.equal(yesterdayCell.pct, 50);
+    assert.equal(yesterdayCell.densityLevel, 2);
   });
-
-  const st = streak(s, s.habits[0], '2026-10-22');
-  assert.equal(st.cur, 3);
-  assert.equal(st.best, 3);
-  assert.ok(xp(s, '2026-10-22') > 0);
-  assert.equal(addD('2026-10-22', 1), '2026-10-23');
 });
+

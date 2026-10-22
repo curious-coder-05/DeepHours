@@ -8,15 +8,23 @@ import type {
   ActiveTimerMode,
   AppSettings,
   AppTab,
+  Chapter,
+  ChapterStatus,
   DDay,
   Habit,
   HabitCategory,
+  MockTest,
+  PrepSubTab,
   PulseHabitState,
   SoundscapeMode,
+  StatsSubTab,
   StudySession,
 } from './types';
 import {
   STARTERS,
+  cloneLog,
+  computeMockScore,
+  createBlankState,
   createDefaultState,
   done,
   due,
@@ -25,13 +33,15 @@ import {
   fmtHMS,
   fmtHMShort,
   fmtMS,
-  getHeadingColor,
   getSessionHeading,
+  getSortedChapterRevisions,
   getTimerMetrics,
+  isAutoStudyHabit,
   logicalKey,
   mkHabit,
   norm,
   pad,
+  syncStudyHabitsForDays,
   syncStudyHabitsInPlace,
   uid,
 } from './utils/studyLogic';
@@ -44,8 +54,8 @@ import {
 } from './utils/audioEngine';
 import { useFloatingTimerPiP } from './hooks/useFloatingTimerPiP';
 import { TodayView } from './components/TodayView';
+import { PrepView } from './components/PrepView';
 import { FocusView } from './components/FocusView';
-import { PlannerView } from './components/PlannerView';
 import { StatsView } from './components/StatsView';
 import { MoreView } from './components/MoreView';
 import { Modals, type ModalState } from './components/Modals';
@@ -57,16 +67,28 @@ function boomConfetti() {
   ) {
     return;
   }
-  for (let i = 0; i < 28; i++) {
+  const palette = ['#10b981', '#38bdf8', '#fbbf24', '#a78bfa', '#f472b6', '#34d399'];
+  for (let i = 0; i < 44; i++) {
     const e = document.createElement('i');
-    e.className = 'cf';
-    e.style.cssText = `left:50%;top:38%;background:hsl(${
-      Math.random() * 360
-    } 90% 65%);--x:${(Math.random() - 0.5) * 380}px;--y:${
-      -120 - Math.random() * 240
-    }px;--r:${Math.random() * 720}deg`;
+    const isStar = i % 3 === 0;
+    const isOrb = i % 3 === 1;
+    e.className = isStar ? 'cf cf-star' : 'cf';
+    const color = palette[i % palette.length];
+    const size = isStar ? 13 : isOrb ? 9 : 8;
+    const height = isStar ? 13 : isOrb ? 9 : 14;
+    const br = isOrb ? '50%' : '2px';
+    const angle = (Math.PI * 2 * i) / 44 + (Math.random() - 0.5) * 0.25;
+    const dist = 90 + Math.random() * 210;
+    const tx = Math.cos(angle) * dist;
+    const ty = -80 - Math.abs(Math.sin(angle)) * 190 - Math.random() * 60;
+    const dur = (1.1 + Math.random() * 0.45).toFixed(2) + 's';
+    e.style.cssText = `left:50%;top:36%;background:${color};--w:${size}px;--h:${height}px;--br:${br};--x:${tx.toFixed(
+      1
+    )}px;--y:${ty.toFixed(1)}px;--r:${Math.round(
+      (Math.random() - 0.5) * 960
+    )}deg;--dur:${dur}`;
     document.body.append(e);
-    setTimeout(() => e.remove(), 1200);
+    setTimeout(() => e.remove(), 1600);
   }
 }
 
@@ -94,8 +116,11 @@ function downloadFile(name: string, content: string, mimeType: string) {
 }
 
 export default function App() {
+  const [ready, setReady] = useState(false);
   const [state, setState] = useState<PulseHabitState>(() => createDefaultState());
   const [tab, setTab] = useState<AppTab>('today');
+  const [prepSubTab, setPrepSubTab] = useState<PrepSubTab>('syllabus');
+  const [statsSubTab, setStatsSubTab] = useState<StatsSubTab>('summary');
   const [sel, setSel] = useState<string>(() => logicalKey(new Date(), 4));
   const [cat, setCat] = useState<'All' | HabitCategory>('All');
   const [deskMode, setDeskMode] = useState(false);
@@ -104,13 +129,20 @@ export default function App() {
     msg: string;
     undoFn?: () => void;
   } | null>(null);
+  const [perfectDayBanner, setPerfectDayBanner] = useState(false);
   const [, setTickCounter] = useState(0);
 
+  const readyRef = useRef(false);
+  const stateRef = useRef<PulseHabitState>(state);
+  stateRef.current = state;
+
   const toastTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const perfectDayTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const firedRemindersRef = useRef<Set<string>>(new Set());
   const wakeLockRef = useRef<WakeLockSentinel | null>(null);
 
   const todayKey = logicalKey(new Date(), state.set.dayResetHour ?? 4);
+  const prevTodayKeyRef = useRef(todayKey);
 
   const showToast = useCallback((msg: string, undoFn?: () => void) => {
     if (toastTimeoutRef.current) clearTimeout(toastTimeoutRef.current);
@@ -120,32 +152,58 @@ export default function App() {
     }, 4500);
   }, []);
 
+  // A3 & A4: Never persist before initial IndexedDB load completes, and never run side effects inside setState
+  const saveNextState = useCallback((next: PulseHabitState) => {
+    stateRef.current = next;
+    setState(next);
+    if (readyRef.current) {
+      persistState(next);
+    }
+  }, []);
+
   const updateAndSave = useCallback(
     (updater: (prev: PulseHabitState) => PulseHabitState) => {
-      setState((prev) => {
-        const next = updater(prev);
-        const curToday = logicalKey(new Date(), next.set.dayResetHour ?? 4);
-        syncStudyHabitsInPlace(next, curToday, curToday);
-        persistState(next);
-        return { ...next };
-      });
+      const prev = stateRef.current;
+      const draft = updater(prev);
+      const next: PulseHabitState = {
+        ...draft,
+        log: cloneLog(draft.log),
+      };
+      const curToday = logicalKey(new Date(), next.set.dayResetHour ?? 4);
+      syncStudyHabitsInPlace(next, curToday, curToday);
+      saveNextState(next);
     },
-    []
+    [saveNextState]
   );
 
-  // Load initial state from IndexedDB / localStorage and register service worker
+  // A3: Load initial state from IndexedDB / localStorage before allowing any persistence
   useEffect(() => {
     let mounted = true;
-    loadInitialState().then((loaded) => {
-      if (!mounted) return;
-      const curToday = logicalKey(new Date(), loaded.set.dayResetHour ?? 4);
-      syncStudyHabitsInPlace(loaded, curToday, curToday);
-      setState(loaded);
-      setSel(curToday);
-    });
+    loadInitialState()
+      .then((loaded) => {
+        if (!mounted) return;
+        const next: PulseHabitState = {
+          ...loaded,
+          log: cloneLog(loaded.log),
+        };
+        const curToday = logicalKey(new Date(), next.set.dayResetHour ?? 4);
+        syncStudyHabitsInPlace(next, curToday, curToday);
+        readyRef.current = true;
+        stateRef.current = next;
+        prevTodayKeyRef.current = curToday;
+        setState(next);
+        setSel(curToday);
+        setReady(true);
+      })
+      .catch(() => {
+        if (!mounted) return;
+        readyRef.current = true;
+        setReady(true);
+      });
 
     const unsub = subscribeBroadcast((latest) => {
       if (!mounted) return;
+      stateRef.current = latest;
       setState(latest);
     });
 
@@ -158,6 +216,22 @@ export default function App() {
       unsub();
     };
   }, []);
+
+  // A7: Idle day-rollover interval every 30s so todayKey and sel advance automatically past dayResetHour
+  useEffect(() => {
+    const id = setInterval(() => {
+      setTickCounter((c) => c + 1);
+    }, 30000);
+    return () => clearInterval(id);
+  }, []);
+
+  useEffect(() => {
+    const prevToday = prevTodayKeyRef.current;
+    if (prevToday !== todayKey) {
+      prevTodayKeyRef.current = todayKey;
+      setSel((curSel) => (curSel === prevToday ? todayKey : curSel));
+    }
+  }, [todayKey]);
 
   // Theme application
   useEffect(() => {
@@ -228,66 +302,78 @@ export default function App() {
     );
   }, [state.set.soundscape, state.activeTimer?.status, state.set.soundVol]);
 
-  // Timer actions
+  // Timer actions (A4: side effects outside state updaters)
   const startTimer = useCallback(
     (
+      subjectId?: string,
       heading?: string,
       mode?: ActiveTimerMode,
       customTargetMins?: number
     ) => {
       ensureAudioEngine();
-      updateAndSave((prev) => {
-        const cleanHeading = (heading && heading.trim()) || 'Deep Study Session';
-        const m: ActiveTimerMode = mode || prev.set.defaultMode || 'pomo';
-        const targetMins =
-          m === 'pomo'
-            ? prev.set.pomoWork || 25
-            : m === 'countdown'
-              ? customTargetMins || prev.set.countdownMins || 45
-              : 0;
-        const now = Date.now();
-        beep('ok', !!prev.set.snd);
-        return {
-          ...prev,
-          set: {
-            ...prev.set,
-            defaultMode: m,
-          },
-          activeTimer: {
-            status: 'running',
-            mode: m,
-            phase: 'work',
-            subjectId: 'sub_code',
-            heading: cleanHeading,
-            startTs: now,
-            sliceStartTs: now,
-            pauseStartTs: null,
-            pausedDurationMs: 0,
-            slicePausedMs: 0,
-            pauseCount: 0,
-            slicePauseCount: 0,
-            targetMs: targetMins * 60000,
-            chimeFired: false,
-          },
-        };
-      });
+      const prev = stateRef.current;
+      const resolvedSubId =
+        subjectId ||
+        prev.activeTimer?.subjectId ||
+        prev.subjects.find((s) => !s.arch)?.id ||
+        'sub_phy';
+      const sub = prev.subjects.find((s) => s.id === resolvedSubId);
+      const cleanHeading =
+        (heading && heading.trim()) ||
+        (sub ? `${sub.name} Study` : 'Deep Study Session');
+      const m: ActiveTimerMode = mode || prev.set.defaultMode || 'pomo';
+      const targetMins =
+        m === 'pomo'
+          ? prev.set.pomoWork || 25
+          : m === 'countdown'
+            ? customTargetMins || prev.set.countdownMins || 45
+            : 0;
+      const now = Date.now();
+
+      beep('ok', !!prev.set.snd);
+      updateAndSave((cur) => ({
+        ...cur,
+        set: {
+          ...cur.set,
+          defaultMode: m,
+        },
+        activeTimer: {
+          status: 'running',
+          mode: m,
+          phase: 'work',
+          subjectId: resolvedSubId,
+          heading: cleanHeading,
+          startTs: now,
+          sliceStartTs: now,
+          pauseStartTs: null,
+          pausedDurationMs: 0,
+          slicePausedMs: 0,
+          pauseCount: 0,
+          slicePauseCount: 0,
+          targetMs: targetMins * 60000,
+          chimeFired: false,
+        },
+      }));
     },
     [updateAndSave]
   );
 
   const pauseTimer = useCallback(() => {
-    updateAndSave((prev) => {
-      const t = prev.activeTimer;
-      if (!t || t.status === 'paused') return prev;
-      beep('no', !!prev.set.snd);
+    const prev = stateRef.current;
+    const t = prev.activeTimer;
+    if (!t || t.status === 'paused') return;
+    beep('no', !!prev.set.snd);
+    updateAndSave((cur) => {
+      const ct = cur.activeTimer;
+      if (!ct || ct.status === 'paused') return cur;
       return {
-        ...prev,
+        ...cur,
         activeTimer: {
-          ...t,
+          ...ct,
           status: 'paused',
           pauseStartTs: Date.now(),
-          pauseCount: (t.pauseCount || 0) + 1,
-          slicePauseCount: (t.slicePauseCount || 0) + 1,
+          pauseCount: (ct.pauseCount || 0) + 1,
+          slicePauseCount: (ct.slicePauseCount || 0) + 1,
         },
       };
     });
@@ -295,30 +381,34 @@ export default function App() {
 
   const resumeTimer = useCallback(() => {
     ensureAudioEngine();
-    updateAndSave((prev) => {
-      const t = prev.activeTimer;
-      if (!t || t.status !== 'paused') return prev;
+    const prev = stateRef.current;
+    const t = prev.activeTimer;
+    if (!t || t.status !== 'paused') return;
+    beep('ok', !!prev.set.snd);
+    updateAndSave((cur) => {
+      const ct = cur.activeTimer;
+      if (!ct || ct.status !== 'paused') return cur;
       const now = Date.now();
-      const deltaPause = t.pauseStartTs ? Math.max(0, now - t.pauseStartTs) : 0;
-      beep('ok', !!prev.set.snd);
+      const deltaPause = ct.pauseStartTs ? Math.max(0, now - ct.pauseStartTs) : 0;
       return {
-        ...prev,
+        ...cur,
         activeTimer: {
-          ...t,
+          ...ct,
           status: 'running',
           pauseStartTs: null,
-          pausedDurationMs: (t.pausedDurationMs || 0) + deltaPause,
-          slicePausedMs: (t.slicePausedMs || 0) + deltaPause,
+          pausedDurationMs: (ct.pausedDurationMs || 0) + deltaPause,
+          slicePausedMs: (ct.slicePausedMs || 0) + deltaPause,
         },
       };
     });
   }, [updateAndSave]);
 
   const toggleTimerPause = useCallback(() => {
-    if (!state.activeTimer) return;
-    if (state.activeTimer.status === 'running') pauseTimer();
+    const cur = stateRef.current.activeTimer;
+    if (!cur) return;
+    if (cur.status === 'running') pauseTimer();
     else resumeTimer();
-  }, [pauseTimer, resumeTimer, state.activeTimer]);
+  }, [pauseTimer, resumeTimer]);
 
   const extendTimerTarget = useCallback(
     (extraMins: number) => {
@@ -343,7 +433,7 @@ export default function App() {
   const commitSliceInState = (
     prev: PulseHabitState,
     now: number,
-    reflection: { heading?: string; rating: number; note: string }
+    reflection: { subjectId?: string; heading?: string; rating: number; note: string }
   ): { next: PulseHabitState; savedEntry: StudySession | null } => {
     const t = prev.activeTimer;
     if (!t || t.phase === 'break') return { next: prev, savedEntry: null };
@@ -363,14 +453,20 @@ export default function App() {
         : 0;
     const denom = sliceActiveMs + slicePausedMs;
     const purity = denom > 0 ? Math.round((sliceActiveMs / denom) * 100) : 100;
+    const finalSubjectId =
+      reflection.subjectId ||
+      t.subjectId ||
+      prev.subjects.find((s) => !s.arch)?.id ||
+      'sub_phy';
+    const sub = prev.subjects.find((s) => s.id === finalSubjectId);
     const finalHeading =
       (reflection.heading && reflection.heading.trim()) ||
       (t.heading && t.heading.trim()) ||
-      'Deep Study Session';
+      (sub ? `${sub.name} Study` : 'Deep Study Session');
 
     const entry: StudySession = {
       id: uid('ses'),
-      subjectId: t.subjectId || 'sub_code',
+      subjectId: finalSubjectId,
       heading: finalHeading,
       dayKey: logicalKey(t.sliceStartTs, prev.set.dayResetHour ?? 4),
       startTs: t.sliceStartTs,
@@ -388,6 +484,7 @@ export default function App() {
 
     const next: PulseHabitState = {
       ...prev,
+      log: cloneLog(prev.log),
       sessions: [...prev.sessions, entry],
       bonus: (prev.bonus || 0) + Math.max(5, Math.round(sliceActiveMs / 60000)),
     };
@@ -396,43 +493,53 @@ export default function App() {
     return { next, savedEntry: entry };
   };
 
-  const switchHeadingMidSession = useCallback(
-    (newHeading: string) => {
-      const clean = newHeading.trim() || 'Deep Study Session';
-      updateAndSave((prev) => {
-        const t = prev.activeTimer;
-        if (!t || t.heading === clean) return prev;
-        const now = Date.now();
-        const { next, savedEntry } = commitSliceInState(prev, now, {
-          heading: t.heading,
-          rating: 5,
-          note: 'Auto-logged on topic switch',
-        });
-        showToast(
-          savedEntry
-            ? `Saved ${fmtHMShort(savedEntry.activeMs)} · Switched to "${clean}"`
-            : `Switched session heading to "${clean}"`
-        );
-        return {
-          ...next,
-          activeTimer: {
-            ...t,
-            heading: clean,
-            sliceStartTs: now,
-            slicePausedMs: 0,
-            slicePauseCount: 0,
-            pauseStartTs: t.status === 'paused' ? now : null,
-          },
-        };
+  const switchTopicMidSession = useCallback(
+    (newSubjectId: string, newHeading: string) => {
+      const prev = stateRef.current;
+      const t = prev.activeTimer;
+      if (!t) return;
+      const sub = prev.subjects.find((s) => s.id === newSubjectId);
+      const clean =
+        newHeading.trim() || (sub ? `${sub.name} Study` : 'Deep Study Session');
+      if (t.subjectId === newSubjectId && t.heading === clean) return;
+
+      const now = Date.now();
+      const { next, savedEntry } = commitSliceInState(prev, now, {
+        subjectId: t.subjectId,
+        heading: t.heading,
+        rating: 5,
+        note: 'Auto-logged on topic switch',
       });
+      const updated: PulseHabitState = {
+        ...next,
+        activeTimer: {
+          ...t,
+          subjectId: newSubjectId,
+          heading: clean,
+          sliceStartTs: now,
+          slicePausedMs: 0,
+          slicePauseCount: 0,
+          pauseStartTs: t.status === 'paused' ? now : null,
+        },
+      };
+      const curToday = logicalKey(now, updated.set.dayResetHour ?? 4);
+      syncStudyHabitsInPlace(updated, curToday, curToday, now);
+      saveNextState(updated);
+
+      showToast(
+        savedEntry
+          ? `Saved ${fmtHMShort(savedEntry.activeMs)} · Switched to "${clean}"`
+          : `Switched session topic to "${clean}"`
+      );
     },
-    [showToast, updateAndSave]
+    [saveNextState, showToast]
   );
 
   const stopTimerAndReflect = useCallback(() => {
-    const t = state.activeTimer;
+    const cur = stateRef.current;
+    const t = cur.activeTimer;
     if (!t) return;
-    const m = getTimerMetrics(state);
+    const m = getTimerMetrics(cur);
     if (t.status === 'running') {
       pauseTimer();
     }
@@ -441,46 +548,50 @@ export default function App() {
       return;
     }
     setModal({ type: 'reflect', metrics: m });
-  }, [pauseTimer, state, updateAndSave]);
+  }, [pauseTimer, updateAndSave]);
 
   const togglePomoPhase = useCallback(() => {
-    updateAndSave((prev) => {
-      const t = prev.activeTimer;
-      if (!t || t.mode !== 'pomo') return prev;
-      const now = Date.now();
-      let workingState = prev;
-      let nextPhase: 'work' | 'break' = 'work';
-      let nextTargetMs = (prev.set.pomoWork || 25) * 60000;
+    const prev = stateRef.current;
+    const t = prev.activeTimer;
+    if (!t || t.mode !== 'pomo') return;
+    const now = Date.now();
+    let workingState = prev;
+    let nextPhase: 'work' | 'break' = 'work';
+    let nextTargetMs = (prev.set.pomoWork || 25) * 60000;
 
-      if (t.phase === 'work') {
-        const res = commitSliceInState(prev, now, {
-          heading: t.heading,
-          rating: 5,
-          note: 'Pomodoro work sprint',
-        });
-        workingState = res.next;
-        nextPhase = 'break';
-        nextTargetMs = (prev.set.pomoBreak || 5) * 60000;
-      }
+    if (t.phase === 'work') {
+      const res = commitSliceInState(prev, now, {
+        subjectId: t.subjectId,
+        heading: t.heading,
+        rating: 5,
+        note: 'Pomodoro work sprint',
+      });
+      workingState = res.next;
+      nextPhase = 'break';
+      nextTargetMs = (prev.set.pomoBreak || 5) * 60000;
+    }
 
-      beep('ok', !!prev.set.snd);
-      return {
-        ...workingState,
-        activeTimer: {
-          ...t,
-          phase: nextPhase,
-          targetMs: nextTargetMs,
-          startTs: now,
-          sliceStartTs: now,
-          pausedDurationMs: 0,
-          slicePausedMs: 0,
-          pauseStartTs: null,
-          status: 'running',
-          chimeFired: false,
-        },
-      };
-    });
-  }, [updateAndSave]);
+    beep('ok', !!prev.set.snd);
+    const updated: PulseHabitState = {
+      ...workingState,
+      log: cloneLog(workingState.log),
+      activeTimer: {
+        ...t,
+        phase: nextPhase,
+        targetMs: nextTargetMs,
+        startTs: now,
+        sliceStartTs: now,
+        pausedDurationMs: 0,
+        slicePausedMs: 0,
+        pauseStartTs: null,
+        status: 'running',
+        chimeFired: false,
+      },
+    };
+    const curToday = logicalKey(now, updated.set.dayResetHour ?? 4);
+    syncStudyHabitsInPlace(updated, curToday, curToday, now);
+    saveNextState(updated);
+  }, [saveNextState]);
 
   const {
     canvasRef,
@@ -505,39 +616,41 @@ export default function App() {
 
     const handleTick = () => {
       setTickCounter((c) => c + 1);
-      setState((prev) => {
-        if (!prev.activeTimer) return prev;
-        const now = Date.now();
-        const m = getTimerMetrics(prev, now);
-        let changed = false;
-        let nextTimer = prev.activeTimer;
+      const prev = stateRef.current;
+      if (!prev.activeTimer) return;
 
-        if (
-          nextTimer.status === 'running' &&
-          nextTimer.mode !== 'stopwatch' &&
-          m &&
-          m.overtimeMs > 0 &&
-          !nextTimer.chimeFired
-        ) {
-          nextTimer = { ...nextTimer, chimeFired: true };
-          changed = true;
-          beep('chime', !!prev.set.snd);
-          sendNotification(
-            `⚡ ${m.heading} target reached!`,
-            'Entering Flow State Overtime (+00:01)'
-          );
-        }
+      const now = Date.now();
+      const m = getTimerMetrics(prev, now);
+      let changed = false;
+      let nextTimer = prev.activeTimer;
 
-        const curToday = logicalKey(now, prev.set.dayResetHour ?? 4);
-        const habitChanged = syncStudyHabitsInPlace(prev, curToday, curToday, now);
+      if (
+        nextTimer.status === 'running' &&
+        nextTimer.mode !== 'stopwatch' &&
+        m &&
+        m.overtimeMs > 0 &&
+        !nextTimer.chimeFired
+      ) {
+        nextTimer = { ...nextTimer, chimeFired: true };
+        changed = true;
+        beep('chime', !!prev.set.snd);
+        sendNotification(
+          `⚡ ${m.heading} target reached!`,
+          'Entering Flow State Overtime (+00:01)'
+        );
+      }
 
-        if (changed || habitChanged) {
-          const updated = { ...prev, activeTimer: nextTimer };
-          persistState(updated);
-          return updated;
-        }
-        return prev;
-      });
+      const curToday = logicalKey(now, prev.set.dayResetHour ?? 4);
+      const draft: PulseHabitState = {
+        ...prev,
+        log: cloneLog(prev.log),
+        activeTimer: nextTimer,
+      };
+      const habitChanged = syncStudyHabitsInPlace(draft, curToday, curToday, now);
+
+      if (changed || habitChanged) {
+        saveNextState(draft);
+      }
       renderTick();
     };
 
@@ -564,23 +677,24 @@ export default function App() {
       if (worker) worker.terminate();
       if (workerUrl) URL.revokeObjectURL(workerUrl);
     };
-  }, [renderTick, state.activeTimer]);
+  }, [renderTick, saveNextState, state.activeTimer]);
 
   // Scheduled Habit Reminders check
   useEffect(() => {
     const id = setInterval(() => {
-      if (!state.set.notif) return;
+      const cur = stateRef.current;
+      if (!cur.set.notif) return;
       const n = new Date();
       const hm = `${pad(n.getHours())}:${pad(n.getMinutes())}`;
-      const tKey = logicalKey(n, state.set.dayResetHour ?? 4);
-      state.habits
+      const tKey = logicalKey(n, cur.set.dayResetHour ?? 4);
+      cur.habits
         .filter((h) => !h.arch)
         .forEach((h) => {
           const remKey = h.id + tKey;
           if (
             h.rem === hm &&
-            due(state, h, tKey) &&
-            !done(state, h, tKey) &&
+            due(cur, h, tKey) &&
+            !done(cur, h, tKey) &&
             !firedRemindersRef.current.has(remKey)
           ) {
             firedRemindersRef.current.add(remKey);
@@ -589,50 +703,63 @@ export default function App() {
         });
     }, 20000);
     return () => clearInterval(id);
-  }, [state]);
+  }, []);
 
-  // Habit Handlers
+  // Habit Handlers (A4 & A11: pure state updates, auto-study habits cannot be manually incremented)
   const setHabitValue = useCallback(
     (id: string, dayKey: string, delta: number) => {
-      updateAndSave((prev) => {
-        const next: PulseHabitState = JSON.parse(JSON.stringify(prev));
-        const h = next.habits.find((x) => x.id === id);
-        if (!h) return prev;
-        const L = (next.log[id] ??= {});
-        const e = (L[dayKey] ??= { v: 0, s: 0 });
-        const wasDone = done(next, h, dayKey);
-        e.s = 0;
-        e.v = Math.max(0, e.v + delta);
-        if (!e.v) delete L[dayKey];
-        if (dayKey < h.created) h.created = dayKey;
-        const nowDone = done(next, h, dayKey);
-        beep(nowDone ? 'ok' : 'no', !!next.set.snd);
-        const dueList = dueOn(next, dayKey);
-        if (
-          nowDone &&
-          !wasDone &&
-          dueList.length > 0 &&
-          dueList.every((x) => done(next, x, dayKey))
-        ) {
-          beep('win', !!next.set.snd);
-          boomConfetti();
-          showToast('Perfect day 🎉');
-        }
-        return next;
-      });
+      const prev = stateRef.current;
+      const h = prev.habits.find((x) => x.id === id);
+      if (!h || isAutoStudyHabit(h)) return;
+
+      const next: PulseHabitState = JSON.parse(JSON.stringify(prev));
+      const nextH = next.habits.find((x) => x.id === id);
+      if (!nextH) return;
+
+      const L = (next.log[id] ??= {});
+      const e = (L[dayKey] ??= { v: 0, s: 0 });
+      const wasDone = done(next, nextH, dayKey);
+      e.s = 0;
+      e.v = Math.max(0, e.v + delta);
+      if (!e.v) delete L[dayKey];
+      if (dayKey < nextH.created) nextH.created = dayKey;
+      const nowDone = done(next, nextH, dayKey);
+
+      const curToday = logicalKey(new Date(), next.set.dayResetHour ?? 4);
+      syncStudyHabitsInPlace(next, curToday, curToday);
+      saveNextState(next);
+
+      beep(nowDone ? 'ok' : 'no', !!next.set.snd);
+      const dueList = dueOn(next, dayKey);
+      if (
+        nowDone &&
+        !wasDone &&
+        dueList.length > 0 &&
+        dueList.every((x) => done(next, x, dayKey))
+      ) {
+        beep('win', !!next.set.snd);
+        boomConfetti();
+        if (perfectDayTimeoutRef.current) clearTimeout(perfectDayTimeoutRef.current);
+        setPerfectDayBanner(true);
+        perfectDayTimeoutRef.current = setTimeout(() => {
+          setPerfectDayBanner(false);
+        }, 2900);
+        showToast('Perfect day 🎉');
+      }
     },
-    [showToast, updateAndSave]
+    [saveNextState, showToast]
   );
 
   const toggleHabit = useCallback(
     (id: string) => {
-      const h = state.habits.find((x) => x.id === id);
-      if (!h) return;
-      const e = ent(state, h, sel);
-      const isDone = done(state, h, sel);
+      const cur = stateRef.current;
+      const h = cur.habits.find((x) => x.id === id);
+      if (!h || isAutoStudyHabit(h)) return;
+      const e = ent(cur, h, sel);
+      const isDone = done(cur, h, sel);
       setHabitValue(id, sel, isDone ? -(e?.v || 0) : h.tn - (e?.v || 0));
     },
-    [sel, setHabitValue, state]
+    [sel, setHabitValue]
   );
 
   const skipHabit = useCallback(
@@ -650,9 +777,209 @@ export default function App() {
     [sel, updateAndSave]
   );
 
+  // A5: Delete session with multi-day habit sync + Undo toast
+  const handleDeleteSession = useCallback(
+    (id: string) => {
+      const prev = stateRef.current;
+      const target = prev.sessions.find((x) => x.id === id);
+      if (!target) return;
+      const snapJson = JSON.stringify(prev);
+
+      const next: PulseHabitState = {
+        ...prev,
+        log: cloneLog(prev.log),
+        sessions: prev.sessions.filter((x) => x.id !== id),
+      };
+      syncStudyHabitsForDays(next, [target.dayKey, sel, todayKey], todayKey);
+      saveNextState(next);
+
+      showToast('Session deleted', () => {
+        const restored = norm(JSON.parse(snapJson));
+        syncStudyHabitsForDays(restored, [target.dayKey, sel, todayKey], todayKey);
+        saveNextState(restored);
+      });
+    },
+    [saveNextState, sel, showToast, todayKey]
+  );
+
+  // B2: Chapter & Revision Handlers
+  const handleAddChapters = useCallback(
+    (subjectId: string, names: string[]) => {
+      const cleanLines = names.map((l) => l.trim()).filter(Boolean);
+      if (!cleanLines.length) return;
+      updateAndSave((prev) => ({
+        ...prev,
+        chapters: [
+          ...prev.chapters,
+          ...cleanLines.map((name) => ({
+            id: uid('ch'),
+            subjectId,
+            name: name.slice(0, 100),
+            status: 'notStarted' as ChapterStatus,
+            revisions: [],
+          })),
+        ],
+      }));
+      if (cleanLines.length > 1) {
+        showToast(`Added ${cleanLines.length} chapters`);
+      }
+    },
+    [showToast, updateAndSave]
+  );
+
+  const handleUpdateChapter = useCallback(
+    (chapterId: string, patch: Partial<Chapter>) => {
+      updateAndSave((prev) => ({
+        ...prev,
+        chapters: prev.chapters.map((ch) =>
+          ch.id === chapterId ? { ...ch, ...patch } : ch
+        ),
+      }));
+    },
+    [updateAndSave]
+  );
+
+  const handleAddRevision = useCallback(
+    (chapterId: string, date: string) => {
+      if (!/^\d{4}-\d{2}-\d{2}$/.test(date)) return;
+      updateAndSave((prev) => ({
+        ...prev,
+        chapters: prev.chapters.map((ch) => {
+          if (ch.id !== chapterId) return ch;
+          const nextRevs = [
+            ...ch.revisions,
+            { id: uid('rev'), date, done: false },
+          ].sort((a, b) => a.date.localeCompare(b.date));
+          return { ...ch, revisions: nextRevs };
+        }),
+      }));
+    },
+    [updateAndSave]
+  );
+
+  const handleToggleRevisionDone = useCallback(
+    (chapterId: string, revId: string) => {
+      updateAndSave((prev) => ({
+        ...prev,
+        chapters: prev.chapters.map((ch) => {
+          if (ch.id !== chapterId) return ch;
+          return {
+            ...ch,
+            revisions: ch.revisions.map((r) =>
+              r.id === revId
+                ? {
+                    ...r,
+                    done: !r.done,
+                    doneOn: !r.done ? todayKey : undefined,
+                  }
+                : r
+            ),
+          };
+        }),
+      }));
+    },
+    [todayKey, updateAndSave]
+  );
+
+  const handleUpdateRevisionDate = useCallback(
+    (chapterId: string, revId: string, newDate: string) => {
+      if (!/^\d{4}-\d{2}-\d{2}$/.test(newDate)) return;
+      updateAndSave((prev) => ({
+        ...prev,
+        chapters: prev.chapters.map((ch) => {
+          if (ch.id !== chapterId) return ch;
+          const updatedRevs = ch.revisions
+            .map((r) => (r.id === revId ? { ...r, date: newDate } : r))
+            .sort((a, b) => a.date.localeCompare(b.date));
+          return {
+            ...ch,
+            revisions: updatedRevs,
+          };
+        }),
+      }));
+    },
+    [updateAndSave]
+  );
+
+  const handleDeleteRevision = useCallback(
+    (chapterId: string, revId: string) => {
+      updateAndSave((prev) => ({
+        ...prev,
+        chapters: prev.chapters.map((ch) => {
+          if (ch.id !== chapterId) return ch;
+          return {
+            ...ch,
+            revisions: ch.revisions.filter((r) => r.id !== revId),
+          };
+        }),
+      }));
+    },
+    [updateAndSave]
+  );
+
+  const handleDeleteChapter = useCallback(
+    (chapterId: string) => {
+      const snapJson = JSON.stringify(stateRef.current);
+      updateAndSave((prev) => ({
+        ...prev,
+        chapters: prev.chapters.filter((ch) => ch.id !== chapterId),
+      }));
+      showToast('Chapter deleted', () => {
+        const restored = norm(JSON.parse(snapJson));
+        saveNextState(restored);
+      });
+    },
+    [saveNextState, showToast, updateAndSave]
+  );
+
+  const handleDeleteMock = useCallback(
+    (mockId: string) => {
+      const snapJson = JSON.stringify(stateRef.current);
+      updateAndSave((prev) => ({
+        ...prev,
+        mocks: prev.mocks.filter((m) => m.id !== mockId),
+      }));
+      setModal({ type: 'none' });
+      showToast('Mock test deleted', () => {
+        const restored = norm(JSON.parse(snapJson));
+        saveNextState(restored);
+      });
+    },
+    [saveNextState, showToast, updateAndSave]
+  );
+
+  // A3: Show minimal loading splash until IndexedDB/localStorage hydration settles
+  if (!ready) {
+    return (
+      <main
+        id="v"
+        style={{
+          display: 'grid',
+          placeItems: 'center',
+          minHeight: '80vh',
+          textAlign: 'center',
+        }}
+      >
+        <div>
+          <b style={{ fontSize: '18px' }}>⚡ Deep Hours</b>
+          <small style={{ display: 'block', marginTop: '6px' }}>
+            Loading your study log…
+          </small>
+        </div>
+      </main>
+    );
+  }
+
   const activeMetrics = getTimerMetrics(state);
+  const pipSub = activeMetrics
+    ? activeMetrics.subject
+    : state.subjects.find((s) => !s.arch) || {
+        e: '⚡',
+        name: 'Physics',
+        color: '#3b82f6',
+      };
   const pipHeading = activeMetrics ? activeMetrics.heading : 'Deep Study Session';
-  const pipColor = getHeadingColor(pipHeading);
+  const pipColor = pipSub.color || '#10b981';
 
   return (
     <>
@@ -681,24 +1008,18 @@ export default function App() {
             }}
             onNewHabit={() => setModal({ type: 'habit' })}
             onEditHabit={(id) => setModal({ type: 'habit', id })}
-            onQuickStartSession={(heading, mode) => {
+            onQuickStartSession={(subjectId, heading, mode) => {
               setTab('focus');
-              startTimer(heading, mode);
+              startTimer(subjectId, heading, mode);
             }}
             onNewDDay={() => setModal({ type: 'dday' })}
             onEditDDay={(id) => setModal({ type: 'dday', id })}
-            onOpenManualSession={() => setModal({ type: 'manualSession' })}
-            onDeleteSession={(id) => {
-              updateAndSave((prev) => {
-                const next = {
-                  ...prev,
-                  sessions: prev.sessions.filter((x) => x.id !== id),
-                };
-                syncStudyHabitsInPlace(next, sel, todayKey);
-                return next;
-              });
-              showToast('Session removed');
-            }}
+            onOpenManualSession={(defaultSubjectId) =>
+              setModal({ type: 'manualSession', defaultSubjectId })
+            }
+            onDeleteSession={handleDeleteSession}
+            onCompleteRevision={handleToggleRevisionDone}
+            onRescheduleRevision={handleUpdateRevisionDate}
             onSetMood={(v) => {
               updateAndSave((prev) => ({
                 ...prev,
@@ -717,6 +1038,31 @@ export default function App() {
           />
         )}
 
+        {tab === 'prep' && (
+          <PrepView
+            state={state}
+            todayKey={todayKey}
+            subTab={prepSubTab}
+            onChangeSubTab={setPrepSubTab}
+            onAddChapters={handleAddChapters}
+            onUpdateChapter={handleUpdateChapter}
+            onDeleteChapter={handleDeleteChapter}
+            onAddRevision={handleAddRevision}
+            onToggleRevision={handleToggleRevisionDone}
+            onUpdateRevisionDate={handleUpdateRevisionDate}
+            onDeleteRevision={handleDeleteRevision}
+            onOpenNewMock={() => setModal({ type: 'mock' })}
+            onEditMock={(mockId) => setModal({ type: 'mock', id: mockId })}
+            onDeleteMock={handleDeleteMock}
+            onUpdateTargetScore={(target: number) => {
+              updateAndSave((prev) => ({
+                ...prev,
+                set: { ...prev.set, targetMockScore: target },
+              }));
+            }}
+          />
+        )}
+
         {tab === 'focus' && (
           <FocusView
             state={state}
@@ -725,9 +1071,9 @@ export default function App() {
             deskMode={deskMode}
             onToggleDeskMode={() => setDeskMode((d) => !d)}
             onOpenPiP={() => togglePiP()}
-            onSwitchHeading={(newHeading) => {
+            onSwitchTopic={(newSubId, newHeading) => {
               if (state.activeTimer) {
-                switchHeadingMidSession(newHeading);
+                switchTopicMidSession(newSubId, newHeading);
               }
             }}
             onSetMode={(m) => {
@@ -755,8 +1101,8 @@ export default function App() {
                 };
               });
             }}
-            onStartTimer={(heading, mode, customTargetMins) =>
-              startTimer(heading, mode, customTargetMins)
+            onStartTimer={(subjectId, heading, mode, customTargetMins) =>
+              startTimer(subjectId, heading, mode, customTargetMins)
             }
             onExtendTarget={extendTimerTarget}
             onTogglePause={toggleTimerPause}
@@ -797,26 +1143,23 @@ export default function App() {
                 todos: (prev.todos || []).filter((td) => td.id !== todoId),
               }));
             }}
-            onOpenManualSession={() => setModal({ type: 'manualSession' })}
+            onOpenManualSession={(defaultSubjectId) =>
+              setModal({ type: 'manualSession', defaultSubjectId })
+            }
             onEditSession={(sesId) => setModal({ type: 'manualSession', id: sesId })}
-          />
-        )}
-
-        {tab === 'planner' && (
-          <PlannerView
-            state={state}
-            sel={sel}
-            todayKey={todayKey}
-            onOpenManualSession={() => setModal({ type: 'manualSession' })}
-            onToast={showToast}
           />
         )}
 
         {tab === 'stats' && (
           <StatsView
             state={state}
+            sel={sel}
             todayKey={todayKey}
+            subTab={statsSubTab}
+            onChangeSubTab={setStatsSubTab}
             onEditSession={(sesId) => setModal({ type: 'manualSession', id: sesId })}
+            onOpenManualSession={() => setModal({ type: 'manualSession' })}
+            onToast={showToast}
           />
         )}
 
@@ -839,45 +1182,94 @@ export default function App() {
                 showToast('Notifications are blocked in browser settings');
                 return;
               }
-              updateAndSave((prev) => {
-                const nextSet = { ...prev.set, [key]: val };
-                if (key === 'dayResetHour' || key === 'ws') {
-                  setSel(logicalKey(new Date(), nextSet.dayResetHour));
-                }
-                return { ...prev, set: nextSet };
-              });
+              // A12: Confirm before changing dayResetHour and recomputing session dayKeys
+              if (key === 'dayResetHour') {
+                const newHr = Number(val);
+                if (newHr === stateRef.current.set.dayResetHour) return;
+                setModal({ type: 'confirmResetHour', newHour: newHr });
+                return;
+              }
+              updateAndSave((prev) => ({
+                ...prev,
+                set: { ...prev.set, [key]: val },
+              }));
             }}
             onExportJson={() => {
               const now = Date.now();
-              updateAndSave((prev) => {
-                const updated = { ...prev, exp: now };
-                downloadFile(
-                  `deep-hours-backup-${todayKey}.json`,
-                  JSON.stringify(updated, null, 2),
-                  'application/json'
-                );
-                return updated;
-              });
+              const updated: PulseHabitState = {
+                ...stateRef.current,
+                exp: now,
+              };
+              saveNextState(updated);
+              downloadFile(
+                `deep-hours-backup-${todayKey}.json`,
+                JSON.stringify(updated, null, 2),
+                'application/json'
+              );
             }}
             onExportCsv={() => {
-              const rows = ['type,date,session_heading_or_habit,minutes_or_value,purity_pct,note'];
-              state.sessions.forEach((s) => {
-                const heading = getSessionHeading(state, s);
+              const cur = stateRef.current;
+              const rows = [
+                'type,date,subject,heading_or_title,minutes_or_score,purity_or_accuracy_pct,note',
+              ];
+              cur.sessions.forEach((s) => {
+                const sub = cur.subjects.find((x) => x.id === s.subjectId);
+                const subName = sub ? sub.name : 'General';
+                const heading = getSessionHeading(cur, s);
                 rows.push(
-                  `study_session,${s.dayKey},"${heading.replace(/"/g, '""')}",${Math.round(
-                    s.activeMs / 60000
-                  )},${s.purity || 100},"${(s.note || '').replace(/"/g, '""')}"`
+                  `study_session,${s.dayKey},"${subName.replace(/"/g, '""')}","${heading.replace(
+                    /"/g,
+                    '""'
+                  )}",${Math.round(s.activeMs / 60000)},${s.purity || 100},"${(
+                    s.note || ''
+                  ).replace(/"/g, '""')}"`
                 );
               });
-              state.habits.forEach((h) =>
-                Object.entries(state.log[h.id] || {})
+              cur.habits.forEach((h) =>
+                Object.entries(cur.log[h.id] || {})
                   .sort()
                   .forEach(([k, e]) => {
                     rows.push(
-                      `habit,${k},"${h.name.replace(/"/g, '""')}",${e.v},100,""`
+                      `habit,${k},"Habit","${h.name.replace(/"/g, '""')}",${e.v},100,""`
                     );
                   })
               );
+              cur.mocks.forEach((m) => {
+                const sc = computeMockScore(m, cur.subjects);
+                rows.push(
+                  `mock_test,${m.dayKey},"All Subjects","${m.name.replace(
+                    /"/g,
+                    '""'
+                  )}",${sc.totalScore},${sc.accuracyPct},"${(m.note || '').replace(
+                    /"/g,
+                    '""'
+                  )}"`
+                );
+              });
+              cur.chapters.forEach((ch) => {
+                const sub = cur.subjects.find((x) => x.id === ch.subjectId);
+                const subName = sub ? sub.name : 'Subject';
+                const revs = getSortedChapterRevisions(ch);
+                if (revs.length === 0) {
+                  rows.push(
+                    `chapter,${ch.completedOn || ''},"${subName.replace(
+                      /"/g,
+                      '""'
+                    )}","${ch.name.replace(/"/g, '""')}",0,100,"status:${ch.status}"`
+                  );
+                } else {
+                  revs.forEach((r) => {
+                    rows.push(
+                      `chapter_revision,${r.date},"${subName.replace(
+                        /"/g,
+                        '""'
+                      )}","${ch.name.replace(/"/g, '""')} (${r.label})",${
+                        r.done ? 1 : 0
+                      },100,"${r.done ? `done:${r.doneOn || r.date}` : 'pending'}"`
+                    );
+                  });
+                }
+              });
               downloadFile(
                 `deep-hours-export-${todayKey}.csv`,
                 rows.join('\n'),
@@ -885,21 +1277,24 @@ export default function App() {
               );
             }}
             onImportJson={async (file) => {
-              const snapJson = JSON.stringify(state);
+              const snapJson = JSON.stringify(stateRef.current);
               try {
                 const parsed = JSON.parse(await file.text());
-                if (!parsed || !Array.isArray(parsed.habits)) {
+                if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) {
                   throw new Error('Invalid schema');
                 }
                 const restored = norm(parsed);
                 const newToday = logicalKey(new Date(), restored.set.dayResetHour);
+                const allDays = new Set<string>([
+                  newToday,
+                  ...restored.sessions.map((s) => s.dayKey),
+                ]);
+                syncStudyHabitsForDays(restored, allDays, newToday);
                 setSel(newToday);
-                setState(restored);
-                persistState(restored);
+                saveNextState(restored);
                 showToast('Full backup restored!', () => {
                   const reverted = norm(JSON.parse(snapJson));
-                  setState(reverted);
-                  persistState(reverted);
+                  saveNextState(reverted);
                 });
               } catch {
                 showToast('Invalid Deep Hours JSON backup file');
@@ -924,13 +1319,13 @@ export default function App() {
         </button>
         <button
           type="button"
-          className={tab === 'planner' ? 'on' : ''}
+          className={tab === 'prep' ? 'on' : ''}
           onClick={() => {
-            setTab('planner');
+            setTab('prep');
             window.scrollTo(0, 0);
           }}
         >
-          <b>🗓️</b>10m Grid
+          <b>🎯</b>Prep
         </button>
         <button
           type="button"
@@ -972,15 +1367,19 @@ export default function App() {
         </button>
       </nav>
 
-      {/* In-App Floating Lecture PiP Companion Overlay (when toggled inside iframe/browser) */}
+      {/* In-App Floating Lecture PiP Companion Overlay */}
       {inAppPiPOpen && (
         <aside
-          className="pip-floating-overlay"
+          className={`pip-floating-overlay aesthetic-${state.set.timerAesthetic || 'neon'}`}
           aria-label="Floating Lecture PiP Timer"
           style={
             {
               '--pip-bd':
-                activeMetrics?.status === 'paused' ? '#f59e0b' : '#10b981',
+                activeMetrics?.status === 'paused'
+                  ? '#f59e0b'
+                  : state.set.timerAesthetic === 'retro'
+                    ? '#d97706'
+                    : pipColor,
             } as React.CSSProperties
           }
         >
@@ -990,7 +1389,7 @@ export default function App() {
                 className="dot"
                 style={{ '--sc': pipColor } as React.CSSProperties}
               />
-              ⚡ {pipHeading.slice(0, 16)}
+              {pipSub.e} {pipHeading.slice(0, 16)}
             </span>
             <span
               style={{
@@ -1007,15 +1406,72 @@ export default function App() {
                     : 'IDLE'}
             </span>
           </div>
-          <div className="pip-clock">
-            {activeMetrics
-              ? fmtHMS(
-                  activeMetrics.overtimeMs > 0
+          {state.set.timerAesthetic === 'retro' ? (
+            <div className="pip-retro-row">
+              {(() => {
+                const ms = activeMetrics
+                  ? activeMetrics.overtimeMs > 0
                     ? activeMetrics.totalActiveMs
                     : activeMetrics.displayMs
-                )
-              : '00:00:00'}
-          </div>
+                  : 0;
+                const totalSec = Math.max(0, Math.floor(ms / 1000));
+                const secDeg = (totalSec % 60) * 6;
+                const minDeg = ((totalSec / 60) % 60) * 6;
+                return (
+                  <svg width="34" height="34" viewBox="0 0 40 40" aria-hidden="true">
+                    <circle
+                      cx="20"
+                      cy="20"
+                      r="18"
+                      fill="#1e1912"
+                      stroke="#d97706"
+                      strokeWidth="2"
+                    />
+                    <line
+                      x1="20"
+                      y1="20"
+                      x2="20"
+                      y2="8"
+                      stroke="#fef3c7"
+                      strokeWidth="2"
+                      strokeLinecap="round"
+                      transform={`rotate(${minDeg} 20 20)`}
+                    />
+                    <line
+                      x1="20"
+                      y1="20"
+                      x2="20"
+                      y2="5"
+                      stroke="#34d399"
+                      strokeWidth="1.2"
+                      strokeLinecap="round"
+                      transform={`rotate(${secDeg} 20 20)`}
+                    />
+                    <circle cx="20" cy="20" r="2" fill="#fbbf24" />
+                  </svg>
+                );
+              })()}
+              <div className="pip-clock">
+                {activeMetrics
+                  ? fmtHMS(
+                      activeMetrics.overtimeMs > 0
+                        ? activeMetrics.totalActiveMs
+                        : activeMetrics.displayMs
+                    )
+                  : '00:00:00'}
+              </div>
+            </div>
+          ) : (
+            <div className="pip-clock">
+              {activeMetrics
+                ? fmtHMS(
+                    activeMetrics.overtimeMs > 0
+                      ? activeMetrics.totalActiveMs
+                      : activeMetrics.displayMs
+                  )
+                : '00:00:00'}
+            </div>
+          )}
           <div className="pip-actions">
             <button
               type="button"
@@ -1068,7 +1524,11 @@ export default function App() {
         onClose={() => setModal({ type: 'none' })}
         onSaveHabit={(id, data: Partial<Habit>) => {
           updateAndSave((prev) => {
-            const next = { ...prev, ob: 1 };
+            const next: PulseHabitState = {
+              ...prev,
+              ob: 1,
+              log: cloneLog(prev.log),
+            };
             if (id) {
               next.habits = prev.habits.map((h) =>
                 h.id === id ? { ...h, ...data, u: Date.now() } : h
@@ -1076,6 +1536,7 @@ export default function App() {
             } else {
               next.habits = [...prev.habits, mkHabit(data, todayKey)];
             }
+            syncStudyHabitsForDays(next, [sel, todayKey], todayKey);
             return next;
           });
           setModal({ type: 'none' });
@@ -1090,9 +1551,9 @@ export default function App() {
           setModal({ type: 'none' });
         }}
         onDeleteHabit={(id) => {
-          const snapJson = JSON.stringify(state);
+          const snapJson = JSON.stringify(stateRef.current);
           updateAndSave((prev) => {
-            const nextLog = { ...prev.log };
+            const nextLog = cloneLog(prev.log);
             delete nextLog[id];
             return {
               ...prev,
@@ -1104,24 +1565,24 @@ export default function App() {
           setModal({ type: 'none' });
           showToast('Habit deleted', () => {
             const restored = norm(JSON.parse(snapJson));
-            setState(restored);
-            persistState(restored);
+            saveNextState(restored);
           });
         }}
-        onSubmitReflection={(heading, rating, note) => {
-          updateAndSave((prev) => {
-            const { next } = commitSliceInState(prev, Date.now(), {
-              heading,
-              rating,
-              note,
-            });
-            return {
-              ...next,
-              activeTimer: null,
-            };
+        onSubmitReflection={(subjectId, heading, rating, note) => {
+          const prev = stateRef.current;
+          const { next } = commitSliceInState(prev, Date.now(), {
+            subjectId,
+            heading,
+            rating,
+            note,
           });
+          const updated: PulseHabitState = {
+            ...next,
+            activeTimer: null,
+          };
+          saveNextState(updated);
           closePiP();
-          beep('win', !!state.set.snd);
+          beep('win', !!updated.set.snd);
           boomConfetti();
           setModal({ type: 'none' });
           showToast(`Logged session: ${heading}`);
@@ -1132,32 +1593,50 @@ export default function App() {
           setModal({ type: 'none' });
         }}
         onSaveManualSession={(id, sessionData) => {
-          updateAndSave((prev) => {
-            const payload: StudySession = {
-              id: id || uid('ses'),
-              ...sessionData,
-            };
-            const nextSessions = id
-              ? prev.sessions.map((x) => (x.id === id ? payload : x))
-              : [...prev.sessions, payload];
-            const next = { ...prev, sessions: nextSessions };
-            syncStudyHabitsInPlace(next, payload.dayKey, todayKey);
-            return next;
-          });
+          const prev = stateRef.current;
+          const oldSession = id ? prev.sessions.find((x) => x.id === id) : undefined;
+          const payload: StudySession = {
+            id: id || uid('ses'),
+            ...sessionData,
+          };
+          const nextSessions = id
+            ? prev.sessions.map((x) => (x.id === id ? payload : x))
+            : [...prev.sessions, payload];
+          const next: PulseHabitState = {
+            ...prev,
+            log: cloneLog(prev.log),
+            sessions: nextSessions,
+          };
+          // A5: Re-sync study habits for both old dayKey (if edited) and new dayKey
+          syncStudyHabitsForDays(
+            next,
+            [oldSession?.dayKey, payload.dayKey, sel, todayKey],
+            todayKey
+          );
+          saveNextState(next);
           setModal({ type: 'none' });
           showToast(`Logged "${sessionData.heading || 'Study Session'}"`);
         }}
         onDeleteSession={(id) => {
-          updateAndSave((prev) => {
-            const next = {
-              ...prev,
-              sessions: prev.sessions.filter((x) => x.id !== id),
-            };
-            syncStudyHabitsInPlace(next, sel, todayKey);
-            return next;
-          });
+          handleDeleteSession(id);
           setModal({ type: 'none' });
         }}
+        onSaveMock={(id, mockData) => {
+          const payload: MockTest = {
+            id: id || uid('mock'),
+            ...mockData,
+          };
+          updateAndSave((prev) => ({
+            ...prev,
+            mocks: id
+              ? prev.mocks.map((m) => (m.id === id ? payload : m))
+              : [...prev.mocks, payload],
+          }));
+          setModal({ type: 'none' });
+          const sc = computeMockScore(payload, stateRef.current.subjects);
+          showToast(`Saved "${payload.name}" (${sc.totalScore}/${payload.maxMarks})`);
+        }}
+        onDeleteMock={handleDeleteMock}
         onSaveTimerConfig={(pomoWork, pomoBreak, countdownMins) => {
           updateAndSave((prev) => ({
             ...prev,
@@ -1189,14 +1668,116 @@ export default function App() {
           }));
           setModal({ type: 'none' });
         }}
-        onConfirmReset={() => {
-          const fresh = createDefaultState();
-          setState(fresh);
-          persistState(fresh);
+        onConfirmResetHour={(newHour) => {
+          // A12: Recompute dayKey for all sessions and re-sync study habits for all affected days
+          const prev = stateRef.current;
+          const affectedDays = new Set<string>([sel, todayKey]);
+          const updatedSessions = prev.sessions.map((s) => {
+            affectedDays.add(s.dayKey);
+            const nextDayKey = logicalKey(s.startTs, newHour);
+            affectedDays.add(nextDayKey);
+            return { ...s, dayKey: nextDayKey };
+          });
+          const newToday = logicalKey(new Date(), newHour);
+          affectedDays.add(newToday);
+
+          const next: PulseHabitState = {
+            ...prev,
+            set: { ...prev.set, dayResetHour: newHour },
+            log: cloneLog(prev.log),
+            sessions: updatedSessions,
+          };
+          syncStudyHabitsForDays(next, affectedDays, newToday);
+          saveNextState(next);
+          setSel(newToday);
           setModal({ type: 'none' });
-          showToast('All device data reset');
+          showToast(`Day reset hour set to ${pad(newHour)}:00 AM`);
+        }}
+        onConfirmReset={() => {
+          // A6: Reset to a truly blank NEET state without demo sessions
+          const fresh = createBlankState();
+          const newToday = logicalKey(new Date(), fresh.set.dayResetHour);
+          saveNextState(fresh);
+          setSel(newToday);
+          setModal({ type: 'none' });
+          showToast('All device data reset to a clean slate');
         }}
       />
+
+      {/* Lightweight SVG Perfect Day Celebration Overlay */}
+      {perfectDayBanner && (
+        <div
+          className="perfect-day-overlay"
+          role="dialog"
+          aria-label="Perfect Day Celebration"
+          onClick={() => setPerfectDayBanner(false)}
+        >
+          <div className="perfect-day-card">
+            <div className="pd-svg-wrap">
+              <svg
+                viewBox="0 0 120 120"
+                width="96"
+                height="96"
+                aria-hidden="true"
+              >
+                <defs>
+                  <linearGradient id="pdGrad" x1="0%" y1="0%" x2="100%" y2="100%">
+                    <stop offset="0%" stopColor="#34d399" />
+                    <stop offset="50%" stopColor="#38bdf8" />
+                    <stop offset="100%" stopColor="#fbbf24" />
+                  </linearGradient>
+                </defs>
+                <g className="pd-rays" stroke="url(#pdGrad)" strokeWidth="2.5" strokeLinecap="round" opacity="0.55">
+                  <line x1="60" y1="4" x2="60" y2="14" />
+                  <line x1="60" y1="106" x2="60" y2="116" />
+                  <line x1="4" y1="60" x2="14" y2="60" />
+                  <line x1="106" y1="60" x2="116" y2="60" />
+                  <line x1="20" y1="20" x2="28" y2="28" />
+                  <line x1="92" y1="92" x2="100" y2="100" />
+                  <line x1="100" y1="20" x2="92" y2="28" />
+                  <line x1="28" y1="92" x2="20" y2="100" />
+                </g>
+                <circle
+                  cx="60"
+                  cy="60"
+                  r="38"
+                  fill="rgba(16, 185, 129, 0.16)"
+                  stroke="url(#pdGrad)"
+                  strokeWidth="4.5"
+                  strokeLinecap="round"
+                  className="pd-ring-circle"
+                />
+                <path
+                  d="M44 61 L55 72 L77 48"
+                  fill="none"
+                  stroke="#f8fafc"
+                  strokeWidth="5.5"
+                  strokeLinecap="round"
+                  strokeLinejoin="round"
+                  className="pd-check-path"
+                />
+              </svg>
+            </div>
+            <span
+              className="pill"
+              style={{
+                background: 'rgba(16, 185, 129, 0.2)',
+                borderColor: 'rgba(52, 211, 153, 0.5)',
+                color: '#6ee7b7',
+                marginBottom: '8px',
+              }}
+            >
+              ✨ 100% Daily Goal Achieved
+            </span>
+            <h3 style={{ fontSize: '21px', marginBottom: '4px', color: '#f8fafc' }}>
+              Perfect Day Unlocked! 🎉
+            </h3>
+            <small style={{ color: '#cbd5e1', display: 'block' }}>
+              Every scheduled habit for this day is complete. Keep the streak alive!
+            </small>
+          </div>
+        </div>
+      )}
 
       {/* Toast Notification */}
       {toastState && (

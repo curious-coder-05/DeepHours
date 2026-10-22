@@ -4,6 +4,8 @@ import type {
   Habit,
   HabitCategory,
   HabitSchedule,
+  MockSubjectScore,
+  MockTest,
   PulseHabitState,
   StudySession,
   TimerMetrics,
@@ -12,6 +14,7 @@ import {
   CATS,
   DN,
   addD,
+  computeMockScore,
   fmtHMS,
   getSessionHeading,
   mkHabit,
@@ -22,10 +25,12 @@ export type ModalState =
   | { type: 'none' }
   | { type: 'habit'; id?: string }
   | { type: 'reflect'; metrics: TimerMetrics }
-  | { type: 'manualSession'; id?: string }
+  | { type: 'manualSession'; id?: string; defaultSubjectId?: string }
+  | { type: 'mock'; id?: string }
   | { type: 'timerConfig' }
   | { type: 'dday'; id?: string }
-  | { type: 'confirmReset' };
+  | { type: 'confirmReset' }
+  | { type: 'confirmResetHour'; newHour: number };
 
 interface ModalsProps {
   modal: ModalState;
@@ -36,14 +41,22 @@ interface ModalsProps {
   onSaveHabit: (id: string | undefined, data: Partial<Habit>) => void;
   onArchiveHabit: (id: string) => void;
   onDeleteHabit: (id: string) => void;
-  onSubmitReflection: (heading: string, rating: number, note: string) => void;
+  onSubmitReflection: (
+    subjectId: string,
+    heading: string,
+    rating: number,
+    note: string
+  ) => void;
   onDiscardSession: () => void;
   onSaveManualSession: (id: string | undefined, session: Omit<StudySession, 'id'>) => void;
   onDeleteSession: (id: string) => void;
+  onSaveMock: (id: string | undefined, mock: Omit<MockTest, 'id'>) => void;
+  onDeleteMock: (id: string) => void;
   onSaveTimerConfig: (pomoWork: number, pomoBreak: number, countdownMins: number) => void;
   onSaveDDay: (id: string | undefined, data: Omit<DDay, 'id'>) => void;
   onDeleteDDay: (id: string) => void;
   onConfirmReset: () => void;
+  onConfirmResetHour: (newHour: number) => void;
 }
 
 export const Modals: React.FC<ModalsProps> = ({
@@ -59,12 +72,16 @@ export const Modals: React.FC<ModalsProps> = ({
   onDiscardSession,
   onSaveManualSession,
   onDeleteSession,
+  onSaveMock,
+  onDeleteMock,
   onSaveTimerConfig,
   onSaveDDay,
   onDeleteDDay,
   onConfirmReset,
+  onConfirmResetHour,
 }) => {
   const dialogRef = useRef<HTMLDialogElement | null>(null);
+  const activeSubjects = state.subjects.filter((s) => !s.arch);
 
   // Habit modal state
   const existingHabit =
@@ -79,11 +96,17 @@ export const Modals: React.FC<ModalsProps> = ({
   const [hDays, setHDays] = useState<number[]>(defaultHabit.days);
   const [hTn, setHTn] = useState(defaultHabit.tn);
   const [hTu, setHTu] = useState(defaultHabit.tu);
-  const [hAutoStudy, setHAutoStudy] = useState(Boolean(defaultHabit.subjectId || defaultHabit.autoMins));
+  const [hAutoStudy, setHAutoStudy] = useState(
+    Boolean(defaultHabit.subjectId || defaultHabit.autoMins)
+  );
+  const [hSubjectId, setHSubjectId] = useState(defaultHabit.subjectId || 'any');
   const [hWeeklyN, setHWeeklyN] = useState(defaultHabit.n);
   const [hRem, setHRem] = useState(defaultHabit.rem);
 
   // Reflection modal state
+  const [refSubjectId, setRefSubjectId] = useState(
+    activeSubjects[0]?.id || 'sub_phy'
+  );
   const [refHeading, setRefHeading] = useState('Deep Study Session');
   const [refRating, setRefRating] = useState(5);
   const [refNote, setRefNote] = useState('');
@@ -93,6 +116,9 @@ export const Modals: React.FC<ModalsProps> = ({
     modal.type === 'manualSession' && modal.id
       ? state.sessions.find((x) => x.id === modal.id)
       : undefined;
+  const [msSubjectId, setMsSubjectId] = useState(
+    activeSubjects[0]?.id || 'sub_phy'
+  );
   const [msHeading, setMsHeading] = useState('');
   const [msDayKey, setMsDayKey] = useState(sel);
   const [msHours, setMsHours] = useState(1);
@@ -100,6 +126,22 @@ export const Modals: React.FC<ModalsProps> = ({
   const [msStartTime, setMsStartTime] = useState('09:00');
   const [msRating, setMsRating] = useState(5);
   const [msNote, setMsNote] = useState('');
+
+  // Mock Test modal state
+  const existingMock =
+    modal.type === 'mock' && modal.id
+      ? state.mocks.find((x) => x.id === modal.id)
+      : undefined;
+  const [mockName, setMockName] = useState('');
+  const [mockDayKey, setMockDayKey] = useState(todayKey);
+  const [mockDurationMins, setMockDurationMins] = useState<string>('180');
+  const [mockMarksCorrect, setMockMarksCorrect] = useState<number>(4);
+  const [mockMarksWrong, setMockMarksWrong] = useState<number>(-1);
+  const [mockMaxMarks, setMockMaxMarks] = useState<number>(720);
+  const [mockScores, setMockScores] = useState<
+    Record<string, MockSubjectScore>
+  >({});
+  const [mockNote, setMockNote] = useState('');
 
   // Timer Config state
   const [cfgPomoWork, setCfgPomoWork] = useState(state.set.pomoWork || 25);
@@ -111,9 +153,9 @@ export const Modals: React.FC<ModalsProps> = ({
     modal.type === 'dday' && modal.id
       ? state.ddays.find((x) => x.id === modal.id)
       : undefined;
-  const [ddEmoji, setDdEmoji] = useState('🎓');
+  const [ddEmoji, setDdEmoji] = useState('🎯');
   const [ddTitle, setDdTitle] = useState('');
-  const [ddDate, setDdDate] = useState(addD(todayKey, 14));
+  const [ddDate, setDdDate] = useState(addD(todayKey, 90));
   const [ddColor, setDdColor] = useState('#10b981');
 
   useEffect(() => {
@@ -129,17 +171,22 @@ export const Modals: React.FC<ModalsProps> = ({
       const h = modal.id
         ? state.habits.find((x) => x.id === modal.id) || mkHabit({}, todayKey)
         : mkHabit({}, todayKey);
+      const isAuto = Boolean(h.subjectId || h.autoMins);
       setHEmoji(h.e);
       setHName(h.name);
       setHCat(h.c);
       setHSch(h.sch);
       setHDays(h.days);
-      setHTn(h.tn);
+      setHTn(isAuto && h.autoMins ? h.autoMins : h.tn);
       setHTu(h.tu);
-      setHAutoStudy(Boolean(h.subjectId || h.autoMins));
+      setHAutoStudy(isAuto);
+      setHSubjectId(h.subjectId || 'any');
       setHWeeklyN(h.n);
       setHRem(h.rem);
     } else if (modal.type === 'reflect') {
+      setRefSubjectId(
+        modal.metrics.subject?.id || activeSubjects[0]?.id || 'sub_phy'
+      );
       setRefHeading(modal.metrics.heading || 'Deep Study Session');
       setRefRating(5);
       setRefNote('');
@@ -150,7 +197,15 @@ export const Modals: React.FC<ModalsProps> = ({
       const now = new Date();
       const oneHrAgo = new Date(now.getTime() - 5400000);
       const startD = ex ? new Date(ex.startTs) : oneHrAgo;
-      const totalMins = ex ? Math.max(1, Math.round((ex.activeMs || 3600000) / 60000)) : 90;
+      const totalMins = ex
+        ? Math.max(1, Math.round((ex.activeMs || 3600000) / 60000))
+        : 90;
+      setMsSubjectId(
+        ex?.subjectId ||
+          modal.defaultSubjectId ||
+          activeSubjects[0]?.id ||
+          'sub_phy'
+      );
       setMsHeading(ex ? getSessionHeading(state, ex) : '');
       setMsDayKey(ex ? ex.dayKey : sel);
       setMsHours(Math.floor(totalMins / 60));
@@ -158,15 +213,38 @@ export const Modals: React.FC<ModalsProps> = ({
       setMsStartTime(`${pad(startD.getHours())}:${pad(startD.getMinutes())}`);
       setMsRating(ex?.rating || 5);
       setMsNote(ex?.note || '');
+    } else if (modal.type === 'mock') {
+      const ex = modal.id
+        ? state.mocks.find((x) => x.id === modal.id)
+        : undefined;
+      setMockName(ex?.name || '');
+      setMockDayKey(ex?.dayKey || todayKey);
+      setMockDurationMins(
+        ex?.durationMins !== undefined ? String(ex.durationMins) : '180'
+      );
+      setMockMarksCorrect(ex?.marksPerCorrect ?? 4);
+      setMockMarksWrong(ex?.marksPerWrong ?? -1);
+      setMockMaxMarks(ex?.maxMarks ?? 720);
+      const initScores: Record<string, MockSubjectScore> = {};
+      state.subjects.forEach((s) => {
+        const sc = ex?.subjects?.[s.id];
+        initScores[s.id] = {
+          correct: sc?.correct ?? 0,
+          wrong: sc?.wrong ?? 0,
+          unattempted: sc?.unattempted ?? 0,
+        };
+      });
+      setMockScores(initScores);
+      setMockNote(ex?.note || '');
     } else if (modal.type === 'timerConfig') {
       setCfgPomoWork(state.set.pomoWork || 25);
       setCfgPomoBreak(state.set.pomoBreak || 5);
       setCfgCountdown(state.set.countdownMins || 45);
     } else if (modal.type === 'dday') {
       const d = modal.id ? state.ddays.find((x) => x.id === modal.id) : undefined;
-      setDdEmoji(d?.e || '🎓');
+      setDdEmoji(d?.e || '🎯');
       setDdTitle(d?.title || '');
-      setDdDate(d?.date || addD(todayKey, 14));
+      setDdDate(d?.date || addD(todayKey, 90));
       setDdColor(d?.color || '#10b981');
     }
 
@@ -177,13 +255,28 @@ export const Modals: React.FC<ModalsProps> = ({
         dlg.setAttribute('open', 'true');
       }
     }
-  }, [modal, sel, state, todayKey]);
+  }, [activeSubjects, modal, sel, state, todayKey]);
 
   const toggleDayInHabit = (dayIdx: number) => {
     setHDays((prev) =>
       prev.includes(dayIdx) ? prev.filter((x) => x !== dayIdx) : [...prev, dayIdx]
     );
   };
+
+  const previewMockStats = computeMockScore(
+    {
+      id: 'preview',
+      name: mockName || 'Preview',
+      dayKey: mockDayKey,
+      marksPerCorrect: mockMarksCorrect,
+      marksPerWrong: mockMarksWrong,
+      maxMarks: mockMaxMarks,
+      subjects: mockScores,
+      note: '',
+      updatedAt: 0,
+    },
+    state.subjects
+  );
 
   return (
     <dialog
@@ -212,7 +305,7 @@ export const Modals: React.FC<ModalsProps> = ({
               tn: targetVal,
               tu: hAutoStudy ? 'min' : hTu.trim(),
               rem: hRem,
-              subjectId: hAutoStudy ? 'any' : '',
+              subjectId: hAutoStudy ? hSubjectId || 'any' : '',
               autoMins: hAutoStudy ? targetVal : 0,
             });
           }}
@@ -231,7 +324,7 @@ export const Modals: React.FC<ModalsProps> = ({
               name="name"
               value={hName}
               onChange={(e) => setHName(e.target.value)}
-              placeholder="e.g. Study 2 hours today"
+              placeholder="e.g. Study 180 mins of Physics"
               required
               maxLength={60}
               aria-label="Habit Name"
@@ -279,7 +372,7 @@ export const Modals: React.FC<ModalsProps> = ({
           </div>
           <div className="row">
             <label className="g">
-              Daily Target
+              Daily Target {hAutoStudy ? '(Minutes)' : ''}
               <input
                 type="number"
                 name="tn"
@@ -296,7 +389,7 @@ export const Modals: React.FC<ModalsProps> = ({
                 value={hAutoStudy ? 'min' : hTu}
                 onChange={(e) => setHTu(e.target.value)}
                 maxLength={12}
-                placeholder="min, pages"
+                placeholder="min, pages, MCQs"
                 disabled={hAutoStudy}
               />
             </label>
@@ -308,8 +401,24 @@ export const Modals: React.FC<ModalsProps> = ({
               checked={hAutoStudy}
               onChange={(e) => setHAutoStudy(e.target.checked)}
             />
-            🔗 Auto-complete from total study minutes logged today
+            🔗 Auto-complete from study timer minutes logged today
           </label>
+          {hAutoStudy && (
+            <label style={{ marginTop: '6px', display: 'block' }}>
+              Count Study Minutes From Subject
+              <select
+                value={hSubjectId}
+                onChange={(e) => setHSubjectId(e.target.value)}
+              >
+                <option value="any">All Subjects Combined</option>
+                {activeSubjects.map((s) => (
+                  <option key={s.id} value={s.id}>
+                    {s.e} {s.name}
+                  </option>
+                ))}
+              </select>
+            </label>
+          )}
           <div className="row">
             <label className="g">
               Times/week (if weekly)
@@ -367,6 +476,7 @@ export const Modals: React.FC<ModalsProps> = ({
           onSubmit={(e) => {
             e.preventDefault();
             onSubmitReflection(
+              refSubjectId,
               refHeading.trim() || 'Deep Study Session',
               refRating,
               refNote.trim()
@@ -388,13 +498,32 @@ export const Modals: React.FC<ModalsProps> = ({
               </b>
             </div>
           </div>
+
+          <label style={{ display: 'block', marginTop: '6px' }}>
+            Subject
+          </label>
+          <div className="chips" style={{ marginBottom: '6px' }}>
+            {activeSubjects.map((s) => (
+              <button
+                key={s.id}
+                type="button"
+                className={`sub-chip ${refSubjectId === s.id ? 'active' : ''}`}
+                style={{ '--sc': s.color } as React.CSSProperties}
+                onClick={() => setRefSubjectId(s.id)}
+              >
+                <i className="dot" style={{ '--sc': s.color } as React.CSSProperties} />{' '}
+                {s.e} {s.name}
+              </button>
+            ))}
+          </div>
+
           <label>
             Session Heading (What did you study?)
             <input
               type="text"
               value={refHeading}
               onChange={(e) => setRefHeading(e.target.value)}
-              placeholder="e.g. Lecture 7 — B-Tree Indexing"
+              placeholder="e.g. Electrostatics — Gauss Law PYQs"
               required
               maxLength={90}
             />
@@ -425,7 +554,7 @@ export const Modals: React.FC<ModalsProps> = ({
               maxLength={300}
               value={refNote}
               onChange={(e) => setRefNote(e.target.value)}
-              placeholder="Summarize what you completed, solved, or reviewed..."
+              placeholder="Summarize NCERT pages read, PYQs solved, or mistakes noted..."
             />
           </label>
           <div className="row">
@@ -448,19 +577,39 @@ export const Modals: React.FC<ModalsProps> = ({
           id="manualSesForm"
           onSubmit={(e) => {
             e.preventDefault();
-            const headingClean = msHeading.trim() || 'Deep Study Session';
+            const sub = state.subjects.find((s) => s.id === msSubjectId);
+            const headingClean =
+              msHeading.trim() ||
+              (sub ? `${sub.name} Study` : 'Deep Study Session');
             const totalDurationMins = Math.max(
               1,
               (Number(msHours) || 0) * 60 + (Number(msMins) || 0)
             );
             const activeMs = totalDurationMins * 60000;
-            const [sh, sm] = msStartTime.split(':').map(Number);
+
+            // A1: Use Number.isFinite so 00:xx is preserved as hour 0.
+            // Times earlier than dayResetHour belong to the NEXT calendar date of the selected logical day.
+            const [shStr, smStr] = msStartTime.split(':');
+            const sh = Number(shStr);
+            const sm = Number(smStr);
+            const safeSh = Number.isFinite(sh) ? sh : 9;
+            const safeSm = Number.isFinite(sm) ? sm : 0;
             const [yr, mo, dy] = msDayKey.split('-').map(Number);
-            const startTs = new Date(yr, mo - 1, dy, sh || 9, sm || 0).getTime();
+            const resetHr = state.set.dayResetHour ?? 4;
+            const dayOffset = safeSh < resetHr ? 1 : 0;
+            const startTs = new Date(
+              yr,
+              mo - 1,
+              dy + dayOffset,
+              safeSh,
+              safeSm,
+              0,
+              0
+            ).getTime();
             const endTs = startTs + activeMs;
 
             onSaveManualSession(modal.id, {
-              subjectId: existingSes?.subjectId || 'sub_code',
+              subjectId: msSubjectId || activeSubjects[0]?.id || 'sub_phy',
               heading: headingClean,
               dayKey: msDayKey,
               startTs,
@@ -469,7 +618,7 @@ export const Modals: React.FC<ModalsProps> = ({
               pausedMs: 0,
               pauseCount: 0,
               overtimeMs: 0,
-              purity: 100,
+              purity: existingSes ? existingSes.purity : 100,
               mode: existingSes?.mode || 'manual',
               rating: Math.min(5, Math.max(1, Number(msRating) || 5)),
               note: msNote.trim(),
@@ -478,14 +627,33 @@ export const Modals: React.FC<ModalsProps> = ({
           }}
         >
           <h3>{existingSes ? 'Edit Study Session' : 'Log Study Session Manually'}</h3>
+
+          <label style={{ display: 'block', marginBottom: '4px' }}>
+            Subject
+          </label>
+          <div className="chips" style={{ marginBottom: '8px' }}>
+            {activeSubjects.map((s) => (
+              <button
+                key={s.id}
+                type="button"
+                className={`sub-chip ${msSubjectId === s.id ? 'active' : ''}`}
+                style={{ '--sc': s.color } as React.CSSProperties}
+                onClick={() => setMsSubjectId(s.id)}
+              >
+                <i className="dot" style={{ '--sc': s.color } as React.CSSProperties} />{' '}
+                {s.e} {s.name}
+              </button>
+            ))}
+          </div>
+
           <label>
-            Session Heading (What did you study?)
+            Session Heading (Chapter / Topic)
             <input
               type="text"
               name="heading"
               value={msHeading}
               onChange={(e) => setMsHeading(e.target.value)}
-              placeholder="e.g., Dynamic Programming & Graph Theory"
+              placeholder="e.g., Rotational Motion PYQs"
               required
               maxLength={90}
             />
@@ -516,7 +684,7 @@ export const Modals: React.FC<ModalsProps> = ({
           </div>
           <div className="row">
             <label className="g">
-              Date
+              Logical Study Date
               <input
                 type="date"
                 name="dayKey"
@@ -544,7 +712,7 @@ export const Modals: React.FC<ModalsProps> = ({
               maxLength={300}
               value={msNote}
               onChange={(e) => setMsNote(e.target.value)}
-              placeholder="e.g., Finished 3 lecture videos and solved 6 practice problems..."
+              placeholder="e.g., Completed NCERT reading and solved 45 questions..."
             />
           </label>
           <label>
@@ -573,6 +741,246 @@ export const Modals: React.FC<ModalsProps> = ({
               onClick={() => onDeleteSession(existingSes.id)}
             >
               Delete Session
+            </button>
+          )}
+        </form>
+      )}
+
+      {modal.type === 'mock' && (
+        <form
+          id="mockForm"
+          onSubmit={(e) => {
+            e.preventDefault();
+            const cleanName = mockName.trim() || 'NEET Mock Test';
+            const durNum = Number(mockDurationMins);
+            onSaveMock(modal.id, {
+              name: cleanName,
+              dayKey: mockDayKey || todayKey,
+              durationMins:
+                mockDurationMins.trim() && Number.isFinite(durNum) && durNum > 0
+                  ? Math.round(durNum)
+                  : undefined,
+              marksPerCorrect: Number.isFinite(Number(mockMarksCorrect))
+                ? Number(mockMarksCorrect)
+                : 4,
+              marksPerWrong: Number.isFinite(Number(mockMarksWrong))
+                ? Number(mockMarksWrong)
+                : -1,
+              maxMarks:
+                Number.isFinite(Number(mockMaxMarks)) && Number(mockMaxMarks) > 0
+                  ? Number(mockMaxMarks)
+                  : 720,
+              subjects: mockScores,
+              note: mockNote.trim(),
+              updatedAt: Date.now(),
+            });
+          }}
+        >
+          <h3>{existingMock ? 'Edit Mock Test' : 'Log NEET Mock Test'}</h3>
+          <label>
+            Test Name / Series
+            <input
+              type="text"
+              value={mockName}
+              onChange={(e) => setMockName(e.target.value)}
+              placeholder="e.g. Allen Major Test #4 / Aakash FTS-02"
+              required
+              maxLength={80}
+            />
+          </label>
+          <div className="row">
+            <label className="g">
+              Date
+              <input
+                type="date"
+                value={mockDayKey}
+                onChange={(e) => setMockDayKey(e.target.value)}
+                required
+              />
+            </label>
+            <label className="g">
+              Duration (mins, optional)
+              <input
+                type="number"
+                min={10}
+                max={300}
+                value={mockDurationMins}
+                onChange={(e) => setMockDurationMins(e.target.value)}
+                placeholder="180"
+              />
+            </label>
+          </div>
+          <div className="row">
+            <label className="g">
+              +Correct Marks
+              <input
+                type="number"
+                step="0.5"
+                value={mockMarksCorrect}
+                onChange={(e) => setMockMarksCorrect(Number(e.target.value))}
+              />
+            </label>
+            <label className="g">
+              −Wrong Marks
+              <input
+                type="number"
+                step="0.5"
+                value={mockMarksWrong}
+                onChange={(e) => setMockMarksWrong(Number(e.target.value))}
+              />
+            </label>
+            <label className="g">
+              Max Marks
+              <input
+                type="number"
+                min={1}
+                max={2000}
+                value={mockMaxMarks}
+                onChange={(e) => setMockMaxMarks(Number(e.target.value))}
+              />
+            </label>
+          </div>
+
+          <div
+            style={{
+              border: '1px solid var(--bd)',
+              borderRadius: '12px',
+              padding: '10px',
+              marginTop: '6px',
+              display: 'grid',
+              gap: '8px',
+            }}
+          >
+            <div className="row" style={{ justifyContent: 'space-between' }}>
+              <small style={{ fontWeight: 700, color: 'var(--tx)' }}>
+                Subject-wise Question Counts
+              </small>
+              <span className="pill mono" style={{ color: 'var(--em)' }}>
+                Score: {previewMockStats.totalScore}/{mockMaxMarks} (
+                {previewMockStats.accuracyPct}% acc)
+              </span>
+            </div>
+
+            {activeSubjects.map((sub) => {
+              const sc = mockScores[sub.id] || {
+                correct: 0,
+                wrong: 0,
+                unattempted: 0,
+              };
+              const subDetail = previewMockStats.bySubject.find(
+                (bs) => bs.subjectId === sub.id
+              );
+              return (
+                <div
+                  key={sub.id}
+                  style={{
+                    borderTop: '1px solid var(--bd)',
+                    paddingTop: '8px',
+                  }}
+                >
+                  <div
+                    className="row"
+                    style={{
+                      justifyContent: 'space-between',
+                      marginBottom: '4px',
+                    }}
+                  >
+                    <b style={{ fontSize: '12px', color: sub.color }}>
+                      {sub.e} {sub.name}
+                    </b>
+                    <small className="mono">
+                      {subDetail
+                        ? `${subDetail.score} marks · ${subDetail.accuracyPct}% acc`
+                        : ''}
+                    </small>
+                  </div>
+                  <div className="row">
+                    <label className="g" style={{ margin: 0 }}>
+                      Correct
+                      <input
+                        type="number"
+                        min={0}
+                        max={200}
+                        value={sc.correct}
+                        onChange={(e) =>
+                          setMockScores((prev) => ({
+                            ...prev,
+                            [sub.id]: {
+                              ...sc,
+                              correct: Math.max(0, Number(e.target.value) || 0),
+                            },
+                          }))
+                        }
+                      />
+                    </label>
+                    <label className="g" style={{ margin: 0 }}>
+                      Wrong
+                      <input
+                        type="number"
+                        min={0}
+                        max={200}
+                        value={sc.wrong}
+                        onChange={(e) =>
+                          setMockScores((prev) => ({
+                            ...prev,
+                            [sub.id]: {
+                              ...sc,
+                              wrong: Math.max(0, Number(e.target.value) || 0),
+                            },
+                          }))
+                        }
+                      />
+                    </label>
+                    <label className="g" style={{ margin: 0 }}>
+                      Unattempted
+                      <input
+                        type="number"
+                        min={0}
+                        max={200}
+                        value={sc.unattempted}
+                        onChange={(e) =>
+                          setMockScores((prev) => ({
+                            ...prev,
+                            [sub.id]: {
+                              ...sc,
+                              unattempted: Math.max(0, Number(e.target.value) || 0),
+                            },
+                          }))
+                        }
+                      />
+                    </label>
+                  </div>
+                </div>
+              );
+            })}
+          </div>
+
+          <label>
+            Mistakes &amp; Analysis Note
+            <textarea
+              rows={3}
+              maxLength={400}
+              value={mockNote}
+              onChange={(e) => setMockNote(e.target.value)}
+              placeholder="Silly mistakes, weak topics to revise before next test..."
+            />
+          </label>
+
+          <div className="row">
+            <button className="pri g" type="submit">
+              Save Mock Test
+            </button>
+            <button type="button" onClick={onClose}>
+              Cancel
+            </button>
+          </div>
+          {existingMock && (
+            <button
+              type="button"
+              className="dg-btn"
+              onClick={() => onDeleteMock(existingMock.id)}
+            >
+              Delete Mock Test
             </button>
           )}
         </form>
@@ -646,12 +1054,12 @@ export const Modals: React.FC<ModalsProps> = ({
             onSaveDDay(modal.id, {
               title: ddTitle.trim(),
               date: ddDate,
-              e: ddEmoji.trim() || '🎓',
+              e: ddEmoji.trim() || '🎯',
               color: ddColor || '#10b981',
             });
           }}
         >
-          <h3>{modal.id ? 'Edit' : 'New'} D-Day Countdown</h3>
+          <h3>{modal.id ? 'Edit' : 'New'} Exam Countdown</h3>
           <div className="row">
             <input
               className="em"
@@ -665,7 +1073,7 @@ export const Modals: React.FC<ModalsProps> = ({
               name="title"
               value={ddTitle}
               onChange={(e) => setDdTitle(e.target.value)}
-              placeholder="e.g. Midterm Exam"
+              placeholder="e.g. NEET UG Exam"
               required
               maxLength={40}
               aria-label="D-Day Title"
@@ -713,12 +1121,35 @@ export const Modals: React.FC<ModalsProps> = ({
         </form>
       )}
 
+      {modal.type === 'confirmResetHour' && (
+        <div style={{ display: 'grid', gap: '12px' }}>
+          <h3>Change Day Reset Hour to {pad(modal.newHour)}:00 AM?</h3>
+          <small>
+            This will recompute the logical study date for all existing study
+            sessions and re-sync your auto-study habits across affected days.
+          </small>
+          <div className="row">
+            <button
+              type="button"
+              className="pri g"
+              onClick={() => onConfirmResetHour(modal.newHour)}
+            >
+              Confirm &amp; Recalculate
+            </button>
+            <button type="button" className="g" onClick={onClose}>
+              Cancel
+            </button>
+          </div>
+        </div>
+      )}
+
       {modal.type === 'confirmReset' && (
         <div style={{ display: 'grid', gap: '12px' }}>
           <h3>Erase All Device Data?</h3>
           <small>
-            This will reset all study sessions, habits, and 10-minute plans on this
-            device. Export a JSON backup first if you want to keep your records.
+            This will reset all study sessions, habits, syllabus chapters, and
+            mock tests on this device to a clean blank state. Export a JSON
+            backup first if you want to keep your records.
           </small>
           <div className="row">
             <button

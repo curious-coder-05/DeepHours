@@ -37,7 +37,7 @@ export const MoreView: React.FC<MoreViewProps> = ({
       <h2>Study Logger Actions</h2>
       <div className="card" style={{ display: 'grid', gap: '8px' }}>
         <small>
-          Log completed study hours manually with a custom session heading and session notes, or use the Pomodoro / Countdown / Stopwatch timers in the Study tab.
+          Log completed study hours manually with a subject, custom session heading, and notes, or use the Pomodoro / Countdown / Stopwatch timers in the Focus tab.
         </small>
         <button
           type="button"
@@ -58,32 +58,47 @@ export const MoreView: React.FC<MoreViewProps> = ({
       >
         + New Habit
       </button>
-      {state.habits.map((h) => (
-        <div
-          key={h.id}
-          className={`c ${h.arch ? 'sk' : ''}`}
-          onClick={() => onEditHabit(h.id)}
-        >
-          <span style={{ fontSize: '22px' }}>{h.e}</span>
-          <div className="g">
-            <b>{h.name}</b>
-            <small>
-              {h.c} · {h.sch === 'week' ? `${h.n}×/wk` : 'daily'}
-              {h.subjectId || h.autoMins ? ' · 🔗 Auto-syncs study mins' : ''}
-              {h.arch ? ' · archived' : ''}
-            </small>
-          </div>
-          <button
-            type="button"
-            onClick={(e) => {
-              e.stopPropagation();
-              onEditHabit(h.id);
-            }}
-          >
-            Edit
-          </button>
+      {state.habits.length === 0 && (
+        <div className="card">
+          <small>
+            No habits yet. Tap &ldquo;+ New Habit&rdquo; above to add a daily habit or an auto-synced study habit.
+          </small>
         </div>
-      ))}
+      )}
+      {state.habits.map((h) => {
+        const sub =
+          h.subjectId && h.subjectId !== 'any'
+            ? state.subjects.find((s) => s.id === h.subjectId)
+            : null;
+        return (
+          <div
+            key={h.id}
+            className={`c ${h.arch ? 'sk' : ''}`}
+            onClick={() => onEditHabit(h.id)}
+          >
+            <span style={{ fontSize: '22px' }}>{h.e}</span>
+            <div className="g">
+              <b>{h.name}</b>
+              <small>
+                {h.c} · {h.sch === 'week' ? `${h.n}×/wk` : 'daily'}
+                {h.subjectId || h.autoMins
+                  ? ` · 🔗 Auto from timer (${sub ? sub.name : 'All subjects'})`
+                  : ''}
+                {h.arch ? ' · archived' : ''}
+              </small>
+            </div>
+            <button
+              type="button"
+              onClick={(e) => {
+                e.stopPropagation();
+                onEditHabit(h.id);
+              }}
+            >
+              Edit
+            </button>
+          </div>
+        );
+      })}
 
       <h2>Study &amp; App Settings</h2>
       <div className="card" style={{ display: 'grid', gap: '10px' }}>
@@ -114,6 +129,53 @@ export const MoreView: React.FC<MoreViewProps> = ({
             <option value="doc">Desktop Document PiP (260×130 Interactive)</option>
           </select>
         </label>
+        <div>
+          <label htmlFor="timerAestheticSelect" style={{ marginBottom: '6px' }}>
+            Timer Aesthetic (Focus View &amp; PiP Clock Face)
+          </label>
+          <div
+            className="chips wrap"
+            role="group"
+            aria-label="Timer Aesthetic"
+            style={{ paddingBottom: 0, gap: '6px', marginBottom: '6px' }}
+          >
+            {(
+              [
+                ['neon', '⚡ Neon Digital'],
+                ['minimal', '⌨️ Minimalist Mono'],
+                ['retro', '🕰️ Analog Retro'],
+              ] as const
+            ).map(([key, label]) => {
+              const isSelected = (set.timerAesthetic || 'neon') === key;
+              return (
+                <button
+                  type="button"
+                  key={key}
+                  className={isSelected ? 'on' : ''}
+                  style={{ flex: 1, minWidth: '120px' }}
+                  onClick={() => onUpdateSetting('timerAesthetic', key)}
+                >
+                  {label}
+                </button>
+              );
+            })}
+          </div>
+          <select
+            id="timerAestheticSelect"
+            aria-label="Timer Aesthetic Select"
+            value={set.timerAesthetic || 'neon'}
+            onChange={(e) =>
+              onUpdateSetting(
+                'timerAesthetic',
+                e.target.value as 'neon' | 'minimal' | 'retro'
+              )
+            }
+          >
+            <option value="neon">Neon Digital (Glowing Cyber HUD)</option>
+            <option value="minimal">Minimalist Mono (Clean Swiss Tabular)</option>
+            <option value="retro">Analog Retro (Chronometer Dial + Phosphor)</option>
+          </select>
+        </div>
         <label>
           Theme
           <select
@@ -198,8 +260,8 @@ export const MoreView: React.FC<MoreViewProps> = ({
       <h2>1-Tap Local Backup &amp; Restore</h2>
       <div className="card" style={{ display: 'grid', gap: '8px' }}>
         <small>
-          Full IndexedDB/localStorage snapshot (Habits, Study Sessions, 10-Min Plans,
-          D-Days).{' '}
+          Full IndexedDB/localStorage snapshot (Habits, Study Sessions, Syllabus
+          Chapters &amp; Revisions, Mock Tests, D-Days).{' '}
           {state.exp
             ? `Last backup: ${new Date(state.exp).toLocaleDateString()}`
             : 'No backup yet.'}

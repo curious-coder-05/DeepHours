@@ -5,7 +5,7 @@ import {
   fmtHMS,
   fmtHMShort,
   fmtMS,
-  getHeadingColor,
+  getSubject,
   getTimerMetrics,
   getTodaySubjectMs,
   logicalKey,
@@ -61,50 +61,58 @@ export function useFloatingTimerPiP(
     const H = 270;
 
     const curState = stateRef.current;
+    const aesthetic = curState.set.timerAesthetic || 'neon';
     const now = Date.now();
     const todayKey = logicalKey(now, curState.set.dayResetHour ?? 4);
     const m = getTimerMetrics(curState, now);
     const isRunning = m && m.status === 'running';
     const isPaused = m && m.status === 'paused';
-    const heading = m ? m.heading : 'Deep Study Session';
-    const dotColor = m ? getHeadingColor(heading) : '#6366F1';
+    const activeSub = m ? m.subject : getSubject(curState);
+    const heading = m ? m.heading : activeSub.name || 'Deep Study Session';
+    const dotColor = activeSub.color || '#3b82f6';
     const todayTotalMs = getTodaySubjectMs(curState, 'any', todayKey, todayKey, now);
 
-    // 1. Pure dark #090D16 background
-    ctx.fillStyle = '#090D16';
+    // 1. Background based on Timer Aesthetic
+    ctx.fillStyle = aesthetic === 'retro' ? '#14110D' : '#090D16';
     ctx.fillRect(0, 0, W, H);
 
-    // 2. Bold #10B981 (emerald), #F59E0B (amber paused), or #6366F1 (indigo) progress border
+    // 2. Progress border
     const borderCol = isPaused
       ? '#F59E0B'
-      : m && m.overtimeMs > 0
-        ? '#10B981'
-        : isRunning
+      : aesthetic === 'retro'
+        ? '#D97706'
+        : m && m.overtimeMs > 0
           ? '#10B981'
-          : '#6366F1';
-    ctx.strokeStyle = '#1E293B';
-    ctx.lineWidth = 10;
+          : isRunning
+            ? '#10B981'
+            : dotColor;
+    ctx.strokeStyle = aesthetic === 'retro' ? '#292118' : '#1E293B';
+    ctx.lineWidth = aesthetic === 'minimal' ? 4 : 10;
     ctx.strokeRect(5, 5, W - 10, H - 10);
 
     const pct = m ? Math.max(0.05, m.progressPct / 100) : 0;
     ctx.strokeStyle = borderCol;
-    ctx.lineWidth = 10;
+    ctx.lineWidth = aesthetic === 'minimal' ? 4 : 10;
     ctx.beginPath();
     const perim = 2 * (W - 10) + 2 * (H - 10);
     ctx.setLineDash([perim * pct, perim]);
     ctx.strokeRect(5, 5, W - 10, H - 10);
     ctx.setLineDash([]);
 
-    // 3. Top Row: Session Heading + Color Dot & Status Badge ("STUDYING" / "PAUSED")
+    // 3. Top Row: Subject Emoji + Name + Session Heading & Status Badge
     ctx.fillStyle = dotColor;
     ctx.beginPath();
     ctx.arc(32, 38, 8, 0, Math.PI * 2);
     ctx.fill();
 
     ctx.fillStyle = '#F8FAFC';
-    ctx.font = '700 20px system-ui, -apple-system, sans-serif';
+    ctx.font = '700 19px system-ui, -apple-system, sans-serif';
     ctx.textAlign = 'left';
-    ctx.fillText(`⚡ ${heading}`.slice(0, 24), 48, 45);
+    const titleLabel =
+      heading.toLowerCase() === activeSub.name.toLowerCase()
+        ? `${activeSub.e} ${activeSub.name}`
+        : `${activeSub.e} ${activeSub.name} · ${heading}`;
+    ctx.fillText(titleLabel.slice(0, 26), 48, 45);
 
     // Status Pill on Top Right
     const statusTxt = isPaused
@@ -129,30 +137,99 @@ export function useFloatingTimerPiP(
     ctx.textAlign = 'center';
     ctx.fillText(statusTxt, W - 81, 41);
 
-    // 4. Center: Large HH:MM:SS Monospace Digits
-    const clockStr = m
-      ? fmtHMS(m.overtimeMs > 0 ? m.totalActiveMs : m.displayMs)
-      : '00:00:00';
-    ctx.fillStyle = isPaused ? '#FBBF24' : '#FFFFFF';
-    ctx.font = '800 76px ui-monospace, "JetBrains Mono", "SF Mono", monospace';
-    ctx.textAlign = 'center';
-    ctx.fillText(clockStr, W / 2, 152);
+    // 4. Center Clock Display (Neon Digital | Minimalist Mono | Analog Retro)
+    const clockMs = m ? (m.overtimeMs > 0 ? m.totalActiveMs : m.displayMs) : 0;
+    const clockStr = fmtHMS(clockMs);
+
+    if (aesthetic === 'retro') {
+      // Draw Analog Retro Dial on left + Warm Amber Phosphor Readout on right
+      const cx = 112;
+      const cy = 126;
+      const r = 46;
+      ctx.save();
+      ctx.beginPath();
+      ctx.arc(cx, cy, r, 0, Math.PI * 2);
+      ctx.fillStyle = '#1E1912';
+      ctx.fill();
+      ctx.lineWidth = 3;
+      ctx.strokeStyle = '#D97706';
+      ctx.stroke();
+
+      for (let i = 0; i < 12; i++) {
+        const ang = (i * 30 * Math.PI) / 180;
+        ctx.beginPath();
+        ctx.moveTo(cx + Math.sin(ang) * (r - 8), cy - Math.cos(ang) * (r - 8));
+        ctx.lineTo(cx + Math.sin(ang) * (r - 3), cy - Math.cos(ang) * (r - 3));
+        ctx.strokeStyle = '#FBBF24';
+        ctx.lineWidth = 2;
+        ctx.stroke();
+      }
+
+      const totalSec = Math.max(0, Math.floor(clockMs / 1000));
+      const secRad = (((totalSec % 60) * 6) * Math.PI) / 180;
+      const minRad = ((((totalSec / 60) % 60) * 6) * Math.PI) / 180;
+      const hrRad = ((((totalSec / 3600) % 12) * 30) * Math.PI) / 180;
+
+      // Hour hand
+      ctx.beginPath();
+      ctx.moveTo(cx, cy);
+      ctx.lineTo(cx + Math.sin(hrRad) * 22, cy - Math.cos(hrRad) * 22);
+      ctx.strokeStyle = '#F59E0B';
+      ctx.lineWidth = 3.5;
+      ctx.stroke();
+
+      // Minute hand
+      ctx.beginPath();
+      ctx.moveTo(cx, cy);
+      ctx.lineTo(cx + Math.sin(minRad) * 32, cy - Math.cos(minRad) * 32);
+      ctx.strokeStyle = '#FEF3C7';
+      ctx.lineWidth = 2.5;
+      ctx.stroke();
+
+      // Second hand
+      ctx.beginPath();
+      ctx.moveTo(cx, cy);
+      ctx.lineTo(cx + Math.sin(secRad) * 37, cy - Math.cos(secRad) * 37);
+      ctx.strokeStyle = '#34D399';
+      ctx.lineWidth = 1.5;
+      ctx.stroke();
+      ctx.restore();
+
+      ctx.fillStyle = '#FBBF24';
+      ctx.font = '700 58px ui-monospace, "JetBrains Mono", monospace';
+      ctx.textAlign = 'center';
+      ctx.fillText(clockStr, 314, 146);
+    } else {
+      ctx.save();
+      if (aesthetic === 'neon') {
+        ctx.shadowColor = isPaused ? '#F59E0B' : borderCol;
+        ctx.shadowBlur = 16;
+      }
+      ctx.fillStyle = isPaused ? '#FBBF24' : '#FFFFFF';
+      ctx.font =
+        aesthetic === 'minimal'
+          ? '400 72px ui-monospace, "JetBrains Mono", "SF Mono", monospace'
+          : '800 76px ui-monospace, "JetBrains Mono", "SF Mono", monospace';
+      ctx.textAlign = 'center';
+      ctx.fillText(clockStr, W / 2, 152);
+      ctx.restore();
+    }
 
     // Overtime or Purity Subtitle
     ctx.font = '700 18px ui-monospace, monospace';
     if (m && m.overtimeMs > 0) {
       ctx.fillStyle = '#10B981';
-      ctx.fillText(`OVERTIME +${fmtMS(m.overtimeMs)} · PURITY ${m.purity}%`, W / 2, 190);
+      ctx.fillText(`OVERTIME +${fmtMS(m.overtimeMs)} · PURITY ${m.purity}%`, W / 2, 194);
     } else if (m) {
       ctx.fillStyle = '#94A3B8';
-      ctx.fillText(`${m.mode.toUpperCase()} · FOCUS PURITY ${m.purity}%`, W / 2, 190);
+      ctx.fillText(`${m.mode.toUpperCase()} · FOCUS PURITY ${m.purity}%`, W / 2, 194);
     } else {
       ctx.fillStyle = '#94A3B8';
-      ctx.fillText('DEEP HOURS · PRESS PLAY TO START', W / 2, 190);
+      ctx.fillText('DEEP HOURS · PRESS PLAY TO START', W / 2, 194);
     }
 
     // 5. Bottom Bar: Today's Total Hours Studied & Active Session Slice
-    ctx.fillStyle = '#131A2A';
+    ctx.fillStyle = aesthetic === 'retro' ? '#211B14' : '#131A2A';
     ctx.fillRect(14, H - 54, W - 28, 40);
     ctx.fillStyle = '#CBD5E1';
     ctx.font = '700 17px system-ui, -apple-system, sans-serif';
@@ -170,29 +247,52 @@ export function useFloatingTimerPiP(
     const docPipWin = docPipWinRef.current;
     if (!docPipWin || docPipWin.closed) return;
     const curState = stateRef.current;
+    const aesthetic = curState.set.timerAesthetic || 'neon';
     const m = getTimerMetrics(curState);
-    const heading = m ? m.heading : 'Study Session';
-    const dotColor = getHeadingColor(heading);
+    const sub = m ? m.subject : getSubject(curState);
+    const heading = m ? m.heading : sub.name || 'Study Session';
+    const dotColor = sub.color || '#3b82f6';
     const isPaused = m?.status === 'paused';
     const isRun = m?.status === 'running';
+    const clockMs = m ? (m.overtimeMs > 0 ? m.totalActiveMs : m.displayMs) : 0;
+    const clockStr = fmtHMS(clockMs);
+    const totalSec = Math.max(0, Math.floor(clockMs / 1000));
+    const secDeg = (totalSec % 60) * 6;
+    const minDeg = ((totalSec / 60) % 60) * 6;
     const esc = (s: string) =>
       String(s ?? '').replace(
         /[&<>"']/g,
         (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' })[c] || c
       );
 
-    docPipWin.document.body.style.setProperty('--pip-bd', isPaused ? '#f59e0b' : '#10b981');
+    docPipWin.document.body.className = `pip-body aesthetic-${aesthetic}`;
+    docPipWin.document.body.style.setProperty(
+      '--pip-bd',
+      isPaused ? '#f59e0b' : aesthetic === 'retro' ? '#d97706' : '#10b981'
+    );
     docPipWin.document.body.innerHTML = `
       <div class="pip-top">
         <span style="display:flex;align-items:center;gap:5px">
           <i class="dot" style="--sc:${esc(dotColor)}"></i>
-          ⚡ ${esc(heading.slice(0, 16))}
+          ${esc(sub.e)} ${esc(heading.slice(0, 16))}
         </span>
         <span style="color:${isPaused ? '#fbbf24' : '#34d399'}">
           ${m && m.overtimeMs > 0 ? `+${fmtMS(m.overtimeMs)}` : isPaused ? 'PAUSED' : isRun ? `${m.purity}%` : 'IDLE'}
         </span>
       </div>
-      <div class="pip-clock">${m ? fmtHMS(m.overtimeMs > 0 ? m.totalActiveMs : m.displayMs) : '00:00:00'}</div>
+      ${
+        aesthetic === 'retro'
+          ? `<div class="pip-retro-row">
+              <svg width="34" height="34" viewBox="0 0 40 40" aria-hidden="true">
+                <circle cx="20" cy="20" r="18" fill="#1e1912" stroke="#d97706" stroke-width="2"/>
+                <line x1="20" y1="20" x2="20" y2="8" stroke="#fef3c7" stroke-width="2" stroke-linecap="round" transform="rotate(${minDeg} 20 20)"/>
+                <line x1="20" y1="20" x2="20" y2="5" stroke="#34d399" stroke-width="1.2" stroke-linecap="round" transform="rotate(${secDeg} 20 20)"/>
+                <circle cx="20" cy="20" r="2" fill="#fbbf24"/>
+              </svg>
+              <div class="pip-clock">${clockStr}</div>
+            </div>`
+          : `<div class="pip-clock">${clockStr}</div>`
+      }
       <div class="pip-actions">
         <button data-pip-act="toggle" style="background:${isRun ? '#f59e0b' : '#10b981'};color:#052e16">
           ${isRun ? '⏸ Pause' : isPaused ? '▶ Resume' : '▶ Start'}
@@ -202,7 +302,6 @@ export function useFloatingTimerPiP(
     `;
   }, []);
 
-  // Immediate optimistic Play/Resume handler so background PiP controls work without waiting for foreground rAF
   const handleExternalResumeOrStart = useCallback(() => {
     ensureAudioEngine();
     const cur = stateRef.current;
@@ -245,7 +344,6 @@ export function useFloatingTimerPiP(
     }
   }, [drawCanvasFrame, renderDocPiP]);
 
-  // Immediate optimistic Pause handler for background PiP controls
   const handleExternalPause = useCallback(() => {
     const cur = stateRef.current;
     const now = Date.now();
@@ -281,7 +379,8 @@ export function useFloatingTimerPiP(
       const now = Date.now();
       const todayKey = logicalKey(now, curState.set.dayResetHour ?? 4);
       const m = getTimerMetrics(curState, now);
-      const heading = m ? m.heading : 'Deep Study Session';
+      const sub = m ? m.subject : getSubject(curState);
+      const heading = m ? m.heading : sub.name || 'Deep Study Session';
       const liveClock = m
         ? fmtHMS(m.overtimeMs > 0 ? m.totalActiveMs : m.displayMs)
         : '00:00:00';
@@ -289,7 +388,7 @@ export function useFloatingTimerPiP(
 
       if (typeof MediaMetadata !== 'undefined') {
         navigator.mediaSession.metadata = new MediaMetadata({
-          title: `⚡ ${heading} · ${liveClock}`,
+          title: `${sub.e} ${sub.name} · ${heading} · ${liveClock}`,
           artist:
             m?.status === 'paused'
               ? `PAUSED (${elapsedClock}) · Deep Hours`
@@ -369,7 +468,6 @@ export function useFloatingTimerPiP(
       if (!videoListenersAttachedRef.current) {
         video.addEventListener('pause', () => {
           if (syncGuardRef.current) return;
-          // Note: When browser minimizes or closes PiP, video may emit 'pause' unless user explicitly paused
           if (stateRef.current.activeTimer?.status === 'running') {
             syncGuardRef.current = true;
             handleExternalPause();
@@ -517,7 +615,6 @@ export function useFloatingTimerPiP(
         }
       }
 
-      // Fallback in-app floating PiP preview overlay (for sandboxed iframes / browsers without native PiP)
       drawCanvasFrame();
       setInAppPiPOpen(true);
       actionsRef.current.onToast('Floating Lecture PiP overlay active');
@@ -525,7 +622,6 @@ export function useFloatingTimerPiP(
     [drawCanvasFrame, inAppPiPOpen, initVideoStream, openDocumentPiP]
   );
 
-  // Synchronous state sync (NO requestAnimationFrame wrapper, so it works even when document.hidden is true!)
   const syncState = useCallback(() => {
     drawCanvasFrame();
     renderDocPiP();
@@ -578,7 +674,14 @@ export function useFloatingTimerPiP(
 
   useEffect(() => {
     syncState();
-  }, [state.activeTimer?.status, state.activeTimer?.heading, state.activeTimer?.mode, syncState]);
+  }, [
+    state.activeTimer?.status,
+    state.activeTimer?.subjectId,
+    state.activeTimer?.heading,
+    state.activeTimer?.mode,
+    state.set.timerAesthetic,
+    syncState,
+  ]);
 
   useEffect(() => {
     const onVis = () => {

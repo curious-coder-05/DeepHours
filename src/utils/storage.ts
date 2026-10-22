@@ -29,22 +29,96 @@ export function kv(mode: 'get' | 'put', key: string, val?: unknown): Promise<unk
   );
 }
 
+function readLegacyPulseHabitIdb(key: string): Promise<unknown> {
+  if (typeof indexedDB === 'undefined') return Promise.resolve(null);
+  return new Promise((resolve) => {
+    try {
+      const req = indexedDB.open('pulsehabit');
+      req.onerror = () => resolve(null);
+      req.onsuccess = () => {
+        const db = req.result;
+        const storeName = db.objectStoreNames.contains('kv')
+          ? 'kv'
+          : db.objectStoreNames.contains('pulsehabit')
+            ? 'pulsehabit'
+            : null;
+        if (!storeName) {
+          db.close();
+          resolve(null);
+          return;
+        }
+        try {
+          const tx = db.transaction(storeName, 'readonly');
+          const store = tx.objectStore(storeName);
+          const getReq = store.get(key);
+          getReq.onsuccess = () => {
+            const res = getReq.result ?? null;
+            db.close();
+            resolve(res);
+          };
+          getReq.onerror = () => {
+            db.close();
+            resolve(null);
+          };
+        } catch {
+          db.close();
+          resolve(null);
+        }
+      };
+    } catch {
+      resolve(null);
+    }
+  });
+}
+
 export async function loadInitialState(): Promise<PulseHabitState> {
   let raw: unknown = null;
+  let migratedFromLegacyOrLs = false;
+
   try {
     raw = await kv('get', 's');
   } catch {
-    // fallback to localStorage
+    // fallback below
   }
+
   if (!raw) {
     try {
-      const ls = localStorage.getItem('dh') || localStorage.getItem('ph');
-      if (ls) raw = JSON.parse(ls);
+      raw = await readLegacyPulseHabitIdb('s');
+      if (raw) migratedFromLegacyOrLs = true;
+    } catch {
+      // ignore legacy IDB errors
+    }
+  }
+
+  if (!raw) {
+    try {
+      const ls =
+        typeof localStorage !== 'undefined'
+          ? localStorage.getItem('dh') || localStorage.getItem('ph')
+          : null;
+      if (ls) {
+        raw = JSON.parse(ls);
+        migratedFromLegacyOrLs = true;
+      }
     } catch {
       // ignore parse errors
     }
   }
-  return norm(raw);
+
+  const state = norm(raw);
+  if (migratedFromLegacyOrLs) {
+    try {
+      await kv('put', 's', state);
+      if (typeof localStorage !== 'undefined') {
+        const serialized = JSON.stringify(state);
+        localStorage.setItem('dh', serialized);
+        localStorage.setItem('ph', serialized);
+      }
+    } catch {
+      // ignore write errors
+    }
+  }
+  return state;
 }
 
 let saveTimer: ReturnType<typeof setTimeout> | null = null;
@@ -53,9 +127,11 @@ const bc =
 
 export function persistState(state: PulseHabitState, onSaved?: () => void): void {
   try {
-    const serialized = JSON.stringify(state);
-    localStorage.setItem('dh', serialized);
-    localStorage.setItem('ph', serialized);
+    if (typeof localStorage !== 'undefined') {
+      const serialized = JSON.stringify(state);
+      localStorage.setItem('dh', serialized);
+      localStorage.setItem('ph', serialized);
+    }
   } catch {
     // ignore quota errors
   }

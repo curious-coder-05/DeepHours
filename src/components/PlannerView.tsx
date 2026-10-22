@@ -3,8 +3,8 @@ import type { PulseHabitState } from '../types';
 import {
   fmtClockTime,
   fmtHMShort,
-  getHeadingColor,
   getSessionHeading,
+  getSubject,
   getTimerMetrics,
   getTodaySubjectMs,
   pad,
@@ -14,13 +14,15 @@ interface PlannerViewProps {
   state: PulseHabitState;
   sel: string;
   todayKey: string;
-  onOpenManualSession: () => void;
+  onOpenManualSession: (defaultSubjectId?: string) => void;
   onToast?: (msg: string) => void;
 }
 
 interface SlotData {
   slotIndex: number;
   windowLabel: string;
+  subjectName: string;
+  subjectEmoji: string;
   heading: string;
   color: string;
   mins: number;
@@ -52,7 +54,10 @@ export const PlannerView: React.FC<PlannerViewProps> = ({
   const liveMetrics = isLiveToday ? getTimerMetrics(state, now) : null;
 
   const actualSlots: Record<number, SlotData> = {};
-  const topicTotals: Record<string, { heading: string; color: string; activeMs: number }> = {};
+  const topicTotals: Record<
+    string,
+    { key: string; subjectEmoji: string; subjectName: string; heading: string; color: string; activeMs: number }
+  > = {};
 
   const getSlotWindowLabel = (slotIdx: number) => {
     const h = Math.floor(slotIdx / 6);
@@ -67,19 +72,28 @@ export const PlannerView: React.FC<PlannerViewProps> = ({
     startTs: number,
     endTs: number,
     activeMs: number,
+    subjectId: string,
     heading: string,
     isLive = false
   ) => {
-    const cleanHeading = (heading || 'Deep Study Session').trim();
-    const color = getHeadingColor(cleanHeading);
+    const sub = getSubject(state, subjectId);
+    const cleanHeading = (heading || sub.name || 'Deep Study Session').trim();
+    const color = sub.color || '#3b82f6';
+    const topicKey = `${sub.id}::${cleanHeading}`;
 
-    if (!topicTotals[cleanHeading]) {
-      topicTotals[cleanHeading] = { heading: cleanHeading, color, activeMs: 0 };
+    if (!topicTotals[topicKey]) {
+      topicTotals[topicKey] = {
+        key: topicKey,
+        subjectEmoji: sub.e,
+        subjectName: sub.name,
+        heading: cleanHeading,
+        color,
+        activeMs: 0,
+      };
     }
-    topicTotals[cleanHeading].activeMs += Math.max(0, activeMs);
+    topicTotals[topicKey].activeMs += Math.max(0, activeMs);
 
     const safeEnd = Math.max(startTs + 1000, endTs);
-    // Step minute-by-minute (or at least paint the starting slot if < 1 min)
     for (let ts = startTs; ts < safeEnd; ts += 60000) {
       const d = new Date(ts);
       const slotIdx = d.getHours() * 6 + Math.floor(d.getMinutes() / 10);
@@ -87,13 +101,16 @@ export const PlannerView: React.FC<PlannerViewProps> = ({
         actualSlots[slotIdx] = {
           slotIndex: slotIdx,
           windowLabel: getSlotWindowLabel(slotIdx),
+          subjectName: sub.name,
+          subjectEmoji: sub.e,
           heading: cleanHeading,
           color,
           mins: 0,
           isLive,
         };
       } else {
-        // Update to most recent heading in this 10-min block
+        actualSlots[slotIdx].subjectName = sub.name;
+        actualSlots[slotIdx].subjectEmoji = sub.e;
         actualSlots[slotIdx].heading = cleanHeading;
         actualSlots[slotIdx].color = color;
         if (isLive) actualSlots[slotIdx].isLive = true;
@@ -107,6 +124,7 @@ export const PlannerView: React.FC<PlannerViewProps> = ({
       s.startTs,
       s.endTs,
       s.activeMs,
+      s.subjectId,
       getSessionHeading(state, s),
       false
     )
@@ -117,7 +135,8 @@ export const PlannerView: React.FC<PlannerViewProps> = ({
       state.activeTimer.sliceStartTs,
       now,
       liveMetrics.sliceActiveMs,
-      state.activeTimer.heading || 'Deep Study Session',
+      state.activeTimer.subjectId,
+      state.activeTimer.heading || liveMetrics.subject.name || 'Deep Study Session',
       true
     );
   }
@@ -139,7 +158,7 @@ export const PlannerView: React.FC<PlannerViewProps> = ({
 
   const spanText =
     firstStartTs && lastEndTs
-      ? `${fmtClockTime(firstStartTs)} → ${ isLiveToday ? 'Now' : fmtClockTime(lastEndTs) }`
+      ? `${fmtClockTime(firstStartTs)} → ${isLiveToday ? 'Now' : fmtClockTime(lastEndTs)}`
       : '—';
 
   const topicList = Object.values(topicTotals).sort((a, b) => b.activeMs - a.activeMs);
@@ -152,7 +171,9 @@ export const PlannerView: React.FC<PlannerViewProps> = ({
       return;
     }
     setSelectedSlot(slotIdx);
-    onToast?.(`${data.windowLabel} · ${data.heading} (${data.mins}m active)`);
+    onToast?.(
+      `${data.windowLabel} · ${data.subjectEmoji} ${data.subjectName}: ${data.heading} (${data.mins}m active)`
+    );
   };
 
   return (
@@ -163,7 +184,7 @@ export const PlannerView: React.FC<PlannerViewProps> = ({
           <h2>24h 10-Minute Study Timeline ({sel})</h2>
           <small>100% automatic 10-minute resolution log from your timers &amp; sessions</small>
         </div>
-        <button type="button" className="s pri" onClick={onOpenManualSession}>
+        <button type="button" className="s pri" onClick={() => onOpenManualSession()}>
           + Log Session
         </button>
       </div>
@@ -203,7 +224,7 @@ export const PlannerView: React.FC<PlannerViewProps> = ({
               return (
                 <button
                   type="button"
-                  key={topic.heading}
+                  key={topic.key}
                   className={`sub-chip ${isSelected ? 'active' : ''}`}
                   style={{ '--sc': topic.color } as React.CSSProperties}
                   onClick={() =>
@@ -217,7 +238,9 @@ export const PlannerView: React.FC<PlannerViewProps> = ({
                     className="dot"
                     style={{ '--sc': topic.color } as React.CSSProperties}
                   />
-                  <span>{topic.heading}</span>
+                  <span>
+                    {topic.subjectEmoji} {topic.subjectName}: {topic.heading}
+                  </span>
                   <b className="mono" style={{ color: 'var(--em)', marginLeft: '2px' }}>
                     {fmtHMShort(topic.activeMs)}
                   </b>
@@ -263,7 +286,7 @@ export const PlannerView: React.FC<PlannerViewProps> = ({
                   className="dot"
                   style={{ '--sc': inspectedSlot.color } as React.CSSProperties}
                 />{' '}
-                {inspectedSlot.heading}
+                {inspectedSlot.subjectEmoji} {inspectedSlot.subjectName} · {inspectedSlot.heading}
               </b>
               <span className="pill mono" style={{ color: 'var(--em)' }}>
                 {inspectedSlot.mins} / 10 min active
@@ -283,7 +306,7 @@ export const PlannerView: React.FC<PlannerViewProps> = ({
           <div className="row sp">
             <small className="mu">
               💡 <b>Tap any colored 10-minute slot</b> below to inspect the exact time window,
-              session heading, and active minutes.
+              subject, session heading, and active minutes.
             </small>
             <small className="mono" style={{ fontSize: '11px' }}>
               6 slots / hr
@@ -344,12 +367,12 @@ export const PlannerView: React.FC<PlannerViewProps> = ({
                       data-slot={slot}
                       aria-label={
                         act
-                          ? `${windowLbl}: ${act.heading} (${act.mins}m active)`
+                          ? `${windowLbl}: ${act.subjectName} — ${act.heading} (${act.mins}m active)`
                           : `${windowLbl}: Empty`
                       }
                       title={
                         act
-                          ? `${windowLbl} · ${act.heading} (${act.mins}m active)`
+                          ? `${windowLbl} · ${act.subjectName}: ${act.heading} (${act.mins}m active)`
                           : `${windowLbl} · 0m`
                       }
                       onClick={() => handleSlotTap(slot)}

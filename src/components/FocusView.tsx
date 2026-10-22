@@ -5,8 +5,8 @@ import {
   fmtHMS,
   fmtHMShort,
   fmtMS,
-  getHeadingColor,
   getSessionHeading,
+  getSubject,
   getTimerMetrics,
   getTodaySubjectMs,
 } from '../utils/studyLogic';
@@ -18,9 +18,14 @@ interface FocusViewProps {
   deskMode: boolean;
   onToggleDeskMode: () => void;
   onOpenPiP: () => void;
-  onSwitchHeading: (heading: string) => void;
+  onSwitchTopic: (subjectId: string, heading: string) => void;
   onSetMode: (mode: ActiveTimerMode) => void;
-  onStartTimer: (heading: string, mode: ActiveTimerMode, customTargetMins?: number) => void;
+  onStartTimer: (
+    subjectId: string,
+    heading: string,
+    mode: ActiveTimerMode,
+    customTargetMins?: number
+  ) => void;
   onExtendTarget?: (extraMins: number) => void;
   onTogglePause: () => void;
   onTogglePomoPhase: () => void;
@@ -31,7 +36,7 @@ interface FocusViewProps {
   onAddTodo: (text: string) => void;
   onToggleTodo: (todoId: string) => void;
   onDeleteTodo: (todoId: string) => void;
-  onOpenManualSession: () => void;
+  onOpenManualSession: (defaultSubjectId?: string) => void;
   onEditSession: (sessionId: string) => void;
 }
 
@@ -42,7 +47,7 @@ export const FocusView: React.FC<FocusViewProps> = ({
   deskMode,
   onToggleDeskMode,
   onOpenPiP,
-  onSwitchHeading,
+  onSwitchTopic,
   onSetMode,
   onStartTimer,
   onExtendTarget,
@@ -60,9 +65,14 @@ export const FocusView: React.FC<FocusViewProps> = ({
 }) => {
   const t = state.activeTimer;
   const m = getTimerMetrics(state);
+  const subjects = state.subjects.filter((s) => !s.arch);
+  const defaultSubId = subjects[0]?.id || 'sub_phy';
 
+  const [selectedSubjectId, setSelectedSubjectId] = useState<string>(
+    t?.subjectId || defaultSubId
+  );
   const [sessionHeading, setSessionHeading] = useState<string>(
-    t?.heading || 'Deep Study Session'
+    t?.heading || ''
   );
   const [todoInput, setTodoInput] = useState('');
   const [selectedMode, setSelectedMode] = useState<ActiveTimerMode>(
@@ -71,6 +81,12 @@ export const FocusView: React.FC<FocusViewProps> = ({
   const [customCountdownMins, setCustomCountdownMins] = useState<number>(
     state.set.countdownMins || 45
   );
+
+  useEffect(() => {
+    if (t?.subjectId) {
+      setSelectedSubjectId(t.subjectId);
+    }
+  }, [t?.subjectId]);
 
   useEffect(() => {
     if (t?.heading) {
@@ -93,8 +109,13 @@ export const FocusView: React.FC<FocusViewProps> = ({
   }, [state.set.countdownMins]);
 
   const mode: ActiveTimerMode = t ? t.mode : selectedMode;
-  const activeHeading = (t?.heading || sessionHeading || 'Deep Study Session').trim();
-  const accentColor = getHeadingColor(activeHeading);
+  const activeSubject = getSubject(state, t ? t.subjectId : selectedSubjectId);
+  const activeHeading = (
+    t?.heading ||
+    sessionHeading ||
+    `${activeSubject.name} Study Session`
+  ).trim();
+  const accentColor = activeSubject.color || '#3b82f6';
 
   // Keyboard shortcut: Space to pause/resume when not typing in an input
   useEffect(() => {
@@ -109,7 +130,8 @@ export const FocusView: React.FC<FocusViewProps> = ({
         onTogglePause();
       } else {
         onStartTimer(
-          sessionHeading.trim() || 'Deep Study Session',
+          selectedSubjectId,
+          sessionHeading.trim() || `${activeSubject.name} Study Session`,
           mode,
           mode === 'countdown' ? customCountdownMins : undefined
         );
@@ -117,25 +139,44 @@ export const FocusView: React.FC<FocusViewProps> = ({
     };
     window.addEventListener('keydown', onKeyDown);
     return () => window.removeEventListener('keydown', onKeyDown);
-  }, [customCountdownMins, mode, onStartTimer, onTogglePause, sessionHeading, t]);
+  }, [
+    activeSubject.name,
+    customCountdownMins,
+    mode,
+    onStartTimer,
+    onTogglePause,
+    selectedSubjectId,
+    sessionHeading,
+    t,
+  ]);
 
-  const clockVal = m
-    ? fmtHMS(m.overtimeMs > 0 ? m.totalActiveMs : m.displayMs)
+  const clockMs = m
+    ? m.overtimeMs > 0
+      ? m.totalActiveMs
+      : m.displayMs
     : mode === 'pomo'
-      ? fmtHMS((state.set.pomoWork || 25) * 60000)
+      ? (state.set.pomoWork || 25) * 60000
       : mode === 'countdown'
-        ? fmtHMS(customCountdownMins * 60000)
-        : '00:00:00';
+        ? customCountdownMins * 60000
+        : 0;
+  const clockVal = fmtHMS(clockMs);
+  const aesthetic = state.set.timerAesthetic || 'neon';
+  const totalSec = Math.max(0, Math.floor(clockMs / 1000));
+  const secAngle = (totalSec % 60) * 6;
+  const minAngle = ((totalSec / 60) % 60) * 6;
+  const hrAngle = ((totalSec / 3600) % 12) * 30;
 
-  // Unique recent headings for quick reuse
-  const recentHeadings = Array.from(
-    new Set(
+  // Unique recent sessions for quick reuse
+  const recentTopics = Array.from(
+    new Map(
       state.sessions
         .slice()
         .reverse()
-        .map((s) => getSessionHeading(state, s))
-        .filter(Boolean)
-    )
+        .map((s) => {
+          const h = getSessionHeading(state, s);
+          return [`${s.subjectId}::${h.toLowerCase()}`, { subjectId: s.subjectId, heading: h }];
+        })
+    ).values()
   ).slice(0, 6);
 
   const todos = state.todos || [];
@@ -150,10 +191,11 @@ export const FocusView: React.FC<FocusViewProps> = ({
 
   const handleHeadingApply = (e: React.FormEvent) => {
     e.preventDefault();
-    const clean = sessionHeading.trim() || 'Deep Study Session';
+    const sub = getSubject(state, selectedSubjectId);
+    const clean = sessionHeading.trim() || `${sub.name} Study Session`;
     setSessionHeading(clean);
     if (t) {
-      onSwitchHeading(clean);
+      onSwitchTopic(selectedSubjectId, clean);
     }
   };
 
@@ -183,8 +225,40 @@ export const FocusView: React.FC<FocusViewProps> = ({
         </div>
       </div>
 
-      {/* Manual Session Heading Input + Mid-Session Slice Switcher */}
+      {/* Subject Picker + Manual Session Heading Input + Mid-Session Slice Switcher */}
       <div className="card hide-desk" style={{ padding: '12px 14px' }}>
+        <small style={{ display: 'block', marginBottom: '6px', fontWeight: 700 }}>
+          Subject {t ? '(tap another subject to slice & switch)' : ''}:
+        </small>
+        <div className="chips wrap" style={{ marginBottom: '10px', paddingBottom: 0 }}>
+          {subjects.map((sub) => {
+            const isActive = (t ? t.subjectId : selectedSubjectId) === sub.id;
+            return (
+              <button
+                type="button"
+                key={sub.id}
+                className={`sub-chip ${isActive ? 'active' : ''}`}
+                style={{ '--sc': sub.color } as React.CSSProperties}
+                onClick={() => {
+                  setSelectedSubjectId(sub.id);
+                  if (t && t.subjectId !== sub.id) {
+                    const nextHeading =
+                      sessionHeading.trim() &&
+                      sessionHeading.trim() !== `${activeSubject.name} Study Session`
+                        ? sessionHeading.trim()
+                        : `${sub.name} Study Session`;
+                    setSessionHeading(nextHeading);
+                    onSwitchTopic(sub.id, nextHeading);
+                  }
+                }}
+              >
+                <i className="dot" style={{ '--sc': sub.color } as React.CSSProperties} />
+                {sub.e} {sub.name}
+              </button>
+            );
+          })}
+        </div>
+
         <form onSubmit={handleHeadingApply}>
           <label style={{ marginTop: 0 }}>
             Session Heading (What are you studying right now?)
@@ -194,39 +268,51 @@ export const FocusView: React.FC<FocusViewProps> = ({
                 id="sessionHeadingInput"
                 value={sessionHeading}
                 onChange={(e) => setSessionHeading(e.target.value)}
-                placeholder="e.g., Lecture 7 — B-Tree Indexing & Practice..."
+                placeholder={`e.g., ${activeSubject.name} — NCERT Ch 3 & PYQs...`}
                 maxLength={90}
               />
-              {t && sessionHeading.trim() && sessionHeading.trim() !== t.heading && (
-                <button type="submit" className="s pri" style={{ whiteSpace: 'nowrap' }}>
-                  Switch Topic
-                </button>
-              )}
+              {t &&
+                ((sessionHeading.trim() && sessionHeading.trim() !== t.heading) ||
+                  selectedSubjectId !== t.subjectId) && (
+                  <button type="submit" className="s pri" style={{ whiteSpace: 'nowrap' }}>
+                    Switch Topic
+                  </button>
+                )}
             </div>
           </label>
         </form>
-        {recentHeadings.length > 0 && (
+
+        {recentTopics.length > 0 && (
           <div style={{ marginTop: '8px' }}>
             <small style={{ display: 'block', marginBottom: '5px', fontSize: '11px' }}>
-              Recent session headings (tap to use{t ? ' & slice' : ''}):
+              Recent session topics (tap to use{t ? ' & slice' : ''}):
             </small>
             <div className="chips wrap" style={{ paddingBottom: 0 }}>
-              {recentHeadings.map((hName) => {
-                const col = getHeadingColor(hName);
-                const isCur = activeHeading.toLowerCase() === hName.toLowerCase();
+              {recentTopics.map((item) => {
+                const sub = getSubject(state, item.subjectId);
+                const isCur =
+                  activeHeading.toLowerCase() === item.heading.toLowerCase() &&
+                  activeSubject.id === sub.id;
                 return (
                   <button
                     type="button"
-                    key={hName}
+                    key={`${item.subjectId}::${item.heading}`}
                     className={`sub-chip ${isCur ? 'active' : ''}`}
-                    style={{ '--sc': col, padding: '5px 10px', fontSize: '12px' } as React.CSSProperties}
+                    style={
+                      {
+                        '--sc': sub.color,
+                        padding: '5px 10px',
+                        fontSize: '12px',
+                      } as React.CSSProperties
+                    }
                     onClick={() => {
-                      setSessionHeading(hName);
-                      if (t) onSwitchHeading(hName);
+                      setSelectedSubjectId(sub.id);
+                      setSessionHeading(item.heading);
+                      if (t) onSwitchTopic(sub.id, item.heading);
                     }}
                   >
-                    <i className="dot" style={{ '--sc': col } as React.CSSProperties} />
-                    {hName}
+                    <i className="dot" style={{ '--sc': sub.color } as React.CSSProperties} />
+                    {sub.e} {item.heading}
                   </button>
                 );
               })}
@@ -236,13 +322,13 @@ export const FocusView: React.FC<FocusViewProps> = ({
       </div>
 
       <div
-        className={`card timer-shell ${m ? m.status : ''}`}
+        className={`card timer-shell aesthetic-${aesthetic} ${m ? m.status : ''}`}
         style={{ '--sc': accentColor } as React.CSSProperties}
       >
         <div className="row sp" style={{ marginBottom: '6px' }}>
           <span className="pill" style={{ borderColor: accentColor }}>
             <i className="dot" style={{ '--sc': accentColor } as React.CSSProperties} />
-            ⚡ {activeHeading.slice(0, 32)}
+            {activeSubject.e} {activeSubject.name} · {activeHeading.slice(0, 26)}
           </span>
           <span
             className={`status-pill ${
@@ -282,7 +368,6 @@ export const FocusView: React.FC<FocusViewProps> = ({
           ))}
         </div>
 
-        {/* Quick Countdown Duration Presets when idle in Countdown mode */}
         {!t && mode === 'countdown' && (
           <div
             className="chips wrap"
@@ -302,16 +387,127 @@ export const FocusView: React.FC<FocusViewProps> = ({
           </div>
         )}
 
-        <div className="big-clock" id="liveClock">
-          {clockVal}
-        </div>
+        {aesthetic === 'retro' ? (
+          <div className="retro-clock-wrap" aria-label="Analog Retro Clock Face">
+            <svg
+              className="retro-dial-svg"
+              viewBox="0 0 180 180"
+              role="img"
+              aria-label={`Analog Retro Timer ${clockVal}`}
+            >
+              <defs>
+                <radialGradient id="retroFaceGrad" cx="50%" cy="45%" r="55%">
+                  <stop offset="0%" stopColor="#261f16" />
+                  <stop offset="100%" stopColor="#120e0a" />
+                </radialGradient>
+              </defs>
+              {/* Outer Gold/Amber Chronometer Bezel */}
+              <circle
+                cx="90"
+                cy="90"
+                r="84"
+                fill="url(#retroFaceGrad)"
+                stroke="#d97706"
+                strokeWidth="3.5"
+              />
+              <circle
+                cx="90"
+                cy="90"
+                r="78"
+                fill="none"
+                stroke="rgba(251, 191, 36, 0.25)"
+                strokeWidth="1"
+              />
+              {/* 60 Minute/Second Ticks */}
+              {Array.from({ length: 60 }, (_, idx) => {
+                const isMajor = idx % 5 === 0;
+                const deg = idx * 6;
+                return (
+                  <line
+                    key={idx}
+                    x1="90"
+                    y1={isMajor ? '15' : '18'}
+                    x2="90"
+                    y2={isMajor ? '24' : '22'}
+                    stroke={isMajor ? '#fbbf24' : 'rgba(251, 191, 36, 0.42)'}
+                    strokeWidth={isMajor ? '2.2' : '1'}
+                    strokeLinecap="round"
+                    transform={`rotate(${deg} 90 90)`}
+                  />
+                );
+              })}
+              {/* Sub-label on dial */}
+              <text
+                x="90"
+                y="62"
+                textAnchor="middle"
+                fill="rgba(251, 191, 36, 0.7)"
+                fontSize="8.5"
+                fontWeight="700"
+                letterSpacing="1.4"
+              >
+                CHRONO · DEEP HOURS
+              </text>
+              {/* Hour Hand */}
+              <line
+                x1="90"
+                y1="94"
+                x2="90"
+                y2="54"
+                stroke="#f59e0b"
+                strokeWidth="4"
+                strokeLinecap="round"
+                transform={`rotate(${hrAngle} 90 90)`}
+              />
+              {/* Minute Hand */}
+              <line
+                x1="90"
+                y1="98"
+                x2="90"
+                y2="34"
+                stroke="#fef3c7"
+                strokeWidth="3"
+                strokeLinecap="round"
+                transform={`rotate(${minAngle} 90 90)`}
+              />
+              {/* Sweeping Second Hand */}
+              <line
+                x1="90"
+                y1="104"
+                x2="90"
+                y2="26"
+                stroke="#34d399"
+                strokeWidth="1.6"
+                strokeLinecap="round"
+                transform={`rotate(${secAngle} 90 90)`}
+              />
+              {/* Center Cap */}
+              <circle cx="90" cy="90" r="5" fill="#fbbf24" />
+              <circle cx="90" cy="90" r="2" fill="#120e0a" />
+            </svg>
+            <div className="retro-sub-readout" id="liveClock">
+              {clockVal}
+            </div>
+          </div>
+        ) : (
+          <div className="big-clock" id="liveClock">
+            {clockVal}
+          </div>
+        )}
 
-        {/* Live Session Progress Bar */}
         {m && (
           <div style={{ width: '100%', maxWidth: '340px', margin: '2px auto 6px' }}>
-            <div className="bar" style={{ height: '7px' }}>
-              <i
+            <div
+              style={{
+                height: '7px',
+                background: 'var(--c2)',
+                borderRadius: '99px',
+                overflow: 'hidden',
+              }}
+            >
+              <div
                 style={{
+                  height: '100%',
                   width: `${progressPct}%`,
                   background:
                     m.status === 'paused'
@@ -333,7 +529,7 @@ export const FocusView: React.FC<FocusViewProps> = ({
 
         <div className="purity-bar">
           <span>
-            Mode: <b style={{ textTransform: 'uppercase' }}>{mode}</b>
+            Subject: <b>{activeSubject.name}</b>
           </span>
           <span>
             Focus Purity: <b id="livePurity">{m ? m.purity : 100}%</b>
@@ -346,7 +542,6 @@ export const FocusView: React.FC<FocusViewProps> = ({
           </span>
         </div>
 
-        {/* Quick Target Boost (+5m / +15m) during active Pomodoro or Countdown */}
         {t && t.mode !== 'stopwatch' && onExtendTarget && (
           <div
             className="row"
@@ -386,13 +581,19 @@ export const FocusView: React.FC<FocusViewProps> = ({
               style={{ padding: '14px', fontSize: '16px' }}
               onClick={() =>
                 onStartTimer(
-                  sessionHeading.trim() || 'Deep Study Session',
+                  selectedSubjectId,
+                  sessionHeading.trim() || `${activeSubject.name} Study Session`,
                   mode,
                   mode === 'countdown' ? customCountdownMins : undefined
                 )
               }
             >
-              ▶ Start {mode === 'stopwatch' ? 'Stopwatch' : mode === 'countdown' ? 'Countdown' : 'Pomodoro'}
+              ▶ Start{' '}
+              {mode === 'stopwatch'
+                ? 'Stopwatch'
+                : mode === 'countdown'
+                  ? 'Countdown'
+                  : 'Pomodoro'}
             </button>
           ) : (
             <>
@@ -433,7 +634,11 @@ export const FocusView: React.FC<FocusViewProps> = ({
           <button type="button" className="s" onClick={onOpenPiP}>
             📲 Pop-out Floating Lecture PiP
           </button>
-          <button type="button" className="s" onClick={onOpenManualSession}>
+          <button
+            type="button"
+            className="s"
+            onClick={() => onOpenManualSession(selectedSubjectId)}
+          >
             + Log Manual Hours
           </button>
           {deskMode ? (
@@ -495,7 +700,9 @@ export const FocusView: React.FC<FocusViewProps> = ({
       <div className="card hide-desk">
         <div className="row sp">
           <h3>✅ Study Session Checklist</h3>
-          <small>{todos.filter((x) => x.done).length}/{todos.length} done</small>
+          <small>
+            {todos.filter((x) => x.done).length}/{todos.length} done
+          </small>
         </div>
         <form onSubmit={handleTodoSubmit} className="row" style={{ margin: '8px 0' }}>
           <input
@@ -555,7 +762,11 @@ export const FocusView: React.FC<FocusViewProps> = ({
       <div className="card hide-desk">
         <div className="row sp" style={{ marginBottom: '8px' }}>
           <h3>Today&apos;s Logged Sessions ({sel})</h3>
-          <button type="button" className="s pri" onClick={onOpenManualSession}>
+          <button
+            type="button"
+            className="s pri"
+            onClick={() => onOpenManualSession(selectedSubjectId)}
+          >
             + Manual Entry
           </button>
         </div>
@@ -565,8 +776,8 @@ export const FocusView: React.FC<FocusViewProps> = ({
             .slice()
             .reverse()
             .map((s) => {
+              const sub = getSubject(state, s.subjectId);
               const heading = getSessionHeading(state, s);
-              const col = getHeadingColor(heading);
               return (
                 <div
                   key={s.id}
@@ -577,16 +788,17 @@ export const FocusView: React.FC<FocusViewProps> = ({
                     <b>
                       <i
                         className="dot"
-                        style={{ '--sc': col } as React.CSSProperties}
+                        style={{ '--sc': sub.color } as React.CSSProperties}
                       />{' '}
-                      {heading} ·{' '}
+                      {sub.e} {sub.name} · {heading} ·{' '}
                       <span className="mono" style={{ color: 'var(--em)' }}>
                         {fmtHMShort(s.activeMs)}
                       </span>
                     </b>
                     <small style={{ display: 'block' }}>
-                      {fmtClockTime(s.startTs)} – {fmtClockTime(s.endTs)} · {s.mode.toUpperCase()} · Purity{' '}
-                      {s.purity ?? 100}% · {'★'.repeat(s.rating || 5)}
+                      {fmtClockTime(s.startTs)} – {fmtClockTime(s.endTs)} ·{' '}
+                      {s.mode.toUpperCase()} · Purity {s.purity ?? 100}% ·{' '}
+                      {'★'.repeat(s.rating || 5)}
                     </small>
                     {s.note && (
                       <small style={{ display: 'block', color: 'var(--tx)', marginTop: '2px' }}>
