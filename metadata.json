@@ -2,5 +2,7 @@
   "name": "PulseHabit · Study & Habit Logger",
   "description": "All-day YPT/Regain-style study logger, floating PiP lecture timer, 10-minute timeline grid planner, and forgiving habit tracker.",
   "requestFramePermissions": [],
-  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+  "majorCapabilities": [
+    "MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"
+  ]
 }
