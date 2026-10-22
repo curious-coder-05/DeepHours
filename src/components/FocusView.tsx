@@ -20,7 +20,8 @@ interface FocusViewProps {
   onOpenPiP: () => void;
   onSwitchHeading: (heading: string) => void;
   onSetMode: (mode: ActiveTimerMode) => void;
-  onStartTimer: (heading: string, mode: ActiveTimerMode) => void;
+  onStartTimer: (heading: string, mode: ActiveTimerMode, customTargetMins?: number) => void;
+  onExtendTarget?: (extraMins: number) => void;
   onTogglePause: () => void;
   onTogglePomoPhase: () => void;
   onStopAndReflect: () => void;
@@ -44,6 +45,7 @@ export const FocusView: React.FC<FocusViewProps> = ({
   onSwitchHeading,
   onSetMode,
   onStartTimer,
+  onExtendTarget,
   onTogglePause,
   onTogglePomoPhase,
   onStopAndReflect,
@@ -66,6 +68,9 @@ export const FocusView: React.FC<FocusViewProps> = ({
   const [selectedMode, setSelectedMode] = useState<ActiveTimerMode>(
     t?.mode || state.set.defaultMode || 'pomo'
   );
+  const [customCountdownMins, setCustomCountdownMins] = useState<number>(
+    state.set.countdownMins || 45
+  );
 
   useEffect(() => {
     if (t?.heading) {
@@ -81,16 +86,45 @@ export const FocusView: React.FC<FocusViewProps> = ({
     }
   }, [t?.mode, state.set.defaultMode]);
 
+  useEffect(() => {
+    if (state.set.countdownMins) {
+      setCustomCountdownMins(state.set.countdownMins);
+    }
+  }, [state.set.countdownMins]);
+
   const mode: ActiveTimerMode = t ? t.mode : selectedMode;
   const activeHeading = (t?.heading || sessionHeading || 'Deep Study Session').trim();
   const accentColor = getHeadingColor(activeHeading);
+
+  // Keyboard shortcut: Space to pause/resume when not typing in an input
+  useEffect(() => {
+    const onKeyDown = (e: KeyboardEvent) => {
+      if (e.code !== 'Space') return;
+      const tag = (e.target as HTMLElement)?.tagName;
+      if (tag === 'INPUT' || tag === 'TEXTAREA' || tag === 'SELECT' || tag === 'BUTTON') {
+        return;
+      }
+      e.preventDefault();
+      if (t) {
+        onTogglePause();
+      } else {
+        onStartTimer(
+          sessionHeading.trim() || 'Deep Study Session',
+          mode,
+          mode === 'countdown' ? customCountdownMins : undefined
+        );
+      }
+    };
+    window.addEventListener('keydown', onKeyDown);
+    return () => window.removeEventListener('keydown', onKeyDown);
+  }, [customCountdownMins, mode, onStartTimer, onTogglePause, sessionHeading, t]);
 
   const clockVal = m
     ? fmtHMS(m.overtimeMs > 0 ? m.totalActiveMs : m.displayMs)
     : mode === 'pomo'
       ? fmtHMS((state.set.pomoWork || 25) * 60000)
       : mode === 'countdown'
-        ? fmtHMS((state.set.countdownMins || 45) * 60000)
+        ? fmtHMS(customCountdownMins * 60000)
         : '00:00:00';
 
   // Unique recent headings for quick reuse
@@ -102,7 +136,7 @@ export const FocusView: React.FC<FocusViewProps> = ({
         .map((s) => getSessionHeading(state, s))
         .filter(Boolean)
     )
-  ).slice(0, 5);
+  ).slice(0, 6);
 
   const todos = state.todos || [];
 
@@ -122,6 +156,8 @@ export const FocusView: React.FC<FocusViewProps> = ({
       onSwitchHeading(clean);
     }
   };
+
+  const progressPct = m ? Math.min(100, Math.max(2, m.progressPct)) : 0;
 
   return (
     <div>
@@ -246,9 +282,49 @@ export const FocusView: React.FC<FocusViewProps> = ({
           ))}
         </div>
 
+        {/* Quick Countdown Duration Presets when idle in Countdown mode */}
+        {!t && mode === 'countdown' && (
+          <div
+            className="chips wrap"
+            style={{ justifyContent: 'center', margin: '2px 0 4px', gap: '6px' }}
+          >
+            {[25, 45, 60, 90, 120].map((mins) => (
+              <button
+                type="button"
+                key={mins}
+                className={customCountdownMins === mins ? 'on' : ''}
+                style={{ padding: '4px 10px', fontSize: '12px' }}
+                onClick={() => setCustomCountdownMins(mins)}
+              >
+                {mins}m
+              </button>
+            ))}
+          </div>
+        )}
+
         <div className="big-clock" id="liveClock">
           {clockVal}
         </div>
+
+        {/* Live Session Progress Bar */}
+        {m && (
+          <div style={{ width: '100%', maxWidth: '340px', margin: '2px auto 6px' }}>
+            <div className="bar" style={{ height: '7px' }}>
+              <i
+                style={{
+                  width: `${progressPct}%`,
+                  background:
+                    m.status === 'paused'
+                      ? 'var(--am)'
+                      : m.overtimeMs > 0
+                        ? 'var(--em)'
+                        : accentColor,
+                }}
+              />
+            </div>
+          </div>
+        )}
+
         {m && m.overtimeMs > 0 && (
           <div id="liveOvertime" className="overtime-tag">
             FLOW OVERTIME +{fmtMS(m.overtimeMs)}
@@ -270,6 +346,34 @@ export const FocusView: React.FC<FocusViewProps> = ({
           </span>
         </div>
 
+        {/* Quick Target Boost (+5m / +15m) during active Pomodoro or Countdown */}
+        {t && t.mode !== 'stopwatch' && onExtendTarget && (
+          <div
+            className="row"
+            style={{ justifyContent: 'center', gap: '8px', marginTop: '4px' }}
+          >
+            <small className="mu" style={{ fontSize: '11px' }}>
+              Target: {Math.round((t.targetMs || 0) / 60000)}m
+            </small>
+            <button
+              type="button"
+              className="s"
+              style={{ padding: '4px 9px', fontSize: '11px' }}
+              onClick={() => onExtendTarget(5)}
+            >
+              +5m
+            </button>
+            <button
+              type="button"
+              className="s"
+              style={{ padding: '4px 9px', fontSize: '11px' }}
+              onClick={() => onExtendTarget(15)}
+            >
+              +15m
+            </button>
+          </div>
+        )}
+
         {/* Primary Controls */}
         <div
           className="row"
@@ -281,7 +385,11 @@ export const FocusView: React.FC<FocusViewProps> = ({
               className="em-btn g"
               style={{ padding: '14px', fontSize: '16px' }}
               onClick={() =>
-                onStartTimer(sessionHeading.trim() || 'Deep Study Session', mode)
+                onStartTimer(
+                  sessionHeading.trim() || 'Deep Study Session',
+                  mode,
+                  mode === 'countdown' ? customCountdownMins : undefined
+                )
               }
             >
               ▶ Start {mode === 'stopwatch' ? 'Stopwatch' : mode === 'countdown' ? 'Countdown' : 'Pomodoro'}

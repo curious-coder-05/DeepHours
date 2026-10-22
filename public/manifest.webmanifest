@@ -1,7 +1,7 @@
 {
   "id": "/",
-  "name": "PulseHabit · Study & Habit Logger",
-  "short_name": "PulseHabit",
+  "name": "Deep Hours · Study & Habit Logger",
+  "short_name": "Deep Hours",
   "description": "All-day study logger with floating lecture PiP timer, 10-minute timeline grid, and forgiving habit tracking.",
   "start_url": "/",
   "scope": "/",

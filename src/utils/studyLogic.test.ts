@@ -128,12 +128,18 @@ test('getTimerMetrics computes countdown, purity, flow overtime, and stopwatch c
   assert.equal(mSw.overtimeMs, 0);
 });
 
-test('computeStudySummary calculates weekly, monthly, peak hours, and heading breakdown', () => {
+test('computeStudySummary calculates weekly, monthly, peak hours, last30Days, and heading breakdown', () => {
   const s = norm(null, new Date(2026, 9, 22, 12, 0, 0));
   const summary = computeStudySummary(s, '2026-10-22', new Date(2026, 9, 22, 12, 0, 0).getTime());
   assert.ok(summary.weekTotalMs > 0);
   assert.ok(summary.monthTotalMs >= summary.weekTotalMs);
   assert.equal(summary.last7Days.length, 7);
+  assert.equal(summary.last30Days.length, 30);
+  const todayPoint = summary.last30Days[summary.last30Days.length - 1];
+  assert.equal(todayPoint.key, '2026-10-22');
+  assert.equal(todayPoint.minutes, 85);
+  assert.equal(todayPoint.formatted, '1h 25m');
+  assert.ok(todayPoint.hours > 1.4);
   assert.ok(summary.peakHourWindowLabel.includes(':00'));
   assert.ok(summary.headingBreakdown.length >= 3);
 });

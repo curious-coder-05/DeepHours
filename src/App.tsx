@@ -320,6 +320,26 @@ export default function App() {
     else resumeTimer();
   }, [pauseTimer, resumeTimer, state.activeTimer]);
 
+  const extendTimerTarget = useCallback(
+    (extraMins: number) => {
+      updateAndSave((prev) => {
+        const t = prev.activeTimer;
+        if (!t || t.mode === 'stopwatch') return prev;
+        const nextTargetMs = Math.max(60000, (t.targetMs || 0) + extraMins * 60000);
+        return {
+          ...prev,
+          activeTimer: {
+            ...t,
+            targetMs: nextTargetMs,
+            chimeFired: false,
+          },
+        };
+      });
+      showToast(`Added +${extraMins}m to session target`);
+    },
+    [showToast, updateAndSave]
+  );
+
   const commitSliceInState = (
     prev: PulseHabitState,
     now: number,
@@ -479,10 +499,11 @@ export default function App() {
     onToast: showToast,
   });
 
-  // 500ms Zero-Drift Timer Loop
+  // 500ms Zero-Drift Timer Loop backed by an unthrottled Web Worker + fallback setInterval
   useEffect(() => {
     if (!state.activeTimer) return;
-    const id = setInterval(() => {
+
+    const handleTick = () => {
       setTickCounter((c) => c + 1);
       setState((prev) => {
         if (!prev.activeTimer) return prev;
@@ -518,8 +539,31 @@ export default function App() {
         return prev;
       });
       renderTick();
+    };
+
+    let worker: Worker | null = null;
+    let workerUrl: string | null = null;
+    try {
+      const blob = new Blob(
+        ['setInterval(() => postMessage("tick"), 500);'],
+        { type: 'application/javascript' }
+      );
+      workerUrl = URL.createObjectURL(blob);
+      worker = new Worker(workerUrl);
+      worker.onmessage = handleTick;
+    } catch {
+      // Fallback to standard setInterval below if Worker is restricted
+    }
+
+    const fallbackId = setInterval(() => {
+      if (!worker) handleTick();
     }, 500);
-    return () => clearInterval(id);
+
+    return () => {
+      clearInterval(fallbackId);
+      if (worker) worker.terminate();
+      if (workerUrl) URL.revokeObjectURL(workerUrl);
+    };
   }, [renderTick, state.activeTimer]);
 
   // Scheduled Habit Reminders check
@@ -711,7 +755,10 @@ export default function App() {
                 };
               });
             }}
-            onStartTimer={(heading, mode) => startTimer(heading, mode)}
+            onStartTimer={(heading, mode, customTargetMins) =>
+              startTimer(heading, mode, customTargetMins)
+            }
+            onExtendTarget={extendTimerTarget}
             onTogglePause={toggleTimerPause}
             onTogglePomoPhase={togglePomoPhase}
             onStopAndReflect={stopTimerAndReflect}
@@ -760,24 +807,8 @@ export default function App() {
             state={state}
             sel={sel}
             todayKey={todayKey}
-            onPaintSlot={(slotIdx, brush) => {
-              updateAndSave((prev) => {
-                const dayPlan = { ...(prev.plans[sel] || {}) };
-                if (brush === 'erase') {
-                  delete dayPlan[slotIdx];
-                } else {
-                  dayPlan[slotIdx] = brush;
-                }
-                return {
-                  ...prev,
-                  plans: {
-                    ...prev.plans,
-                    [sel]: dayPlan,
-                  },
-                };
-              });
-            }}
             onOpenManualSession={() => setModal({ type: 'manualSession' })}
+            onToast={showToast}
           />
         )}
 
@@ -821,7 +852,7 @@ export default function App() {
               updateAndSave((prev) => {
                 const updated = { ...prev, exp: now };
                 downloadFile(
-                  `pulsehabit-backup-${todayKey}.json`,
+                  `deep-hours-backup-${todayKey}.json`,
                   JSON.stringify(updated, null, 2),
                   'application/json'
                 );
@@ -848,7 +879,7 @@ export default function App() {
                   })
               );
               downloadFile(
-                `pulsehabit-export-${todayKey}.csv`,
+                `deep-hours-export-${todayKey}.csv`,
                 rows.join('\n'),
                 'text/csv'
               );
@@ -871,7 +902,7 @@ export default function App() {
                   persistState(reverted);
                 });
               } catch {
-                showToast('Invalid PulseHabit JSON backup file');
+                showToast('Invalid Deep Hours JSON backup file');
               }
             }}
             onRequestReset={() => setModal({ type: 'confirmReset' })}

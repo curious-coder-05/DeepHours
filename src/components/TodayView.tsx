@@ -201,7 +201,7 @@ export const TodayView: React.FC<TodayViewProps> = ({
             })}{' '}
             · Reset {pad(state.set.dayResetHour)}:00
           </small>
-          <h1>PulseHabit</h1>
+          <h1>Deep Hours</h1>
         </div>
         <div className="row">
           {activeMetrics && (

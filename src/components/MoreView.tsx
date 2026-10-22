@@ -172,7 +172,7 @@ export const MoreView: React.FC<MoreViewProps> = ({
 
         {!isInstalled && isInstallable && (
           <button type="button" className="pri" onClick={install}>
-            📲 Install PulseHabit PWA
+            📲 Install Deep Hours PWA
           </button>
         )}
         {!isInstalled && isIOS && (
@@ -181,7 +181,7 @@ export const MoreView: React.FC<MoreViewProps> = ({
             className="pri"
             onClick={() => setShowIOSGuide((v) => !v)}
           >
-            📲 Install PulseHabit on iPhone / iPad
+            📲 Install Deep Hours on iPhone / iPad
           </button>
         )}
         {showIOSGuide && (

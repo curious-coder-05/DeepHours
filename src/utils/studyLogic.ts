@@ -654,6 +654,16 @@ export interface StudySummaryReport {
     ms: number;
     sessionsCount: number;
   }>;
+  last30Days: Array<{
+    key: string;
+    dayName: string;
+    shortDate: string;
+    ms: number;
+    hours: number;
+    minutes: number;
+    formatted: string;
+    sessionsCount: number;
+  }>;
   modeBreakdown: Array<{
     mode: TimerMode;
     label: string;
@@ -712,14 +722,29 @@ export function computeStudySummary(
         ? 100
         : 0;
 
-  // Last 30 days (monthly window)
+  // Last 30 days (monthly window & Deep Work Frequency series)
+  const last30Days: StudySummaryReport['last30Days'] = [];
   let monthTotalMs = 0;
   let monthActiveDays = 0;
   for (let i = 29; i >= 0; i--) {
     const k = addD(todayKey, -i);
+    const d = parseKey(k);
+    const daySessions = state.sessions.filter((s) => s.dayKey === k);
     const ms = getDayTotalStudyMs(state, k, todayKey, now);
     if (ms > 0) monthActiveDays++;
     monthTotalMs += ms;
+    last30Days.push({
+      key: k,
+      dayName: d.toLocaleDateString(undefined, { weekday: 'short' }),
+      shortDate: d.toLocaleDateString(undefined, { month: 'short', day: 'numeric' }),
+      ms,
+      hours: Number((ms / 3600000).toFixed(2)),
+      minutes: Math.round(ms / 60000),
+      formatted: fmtHMShort(ms),
+      sessionsCount:
+        daySessions.length +
+        (k === todayKey && state.activeTimer && state.activeTimer.phase !== 'break' ? 1 : 0),
+    });
   }
 
   const allTimeTotalMs =
@@ -887,6 +912,7 @@ export function computeStudySummary(
     avgStartHourLabel,
     avgEndHourLabel,
     last7Days,
+    last30Days,
     modeBreakdown,
     headingBreakdown,
   };

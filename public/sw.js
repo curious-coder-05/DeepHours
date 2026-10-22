@@ -1,4 +1,4 @@
-const CACHE_NAME = 'pulsehabit-v2';
+const CACHE_NAME = 'deep-hours-v2';
 const ASSETS = [
   '/',
   '/index.html',

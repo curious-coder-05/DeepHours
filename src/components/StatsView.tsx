@@ -1,4 +1,14 @@
 import React from 'react';
+import {
+  CartesianGrid,
+  Line,
+  LineChart,
+  ReferenceLine,
+  ResponsiveContainer,
+  Tooltip,
+  XAxis,
+  YAxis,
+} from 'recharts';
 import type { PulseHabitState } from '../types';
 import {
   addD,
@@ -8,7 +18,7 @@ import {
   fmtHMShort,
   getHeadingColor,
   getSessionHeading,
-   getTodaySubjectMs,
+  getTodaySubjectMs,
   live,
   lvl,
   pad,
@@ -24,6 +34,57 @@ interface StatsViewProps {
   todayKey: string;
   onEditSession?: (sessionId: string) => void;
 }
+
+interface DeepWorkTooltipProps {
+  active?: boolean;
+  payload?: Array<{
+    payload: {
+      key: string;
+      dayName: string;
+      shortDate: string;
+      ms: number;
+      hours: number;
+      minutes: number;
+      formatted: string;
+      sessionsCount: number;
+    };
+  }>;
+}
+
+const DeepWorkTooltip: React.FC<DeepWorkTooltipProps> = ({ active, payload }) => {
+  if (!active || !payload || !payload.length) return null;
+  const pt = payload[0].payload;
+  const hrsFloor = Math.floor(pt.minutes / 60);
+  const minsRem = pt.minutes % 60;
+  const hmDetailed =
+    hrsFloor > 0 ? `${hrsFloor}h ${minsRem}m (${pt.minutes} mins)` : `${pt.minutes}m`;
+
+  return (
+    <div
+      style={{
+        background: 'rgba(15, 23, 42, 0.96)',
+        border: '1px solid rgba(99, 102, 241, 0.45)',
+        borderRadius: '12px',
+        padding: '10px 12px',
+        boxShadow: '0 10px 26px rgba(0, 0, 0, 0.45)',
+        color: '#eef1f8',
+        fontSize: '12px',
+        lineHeight: 1.45,
+      }}
+    >
+      <div style={{ fontWeight: 700, marginBottom: '3px', color: '#f8fafc' }}>
+        {pt.dayName}, {pt.shortDate}{' '}
+        <span style={{ color: '#8b95b0', fontWeight: 500 }}>({pt.key})</span>
+      </div>
+      <div className="mono" style={{ color: '#10b981', fontWeight: 800, fontSize: '13px' }}>
+        ⏱️ Studied: {hmDetailed}
+      </div>
+      <div style={{ color: '#94a3b8', fontSize: '11px', marginTop: '2px' }}>
+        {pt.sessionsCount} {pt.sessionsCount === 1 ? 'session' : 'sessions'} logged · {pt.hours}h
+      </div>
+    </div>
+  );
+};
 
 export const StatsView: React.FC<StatsViewProps> = ({ state, todayKey, onEditSession }) => {
   const summary = computeStudySummary(state, todayKey);
@@ -55,6 +116,9 @@ export const StatsView: React.FC<StatsViewProps> = ({ state, todayKey, onEditSes
 
   const maxWeekDayMs = Math.max(3600000, ...summary.last7Days.map((d) => d.ms));
   const maxHrMs = Math.max(1800000, ...summary.hourlyMs);
+  const peak30dMs = Math.max(0, ...summary.last30Days.map((d) => d.ms));
+  const avg30dHours = Number((summary.monthAvgMsPerDay / 3600000).toFixed(2));
+  const consistencyPct = Math.round((summary.monthActiveDays / 30) * 100);
 
   const totalXp = xp(state, todayKey);
   const level = lvl(totalXp);
@@ -68,7 +132,7 @@ export const StatsView: React.FC<StatsViewProps> = ({ state, todayKey, onEditSes
         <div>
           <h2>Study Summary &amp; Analytics Report</h2>
           <small>
-            Weekly &amp; monthly study averages, peak active hours, and session history
+            Weekly &amp; monthly study averages, deep work frequency, peak active hours, and session history
           </small>
         </div>
       </div>
@@ -127,6 +191,94 @@ export const StatsView: React.FC<StatsViewProps> = ({ state, todayKey, onEditSes
             All-time: <b className="mono">{fmtHMShort(summary.allTimeTotalMs)}</b> (
             {summary.totalSessionsCount} sessions)
           </small>
+        </div>
+      </div>
+
+      {/* Deep Work Frequency (Last 30 Days) Line Chart via Recharts */}
+      <div className="card" id="deepWorkFrequencyCard">
+        <div className="row sp" style={{ marginBottom: '8px', alignItems: 'flex-start' }}>
+          <div>
+            <h3>📈 Deep Work Frequency (Last 30 Days)</h3>
+            <small>
+              Daily study hours &amp; minutes over the last 30 days to visualize consistency
+            </small>
+          </div>
+          <span className="pill mono" style={{ fontSize: '11.5px', color: 'var(--em)' }}>
+            {summary.monthActiveDays}/30 Active ({consistencyPct}%)
+          </span>
+        </div>
+
+        <div className="chips wrap" style={{ marginBottom: '10px', gap: '8px', paddingBottom: 0 }}>
+          <span className="pill" style={{ fontSize: '11.5px' }}>
+            30d Total: <b className="mono">{fmtHMShort(summary.monthTotalMs)}</b>
+          </span>
+          <span className="pill" style={{ fontSize: '11.5px' }}>
+            Daily Avg: <b className="mono">{fmtHMShort(summary.monthAvgMsPerDay)}</b>
+          </span>
+          <span className="pill" style={{ fontSize: '11.5px' }}>
+            Peak Day: <b className="mono">{fmtHMShort(peak30dMs)}</b>
+          </span>
+        </div>
+
+        <div style={{ width: '100%', height: 225 }} id="deepWorkFrequencyChart">
+          <ResponsiveContainer width="100%" height="100%">
+            <LineChart
+              data={summary.last30Days}
+              margin={{ top: 10, right: 12, left: -8, bottom: 2 }}
+            >
+              <CartesianGrid
+                strokeDasharray="3 3"
+                stroke="rgba(148, 163, 184, 0.14)"
+                vertical={false}
+              />
+              <XAxis
+                dataKey="shortDate"
+                minTickGap={22}
+                tick={{ fill: '#8b95b0', fontSize: 11 }}
+                tickLine={false}
+                axisLine={{ stroke: 'rgba(148, 163, 184, 0.2)' }}
+              />
+              <YAxis
+                dataKey="hours"
+                tickFormatter={(val: number) => {
+                  const mins = Math.round(val * 60);
+                  if (mins === 0) return '0m';
+                  const h = Math.floor(mins / 60);
+                  const m = mins % 60;
+                  return m > 0 ? `${h}h${m}m` : `${h}h`;
+                }}
+                tick={{ fill: '#8b95b0', fontSize: 11 }}
+                tickLine={false}
+                axisLine={false}
+                width={44}
+                domain={[0, (dataMax: number) => Math.max(2, Math.ceil(dataMax + 0.5))]}
+              />
+              <Tooltip content={<DeepWorkTooltip />} />
+              {avg30dHours > 0 && (
+                <ReferenceLine
+                  y={avg30dHours}
+                  stroke="#6366f1"
+                  strokeDasharray="4 4"
+                  strokeOpacity={0.75}
+                />
+              )}
+              <Line
+                type="monotone"
+                dataKey="hours"
+                name="Daily Study Time"
+                stroke="#10b981"
+                strokeWidth={2.75}
+                dot={{ r: 3, fill: '#10b981', strokeWidth: 0 }}
+                activeDot={{
+                  r: 6,
+                  fill: '#10b981',
+                  stroke: '#090d16',
+                  strokeWidth: 2,
+                }}
+                isAnimationActive={false}
+              />
+            </LineChart>
+          </ResponsiveContainer>
         </div>
       </div>
 

@@ -4,7 +4,7 @@ import { norm } from './studyLogic';
 const idbPromise: Promise<IDBDatabase> | null =
   typeof indexedDB !== 'undefined'
     ? new Promise((resolve, reject) => {
-        const req = indexedDB.open('pulsehabit', 1);
+        const req = indexedDB.open('deephours', 1);
         req.onupgradeneeded = () => {
           if (!req.result.objectStoreNames.contains('kv')) {
             req.result.createObjectStore('kv');
@@ -38,7 +38,7 @@ export async function loadInitialState(): Promise<PulseHabitState> {
   }
   if (!raw) {
     try {
-      const ls = localStorage.getItem('ph');
+      const ls = localStorage.getItem('dh') || localStorage.getItem('ph');
       if (ls) raw = JSON.parse(ls);
     } catch {
       // ignore parse errors
@@ -49,11 +49,13 @@ export async function loadInitialState(): Promise<PulseHabitState> {
 
 let saveTimer: ReturnType<typeof setTimeout> | null = null;
 const bc =
-  typeof BroadcastChannel !== 'undefined' ? new BroadcastChannel('ph') : null;
+  typeof BroadcastChannel !== 'undefined' ? new BroadcastChannel('deephours') : null;
 
 export function persistState(state: PulseHabitState, onSaved?: () => void): void {
   try {
-    localStorage.setItem('ph', JSON.stringify(state));
+    const serialized = JSON.stringify(state);
+    localStorage.setItem('dh', serialized);
+    localStorage.setItem('ph', serialized);
   } catch {
     // ignore quota errors
   }

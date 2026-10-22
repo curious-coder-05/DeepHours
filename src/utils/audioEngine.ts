@@ -2,6 +2,7 @@ import type { SoundscapeMode } from '../types';
 
 let audioCtx: AudioContext | null = null;
 let mediaStreamDest: MediaStreamAudioDestinationNode | null = null;
+let silentOsc: OscillatorNode | null = null;
 let silentKeepAliveGain: GainNode | null = null;
 let noiseNode: AudioBufferSourceNode | null = null;
 let noiseGain: GainNode | null = null;
@@ -9,6 +10,7 @@ let noiseGain: GainNode | null = null;
 export function ensureAudioEngine(): {
   ctx: AudioContext | null;
   mediaStreamDest: MediaStreamAudioDestinationNode | null;
+  audioTracks: MediaStreamTrack[];
 } {
   try {
     if (!audioCtx) {
@@ -22,20 +24,26 @@ export function ensureAudioEngine(): {
     }
     if (audioCtx && !mediaStreamDest) {
       mediaStreamDest = audioCtx.createMediaStreamDestination();
-      // Crucial for Android Chrome PiP: continuous 0.001 gain audio signal
-      // so Android OS treats the <video> stream as an active media session with Play/Pause controls
-      const osc = audioCtx.createOscillator();
+      // Continuous sub-audible 0.001 gain 60Hz sine oscillator routed into both
+      // mediaStreamDest (for the <video> MediaStream) and audioCtx.destination
+      // so Android Chrome grants foreground media execution status and never throttles the timer loop.
+      silentOsc = audioCtx.createOscillator();
+      silentOsc.type = 'sine';
+      silentOsc.frequency.setValueAtTime(60, audioCtx.currentTime);
+
       silentKeepAliveGain = audioCtx.createGain();
-      silentKeepAliveGain.gain.value = 0.001;
-      osc.frequency.value = 60;
-      osc.connect(silentKeepAliveGain);
+      silentKeepAliveGain.gain.setValueAtTime(0.001, audioCtx.currentTime);
+
+      silentOsc.connect(silentKeepAliveGain);
       silentKeepAliveGain.connect(mediaStreamDest);
-      osc.start();
+      silentKeepAliveGain.connect(audioCtx.destination);
+      silentOsc.start();
     }
   } catch {
     // ignore in restricted environments
   }
-  return { ctx: audioCtx, mediaStreamDest };
+  const audioTracks = mediaStreamDest ? mediaStreamDest.stream.getAudioTracks() : [];
+  return { ctx: audioCtx, mediaStreamDest, audioTracks };
 }
 
 export function getMediaStreamDestination(): MediaStreamAudioDestinationNode | null {
@@ -78,6 +86,7 @@ export function beep(type: 'ok' | 'no' | 'win' | 'chime', soundEnabled = true): 
     const g = ctx.createGain();
     o.connect(g);
     g.connect(ctx.destination);
+    if (dest) g.connect(dest);
     o.frequency.setValueAtTime(type === 'no' ? 300 : type === 'win' ? 880 : 560, n);
     o.frequency.exponentialRampToValueAtTime(
       type === 'no' ? 220 : type === 'win' ? 1320 : 840,
