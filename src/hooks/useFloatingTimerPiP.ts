@@ -35,6 +35,9 @@ export function useFloatingTimerPiP(
   const actionsRef = useRef(actions);
 
   const [inAppPiPOpen, setInAppPiPOpen] = useState(false);
+  const [pipCollapsed, setPipCollapsed] = useState(false);
+  const [pipGhost, setPipGhost] = useState(false);
+  const [pipTopY, setPipTopY] = useState<number>(136);
 
   stateRef.current = state;
   actionsRef.current = actions;
@@ -52,192 +55,221 @@ export function useFloatingTimerPiP(
     }
   }, []);
 
+  // Compact wide pill ratio (420x150) with Regain-style obsidian + indigo/emerald neon layout
   const drawCanvasFrame = useCallback(() => {
     const canvas = canvasRef.current;
     if (!canvas) return;
+    const W = 420;
+    const H = 150;
+    if (canvas.width !== W) canvas.width = W;
+    if (canvas.height !== H) canvas.height = H;
+
     const ctx = canvas.getContext('2d');
     if (!ctx) return;
-    const W = 480;
-    const H = 270;
 
     const curState = stateRef.current;
     const aesthetic = curState.set.timerAesthetic || 'neon';
     const now = Date.now();
     const todayKey = logicalKey(now, curState.set.dayResetHour ?? 4);
     const m = getTimerMetrics(curState, now);
-    const isRunning = m && m.status === 'running';
-    const isPaused = m && m.status === 'paused';
+    const isRunning = Boolean(m && m.status === 'running');
+    const isPaused = Boolean(m && m.status === 'paused');
     const activeSub = m ? m.subject : getSubject(curState);
     const heading = m ? m.heading : activeSub.name || 'Deep Study Session';
-    const dotColor = activeSub.color || '#3b82f6';
     const todayTotalMs = getTodaySubjectMs(curState, 'any', todayKey, todayKey, now);
 
-    // 1. Background based on Timer Aesthetic
+    // 1. Deep Obsidian Base Fill (#090D16)
+    ctx.clearRect(0, 0, W, H);
     ctx.fillStyle = aesthetic === 'retro' ? '#14110D' : '#090D16';
     ctx.fillRect(0, 0, W, H);
 
-    // 2. Progress border
-    const borderCol = isPaused
-      ? '#F59E0B'
-      : aesthetic === 'retro'
-        ? '#D97706'
-        : m && m.overtimeMs > 0
-          ? '#10B981'
-          : isRunning
-            ? '#10B981'
-            : dotColor;
-    ctx.strokeStyle = aesthetic === 'retro' ? '#292118' : '#1E293B';
-    ctx.lineWidth = aesthetic === 'minimal' ? 4 : 10;
-    ctx.strokeRect(5, 5, W - 10, H - 10);
-
-    const pct = m ? Math.max(0.05, m.progressPct / 100) : 0;
-    ctx.strokeStyle = borderCol;
-    ctx.lineWidth = aesthetic === 'minimal' ? 4 : 10;
-    ctx.beginPath();
-    const perim = 2 * (W - 10) + 2 * (H - 10);
-    ctx.setLineDash([perim * pct, perim]);
-    ctx.strokeRect(5, 5, W - 10, H - 10);
-    ctx.setLineDash([]);
-
-    // 3. Top Row: Subject Emoji + Name + Session Heading & Status Badge
-    ctx.fillStyle = dotColor;
-    ctx.beginPath();
-    ctx.arc(32, 38, 8, 0, Math.PI * 2);
-    ctx.fill();
-
-    ctx.fillStyle = '#F8FAFC';
-    ctx.font = '700 19px system-ui, -apple-system, sans-serif';
-    ctx.textAlign = 'left';
-    const titleLabel =
-      heading.toLowerCase() === activeSub.name.toLowerCase()
-        ? `${activeSub.e} ${activeSub.name}`
-        : `${activeSub.e} ${activeSub.name} · ${heading}`;
-    ctx.fillText(titleLabel.slice(0, 26), 48, 45);
-
-    // Status Pill on Top Right
-    const statusTxt = isPaused
-      ? 'PAUSED'
-      : m && m.overtimeMs > 0
-        ? 'FLOW +OT'
-        : isRunning
-          ? 'STUDYING'
-          : 'READY';
-    const badgeBg = isPaused ? '#F59E0B' : isRunning ? '#10B981' : '#6366F1';
-    ctx.fillStyle = badgeBg;
+    // Subtle ambient glow inside the pill canvas
+    const bgGrad = ctx.createLinearGradient(0, 0, W, H);
+    if (aesthetic === 'retro') {
+      bgGrad.addColorStop(0, 'rgba(30, 25, 18, 0.96)');
+      bgGrad.addColorStop(1, 'rgba(18, 14, 10, 0.98)');
+    } else {
+      bgGrad.addColorStop(0, 'rgba(15, 23, 42, 0.96)');
+      bgGrad.addColorStop(1, 'rgba(9, 13, 22, 0.98)');
+    }
+    ctx.fillStyle = bgGrad;
     ctx.beginPath();
     if (typeof ctx.roundRect === 'function') {
-      ctx.roundRect(W - 138, 20, 114, 32, 16);
+      ctx.roundRect(4, 4, W - 8, H - 8, 28);
     } else {
-      ctx.rect(W - 138, 20, 114, 32);
+      ctx.rect(4, 4, W - 8, H - 8);
     }
     ctx.fill();
 
-    ctx.fillStyle = '#090D16';
-    ctx.font = '800 15px ui-monospace, monospace';
-    ctx.textAlign = 'center';
-    ctx.fillText(statusTxt, W - 81, 41);
+    // 2. Pill Accent Border (#6366F1 -> #10B981 when studying, #F59E0B when paused)
+    const borderGrad = ctx.createLinearGradient(0, 0, W, H);
+    if (isPaused) {
+      borderGrad.addColorStop(0, '#F59E0B');
+      borderGrad.addColorStop(1, '#D97706');
+    } else if (aesthetic === 'retro') {
+      borderGrad.addColorStop(0, '#F59E0B');
+      borderGrad.addColorStop(1, '#B45309');
+    } else {
+      borderGrad.addColorStop(0, '#6366F1');
+      borderGrad.addColorStop(1, '#10B981');
+    }
 
-    // 4. Center Clock Display (Neon Digital | Minimalist Mono | Analog Retro)
-    const clockMs = m ? (m.overtimeMs > 0 ? m.totalActiveMs : m.displayMs) : 0;
-    const clockStr = fmtHMS(clockMs);
+    ctx.strokeStyle = borderGrad;
+    ctx.lineWidth = aesthetic === 'minimal' ? 2 : 3.5;
+    ctx.beginPath();
+    if (typeof ctx.roundRect === 'function') {
+      ctx.roundRect(5, 5, W - 10, H - 10, 26);
+    } else {
+      ctx.rect(5, 5, W - 10, H - 10);
+    }
+    ctx.stroke();
 
-    if (aesthetic === 'retro') {
-      // Draw Analog Retro Dial on left + Warm Amber Phosphor Readout on right
-      const cx = 112;
-      const cy = 126;
-      const r = 46;
-      ctx.save();
+    // 3. Left Circular Glowing Status Orb + Progress Ring
+    const orbX = 66;
+    const orbY = H / 2;
+    const ringR = 44;
+    const orbR = 35;
+
+    // Background track ring
+    ctx.beginPath();
+    ctx.arc(orbX, orbY, ringR, 0, Math.PI * 2);
+    ctx.strokeStyle = 'rgba(148, 163, 184, 0.18)';
+    ctx.lineWidth = 5;
+    ctx.stroke();
+
+    // Active progress arc around the orb
+    const pct = m ? Math.max(0.06, Math.min(1, m.progressPct / 100)) : 0.12;
+    ctx.save();
+    ctx.beginPath();
+    ctx.arc(
+      orbX,
+      orbY,
+      ringR,
+      -Math.PI / 2,
+      -Math.PI / 2 + Math.PI * 2 * pct
+    );
+    ctx.strokeStyle = isPaused ? '#F59E0B' : '#10B981';
+    ctx.lineWidth = 5;
+    ctx.lineCap = 'round';
+    if (aesthetic === 'neon') {
+      ctx.shadowColor = isPaused ? '#F59E0B' : '#10B981';
+      ctx.shadowBlur = 10;
+    }
+    ctx.stroke();
+    ctx.restore();
+
+    // Inner Glowing Radial Gradient Orb (#6366F1 to #10B981)
+    ctx.save();
+    const orbGrad = ctx.createRadialGradient(
+      orbX - 10,
+      orbY - 10,
+      4,
+      orbX,
+      orbY,
+      orbR
+    );
+    if (isPaused) {
+      orbGrad.addColorStop(0, '#FBBF24');
+      orbGrad.addColorStop(1, '#D97706');
+    } else if (aesthetic === 'retro') {
+      orbGrad.addColorStop(0, '#F59E0B');
+      orbGrad.addColorStop(1, '#92400E');
+    } else {
+      orbGrad.addColorStop(0, '#6366F1');
+      orbGrad.addColorStop(1, '#10B981');
+    }
+    if (aesthetic === 'neon') {
+      ctx.shadowColor = isPaused ? 'rgba(245, 158, 11, 0.55)' : 'rgba(16, 185, 129, 0.55)';
+      ctx.shadowBlur = 16;
+    }
+    ctx.beginPath();
+    ctx.arc(orbX, orbY, orbR, 0, Math.PI * 2);
+    ctx.fillStyle = orbGrad;
+    ctx.fill();
+    ctx.restore();
+
+    // Play / Pause glyph inside the orb
+    ctx.fillStyle = '#FFFFFF';
+    if (isRunning) {
+      // Pause bars
+      const bw = 6;
+      const bh = 22;
+      ctx.fillRect(orbX - 9, orbY - bh / 2, bw, bh);
+      ctx.fillRect(orbX + 3, orbY - bh / 2, bw, bh);
+    } else {
+      // Play triangle
       ctx.beginPath();
-      ctx.arc(cx, cy, r, 0, Math.PI * 2);
-      ctx.fillStyle = '#1E1912';
+      ctx.moveTo(orbX - 6, orbY - 12);
+      ctx.lineTo(orbX - 6, orbY + 12);
+      ctx.lineTo(orbX + 12, orbY);
+      ctx.closePath();
       ctx.fill();
-      ctx.lineWidth = 3;
-      ctx.strokeStyle = '#D97706';
-      ctx.stroke();
-
-      for (let i = 0; i < 12; i++) {
-        const ang = (i * 30 * Math.PI) / 180;
-        ctx.beginPath();
-        ctx.moveTo(cx + Math.sin(ang) * (r - 8), cy - Math.cos(ang) * (r - 8));
-        ctx.lineTo(cx + Math.sin(ang) * (r - 3), cy - Math.cos(ang) * (r - 3));
-        ctx.strokeStyle = '#FBBF24';
-        ctx.lineWidth = 2;
-        ctx.stroke();
-      }
-
-      const totalSec = Math.max(0, Math.floor(clockMs / 1000));
-      const secRad = (((totalSec % 60) * 6) * Math.PI) / 180;
-      const minRad = ((((totalSec / 60) % 60) * 6) * Math.PI) / 180;
-      const hrRad = ((((totalSec / 3600) % 12) * 30) * Math.PI) / 180;
-
-      // Hour hand
-      ctx.beginPath();
-      ctx.moveTo(cx, cy);
-      ctx.lineTo(cx + Math.sin(hrRad) * 22, cy - Math.cos(hrRad) * 22);
-      ctx.strokeStyle = '#F59E0B';
-      ctx.lineWidth = 3.5;
-      ctx.stroke();
-
-      // Minute hand
-      ctx.beginPath();
-      ctx.moveTo(cx, cy);
-      ctx.lineTo(cx + Math.sin(minRad) * 32, cy - Math.cos(minRad) * 32);
-      ctx.strokeStyle = '#FEF3C7';
-      ctx.lineWidth = 2.5;
-      ctx.stroke();
-
-      // Second hand
-      ctx.beginPath();
-      ctx.moveTo(cx, cy);
-      ctx.lineTo(cx + Math.sin(secRad) * 37, cy - Math.cos(secRad) * 37);
-      ctx.strokeStyle = '#34D399';
-      ctx.lineWidth = 1.5;
-      ctx.stroke();
-      ctx.restore();
-
-      ctx.fillStyle = '#FBBF24';
-      ctx.font = '700 58px ui-monospace, "JetBrains Mono", monospace';
-      ctx.textAlign = 'center';
-      ctx.fillText(clockStr, 314, 146);
-    } else {
-      ctx.save();
-      if (aesthetic === 'neon') {
-        ctx.shadowColor = isPaused ? '#F59E0B' : borderCol;
-        ctx.shadowBlur = 16;
-      }
-      ctx.fillStyle = isPaused ? '#FBBF24' : '#FFFFFF';
-      ctx.font =
-        aesthetic === 'minimal'
-          ? '400 72px ui-monospace, "JetBrains Mono", "SF Mono", monospace'
-          : '800 76px ui-monospace, "JetBrains Mono", "SF Mono", monospace';
-      ctx.textAlign = 'center';
-      ctx.fillText(clockStr, W / 2, 152);
-      ctx.restore();
     }
 
-    // Overtime or Purity Subtitle
-    ctx.font = '700 18px ui-monospace, monospace';
-    if (m && m.overtimeMs > 0) {
-      ctx.fillStyle = '#10B981';
-      ctx.fillText(`OVERTIME +${fmtMS(m.overtimeMs)} · PURITY ${m.purity}%`, W / 2, 194);
-    } else if (m) {
-      ctx.fillStyle = '#94A3B8';
-      ctx.fillText(`${m.mode.toUpperCase()} · FOCUS PURITY ${m.purity}%`, W / 2, 194);
-    } else {
-      ctx.fillStyle = '#94A3B8';
-      ctx.fillText('DEEP HOURS · PRESS PLAY TO START', W / 2, 194);
-    }
+    // 4. Center/Right Bold Monospace Clock + "Time focused • [Heading]" Subtitle
+    const clockMs = m ? (m.overtimeMs > 0 ? m.totalActiveMs : m.displayMs) : 0;
+    const totalSec = Math.max(0, Math.floor(clockMs / 1000));
+    const hrs = Math.floor(totalSec / 3600);
+    const clockStr = hrs > 0 ? fmtHMS(clockMs) : fmtMS(clockMs);
 
-    // 5. Bottom Bar: Today's Total Hours Studied & Active Session Slice
-    ctx.fillStyle = aesthetic === 'retro' ? '#211B14' : '#131A2A';
-    ctx.fillRect(14, H - 54, W - 28, 40);
-    ctx.fillStyle = '#CBD5E1';
-    ctx.font = '700 17px system-ui, -apple-system, sans-serif';
+    const textLeft = 128;
+    ctx.save();
+    if (aesthetic === 'neon') {
+      ctx.shadowColor = isPaused ? 'rgba(245, 158, 11, 0.45)' : 'rgba(99, 102, 241, 0.5)';
+      ctx.shadowBlur = 14;
+    }
+    ctx.fillStyle = isPaused ? '#FBBF24' : aesthetic === 'retro' ? '#FBBF24' : '#F8FAFC';
+    ctx.font =
+      aesthetic === 'minimal'
+        ? `400 ${hrs > 0 ? 44 : 52}px ui-monospace, "JetBrains Mono", "SF Mono", monospace`
+        : `800 ${hrs > 0 ? 46 : 54}px ui-monospace, "JetBrains Mono", "SF Mono", monospace`;
+    ctx.textAlign = 'left';
+    ctx.textBaseline = 'alphabetic';
+    ctx.fillText(clockStr, textLeft, 74);
+    ctx.restore();
+
+    // Status pill badge on top-right
+    const statusText = isPaused
+      ? 'PAUSED'
+      : m && m.overtimeMs > 0
+        ? `+${fmtMS(m.overtimeMs)}`
+        : isRunning
+          ? 'FOCUSING'
+          : 'READY';
+    ctx.fillStyle = isPaused
+      ? 'rgba(245, 158, 11, 0.2)'
+      : 'rgba(16, 185, 129, 0.2)';
+    ctx.beginPath();
+    if (typeof ctx.roundRect === 'function') {
+      ctx.roundRect(W - 104, 18, 86, 24, 12);
+    } else {
+      ctx.rect(W - 104, 18, 86, 24);
+    }
+    ctx.fill();
+
+    ctx.fillStyle = isPaused ? '#FBBF24' : '#34D399';
+    ctx.font = '800 11px ui-monospace, monospace';
     ctx.textAlign = 'center';
+    ctx.fillText(statusText, W - 61, 34);
+
+    // Subtitle: "Time focused • [Heading]" in muted slate (#94A3B8)
+    ctx.fillStyle = '#94A3B8';
+    ctx.font = '600 15px system-ui, -apple-system, sans-serif';
+    ctx.textAlign = 'left';
+    const cleanTopic =
+      heading.toLowerCase() === activeSub.name.toLowerCase()
+        ? `${activeSub.e} ${activeSub.name}`
+        : `${activeSub.e} ${heading}`;
+    const subtitle = `Time focused • ${cleanTopic}`;
+    ctx.fillText(subtitle.slice(0, 31), textLeft, 103);
+
+    // Secondary micro-row: Today's Total & Focus Purity
+    ctx.fillStyle = '#64748B';
+    ctx.font = '700 12.5px ui-monospace, monospace';
     ctx.fillText(
-      `Today Studied: ${fmtHMShort(todayTotalMs)}   |   Active: ${m ? fmtHMShort(m.totalActiveMs) : '0m'}`,
-      W / 2,
-      H - 28
+      `Today ${fmtHMShort(todayTotalMs)}  •  Purity ${m ? m.purity : 100}%`,
+      textLeft,
+      126
     );
 
     pushCanvasFrame();
@@ -251,14 +283,16 @@ export function useFloatingTimerPiP(
     const m = getTimerMetrics(curState);
     const sub = m ? m.subject : getSubject(curState);
     const heading = m ? m.heading : sub.name || 'Study Session';
-    const dotColor = sub.color || '#3b82f6';
     const isPaused = m?.status === 'paused';
     const isRun = m?.status === 'running';
     const clockMs = m ? (m.overtimeMs > 0 ? m.totalActiveMs : m.displayMs) : 0;
-    const clockStr = fmtHMS(clockMs);
     const totalSec = Math.max(0, Math.floor(clockMs / 1000));
-    const secDeg = (totalSec % 60) * 6;
-    const minDeg = ((totalSec / 60) % 60) * 6;
+    const hrs = Math.floor(totalSec / 3600);
+    const clockStr = hrs > 0 ? fmtHMS(clockMs) : fmtMS(clockMs);
+    const pct = m ? Math.max(6, Math.min(100, m.progressPct)) : 12;
+    const r = 19;
+    const circ = 2 * Math.PI * r;
+    const dashOffset = circ * (1 - pct / 100);
     const esc = (s: string) =>
       String(s ?? '').replace(
         /[&<>"']/g,
@@ -268,36 +302,24 @@ export function useFloatingTimerPiP(
     docPipWin.document.body.className = `pip-body aesthetic-${aesthetic}`;
     docPipWin.document.body.style.setProperty(
       '--pip-bd',
-      isPaused ? '#f59e0b' : aesthetic === 'retro' ? '#d97706' : '#10b981'
+      isPaused ? '#f59e0b' : aesthetic === 'retro' ? '#d97706' : '#6366f1'
     );
     docPipWin.document.body.innerHTML = `
-      <div class="pip-top">
-        <span style="display:flex;align-items:center;gap:5px">
-          <i class="dot" style="--sc:${esc(dotColor)}"></i>
-          ${esc(sub.e)} ${esc(heading.slice(0, 16))}
-        </span>
-        <span style="color:${isPaused ? '#fbbf24' : '#34d399'}">
-          ${m && m.overtimeMs > 0 ? `+${fmtMS(m.overtimeMs)}` : isPaused ? 'PAUSED' : isRun ? `${m.purity}%` : 'IDLE'}
-        </span>
-      </div>
-      ${
-        aesthetic === 'retro'
-          ? `<div class="pip-retro-row">
-              <svg width="34" height="34" viewBox="0 0 40 40" aria-hidden="true">
-                <circle cx="20" cy="20" r="18" fill="#1e1912" stroke="#d97706" stroke-width="2"/>
-                <line x1="20" y1="20" x2="20" y2="8" stroke="#fef3c7" stroke-width="2" stroke-linecap="round" transform="rotate(${minDeg} 20 20)"/>
-                <line x1="20" y1="20" x2="20" y2="5" stroke="#34d399" stroke-width="1.2" stroke-linecap="round" transform="rotate(${secDeg} 20 20)"/>
-                <circle cx="20" cy="20" r="2" fill="#fbbf24"/>
-              </svg>
-              <div class="pip-clock">${clockStr}</div>
-            </div>`
-          : `<div class="pip-clock">${clockStr}</div>`
-      }
-      <div class="pip-actions">
-        <button data-pip-act="toggle" style="background:${isRun ? '#f59e0b' : '#10b981'};color:#052e16">
-          ${isRun ? '⏸ Pause' : isPaused ? '▶ Resume' : '▶ Start'}
+      <div style="display:flex;align-items:center;gap:12px;height:100%;padding:2px 4px;">
+        <button data-pip-act="toggle" style="position:relative;width:44px;height:44px;border-radius:999px;border:0;cursor:pointer;background:radial-gradient(circle at 30% 30%, ${isPaused ? '#fbbf24, #d97706' : '#6366f1, #10b981'});color:#fff;font-size:15px;font-weight:800;display:flex;align-items:center;justify-content:center;flex-shrink:0;box-shadow:0 0 14px ${isPaused ? 'rgba(245,158,11,0.45)' : 'rgba(16,185,129,0.45)'}">
+          <svg width="44" height="44" viewBox="0 0 44 44" style="position:absolute;inset:0;transform:rotate(-90deg);pointer-events:none">
+            <circle cx="22" cy="22" r="${r}" fill="none" stroke="rgba(255,255,255,0.18)" stroke-width="2.5"/>
+            <circle cx="22" cy="22" r="${r}" fill="none" stroke="${isPaused ? '#fde68a' : '#6ee7b7'}" stroke-width="2.5" stroke-dasharray="${circ.toFixed(1)}" stroke-dashoffset="${dashOffset.toFixed(1)}" stroke-linecap="round"/>
+          </svg>
+          <span>${isRun ? '⏸' : '▶'}</span>
         </button>
-        ${m ? `<button data-pip-act="stop" style="background:#334155;color:#fca5a5">⏹ Stop</button>` : ''}
+        <div style="flex:1;min-width:0;">
+          <div class="pip-clock" style="text-align:left;font-size:24px;margin:0;line-height:1.1;">${clockStr}</div>
+          <div style="font-size:11px;color:#94a3b8;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;margin-top:2px;">
+            Time focused • ${esc(sub.e)} ${esc(heading)}
+          </div>
+        </div>
+        ${m ? `<button data-pip-act="stop" title="Finish Session" style="width:28px;height:28px;border-radius:999px;border:1px solid rgba(248,113,113,0.35);background:rgba(239,68,68,0.15);color:#fca5a5;cursor:pointer;font-size:11px;display:flex;align-items:center;justify-content:center;flex-shrink:0;">⏹</button>` : ''}
       </div>
     `;
   }, []);
@@ -372,137 +394,6 @@ export function useFloatingTimerPiP(
     }
   }, [drawCanvasFrame, renderDocPiP]);
 
-  const setupMediaSessionHandlers = useCallback(() => {
-    if (typeof navigator === 'undefined' || !('mediaSession' in navigator)) return;
-    try {
-      const curState = stateRef.current;
-      const now = Date.now();
-      const todayKey = logicalKey(now, curState.set.dayResetHour ?? 4);
-      const m = getTimerMetrics(curState, now);
-      const sub = m ? m.subject : getSubject(curState);
-      const heading = m ? m.heading : sub.name || 'Deep Study Session';
-      const liveClock = m
-        ? fmtHMS(m.overtimeMs > 0 ? m.totalActiveMs : m.displayMs)
-        : '00:00:00';
-      const elapsedClock = m ? fmtHMS(m.totalActiveMs) : '00:00:00';
-
-      if (typeof MediaMetadata !== 'undefined') {
-        navigator.mediaSession.metadata = new MediaMetadata({
-          title: `${sub.e} ${sub.name} · ${heading} · ${liveClock}`,
-          artist:
-            m?.status === 'paused'
-              ? `PAUSED (${elapsedClock}) · Deep Hours`
-              : m && m.overtimeMs > 0
-                ? `FLOW +${fmtMS(m.overtimeMs)} · Purity ${m.purity}% · Deep Hours`
-                : `STUDYING (${elapsedClock}) · Purity ${m ? m.purity : 100}% · Deep Hours`,
-          album: `Today Studied: ${fmtHMShort(
-            getTodaySubjectMs(curState, 'any', todayKey, todayKey, now)
-          )}`,
-          artwork: [
-            {
-              src: '/icon.svg',
-              sizes: '512x512',
-              type: 'image/svg+xml',
-            },
-          ],
-        });
-      }
-
-      navigator.mediaSession.playbackState =
-        m?.status === 'running'
-          ? 'playing'
-          : m?.status === 'paused'
-            ? 'paused'
-            : 'none';
-
-      navigator.mediaSession.setActionHandler('play', () => {
-        handleExternalResumeOrStart();
-      });
-
-      navigator.mediaSession.setActionHandler('pause', () => {
-        handleExternalPause();
-      });
-
-      navigator.mediaSession.setActionHandler('stop', () => {
-        if (stateRef.current.activeTimer) {
-          actionsRef.current.onStopAndReflect();
-        }
-      });
-    } catch {
-      // ignore mediaSession errors
-    }
-  }, [handleExternalPause, handleExternalResumeOrStart]);
-
-  const initVideoStream = useCallback(async () => {
-    const video = videoRef.current;
-    const canvas = canvasRef.current;
-    if (!video || !canvas) return null;
-
-    const { audioTracks } = ensureAudioEngine();
-    drawCanvasFrame();
-
-    if (typeof canvas.captureStream === 'function') {
-      if (!combinedStreamRef.current) {
-        const canvasStream = canvas.captureStream(15);
-        canvasTrackRef.current = canvasStream.getVideoTracks()[0] || null;
-        combinedStreamRef.current = new MediaStream([
-          ...canvasStream.getVideoTracks(),
-          ...audioTracks,
-        ]);
-      } else if (
-        audioTracks.length > 0 &&
-        combinedStreamRef.current.getAudioTracks().length === 0
-      ) {
-        audioTracks.forEach((track) => combinedStreamRef.current?.addTrack(track));
-      }
-
-      if (video.srcObject !== combinedStreamRef.current) {
-        video.srcObject = combinedStreamRef.current;
-      }
-
-      // Crucial Android Chrome requirement: keep <video> unmuted with the 0.001 gain oscillator track
-      video.muted = false;
-      video.removeAttribute('muted');
-      video.volume = 1.0;
-
-      if (!videoListenersAttachedRef.current) {
-        video.addEventListener('pause', () => {
-          if (syncGuardRef.current) return;
-          if (stateRef.current.activeTimer?.status === 'running') {
-            syncGuardRef.current = true;
-            handleExternalPause();
-            syncGuardRef.current = false;
-          }
-        });
-
-        video.addEventListener('play', () => {
-          if (syncGuardRef.current) return;
-          syncGuardRef.current = true;
-          handleExternalResumeOrStart();
-          syncGuardRef.current = false;
-        });
-
-        videoListenersAttachedRef.current = true;
-      }
-    }
-
-    setupMediaSessionHandlers();
-    try {
-      syncGuardRef.current = true;
-      await video.play();
-    } catch {
-      // ignore autoplay block until user gesture
-    } finally {
-      syncGuardRef.current = false;
-    }
-    return video;
-  }, [
-    drawCanvasFrame,
-    handleExternalPause,
-    handleExternalResumeOrStart,
-    setupMediaSessionHandlers,
-  ]);
-
   const openDocumentPiP = useCallback(async () => {
     const w = window as unknown as {
       documentPictureInPicture?: {
@@ -512,8 +403,8 @@ export function useFloatingTimerPiP(
     if (!w.documentPictureInPicture) return false;
     try {
       const docPipWin = await w.documentPictureInPicture.requestWindow({
-        width: 260,
-        height: 130,
+        width: 280,
+        height: 92,
       });
       docPipWinRef.current = docPipWin;
       [...document.styleSheets].forEach((ss) => {
@@ -563,6 +454,174 @@ export function useFloatingTimerPiP(
     }
   }, [handleExternalPause, handleExternalResumeOrStart, renderDocPiP]);
 
+  const setupMediaSessionHandlers = useCallback(() => {
+    if (typeof navigator === 'undefined' || !('mediaSession' in navigator)) return;
+    try {
+      const curState = stateRef.current;
+      const now = Date.now();
+      const todayKey = logicalKey(now, curState.set.dayResetHour ?? 4);
+      const m = getTimerMetrics(curState, now);
+      const sub = m ? m.subject : getSubject(curState);
+      const heading = m ? m.heading : sub.name || 'Deep Study Session';
+      const liveClock = m
+        ? fmtHMS(m.overtimeMs > 0 ? m.totalActiveMs : m.displayMs)
+        : '00:00:00';
+      const elapsedClock = m ? fmtHMS(m.totalActiveMs) : '00:00:00';
+
+      if (typeof MediaMetadata !== 'undefined') {
+        navigator.mediaSession.metadata = new MediaMetadata({
+          title: `${sub.e} ${sub.name} · ${heading} · ${liveClock}`,
+          artist:
+            m?.status === 'paused'
+              ? `PAUSED (${elapsedClock}) · Deep Hours`
+              : m && m.overtimeMs > 0
+                ? `FLOW +${fmtMS(m.overtimeMs)} · Purity ${m.purity}% · Deep Hours`
+                : `Time focused (${elapsedClock}) · Purity ${m ? m.purity : 100}% · Deep Hours`,
+          album: `Today Studied: ${fmtHMShort(
+            getTodaySubjectMs(curState, 'any', todayKey, todayKey, now)
+          )}`,
+          artwork: [
+            {
+              src: '/icon.svg',
+              sizes: '512x512',
+              type: 'image/svg+xml',
+            },
+          ],
+        });
+      }
+
+      navigator.mediaSession.playbackState =
+        m?.status === 'running'
+          ? 'playing'
+          : m?.status === 'paused'
+            ? 'paused'
+            : 'none';
+
+      navigator.mediaSession.setActionHandler('play', () => {
+        handleExternalResumeOrStart();
+      });
+
+      navigator.mediaSession.setActionHandler('pause', () => {
+        handleExternalPause();
+      });
+
+      navigator.mediaSession.setActionHandler('stop', () => {
+        if (stateRef.current.activeTimer) {
+          actionsRef.current.onStopAndReflect();
+        }
+      });
+
+      // Automatic Picture-in-Picture MediaSession handler for installed PWAs & Android Chrome
+      try {
+        navigator.mediaSession.setActionHandler(
+          'enterpictureinpicture' as MediaSessionAction,
+          async () => {
+            const video = videoRef.current;
+            if (
+              video &&
+              typeof video.requestPictureInPicture === 'function' &&
+              !document.pictureInPictureElement
+            ) {
+              try {
+                await video.requestPictureInPicture();
+                return;
+              } catch {
+                // fallback to Document PiP if supported
+              }
+            }
+            await openDocumentPiP();
+          }
+        );
+      } catch {
+        // enterpictureinpicture action not supported in this browser version
+      }
+    } catch {
+      // ignore mediaSession errors
+    }
+  }, [handleExternalPause, handleExternalResumeOrStart, openDocumentPiP]);
+
+  const initVideoStream = useCallback(async () => {
+    const video = videoRef.current;
+    const canvas = canvasRef.current;
+    if (!video || !canvas) return null;
+
+    const { audioTracks } = ensureAudioEngine();
+    drawCanvasFrame();
+
+    if (typeof canvas.captureStream === 'function') {
+      if (!combinedStreamRef.current) {
+        const canvasStream = canvas.captureStream(15);
+        canvasTrackRef.current = canvasStream.getVideoTracks()[0] || null;
+        combinedStreamRef.current = new MediaStream([
+          ...canvasStream.getVideoTracks(),
+          ...audioTracks,
+        ]);
+      } else if (
+        audioTracks.length > 0 &&
+        combinedStreamRef.current.getAudioTracks().length === 0
+      ) {
+        audioTracks.forEach((track) => combinedStreamRef.current?.addTrack(track));
+      }
+
+      if (video.srcObject !== combinedStreamRef.current) {
+        video.srcObject = combinedStreamRef.current;
+      }
+
+      // Crucial Android Chrome requirement: keep <video> unmuted with the 0.001 gain oscillator track
+      video.muted = false;
+      video.removeAttribute('muted');
+      video.volume = 1.0;
+
+      // Enable automatic Picture-in-Picture when swiping home on Android / desktop Chrome
+      (
+        video as HTMLVideoElement & {
+          autoPictureInPicture?: boolean;
+          disablePictureInPicture?: boolean;
+        }
+      ).autoPictureInPicture = true;
+      (
+        video as HTMLVideoElement & { disablePictureInPicture?: boolean }
+      ).disablePictureInPicture = false;
+      video.setAttribute('autopictureinpicture', '');
+
+      if (!videoListenersAttachedRef.current) {
+        video.addEventListener('pause', () => {
+          if (syncGuardRef.current) return;
+          if (stateRef.current.activeTimer?.status === 'running') {
+            syncGuardRef.current = true;
+            handleExternalPause();
+            syncGuardRef.current = false;
+          }
+        });
+
+        video.addEventListener('play', () => {
+          if (syncGuardRef.current) return;
+          syncGuardRef.current = true;
+          handleExternalResumeOrStart();
+          syncGuardRef.current = false;
+        });
+
+        videoListenersAttachedRef.current = true;
+      }
+    }
+
+    setupMediaSessionHandlers();
+    try {
+      syncGuardRef.current = true;
+      await video.play();
+    } catch {
+      // ignore autoplay block until user gesture
+    } finally {
+      syncGuardRef.current = false;
+    }
+    return video;
+  }, [
+    drawCanvasFrame,
+    handleExternalPause,
+    handleExternalResumeOrStart,
+    setupMediaSessionHandlers,
+  ]);
+
   const togglePiP = useCallback(
     async (forceMode?: 'video' | 'doc') => {
       if (!stateRef.current.activeTimer) {
@@ -580,10 +639,11 @@ export function useFloatingTimerPiP(
         setInAppPiPOpen(false);
         return;
       }
-      if (inAppPiPOpen) {
-        setInAppPiPOpen(false);
-        return;
-      }
+
+      // Always activate the sleek in-app Regain-style pill
+      setInAppPiPOpen(true);
+      setPipCollapsed(false);
+      setPipGhost(false);
 
       const pref = forceMode || stateRef.current.set.pipPref || 'video';
       const isAndroid = /Android/i.test(navigator.userAgent);
@@ -616,10 +676,9 @@ export function useFloatingTimerPiP(
       }
 
       drawCanvasFrame();
-      setInAppPiPOpen(true);
-      actionsRef.current.onToast('Floating Lecture PiP overlay active');
+      actionsRef.current.onToast('Sleek Floating Pill active');
     },
-    [drawCanvasFrame, inAppPiPOpen, initVideoStream, openDocumentPiP]
+    [drawCanvasFrame, initVideoStream, openDocumentPiP]
   );
 
   const syncState = useCallback(() => {
@@ -627,13 +686,29 @@ export function useFloatingTimerPiP(
     renderDocPiP();
     setupMediaSessionHandlers();
 
-    const isRun = stateRef.current.activeTimer?.status === 'running';
+    const activeTimer = stateRef.current.activeTimer;
+    const isRun = activeTimer?.status === 'running';
+    const video = videoRef.current;
+
+    if (video) {
+      if (activeTimer) {
+        (
+          video as HTMLVideoElement & { autoPictureInPicture?: boolean }
+        ).autoPictureInPicture = true;
+        video.setAttribute('autopictureinpicture', '');
+      } else {
+        (
+          video as HTMLVideoElement & { autoPictureInPicture?: boolean }
+        ).autoPictureInPicture = false;
+        video.removeAttribute('autopictureinpicture');
+      }
+    }
+
     if (isRun && !combinedStreamRef.current) {
       void initVideoStream();
       return;
     }
 
-    const video = videoRef.current;
     if (video && combinedStreamRef.current) {
       syncGuardRef.current = true;
       if (isRun && video.paused) {
@@ -670,7 +745,16 @@ export function useFloatingTimerPiP(
       document.exitPictureInPicture().catch(() => {});
     }
     setInAppPiPOpen(false);
+    setPipCollapsed(false);
+    setPipGhost(false);
   }, []);
+
+  // Automatically show the sleek floating pill when a timer starts in any mode
+  useEffect(() => {
+    if (state.activeTimer) {
+      setInAppPiPOpen(true);
+    }
+  }, [ Boolean(state.activeTimer) ]);
 
   useEffect(() => {
     syncState();
@@ -683,9 +767,25 @@ export function useFloatingTimerPiP(
     syncState,
   ]);
 
+  // Automatic Picture-in-Picture trigger on visibilitychange when minimizing on Android / PWA
   useEffect(() => {
     const onVis = () => {
       syncState();
+      if (
+        document.visibilityState === 'hidden' &&
+        stateRef.current.activeTimer?.status === 'running'
+      ) {
+        const video = videoRef.current;
+        if (
+          video &&
+          typeof video.requestPictureInPicture === 'function' &&
+          !document.pictureInPictureElement
+        ) {
+          video.requestPictureInPicture().catch(() => {
+            // Browser requires Automatic PiP via autoPictureInPicture attribute or enterpictureinpicture handler
+          });
+        }
+      }
     };
     document.addEventListener('visibilitychange', onVis);
     return () => document.removeEventListener('visibilitychange', onVis);
@@ -696,6 +796,12 @@ export function useFloatingTimerPiP(
     videoRef,
     inAppPiPOpen,
     setInAppPiPOpen,
+    pipCollapsed,
+    setPipCollapsed,
+    pipGhost,
+    setPipGhost,
+    pipTopY,
+    setPipTopY,
     togglePiP,
     syncState,
     renderTick,

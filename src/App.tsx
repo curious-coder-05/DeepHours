@@ -598,6 +598,12 @@ export default function App() {
     videoRef,
     inAppPiPOpen,
     setInAppPiPOpen,
+    pipCollapsed,
+    setPipCollapsed,
+    pipGhost,
+    setPipGhost,
+    pipTopY,
+    setPipTopY,
     togglePiP,
     renderTick,
     closePiP,
@@ -609,6 +615,69 @@ export default function App() {
     onStopAndReflect: stopTimerAndReflect,
     onToast: showToast,
   });
+
+  const pipDragRef = useRef<{
+    active: boolean;
+    pointerId: number | null;
+    startY: number;
+    startTop: number;
+    moved: boolean;
+  }>({
+    active: false,
+    pointerId: null,
+    startY: 0,
+    startTop: 136,
+    moved: false,
+  });
+
+  const handlePipPointerDown = useCallback(
+    (e: React.PointerEvent<HTMLElement>) => {
+      pipDragRef.current = {
+        active: true,
+        pointerId: e.pointerId,
+        startY: e.clientY,
+        startTop: pipTopY,
+        moved: false,
+      };
+    },
+    [pipTopY]
+  );
+
+  const handlePipPointerMove = useCallback(
+    (e: React.PointerEvent<HTMLElement>) => {
+      const drag = pipDragRef.current;
+      if (!drag.active || drag.pointerId !== e.pointerId) return;
+      const dy = e.clientY - drag.startY;
+      if (!drag.moved && Math.abs(dy) > 6) {
+        drag.moved = true;
+        try {
+          e.currentTarget.setPointerCapture(e.pointerId);
+        } catch {
+          // ignore if capture fails
+        }
+      }
+      if (drag.moved) {
+        const maxTop =
+          typeof window !== 'undefined' ? Math.max(72, window.innerHeight - 132) : 640;
+        const nextTop = Math.min(maxTop, Math.max(56, Math.round(drag.startTop + dy)));
+        setPipTopY(nextTop);
+      }
+    },
+    [setPipTopY]
+  );
+
+  const handlePipPointerUp = useCallback((e: React.PointerEvent<HTMLElement>) => {
+    const drag = pipDragRef.current;
+    if (!drag.active) return;
+    drag.active = false;
+    try {
+      if (e.currentTarget.hasPointerCapture(e.pointerId)) {
+        e.currentTarget.releasePointerCapture(e.pointerId);
+      }
+    } catch {
+      // ignore
+    }
+  }, []);
 
   // 500ms Zero-Drift Timer Loop backed by an unthrottled Web Worker + fallback setInterval
   useEffect(() => {
@@ -1367,153 +1436,207 @@ export default function App() {
         </button>
       </nav>
 
-      {/* In-App Floating Lecture PiP Companion Overlay */}
-      {inAppPiPOpen && (
-        <aside
-          className={`pip-floating-overlay aesthetic-${state.set.timerAesthetic || 'neon'}`}
-          aria-label="Floating Lecture PiP Timer"
-          style={
-            {
-              '--pip-bd':
-                activeMetrics?.status === 'paused'
-                  ? '#f59e0b'
-                  : state.set.timerAesthetic === 'retro'
-                    ? '#d97706'
-                    : pipColor,
-            } as React.CSSProperties
-          }
-        >
-          <div className="pip-top">
-            <span style={{ display: 'flex', alignItems: 'center', gap: '5px' }}>
-              <i
-                className="dot"
-                style={{ '--sc': pipColor } as React.CSSProperties}
-              />
-              {pipSub.e} {pipHeading.slice(0, 16)}
-            </span>
-            <span
-              style={{
-                color:
-                  activeMetrics?.status === 'paused' ? '#fbbf24' : '#34d399',
-              }}
-            >
-              {activeMetrics && activeMetrics.overtimeMs > 0
-                ? `+${fmtMS(activeMetrics.overtimeMs)}`
-                : activeMetrics?.status === 'paused'
-                  ? 'PAUSED'
-                  : activeMetrics?.status === 'running'
-                    ? `${activeMetrics.purity}%`
-                    : 'IDLE'}
-            </span>
-          </div>
-          {state.set.timerAesthetic === 'retro' ? (
-            <div className="pip-retro-row">
-              {(() => {
-                const ms = activeMetrics
-                  ? activeMetrics.overtimeMs > 0
-                    ? activeMetrics.totalActiveMs
-                    : activeMetrics.displayMs
-                  : 0;
-                const totalSec = Math.max(0, Math.floor(ms / 1000));
-                const secDeg = (totalSec % 60) * 6;
-                const minDeg = ((totalSec / 60) % 60) * 6;
-                return (
-                  <svg width="34" height="34" viewBox="0 0 40 40" aria-hidden="true">
-                    <circle
-                      cx="20"
-                      cy="20"
-                      r="18"
-                      fill="#1e1912"
-                      stroke="#d97706"
-                      strokeWidth="2"
-                    />
-                    <line
-                      x1="20"
-                      y1="20"
-                      x2="20"
-                      y2="8"
-                      stroke="#fef3c7"
-                      strokeWidth="2"
-                      strokeLinecap="round"
-                      transform={`rotate(${minDeg} 20 20)`}
-                    />
-                    <line
-                      x1="20"
-                      y1="20"
-                      x2="20"
-                      y2="5"
-                      stroke="#34d399"
-                      strokeWidth="1.2"
-                      strokeLinecap="round"
-                      transform={`rotate(${secDeg} 20 20)`}
-                    />
-                    <circle cx="20" cy="20" r="2" fill="#fbbf24" />
-                  </svg>
-                );
-              })()}
-              <div className="pip-clock">
-                {activeMetrics
-                  ? fmtHMS(
-                      activeMetrics.overtimeMs > 0
-                        ? activeMetrics.totalActiveMs
-                        : activeMetrics.displayMs
-                    )
-                  : '00:00:00'}
-              </div>
-            </div>
-          ) : (
-            <div className="pip-clock">
-              {activeMetrics
-                ? fmtHMS(
-                    activeMetrics.overtimeMs > 0
-                      ? activeMetrics.totalActiveMs
-                      : activeMetrics.displayMs
-                  )
-                : '00:00:00'}
-            </div>
-          )}
-          <div className="pip-actions">
-            <button
-              type="button"
-              style={{
-                background:
-                  activeMetrics?.status === 'running' ? '#f59e0b' : '#10b981',
-                color: '#052e16',
-              }}
-              onClick={() => {
-                if (!state.activeTimer) startTimer();
-                else toggleTimerPause();
-              }}
-            >
-              {activeMetrics?.status === 'running'
-                ? '⏸ Pause'
-                : activeMetrics?.status === 'paused'
-                  ? '▶ Resume'
-                  : '▶ Start'}
-            </button>
-            {activeMetrics && (
-              <button
-                type="button"
-                style={{ background: '#334155', color: '#fca5a5' }}
+      {/* Regain-Style Sleek Floating Edge Pill & Dockable Tab */}
+      {(inAppPiPOpen || Boolean(state.activeTimer)) &&
+        (() => {
+          const isRunning = activeMetrics?.status === 'running';
+          const isPaused = activeMetrics?.status === 'paused';
+          const rawMs = activeMetrics
+            ? activeMetrics.overtimeMs > 0
+              ? activeMetrics.totalActiveMs
+              : activeMetrics.displayMs
+            : 0;
+          const totalSec = Math.max(0, Math.floor(rawMs / 1000));
+          const hrs = Math.floor(totalSec / 3600);
+          const clockText = hrs > 0 ? fmtHMS(rawMs) : fmtMS(rawMs);
+          const pct = activeMetrics
+            ? Math.max(6, Math.min(100, activeMetrics.progressPct))
+            : 12;
+          const ringR = 19.5;
+          const ringCirc = 2 * Math.PI * ringR;
+          const ringOffset = ringCirc * (1 - pct / 100);
+          const borderAccent = isPaused
+            ? '#f59e0b'
+            : state.set.timerAesthetic === 'retro'
+              ? '#d97706'
+              : isRunning
+                ? '#10b981'
+                : '#6366f1';
+
+          return (
+            <>
+              <aside
+                className={`regain-pip-pill aesthetic-${state.set.timerAesthetic || 'neon'}${pipCollapsed ? ' is-collapsed' : ''}${pipGhost ? ' is-ghost' : ''}`}
+                aria-label="Floating Study Timer Pill"
+                style={
+                  {
+                    top: `${pipTopY}px`,
+                    '--pip-bd': borderAccent,
+                  } as React.CSSProperties
+                }
+                onPointerDown={handlePipPointerDown}
+                onPointerMove={handlePipPointerMove}
+                onPointerUp={handlePipPointerUp}
+                onPointerCancel={handlePipPointerUp}
                 onClick={() => {
-                  setInAppPiPOpen(false);
-                  stopTimerAndReflect();
+                  if (pipDragRef.current.moved) return;
+                  if (pipGhost) {
+                    setPipGhost(false);
+                  }
                 }}
               >
-                ⏹ Stop
+                {/* Left: Circular Glowing Play/Pause Button (44x44px) with Progress Ring */}
+                <div className="regain-pip-orb-wrap">
+                  <svg
+                    className="regain-pip-ring-svg"
+                    viewBox="0 0 44 44"
+                    aria-hidden="true"
+                  >
+                    <circle
+                      cx="22"
+                      cy="22"
+                      r={ringR}
+                      fill="none"
+                      stroke="rgba(148, 163, 184, 0.22)"
+                      strokeWidth="2.6"
+                    />
+                    <circle
+                      cx="22"
+                      cy="22"
+                      r={ringR}
+                      fill="none"
+                      stroke={isPaused ? '#fbbf24' : '#10b981'}
+                      strokeWidth="2.6"
+                      strokeLinecap="round"
+                      strokeDasharray={ringCirc.toFixed(1)}
+                      strokeDashoffset={ringOffset.toFixed(1)}
+                    />
+                  </svg>
+                  <button
+                    type="button"
+                    className={`regain-pip-orb-btn${isPaused ? ' is-paused' : ''}`}
+                    aria-label={
+                      isRunning
+                        ? 'Pause Study Timer'
+                        : isPaused
+                          ? 'Resume Study Timer'
+                          : 'Start Study Timer'
+                    }
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      if (pipDragRef.current.moved) return;
+                      if (pipGhost) {
+                        setPipGhost(false);
+                        return;
+                      }
+                      if (!state.activeTimer) startTimer();
+                      else toggleTimerPause();
+                    }}
+                  >
+                    {isRunning ? (
+                      <svg width="14" height="14" viewBox="0 0 14 14" aria-hidden="true">
+                        <rect x="2.5" y="2" width="3.2" height="10" rx="1" fill="#ffffff" />
+                        <rect x="8.3" y="2" width="3.2" height="10" rx="1" fill="#ffffff" />
+                      </svg>
+                    ) : (
+                      <svg width="14" height="14" viewBox="0 0 14 14" aria-hidden="true">
+                        <path d="M3.5 2.2L11.8 7L3.5 11.8V2.2Z" fill="#ffffff" />
+                      </svg>
+                    )}
+                  </button>
+                </div>
+
+                {/* Center: Bold Monospace Clock + Active Session Heading / "Time focused" Subtitle */}
+                <div className="regain-pip-center">
+                  <div className="regain-pip-clock-row">
+                    <span className="regain-pip-clock">{clockText}</span>
+                    <span
+                      className={`regain-pip-badge${isPaused ? ' is-paused' : ''}`}
+                    >
+                      {activeMetrics && activeMetrics.overtimeMs > 0
+                        ? `+${fmtMS(activeMetrics.overtimeMs)}`
+                        : isPaused
+                          ? 'PAUSED'
+                          : isRunning
+                            ? `${activeMetrics.purity}%`
+                            : 'READY'}
+                    </span>
+                  </div>
+                  <div className="regain-pip-sub">
+                    {pipSub.e} {pipHeading} • Time focused
+                  </div>
+                </div>
+
+                {/* Right Controls: 95% Ghost Mode Toggle (👻) + Collapse Cross Button (✕) */}
+                <div className="regain-pip-actions">
+                  <button
+                    type="button"
+                    className={`regain-pip-icon-btn${pipGhost ? ' ghost-on' : ''}`}
+                    aria-label={
+                      pipGhost
+                        ? 'Restore Full Visibility'
+                        : 'Toggle 95% Transparent Ghost Mode'
+                    }
+                    title="95% Transparent Ghost Mode (Read through timer)"
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      if (pipDragRef.current.moved) return;
+                      setPipGhost((g) => !g);
+                    }}
+                  >
+                    👻
+                  </button>
+                  <button
+                    type="button"
+                    className="regain-pip-icon-btn"
+                    aria-label="Collapse Timer to Edge Handle"
+                    title="Collapse to Edge Handle"
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      if (pipDragRef.current.moved) return;
+                      setPipGhost(false);
+                      setPipCollapsed(true);
+                    }}
+                  >
+                    <svg width="11" height="11" viewBox="0 0 12 12" aria-hidden="true">
+                      <path
+                        d="M2.2 2.2L9.8 9.8M9.8 2.2L2.2 9.8"
+                        stroke="currentColor"
+                        strokeWidth="2"
+                        strokeLinecap="round"
+                      />
+                    </svg>
+                  </button>
+                </div>
+              </aside>
+
+              {/* Collapsed Edge Handle State (>) */}
+              <button
+                type="button"
+                className={`regain-edge-handle${pipCollapsed ? ' is-visible' : ''}`}
+                aria-label="Expand Floating Study Timer"
+                title="Expand Study Timer Pill"
+                style={
+                  {
+                    top: `${pipTopY}px`,
+                    '--pip-bd': borderAccent,
+                  } as React.CSSProperties
+                }
+                onPointerDown={handlePipPointerDown}
+                onPointerMove={handlePipPointerMove}
+                onPointerUp={handlePipPointerUp}
+                onPointerCancel={handlePipPointerUp}
+                onClick={() => {
+                  if (pipDragRef.current.moved) return;
+                  setPipCollapsed(false);
+                }}
+              >
+                <span className="regain-edge-dot" />
+                <span className="regain-edge-chev">&gt;</span>
               </button>
-            )}
-            <button
-              type="button"
-              style={{ background: '#1e293b', color: '#94a3b8', flex: 'none' }}
-              aria-label="Close Floating PiP"
-              onClick={() => setInAppPiPOpen(false)}
-            >
-              ×
-            </button>
-          </div>
-        </aside>
-      )}
+            </>
+          );
+        })()}
 
       {/* Modals */}
       <Modals
@@ -1797,12 +1920,12 @@ export default function App() {
         </div>
       )}
 
-      {/* Hidden offscreen Canvas & Video for Android Chrome PiP Stream (16:9 480x270) */}
+      {/* Hidden offscreen Canvas & Video for Android Chrome PiP Stream (Compact Pill 420x150) */}
       <canvas
         id="pipCanvas"
         ref={canvasRef}
-        width={480}
-        height={270}
+        width={420}
+        height={150}
         style={{
           position: 'fixed',
           left: '-9999px',
@@ -1814,6 +1937,7 @@ export default function App() {
         id="pipVideo"
         ref={videoRef}
         playsInline
+        {...({ autopictureinpicture: '' } as React.VideoHTMLAttributes<HTMLVideoElement>)}
         style={{
           position: 'fixed',
           left: '-9999px',
