@@ -1,0 +1,469 @@
+import { useCallback, useEffect, useRef, useState } from 'react';
+import type { PulseHabitState } from '../types';
+import { ensureAudioEngine } from '../utils/audioEngine';
+import {
+  fmtHMS,
+  fmtHMShort,
+  fmtMS,
+  getSubject,
+  getTimerMetrics,
+  getTodaySubjectMs,
+  logicalKey,
+} from '../utils/studyLogic';
+
+interface FloatingPiPActions {
+  onStart: () => void;
+  onPause: () => void;
+  onResume: () => void;
+  onTogglePause: () => void;
+  onStopAndReflect: () => void;
+  onToast: (msg: string) => void;
+}
+
+export function useFloatingTimerPiP(
+  state: PulseHabitState,
+  actions: FloatingPiPActions
+) {
+  const canvasRef = useRef<HTMLCanvasElement | null>(null);
+  const videoRef = useRef<HTMLVideoElement | null>(null);
+  const docPipWinRef = useRef<Window | null>(null);
+  const videoStreamReadyRef = useRef(false);
+  const syncGuardRef = useRef(false);
+  const stateRef = useRef(state);
+  const actionsRef = useRef(actions);
+
+  const [inAppPiPOpen, setInAppPiPOpen] = useState(false);
+
+  stateRef.current = state;
+  actionsRef.current = actions;
+
+  const drawCanvasFrame = useCallback(() => {
+    const canvas = canvasRef.current;
+    if (!canvas) return;
+    const ctx = canvas.getContext('2d');
+    if (!ctx) return;
+    const W = 480;
+    const H = 270;
+
+    const curState = stateRef.current;
+    const now = Date.now();
+    const todayKey = logicalKey(now, curState.set.dayResetHour ?? 4);
+    const m = getTimerMetrics(curState, now);
+    const isRunning = m && m.status === 'running';
+    const isPaused = m && m.status === 'paused';
+    const sub = m ? m.subject : getSubject(curState);
+    const todayTotalMs = getTodaySubjectMs(curState, 'any', todayKey, todayKey, now);
+    const subTodayMs = getTodaySubjectMs(curState, sub.id, todayKey, todayKey, now);
+
+    // 1. Pure dark #090D16 background
+    ctx.fillStyle = '#090D16';
+    ctx.fillRect(0, 0, W, H);
+
+    // 2. Bold #10B981 (emerald), #F59E0B (amber paused), or #6366F1 (indigo) progress border
+    const borderCol = isPaused
+      ? '#F59E0B'
+      : m && m.overtimeMs > 0
+        ? '#10B981'
+        : isRunning
+          ? '#10B981'
+          : '#6366F1';
+    ctx.strokeStyle = '#1E293B';
+    ctx.lineWidth = 10;
+    ctx.strokeRect(5, 5, W - 10, H - 10);
+
+    const pct = m ? Math.max(0.05, m.progressPct / 100) : 0;
+    ctx.strokeStyle = borderCol;
+    ctx.lineWidth = 10;
+    ctx.beginPath();
+    const perim = 2 * (W - 10) + 2 * (H - 10);
+    ctx.setLineDash([perim * pct, perim]);
+    ctx.strokeRect(5, 5, W - 10, H - 10);
+    ctx.setLineDash([]);
+
+    // 3. Top Row: Subject Name + Color Dot & Status Badge ("STUDYING" / "PAUSED")
+    ctx.fillStyle = sub.color || '#6366F1';
+    ctx.beginPath();
+    ctx.arc(32, 38, 8, 0, Math.PI * 2);
+    ctx.fill();
+
+    ctx.fillStyle = '#F8FAFC';
+    ctx.font = '700 20px system-ui, -apple-system, sans-serif';
+    ctx.textAlign = 'left';
+    ctx.fillText(`${sub.e} ${sub.name}`.slice(0, 22), 48, 45);
+
+    // Status Pill on Top Right
+    const statusTxt = isPaused
+      ? 'PAUSED'
+      : m && m.overtimeMs > 0
+        ? 'FLOW +OT'
+        : isRunning
+          ? 'STUDYING'
+          : 'READY';
+    const badgeBg = isPaused ? '#F59E0B' : isRunning ? '#10B981' : '#6366F1';
+    ctx.fillStyle = badgeBg;
+    ctx.beginPath();
+    if (typeof ctx.roundRect === 'function') {
+      ctx.roundRect(W - 138, 20, 114, 32, 16);
+    } else {
+      ctx.rect(W - 138, 20, 114, 32);
+    }
+    ctx.fill();
+
+    ctx.fillStyle = '#090D16';
+    ctx.font = '800 15px ui-monospace, monospace';
+    ctx.textAlign = 'center';
+    ctx.fillText(statusTxt, W - 81, 41);
+
+    // 4. Center: Large HH:MM:SS Monospace Digits
+    const clockStr = m
+      ? fmtHMS(m.overtimeMs > 0 ? m.totalActiveMs : m.displayMs)
+      : '00:00:00';
+    ctx.fillStyle = isPaused ? '#FBBF24' : '#FFFFFF';
+    ctx.font = '800 76px ui-monospace, "JetBrains Mono", "SF Mono", monospace';
+    ctx.textAlign = 'center';
+    ctx.fillText(clockStr, W / 2, 152);
+
+    // Overtime or Purity Subtitle
+    ctx.font = '700 18px ui-monospace, monospace';
+    if (m && m.overtimeMs > 0) {
+      ctx.fillStyle = '#10B981';
+      ctx.fillText(`OVERTIME +${fmtMS(m.overtimeMs)} · PURITY ${m.purity}%`, W / 2, 190);
+    } else if (m) {
+      ctx.fillStyle = '#94A3B8';
+      ctx.fillText(`${m.mode.toUpperCase()} · FOCUS PURITY ${m.purity}%`, W / 2, 190);
+    } else {
+      ctx.fillStyle = '#94A3B8';
+      ctx.fillText('PRESS PLAY TO START SESSION', W / 2, 190);
+    }
+
+    // 5. Bottom Bar: Today's Total Hours Studied
+    ctx.fillStyle = '#131A2A';
+    ctx.fillRect(14, H - 54, W - 28, 40);
+    ctx.fillStyle = '#CBD5E1';
+    ctx.font = '700 17px system-ui, -apple-system, sans-serif';
+    ctx.textAlign = 'center';
+    ctx.fillText(
+      `Today Total: ${fmtHMShort(todayTotalMs)}   |   Subject: ${fmtHMShort(subTodayMs)}`,
+      W / 2,
+      H - 28
+    );
+  }, []);
+
+  const setupMediaSessionHandlers = useCallback(() => {
+    if (typeof navigator === 'undefined' || !('mediaSession' in navigator)) return;
+    try {
+      const curState = stateRef.current;
+      const now = Date.now();
+      const todayKey = logicalKey(now, curState.set.dayResetHour ?? 4);
+      const m = getTimerMetrics(curState, now);
+      const sub = m ? m.subject : getSubject(curState);
+
+      if (typeof MediaMetadata !== 'undefined') {
+        navigator.mediaSession.metadata = new MediaMetadata({
+          title: `${sub.e} ${sub.name} (${m ? fmtHMS(m.totalActiveMs) : '00:00:00'})`,
+          artist:
+            m?.status === 'paused'
+              ? 'PAUSED · PulseHabit Study Logger'
+              : 'STUDYING · PulseHabit Study Logger',
+          album: `Today Total: ${fmtHMShort(
+            getTodaySubjectMs(curState, 'any', todayKey, todayKey, now)
+          )}`,
+        });
+      }
+
+      navigator.mediaSession.setActionHandler('play', () => {
+        if (!stateRef.current.activeTimer) actionsRef.current.onStart();
+        else if (stateRef.current.activeTimer.status === 'paused') {
+          actionsRef.current.onResume();
+        }
+      });
+
+      navigator.mediaSession.setActionHandler('pause', () => {
+        if (stateRef.current.activeTimer?.status === 'running') {
+          actionsRef.current.onPause();
+        }
+      });
+
+      navigator.mediaSession.setActionHandler('stop', () => {
+        if (stateRef.current.activeTimer) {
+          actionsRef.current.onStopAndReflect();
+        }
+      });
+    } catch {
+      // ignore mediaSession errors
+    }
+  }, []);
+
+  const renderDocPiP = useCallback(() => {
+    const docPipWin = docPipWinRef.current;
+    if (!docPipWin || docPipWin.closed) return;
+    const curState = stateRef.current;
+    const m = getTimerMetrics(curState);
+    const sub = m ? m.subject : getSubject(curState);
+    const isPaused = m?.status === 'paused';
+    const isRun = m?.status === 'running';
+    const esc = (s: string) =>
+      String(s ?? '').replace(
+        /[&<>"']/g,
+        (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' })[c] || c
+      );
+
+    docPipWin.document.body.style.setProperty('--pip-bd', isPaused ? '#f59e0b' : '#10b981');
+    docPipWin.document.body.innerHTML = `
+      <div class="pip-top">
+        <span style="display:flex;align-items:center;gap:5px">
+          <i class="dot" style="--sc:${esc(sub.color)}"></i>
+          ${esc(sub.e)} ${esc(sub.name.slice(0, 14))}
+        </span>
+        <span style="color:${isPaused ? '#fbbf24' : '#34d399'}">
+          ${m && m.overtimeMs > 0 ? `+${fmtMS(m.overtimeMs)}` : isPaused ? 'PAUSED' : isRun ? `${m.purity}%` : 'IDLE'}
+        </span>
+      </div>
+      <div class="pip-clock">${m ? fmtHMS(m.overtimeMs > 0 ? m.totalActiveMs : m.displayMs) : '00:00:00'}</div>
+      <div class="pip-actions">
+        <button data-pip-act="toggle" style="background:${isRun ? '#f59e0b' : '#10b981'};color:#052e16">
+          ${isRun ? '⏸ Pause' : isPaused ? '▶ Resume' : '▶ Start'}
+        </button>
+        ${m ? `<button data-pip-act="stop" style="background:#334155;color:#fca5a5">⏹ Stop</button>` : ''}
+      </div>
+    `;
+  }, []);
+
+  const initVideoStream = useCallback(async () => {
+    const video = videoRef.current;
+    const canvas = canvasRef.current;
+    if (!video || !canvas) return null;
+
+    const { mediaStreamDest } = ensureAudioEngine();
+    drawCanvasFrame();
+
+    if (!videoStreamReadyRef.current && typeof canvas.captureStream === 'function') {
+      const canvasStream = canvas.captureStream(15);
+      const combinedTracks = [
+        ...canvasStream.getVideoTracks(),
+        ...(mediaStreamDest ? mediaStreamDest.stream.getAudioTracks() : []),
+      ];
+      const combinedStream = new MediaStream(combinedTracks);
+      video.srcObject = combinedStream;
+      // Crucial Android Chrome requirement: DO NOT set muted attribute once 0.001 gain node is active
+      video.muted = false;
+      video.removeAttribute('muted');
+      video.volume = 1.0;
+
+      video.addEventListener('pause', () => {
+        if (syncGuardRef.current) return;
+        if (stateRef.current.activeTimer?.status === 'running') {
+          syncGuardRef.current = true;
+          actionsRef.current.onPause();
+          syncGuardRef.current = false;
+        }
+      });
+
+      video.addEventListener('play', () => {
+        if (syncGuardRef.current) return;
+        if (!stateRef.current.activeTimer) {
+          syncGuardRef.current = true;
+          actionsRef.current.onStart();
+          syncGuardRef.current = false;
+        } else if (stateRef.current.activeTimer.status === 'paused') {
+          syncGuardRef.current = true;
+          actionsRef.current.onResume();
+          syncGuardRef.current = false;
+        }
+      });
+
+      videoStreamReadyRef.current = true;
+    }
+
+    setupMediaSessionHandlers();
+    try {
+      await video.play();
+    } catch {
+      // ignore autoplay block
+    }
+    return video;
+  }, [drawCanvasFrame, setupMediaSessionHandlers]);
+
+  const openDocumentPiP = useCallback(async () => {
+    const w = window as unknown as {
+      documentPictureInPicture?: {
+        requestWindow: (opts: { width: number; height: number }) => Promise<Window>;
+      };
+    };
+    if (!w.documentPictureInPicture) return false;
+    try {
+      const docPipWin = await w.documentPictureInPicture.requestWindow({
+        width: 260,
+        height: 130,
+      });
+      docPipWinRef.current = docPipWin;
+      [...document.styleSheets].forEach((ss) => {
+        try {
+          const cssRules = [...ss.cssRules].map((r) => r.cssText).join('');
+          const style = docPipWin.document.createElement('style');
+          style.textContent = cssRules;
+          docPipWin.document.head.appendChild(style);
+        } catch {
+          if (ss.href) {
+            const link = docPipWin.document.createElement('link');
+            link.rel = 'stylesheet';
+            link.href = ss.href;
+            docPipWin.document.head.appendChild(link);
+          }
+        }
+      });
+
+      docPipWin.document.body.className = 'pip-body';
+      renderDocPiP();
+
+      docPipWin.document.body.addEventListener('click', (e) => {
+        const target = e.target as HTMLElement;
+        const b = target.closest('[data-pip-act]') as HTMLElement | null;
+        if (!b) return;
+        const act = b.dataset.pipAct;
+        if (act === 'toggle') {
+          if (!stateRef.current.activeTimer) actionsRef.current.onStart();
+          else actionsRef.current.onTogglePause();
+        } else if (act === 'stop') {
+          actionsRef.current.onStopAndReflect();
+          docPipWin.close();
+        }
+      });
+
+      docPipWin.addEventListener('pagehide', () => {
+        docPipWinRef.current = null;
+      });
+      return true;
+    } catch {
+      return false;
+    }
+  }, [renderDocPiP]);
+
+  const togglePiP = useCallback(
+    async (forceMode?: 'video' | 'doc') => {
+      if (!stateRef.current.activeTimer) {
+        actionsRef.current.onStart();
+      }
+
+      if (docPipWinRef.current && !docPipWinRef.current.closed) {
+        docPipWinRef.current.close();
+        docPipWinRef.current = null;
+        setInAppPiPOpen(false);
+        return;
+      }
+      if (document.pictureInPictureElement) {
+        await document.exitPictureInPicture().catch(() => {});
+        setInAppPiPOpen(false);
+        return;
+      }
+      if (inAppPiPOpen) {
+        setInAppPiPOpen(false);
+        return;
+      }
+
+      const pref = forceMode || stateRef.current.set.pipPref || 'video';
+      const isAndroid = /Android/i.test(navigator.userAgent);
+
+      if (pref === 'doc' && !isAndroid && 'documentPictureInPicture' in window) {
+        const ok = await openDocumentPiP();
+        if (ok) {
+          actionsRef.current.onToast('Floating Document PiP active');
+          return;
+        }
+      }
+
+      try {
+        const video = await initVideoStream();
+        if (video && typeof video.requestPictureInPicture === 'function') {
+          await video.requestPictureInPicture();
+          actionsRef.current.onToast('Floating PiP active · Switch to your lecture app');
+          return;
+        }
+      } catch {
+        // fallback below
+      }
+
+      if ('documentPictureInPicture' in window) {
+        const ok = await openDocumentPiP();
+        if (ok) {
+          actionsRef.current.onToast('Floating Document PiP active');
+          return;
+        }
+      }
+
+      // Fallback in-app floating PiP preview overlay (for sandboxed iframes / browsers without native PiP)
+      drawCanvasFrame();
+      setInAppPiPOpen(true);
+      actionsRef.current.onToast('Floating Lecture PiP overlay active');
+    },
+    [drawCanvasFrame, inAppPiPOpen, initVideoStream, openDocumentPiP]
+  );
+
+  const syncState = useCallback(() => {
+    drawCanvasFrame();
+    renderDocPiP();
+    setupMediaSessionHandlers();
+
+    const video = videoRef.current;
+    if (video && videoStreamReadyRef.current) {
+      const isRun = stateRef.current.activeTimer?.status === 'running';
+      if ('mediaSession' in navigator) {
+        try {
+          navigator.mediaSession.playbackState = isRun ? 'playing' : 'paused';
+        } catch {
+          // ignore
+        }
+      }
+      requestAnimationFrame(() => {
+        syncGuardRef.current = true;
+        if (isRun && video.paused) {
+          video
+            .play()
+            .catch(() => {})
+            .finally(() => {
+              syncGuardRef.current = false;
+            });
+        } else if (!isRun && !video.paused && document.pictureInPictureElement === video) {
+          video.pause();
+          syncGuardRef.current = false;
+        } else {
+          syncGuardRef.current = false;
+        }
+      });
+    }
+  }, [drawCanvasFrame, renderDocPiP, setupMediaSessionHandlers]);
+
+  const renderTick = useCallback(() => {
+    drawCanvasFrame();
+    renderDocPiP();
+    if ('mediaSession' in navigator && stateRef.current.activeTimer) {
+      setupMediaSessionHandlers();
+    }
+  }, [drawCanvasFrame, renderDocPiP, setupMediaSessionHandlers]);
+
+  const closePiP = useCallback(() => {
+    if (docPipWinRef.current && !docPipWinRef.current.closed) {
+      docPipWinRef.current.close();
+      docPipWinRef.current = null;
+    }
+    if (document.pictureInPictureElement) {
+      document.exitPictureInPicture().catch(() => {});
+    }
+    setInAppPiPOpen(false);
+  }, []);
+
+  useEffect(() => {
+    syncState();
+  }, [state.activeTimer?.status, state.activeTimer?.subjectId, syncState]);
+
+  return {
+    canvasRef,
+    videoRef,
+    inAppPiPOpen,
+    setInAppPiPOpen,
+    togglePiP,
+    syncState,
+    renderTick,
+    closePiP,
+  };
+}
