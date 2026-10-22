@@ -2,10 +2,13 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import {
   addD,
+  computeStudySummary,
+  DAILY_FOCUS_TIPS,
   done,
   fmtHMS,
   fmtHMShort,
   fmtMS,
+  getDailyFocusTip,
   getTimerMetrics,
   getTodaySubjectMs,
   logicalKey,
@@ -30,6 +33,15 @@ test('time formatters format milliseconds accurately', () => {
   assert.equal(fmtMS(600000), '10:00');
   assert.equal(fmtHMShort(5100000), '1h 25m');
   assert.equal(fmtHMShort(2700000), '45m');
+});
+
+test('getDailyFocusTip returns deterministic daily tip and cycles with offset', () => {
+  assert.ok(DAILY_FOCUS_TIPS.length >= 8);
+  const tipA = getDailyFocusTip('2026-10-22', 0);
+  const tipA2 = getDailyFocusTip('2026-10-22', 0);
+  const tipNext = getDailyFocusTip('2026-10-22', 1);
+  assert.equal(tipA.id, tipA2.id);
+  assert.notEqual(tipA.id, tipNext.id);
 });
 
 test('norm preserves existing schema and initializes missing collections', () => {
@@ -68,7 +80,7 @@ test('norm preserves existing schema and initializes missing collections', () =>
   assert.equal(s.set.dayResetHour, 4);
 });
 
-test('getTimerMetrics computes countdown, purity, and flow overtime without drift', () => {
+test('getTimerMetrics computes countdown, purity, flow overtime, and stopwatch count-up', () => {
   const s = norm({});
   const startTs = 1761130000000;
   s.activeTimer = {
@@ -76,6 +88,7 @@ test('getTimerMetrics computes countdown, purity, and flow overtime without drif
     mode: 'pomo',
     phase: 'work',
     subjectId: 'sub_code',
+    heading: 'Distributed Consensus Algorithms',
     startTs,
     sliceStartTs: startTs,
     pauseStartTs: null,
@@ -90,6 +103,7 @@ test('getTimerMetrics computes countdown, purity, and flow overtime without drif
   // At +20 mins wall clock: 15 mins active, 5 mins paused -> 10 mins remaining, 75% purity
   const m1 = getTimerMetrics(s, startTs + 20 * 60000);
   assert.ok(m1);
+  assert.equal(m1.heading, 'Distributed Consensus Algorithms');
   assert.equal(m1.totalActiveMs, 15 * 60000);
   assert.equal(m1.displayMs, 10 * 60000);
   assert.equal(m1.overtimeMs, 0);
@@ -102,14 +116,34 @@ test('getTimerMetrics computes countdown, purity, and flow overtime without drif
   assert.equal(m2.displayMs, 0);
   assert.equal(m2.overtimeMs, 5 * 60000);
   assert.equal(m2.progressPct, 100);
+
+  // Stopwatch mode counts up from 00:00:00
+  s.activeTimer.mode = 'stopwatch';
+  s.activeTimer.pausedDurationMs = 0;
+  s.activeTimer.slicePausedMs = 0;
+  const mSw = getTimerMetrics(s, startTs + 75000); // 1m 15s elapsed
+  assert.ok(mSw);
+  assert.equal(mSw.mode, 'stopwatch');
+  assert.equal(mSw.displayMs, 75000);
+  assert.equal(mSw.overtimeMs, 0);
 });
 
-test('syncStudyHabitsInPlace auto-completes habits linked to subjects', () => {
+test('computeStudySummary calculates weekly, monthly, peak hours, and heading breakdown', () => {
+  const s = norm(null, new Date(2026, 9, 22, 12, 0, 0));
+  const summary = computeStudySummary(s, '2026-10-22', new Date(2026, 9, 22, 12, 0, 0).getTime());
+  assert.ok(summary.weekTotalMs > 0);
+  assert.ok(summary.monthTotalMs >= summary.weekTotalMs);
+  assert.equal(summary.last7Days.length, 7);
+  assert.ok(summary.peakHourWindowLabel.includes(':00'));
+  assert.ok(summary.headingBreakdown.length >= 3);
+});
+
+test('syncStudyHabitsInPlace auto-completes study habits', () => {
   const s = norm({
     habits: [
       {
         id: 'h_code',
-        name: 'Study 3 hours of Coding',
+        name: 'Study 3 hours today',
         e: '💻',
         c: 'Work',
         sch: 'daily',
@@ -120,7 +154,7 @@ test('syncStudyHabitsInPlace auto-completes habits linked to subjects', () => {
         rem: '',
         arch: 0,
         created: '2026-10-20',
-        subjectId: 'sub_code',
+        subjectId: 'any',
         autoMins: 180,
       },
     ],
@@ -128,6 +162,7 @@ test('syncStudyHabitsInPlace auto-completes habits linked to subjects', () => {
       {
         id: 'ses_1',
         subjectId: 'sub_code',
+        heading: 'Operating Systems Kernel Lab',
         dayKey: '2026-10-22',
         startTs: 1000,
         endTs: 1000 + 185 * 60000,
@@ -136,7 +171,7 @@ test('syncStudyHabitsInPlace auto-completes habits linked to subjects', () => {
         pauseCount: 0,
         overtimeMs: 0,
         purity: 100,
-        mode: 'pomo',
+        mode: 'stopwatch',
         rating: 5,
         note: 'Deep work',
         updatedAt: 2000,
@@ -144,7 +179,7 @@ test('syncStudyHabitsInPlace auto-completes habits linked to subjects', () => {
     ],
   });
 
-  const totalMs = getTodaySubjectMs(s, 'sub_code', '2026-10-22', '2026-10-22');
+  const totalMs = getTodaySubjectMs(s, 'any', '2026-10-22', '2026-10-22');
   assert.equal(totalMs, 185 * 60000);
 
   const changed = syncStudyHabitsInPlace(s, '2026-10-22', '2026-10-22');

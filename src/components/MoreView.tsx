@@ -5,10 +5,9 @@ import { usePWAInstall } from '../hooks/usePWAInstall';
 
 interface MoreViewProps {
   state: PulseHabitState;
-  onNewSubject: () => void;
-  onEditSubject: (id: string) => void;
   onNewHabit: () => void;
   onEditHabit: (id: string) => void;
+  onOpenManualSession: () => void;
   onUpdateSetting: <K extends keyof AppSettings>(key: K, val: AppSettings[K]) => void;
   onExportJson: () => void;
   onExportCsv: () => void;
@@ -18,10 +17,9 @@ interface MoreViewProps {
 
 export const MoreView: React.FC<MoreViewProps> = ({
   state,
-  onNewSubject,
-  onEditSubject,
   onNewHabit,
   onEditHabit,
+  onOpenManualSession,
   onUpdateSetting,
   onExportJson,
   onExportCsv,
@@ -36,38 +34,20 @@ export const MoreView: React.FC<MoreViewProps> = ({
 
   return (
     <div>
-      <h2>Subjects</h2>
-      <button
-        type="button"
-        className="pri"
-        style={{ width: '100%', marginBottom: '8px' }}
-        onClick={onNewSubject}
-      >
-        + New Subject
-      </button>
-      {state.subjects.map((s) => (
-        <div key={s.id} className="c" onClick={() => onEditSubject(s.id)}>
-          <span style={{ fontSize: '22px' }}>{s.e}</span>
-          <div className="g">
-            <b>
-              <i className="dot" style={{ '--sc': s.color } as React.CSSProperties} />{' '}
-              {s.name}
-            </b>
-            <small>
-              Daily Goal: {s.dailyGoalMins || 0}m · {(s.todos || []).length} sub-tasks
-            </small>
-          </div>
-          <button
-            type="button"
-            onClick={(e) => {
-              e.stopPropagation();
-              onEditSubject(s.id);
-            }}
-          >
-            Edit
-          </button>
-        </div>
-      ))}
+      <h2>Study Logger Actions</h2>
+      <div className="card" style={{ display: 'grid', gap: '8px' }}>
+        <small>
+          Log completed study hours manually with a custom session heading and session notes, or use the Pomodoro / Countdown / Stopwatch timers in the Study tab.
+        </small>
+        <button
+          type="button"
+          className="pri"
+          style={{ width: '100%' }}
+          onClick={onOpenManualSession}
+        >
+          + Log Study Session Manually
+        </button>
+      </div>
 
       <h2>Habits</h2>
       <button
@@ -89,7 +69,7 @@ export const MoreView: React.FC<MoreViewProps> = ({
             <b>{h.name}</b>
             <small>
               {h.c} · {h.sch === 'week' ? `${h.n}×/wk` : 'daily'}
-              {h.subjectId ? ' · 🔗 Auto-Study' : ''}
+              {h.subjectId || h.autoMins ? ' · 🔗 Auto-syncs study mins' : ''}
               {h.arch ? ' · archived' : ''}
             </small>
           </div>
@@ -219,7 +199,7 @@ export const MoreView: React.FC<MoreViewProps> = ({
       <div className="card" style={{ display: 'grid', gap: '8px' }}>
         <small>
           Full IndexedDB/localStorage snapshot (Habits, Study Sessions, 10-Min Plans,
-          Subjects, D-Days).{' '}
+          D-Days).{' '}
           {state.exp
             ? `Last backup: ${new Date(state.exp).toLocaleDateString()}`
             : 'No backup yet.'}

@@ -6,15 +6,14 @@ import type {
   HabitSchedule,
   PulseHabitState,
   StudySession,
-  Subject,
   TimerMetrics,
 } from '../types';
 import {
   CATS,
   DN,
-  SUB_COLORS,
   addD,
   fmtHMS,
+  getSessionHeading,
   mkHabit,
   pad,
 } from '../utils/studyLogic';
@@ -22,7 +21,6 @@ import {
 export type ModalState =
   | { type: 'none' }
   | { type: 'habit'; id?: string }
-  | { type: 'subject'; id?: string }
   | { type: 'reflect'; metrics: TimerMetrics }
   | { type: 'manualSession'; id?: string }
   | { type: 'timerConfig' }
@@ -38,8 +36,7 @@ interface ModalsProps {
   onSaveHabit: (id: string | undefined, data: Partial<Habit>) => void;
   onArchiveHabit: (id: string) => void;
   onDeleteHabit: (id: string) => void;
-  onSaveSubject: (id: string | undefined, data: Partial<Subject>) => void;
-  onSubmitReflection: (rating: number, note: string) => void;
+  onSubmitReflection: (heading: string, rating: number, note: string) => void;
   onDiscardSession: () => void;
   onSaveManualSession: (id: string | undefined, session: Omit<StudySession, 'id'>) => void;
   onDeleteSession: (id: string) => void;
@@ -58,7 +55,6 @@ export const Modals: React.FC<ModalsProps> = ({
   onSaveHabit,
   onArchiveHabit,
   onDeleteHabit,
-  onSaveSubject,
   onSubmitReflection,
   onDiscardSession,
   onSaveManualSession,
@@ -83,21 +79,12 @@ export const Modals: React.FC<ModalsProps> = ({
   const [hDays, setHDays] = useState<number[]>(defaultHabit.days);
   const [hTn, setHTn] = useState(defaultHabit.tn);
   const [hTu, setHTu] = useState(defaultHabit.tu);
-  const [hSubId, setHSubId] = useState(defaultHabit.subjectId || '');
+  const [hAutoStudy, setHAutoStudy] = useState(Boolean(defaultHabit.subjectId || defaultHabit.autoMins));
   const [hWeeklyN, setHWeeklyN] = useState(defaultHabit.n);
   const [hRem, setHRem] = useState(defaultHabit.rem);
 
-  // Subject modal state
-  const existingSub =
-    modal.type === 'subject' && modal.id
-      ? state.subjects.find((x) => x.id === modal.id)
-      : undefined;
-  const [sEmoji, setSEmoji] = useState('📚');
-  const [sName, setSName] = useState('');
-  const [sColor, setSColor] = useState('#6366f1');
-  const [sGoal, setSGoal] = useState(120);
-
   // Reflection modal state
+  const [refHeading, setRefHeading] = useState('Deep Study Session');
   const [refRating, setRefRating] = useState(5);
   const [refNote, setRefNote] = useState('');
 
@@ -106,11 +93,11 @@ export const Modals: React.FC<ModalsProps> = ({
     modal.type === 'manualSession' && modal.id
       ? state.sessions.find((x) => x.id === modal.id)
       : undefined;
-  const [msSubId, setMsSubId] = useState(state.subjects[0]?.id || 'sub_code');
+  const [msHeading, setMsHeading] = useState('');
   const [msDayKey, setMsDayKey] = useState(sel);
+  const [msHours, setMsHours] = useState(1);
+  const [msMins, setMsMins] = useState(30);
   const [msStartTime, setMsStartTime] = useState('09:00');
-  const [msEndTime, setMsEndTime] = useState('10:00');
-  const [msPauseMins, setMsPauseMins] = useState(0);
   const [msRating, setMsRating] = useState(5);
   const [msNote, setMsNote] = useState('');
 
@@ -149,18 +136,11 @@ export const Modals: React.FC<ModalsProps> = ({
       setHDays(h.days);
       setHTn(h.tn);
       setHTu(h.tu);
-      setHSubId(h.subjectId || '');
+      setHAutoStudy(Boolean(h.subjectId || h.autoMins));
       setHWeeklyN(h.n);
       setHRem(h.rem);
-    } else if (modal.type === 'subject') {
-      const s = modal.id ? state.subjects.find((x) => x.id === modal.id) : undefined;
-      setSEmoji(s?.e || '📚');
-      setSName(s?.name || '');
-      setSColor(
-        s?.color || SUB_COLORS[state.subjects.length % SUB_COLORS.length]
-      );
-      setSGoal(s?.dailyGoalMins || 120);
     } else if (modal.type === 'reflect') {
+      setRefHeading(modal.metrics.heading || 'Deep Study Session');
       setRefRating(5);
       setRefNote('');
     } else if (modal.type === 'manualSession') {
@@ -168,14 +148,14 @@ export const Modals: React.FC<ModalsProps> = ({
         ? state.sessions.find((x) => x.id === modal.id)
         : undefined;
       const now = new Date();
-      const oneHrAgo = new Date(now.getTime() - 3600000);
+      const oneHrAgo = new Date(now.getTime() - 5400000);
       const startD = ex ? new Date(ex.startTs) : oneHrAgo;
-      const endD = ex ? new Date(ex.endTs) : now;
-      setMsSubId(ex?.subjectId || state.subjects[0]?.id || 'sub_code');
+      const totalMins = ex ? Math.max(1, Math.round((ex.activeMs || 3600000) / 60000)) : 90;
+      setMsHeading(ex ? getSessionHeading(state, ex) : '');
       setMsDayKey(ex ? ex.dayKey : sel);
+      setMsHours(Math.floor(totalMins / 60));
+      setMsMins(totalMins % 60);
       setMsStartTime(`${pad(startD.getHours())}:${pad(startD.getMinutes())}`);
-      setMsEndTime(`${pad(endD.getHours())}:${pad(endD.getMinutes())}`);
-      setMsPauseMins(ex ? Math.round((ex.pausedMs || 0) / 60000) : 0);
       setMsRating(ex?.rating || 5);
       setMsNote(ex?.note || '');
     } else if (modal.type === 'timerConfig') {
@@ -197,7 +177,7 @@ export const Modals: React.FC<ModalsProps> = ({
         dlg.setAttribute('open', 'true');
       }
     }
-  }, [modal, sel, state.ddays, state.habits, state.sessions, state.set, state.subjects, todayKey]);
+  }, [modal, sel, state, todayKey]);
 
   const toggleDayInHabit = (dayIdx: number) => {
     setHDays((prev) =>
@@ -221,6 +201,7 @@ export const Modals: React.FC<ModalsProps> = ({
             e.preventDefault();
             const trimmed = hName.trim();
             if (!trimmed) return;
+            const targetVal = Math.min(999, Math.max(1, Number(hTn) || 1));
             onSaveHabit(modal.id, {
               name: trimmed,
               e: hEmoji.trim() || '✨',
@@ -228,10 +209,11 @@ export const Modals: React.FC<ModalsProps> = ({
               sch: hSch,
               days: hDays.length ? hDays : [0, 1, 2, 3, 4, 5, 6],
               n: Math.min(7, Math.max(1, Number(hWeeklyN) || 3)),
-              tn: Math.min(999, Math.max(1, Number(hTn) || 1)),
-              tu: hSubId ? 'min' : hTu.trim(),
+              tn: targetVal,
+              tu: hAutoStudy ? 'min' : hTu.trim(),
               rem: hRem,
-              subjectId: hSubId,
+              subjectId: hAutoStudy ? 'any' : '',
+              autoMins: hAutoStudy ? targetVal : 0,
             });
           }}
         >
@@ -249,7 +231,7 @@ export const Modals: React.FC<ModalsProps> = ({
               name="name"
               value={hName}
               onChange={(e) => setHName(e.target.value)}
-              placeholder="e.g. Study 2 hours of Coding"
+              placeholder="e.g. Study 2 hours today"
               required
               maxLength={60}
               aria-label="Habit Name"
@@ -311,28 +293,22 @@ export const Modals: React.FC<ModalsProps> = ({
               Unit
               <input
                 name="tu"
-                value={hTu}
+                value={hAutoStudy ? 'min' : hTu}
                 onChange={(e) => setHTu(e.target.value)}
                 maxLength={12}
                 placeholder="min, pages"
+                disabled={hAutoStudy}
               />
             </label>
           </div>
-          <label>
-            🔗 Auto-Complete from Study Subject (logs minutes automatically)
-            <select
-              name="subjectId"
-              value={hSubId}
-              onChange={(e) => setHSubId(e.target.value)}
-            >
-              <option value="">Manual check-in only</option>
-              <option value="any">⏱️ Any Study Subject (Total Minutes)</option>
-              {state.subjects.map((s) => (
-                <option key={s.id} value={s.id}>
-                  {s.e} {s.name} (Minutes)
-                </option>
-              ))}
-            </select>
+          <label className="row" style={{ marginTop: '10px', cursor: 'pointer' }}>
+            <input
+              type="checkbox"
+              style={{ width: 'auto' }}
+              checked={hAutoStudy}
+              onChange={(e) => setHAutoStudy(e.target.checked)}
+            />
+            🔗 Auto-complete from total study minutes logged today
           </label>
           <div className="row">
             <label className="g">
@@ -385,85 +361,22 @@ export const Modals: React.FC<ModalsProps> = ({
         </form>
       )}
 
-      {modal.type === 'subject' && (
-        <form
-          id="subForm"
-          onSubmit={(e) => {
-            e.preventDefault();
-            onSaveSubject(modal.id, {
-              name: sName.trim() || 'Subject',
-              e: sEmoji.trim() || '📚',
-              color: sColor || '#6366f1',
-              dailyGoalMins: Number(sGoal) || 120,
-            });
-          }}
-        >
-          <h3>{modal.id ? 'Edit' : 'New'} Subject</h3>
-          <div className="row">
-            <input
-              className="em"
-              name="e"
-              value={sEmoji}
-              onChange={(e) => setSEmoji(e.target.value)}
-              maxLength={4}
-              aria-label="Subject Emoji"
-            />
-            <input
-              name="name"
-              value={sName}
-              onChange={(e) => setSName(e.target.value)}
-              placeholder="Subject Name (e.g. Algorithms)"
-              required
-              maxLength={40}
-              aria-label="Subject Name"
-            />
-          </div>
-          <div className="row">
-            <label className="g">
-              Color
-              <input
-                type="color"
-                name="color"
-                value={sColor}
-                onChange={(e) => setSColor(e.target.value)}
-                style={{ height: '42px', padding: '4px' }}
-              />
-            </label>
-            <label className="g">
-              Daily Goal (mins)
-              <input
-                type="number"
-                name="dailyGoalMins"
-                min={10}
-                max={960}
-                value={sGoal}
-                onChange={(e) => setSGoal(Number(e.target.value))}
-              />
-            </label>
-          </div>
-          <div className="row">
-            <button className="pri g" type="submit">
-              Save Subject
-            </button>
-            <button type="button" onClick={onClose}>
-              Cancel
-            </button>
-          </div>
-        </form>
-      )}
-
       {modal.type === 'reflect' && (
         <form
           id="reflectForm"
           onSubmit={(e) => {
             e.preventDefault();
-            onSubmitReflection(refRating, refNote.trim());
+            onSubmitReflection(
+              refHeading.trim() || 'Deep Study Session',
+              refRating,
+              refNote.trim()
+            );
           }}
         >
           <h3>🎉 Session Complete!</h3>
           <div className="stat-mini">
             <div className="stat-box">
-              <small>Focused</small>
+              <small>Studied Duration</small>
               <b className="mono" style={{ color: 'var(--em)' }}>
                 {fmtHMS(modal.metrics.sliceActiveMs)}
               </b>
@@ -475,6 +388,17 @@ export const Modals: React.FC<ModalsProps> = ({
               </b>
             </div>
           </div>
+          <label>
+            Session Heading (What did you study?)
+            <input
+              type="text"
+              value={refHeading}
+              onChange={(e) => setRefHeading(e.target.value)}
+              placeholder="e.g. Lecture 7 — B-Tree Indexing"
+              required
+              maxLength={90}
+            />
+          </label>
           <label
             style={{ textAlign: 'center', display: 'block', marginTop: '6px' }}
           >
@@ -493,14 +417,17 @@ export const Modals: React.FC<ModalsProps> = ({
               </button>
             ))}
           </div>
-          <textarea
-            name="note"
-            rows={3}
-            maxLength={300}
-            value={refNote}
-            onChange={(e) => setRefNote(e.target.value)}
-            placeholder="What did you accomplish or learn in this session?"
-          />
+          <label>
+            What did you do in this session?
+            <textarea
+              name="note"
+              rows={3}
+              maxLength={300}
+              value={refNote}
+              onChange={(e) => setRefNote(e.target.value)}
+              placeholder="Summarize what you completed, solved, or reviewed..."
+            />
+          </label>
           <div className="row">
             <button className="em-btn g" type="submit">
               Save &amp; Log Session
@@ -521,61 +448,85 @@ export const Modals: React.FC<ModalsProps> = ({
           id="manualSesForm"
           onSubmit={(e) => {
             e.preventDefault();
+            const headingClean = msHeading.trim() || 'Deep Study Session';
+            const totalDurationMins = Math.max(
+              1,
+              (Number(msHours) || 0) * 60 + (Number(msMins) || 0)
+            );
+            const activeMs = totalDurationMins * 60000;
             const [sh, sm] = msStartTime.split(':').map(Number);
-            const [eh, em] = msEndTime.split(':').map(Number);
             const [yr, mo, dy] = msDayKey.split('-').map(Number);
-            const startTs = new Date(yr, mo - 1, dy, sh, sm).getTime();
-            let endTs = new Date(yr, mo - 1, dy, eh, em).getTime();
-            if (endTs <= startTs) endTs += 86400000;
-            const pausedMs = Math.max(0, (Number(msPauseMins) || 0) * 60000);
-            const activeMs = Math.max(60000, endTs - startTs - pausedMs);
-            const purity = Math.round((activeMs / (activeMs + pausedMs)) * 100);
+            const startTs = new Date(yr, mo - 1, dy, sh || 9, sm || 0).getTime();
+            const endTs = startTs + activeMs;
 
             onSaveManualSession(modal.id, {
-              subjectId: msSubId,
+              subjectId: existingSes?.subjectId || 'sub_code',
+              heading: headingClean,
               dayKey: msDayKey,
               startTs,
               endTs,
               activeMs,
-              pausedMs,
-              pauseCount: pausedMs > 0 ? 1 : 0,
+              pausedMs: 0,
+              pauseCount: 0,
               overtimeMs: 0,
-              purity,
-              mode: 'manual',
+              purity: 100,
+              mode: existingSes?.mode || 'manual',
               rating: Math.min(5, Math.max(1, Number(msRating) || 5)),
               note: msNote.trim(),
               updatedAt: Date.now(),
             });
           }}
         >
-          <h3>{existingSes ? 'Edit Logged Session' : 'Manual Study Entry'}</h3>
+          <h3>{existingSes ? 'Edit Study Session' : 'Log Study Session Manually'}</h3>
           <label>
-            Subject
-            <select
-              name="subjectId"
-              value={msSubId}
-              onChange={(e) => setMsSubId(e.target.value)}
-            >
-              {state.subjects.map((s) => (
-                <option key={s.id} value={s.id}>
-                  {s.e} {s.name}
-                </option>
-              ))}
-            </select>
-          </label>
-          <label>
-            Logical Date
+            Session Heading (What did you study?)
             <input
-              type="date"
-              name="dayKey"
-              value={msDayKey}
-              onChange={(e) => setMsDayKey(e.target.value)}
+              type="text"
+              name="heading"
+              value={msHeading}
+              onChange={(e) => setMsHeading(e.target.value)}
+              placeholder="e.g., Dynamic Programming & Graph Theory"
               required
+              maxLength={90}
             />
           </label>
           <div className="row">
             <label className="g">
-              Start Time
+              Hours Studied
+              <input
+                type="number"
+                name="hours"
+                min={0}
+                max={24}
+                value={msHours}
+                onChange={(e) => setMsHours(Math.max(0, Number(e.target.value)))}
+              />
+            </label>
+            <label className="g">
+              Minutes Studied
+              <input
+                type="number"
+                name="mins"
+                min={0}
+                max={59}
+                value={msMins}
+                onChange={(e) => setMsMins(Math.max(0, Number(e.target.value)))}
+              />
+            </label>
+          </div>
+          <div className="row">
+            <label className="g">
+              Date
+              <input
+                type="date"
+                name="dayKey"
+                value={msDayKey}
+                onChange={(e) => setMsDayKey(e.target.value)}
+                required
+              />
+            </label>
+            <label className="g">
+              Start Time (for 24h timeline)
               <input
                 type="time"
                 name="startTime"
@@ -584,48 +535,27 @@ export const Modals: React.FC<ModalsProps> = ({
                 required
               />
             </label>
-            <label className="g">
-              End Time
-              <input
-                type="time"
-                name="endTime"
-                value={msEndTime}
-                onChange={(e) => setMsEndTime(e.target.value)}
-                required
-              />
-            </label>
-          </div>
-          <div className="row">
-            <label className="g">
-              Paused (mins)
-              <input
-                type="number"
-                name="pauseMins"
-                min={0}
-                max={300}
-                value={msPauseMins}
-                onChange={(e) => setMsPauseMins(Number(e.target.value))}
-              />
-            </label>
-            <label className="g">
-              Focus Stars (1–5)
-              <input
-                type="number"
-                name="rating"
-                min={1}
-                max={5}
-                value={msRating}
-                onChange={(e) => setMsRating(Number(e.target.value))}
-              />
-            </label>
           </div>
           <label>
-            Study Note
-            <input
+            What did you do in this session?
+            <textarea
               name="note"
+              rows={3}
+              maxLength={300}
               value={msNote}
               onChange={(e) => setMsNote(e.target.value)}
-              placeholder="Topics covered..."
+              placeholder="e.g., Finished 3 lecture videos and solved 6 practice problems..."
+            />
+          </label>
+          <label>
+            Focus Rating (1–5 Stars)
+            <input
+              type="number"
+              name="rating"
+              min={1}
+              max={5}
+              value={msRating}
+              onChange={(e) => setMsRating(Number(e.target.value))}
             />
           </label>
           <div className="row">

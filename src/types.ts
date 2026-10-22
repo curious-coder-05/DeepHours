@@ -1,6 +1,7 @@
 export type HabitCategory = 'Health' | 'Mind' | 'Work' | 'Learn' | 'Social' | 'Other';
 export type HabitSchedule = 'daily' | 'days' | 'week';
 export type TimerMode = 'pomo' | 'countdown' | 'stopwatch' | 'manual';
+export type ActiveTimerMode = 'pomo' | 'countdown' | 'stopwatch';
 export type TimerPhase = 'work' | 'break';
 export type SoundscapeMode = 'off' | 'brown' | 'pink' | 'rain';
 export type PiPPreference = 'video' | 'doc';
@@ -42,7 +43,7 @@ export interface Subject {
   name: string;
   e: string;
   color: string;
-  dailyGoalMins: number;
+  dailyGoalMins?: number;
   arch: number;
   todos: StudyTodo[];
 }
@@ -50,6 +51,7 @@ export interface Subject {
 export interface StudySession {
   id: string;
   subjectId: string;
+  heading?: string;
   dayKey: string;
   startTs: number;
   endTs: number;
@@ -77,9 +79,10 @@ export interface DDay {
 
 export interface ActiveTimer {
   status: 'running' | 'paused';
-  mode: 'pomo' | 'countdown' | 'stopwatch';
+  mode: ActiveTimerMode;
   phase: TimerPhase;
   subjectId: string;
+  heading?: string;
   startTs: number;
   sliceStartTs: number;
   pauseStartTs: number | null;
@@ -101,6 +104,7 @@ export interface AppSettings {
   pomoWork: number;
   pomoBreak: number;
   countdownMins: number;
+  defaultMode?: ActiveTimerMode;
   pipPref: PiPPreference;
   soundscape: SoundscapeMode;
   soundVol: number;
@@ -110,6 +114,7 @@ export interface PulseHabitState {
   habits: Habit[];
   log: HabitLogMap;
   subjects: Subject[];
+  todos?: StudyTodo[];
   sessions: StudySession[];
   plans: PlansMap;
   ddays: DDay[];
@@ -125,9 +130,10 @@ export interface PulseHabitState {
 
 export interface TimerMetrics {
   status: 'running' | 'paused';
-  mode: 'pomo' | 'countdown' | 'stopwatch';
+  mode: ActiveTimerMode;
   phase: TimerPhase;
   subject: Subject;
+  heading: string;
   totalActiveMs: number;
   totalPausedMs: number;
   sliceActiveMs: number;

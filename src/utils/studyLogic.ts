@@ -1,12 +1,12 @@
 import type {
-  ActiveTimer,
-  DDay,
+  ActiveTimerMode,
   Habit,
   HabitCategory,
   PulseHabitState,
   StudySession,
   Subject,
   TimerMetrics,
+  TimerMode,
 } from '../types';
 
 export const DN = ['S', 'M', 'T', 'W', 'T', 'F', 'S'] as const;
@@ -20,53 +20,129 @@ export const CC: Record<HabitCategory, string> = {
   Other: '#94a3b8',
 };
 export const ACS = ['#6366f1', '#10b981', '#8b7bff', '#ff7eb6', '#fbbf24', '#38bdf8'];
-export const SUB_COLORS = ['#6366f1', '#10b981', '#f59e0b', '#ec4899', '#3b82f6', '#a855f7', '#14b8a6', '#f97316'];
+export const SUB_COLORS = [
+  '#6366f1',
+  '#10b981',
+  '#f59e0b',
+  '#ec4899',
+  '#3b82f6',
+  '#a855f7',
+  '#14b8a6',
+  '#f97316',
+];
+
+export interface DailyFocusTip {
+  id: string;
+  title: string;
+  tip: string;
+  tag: string;
+}
+
+export const DAILY_FOCUS_TIPS: DailyFocusTip[] = [
+  {
+    id: 'tip_1',
+    title: 'Active Recall Over Re-Reading',
+    tip: 'Close your notes after every 25-minute block and write down everything you remember from scratch. Retrieval strengthens neural pathways 3× faster than passive highlighting.',
+    tag: 'Memory Science',
+  },
+  {
+    id: 'tip_2',
+    title: 'The 2-Minute Ignition Rule',
+    tip: 'When resistance is high, commit to starting your timer and writing just the session heading for 2 minutes. Momentum almost always carries you into deep flow.',
+    tag: 'Anti-Procrastination',
+  },
+  {
+    id: 'tip_3',
+    title: 'Single-Task Context Locking',
+    tip: 'Give every study session one specific, concrete heading (e.g., "Graph Shortest Path Practice" instead of "Study"). Clear scope eliminates mid-session decision fatigue.',
+    tag: 'Deep Work',
+  },
+  {
+    id: 'tip_4',
+    title: 'Ultradian 90-Minute Wave',
+    tip: 'Your brain naturally cycles through 90-minute peaks of high alertness followed by a 20-minute trough. Pair two 45m countdown sessions before taking a real walk.',
+    tag: 'Circadian Rhythm',
+  },
+  {
+    id: 'tip_5',
+    title: 'Interleaving Practice Problems',
+    tip: 'Mix three different problem types in one session rather than grinding 20 identical drills. Your brain learns how to select the right strategy, not just repeat a pattern.',
+    tag: 'Problem Solving',
+  },
+  {
+    id: 'tip_6',
+    title: 'Feynman Summary Note',
+    tip: 'When ending your session, write a 1-sentence summary of what you completed as if explaining it to a beginner. Any gap in your explanation reveals what to review next.',
+    tag: 'Retention',
+  },
+  {
+    id: 'tip_7',
+    title: 'Visual Distraction Purge',
+    tip: 'Keep your phone out of your peripheral vision and use Picture-in-Picture mode while watching lectures so only the live study clock stays in view.',
+    tag: 'Attention Control',
+  },
+  {
+    id: 'tip_8',
+    title: 'Ride the Flow Overtime',
+    tip: 'If your Pomodoro hits 00:00 while you are deep in concentration, do not force a break—let the timer count up in overtime until you hit a natural stopping point.',
+    tag: 'Flow State',
+  },
+];
+
+export function getDailyFocusTip(dayKey: string, offset = 0): DailyFocusTip {
+  let hash = 0;
+  for (let i = 0; i < dayKey.length; i++) {
+    hash = (hash * 31 + dayKey.charCodeAt(i)) >>> 0;
+  }
+  const idx = (hash + Math.max(0, offset)) % DAILY_FOCUS_TIPS.length;
+  return DAILY_FOCUS_TIPS[idx];
+}
 
 export const STARTERS: Array<Partial<Habit> & { name: string; e: string; c: HabitCategory }> = [
   { name: 'Deep Study (2 hrs)', e: '📚', c: 'Learn', tn: 120, tu: 'min', subjectId: 'any', autoMins: 120 },
   { name: 'Drink water', e: '💧', c: 'Health', tn: 8, tu: 'glasses' },
-  { name: 'Coding Practice', e: '💻', c: 'Work', tn: 90, tu: 'min', subjectId: 'sub_code', autoMins: 90 },
+  { name: 'Problem Solving Practice', e: '💻', c: 'Work', tn: 90, tu: 'min', subjectId: 'any', autoMins: 90 },
   { name: 'Exercise', e: '🏋️', c: 'Health', sch: 'week', n: 3 },
-  { name: 'Review Lecture Notes', e: '📝', c: 'Learn' },
+  { name: 'Review Session Notes', e: '📝', c: 'Learn' },
 ];
 
 export const DEFAULT_SUBJECTS: Subject[] = [
   {
     id: 'sub_code',
-    name: 'Coding & CS',
-    e: '💻',
+    name: 'Deep Focus Block',
+    e: '⚡',
     color: '#6366f1',
-    dailyGoalMins: 180,
+    dailyGoalMins: 0,
     arch: 0,
     todos: [
-      { id: 'td_1', text: 'Implement Floating PiP Hook', done: true },
-      { id: 'td_2', text: 'Practice Graph DP problems', done: false },
+      { id: 'td_1', text: 'Complete Lecture 7 notes & summary', done: true },
+      { id: 'td_2', text: 'Solve 5 practice problems without hints', done: false },
     ],
   },
   {
     id: 'sub_math',
-    name: 'Mathematics',
+    name: 'Problem Solving & Drills',
     e: '📐',
     color: '#10b981',
-    dailyGoalMins: 120,
+    dailyGoalMins: 0,
     arch: 0,
-    todos: [{ id: 'td_3', text: 'Solve 10 practice problems', done: false }],
+    todos: [],
   },
   {
     id: 'sub_lec',
-    name: 'Video Lectures',
+    name: 'Lectures & Video Course',
     e: '🎧',
     color: '#f59e0b',
-    dailyGoalMins: 90,
+    dailyGoalMins: 0,
     arch: 0,
     todos: [],
   },
   {
     id: 'sub_read',
-    name: 'Reading & Papers',
+    name: 'Reading & Synthesis',
     e: '📖',
     color: '#ec4899',
-    dailyGoalMins: 60,
+    dailyGoalMins: 0,
     arch: 0,
     todos: [],
   },
@@ -120,8 +196,32 @@ export function fmtHMShort(ms: number): string {
   return h > 0 ? `${h}h ${m}m` : `${m}m`;
 }
 
+export function fmtHoursDecimal(ms: number): string {
+  const hrs = ms / 3600000;
+  return hrs >= 10 ? hrs.toFixed(1) + 'h' : hrs.toFixed(1) + 'h';
+}
+
 export function fmtClockTime(ts: number): string {
   return new Date(ts).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', hour12: false });
+}
+
+export function getHeadingColor(heading?: string): string {
+  const clean = (heading || 'Study Session').trim().toLowerCase();
+  if (!clean) return SUB_COLORS[0];
+  let hash = 0;
+  for (let i = 0; i < clean.length; i++) {
+    hash = (hash * 31 + clean.charCodeAt(i)) >>> 0;
+  }
+  return SUB_COLORS[hash % SUB_COLORS.length];
+}
+
+export function getSessionHeading(state: PulseHabitState, session: StudySession): string {
+  if (session.heading && session.heading.trim()) {
+    return session.heading.trim();
+  }
+  const found = state.subjects?.find((x) => x.id === session.subjectId);
+  if (found && found.name) return found.name;
+  return 'Study Session';
 }
 
 export function createBlankState(nowDate = new Date()): PulseHabitState {
@@ -130,6 +230,10 @@ export function createBlankState(nowDate = new Date()): PulseHabitState {
     habits: [],
     log: {},
     subjects: JSON.parse(JSON.stringify(DEFAULT_SUBJECTS)),
+    todos: [
+      { id: 'td_1', text: 'Complete Lecture 7 notes & summary', done: true },
+      { id: 'td_2', text: 'Solve 5 practice problems without hints', done: false },
+    ],
     sessions: [],
     plans: {},
     ddays: [
@@ -158,6 +262,7 @@ export function createBlankState(nowDate = new Date()): PulseHabitState {
       pomoWork: 25,
       pomoBreak: 5,
       countdownMins: 45,
+      defaultMode: 'pomo',
       pipPref: 'video',
       soundscape: 'off',
       soundVol: 0.35,
@@ -177,9 +282,9 @@ export function createDefaultState(nowDate = new Date()): PulseHabitState {
     habits: [
       {
         id: 'h_1',
-        name: 'Study 3 hours of Coding',
-        e: '💻',
-        c: 'Work',
+        name: 'Study 3 hours today',
+        e: '📚',
+        c: 'Learn',
         sch: 'daily',
         days: [0, 1, 2, 3, 4, 5, 6],
         n: 3,
@@ -188,7 +293,7 @@ export function createDefaultState(nowDate = new Date()): PulseHabitState {
         rem: '09:00',
         arch: 0,
         created: addD(curKey, -21),
-        subjectId: 'sub_code',
+        subjectId: 'any',
         autoMins: 180,
       },
       {
@@ -207,7 +312,7 @@ export function createDefaultState(nowDate = new Date()): PulseHabitState {
       },
       {
         id: 'h_3',
-        name: 'Review Lecture Notes',
+        name: 'Review Session Notes',
         e: '📝',
         c: 'Learn',
         sch: 'daily',
@@ -222,7 +327,7 @@ export function createDefaultState(nowDate = new Date()): PulseHabitState {
     ],
     log: {
       h_1: {
-        [twoDaysAgoKey]: { v: 180, s: 0 },
+        [twoDaysAgoKey]: { v: 120, s: 0 },
         [yestKey]: { v: 195, s: 0 },
         [curKey]: { v: 85, s: 0 },
       },
@@ -238,10 +343,15 @@ export function createDefaultState(nowDate = new Date()): PulseHabitState {
       },
     },
     subjects: JSON.parse(JSON.stringify(DEFAULT_SUBJECTS)),
+    todos: [
+      { id: 'td_1', text: 'Complete Lecture 7 notes & summary', done: true },
+      { id: 'td_2', text: 'Solve 5 practice problems without hints', done: false },
+    ],
     sessions: [
       {
         id: 'ses_prev2',
         subjectId: 'sub_math',
+        heading: 'Linear Algebra — Eigenvalues & Eigenvectors',
         dayKey: twoDaysAgoKey,
         startTs: morningStartTs - 2 * 86400000 + 5 * 3600000,
         endTs: morningStartTs - 2 * 86400000 + 7 * 3600000,
@@ -252,12 +362,13 @@ export function createDefaultState(nowDate = new Date()): PulseHabitState {
         purity: 100,
         mode: 'countdown',
         rating: 5,
-        note: 'Linear algebra problem set and eigenvalues.',
+        note: 'Completed problem set 4 and verified matrix diagonalization proofs.',
         updatedAt: morningStartTs - 2 * 86400000 + 7 * 3600000,
       },
       {
         id: 'ses_prev1',
         subjectId: 'sub_code',
+        heading: 'Graph Algorithms & Dynamic Programming',
         dayKey: yestKey,
         startTs: morningStartTs - 86400000 + 2 * 3600000,
         endTs: morningStartTs - 86400000 + 5.25 * 3600000,
@@ -266,14 +377,15 @@ export function createDefaultState(nowDate = new Date()): PulseHabitState {
         pauseCount: 0,
         overtimeMs: 1200000,
         purity: 98,
-        mode: 'pomo',
+        mode: 'stopwatch',
         rating: 5,
-        note: 'Dynamic programming & graph shortest paths.',
+        note: 'Implemented Dijkstra and Bellman-Ford from scratch and analyzed complexity.',
         updatedAt: morningStartTs - 86400000 + 5.25 * 3600000,
       },
       {
         id: 'ses_m2k9x',
         subjectId: 'sub_code',
+        heading: 'Systems Architecture — Lecture 7 & Trees',
         dayKey: curKey,
         startTs: morningStartTs,
         endTs: morningEndTs,
@@ -284,7 +396,7 @@ export function createDefaultState(nowDate = new Date()): PulseHabitState {
         purity: 94,
         mode: 'pomo',
         rating: 5,
-        note: 'Finished lecture 7 and implemented tree traversal.',
+        note: 'Finished lecture 7 and implemented B-tree traversal routines.',
         updatedAt: morningEndTs,
       },
     ],
@@ -327,6 +439,7 @@ export function createDefaultState(nowDate = new Date()): PulseHabitState {
       pomoWork: 25,
       pomoBreak: 5,
       countdownMins: 45,
+      defaultMode: 'pomo',
       pipPref: 'video',
       soundscape: 'off',
       soundVol: 0.35,
@@ -359,6 +472,7 @@ export function norm(raw: unknown, nowDate = new Date()): PulseHabitState {
   const d = isEmptyBoot ? createDefaultState(nowDate) : createBlankState(nowDate);
   const s = Object.assign(d, raw && typeof raw === 'object' ? raw : {}) as PulseHabitState;
   s.set = Object.assign(createBlankState(nowDate).set, s.set || {});
+  if (!s.set.defaultMode) s.set.defaultMode = 'pomo';
   if (!Array.isArray(s.habits)) s.habits = [];
   if (!s.log || typeof s.log !== 'object') s.log = {};
   if (!Array.isArray(s.subjects) || !s.subjects.length) {
@@ -367,7 +481,22 @@ export function norm(raw: unknown, nowDate = new Date()): PulseHabitState {
   s.subjects.forEach((sub) => {
     if (!Array.isArray(sub.todos)) sub.todos = [];
   });
+  if (!Array.isArray(s.todos)) {
+    const mergedTodos = s.subjects.flatMap((sub) => sub.todos || []);
+    s.todos = mergedTodos.length
+      ? mergedTodos
+      : [
+          { id: 'td_1', text: 'Complete Lecture 7 notes & summary', done: true },
+          { id: 'td_2', text: 'Solve 5 practice problems without hints', done: false },
+        ];
+  }
   if (!Array.isArray(s.sessions)) s.sessions = [];
+  s.sessions.forEach((ses) => {
+    if (!ses.heading) {
+      const sub = s.subjects.find((x) => x.id === ses.subjectId);
+      ses.heading = sub ? sub.name : 'Study Session';
+    }
+  });
   if (!s.plans || typeof s.plans !== 'object') s.plans = {};
   if (!Array.isArray(s.ddays)) s.ddays = [];
   if (!s.notes || typeof s.notes !== 'object') s.notes = {};
@@ -417,12 +546,20 @@ export function getTimerMetrics(state: PulseHabitState, now = Date.now()): Timer
 
   const denom = totalActiveMs + totalPausedMs;
   const purity = denom > 0 ? Math.round((totalActiveMs / denom) * 100) : 100;
+  const baseSub = getSubject(state, t.subjectId);
+  const heading = (t.heading && t.heading.trim()) || baseSub.name || 'Study Session';
+  const color = t.heading && t.heading.trim() ? getHeadingColor(heading) : baseSub.color;
 
   return {
     status: t.status,
     mode: t.mode,
     phase: t.phase || 'work',
-    subject: getSubject(state, t.subjectId),
+    subject: {
+      ...baseSub,
+      name: heading,
+      color,
+    },
+    heading,
     totalActiveMs,
     totalPausedMs,
     sliceActiveMs,
@@ -443,16 +580,29 @@ export function getTodaySubjectMs(
   now = Date.now()
 ): number {
   let ms = state.sessions
-    .filter((s) => s.dayKey === dayKey && (subId === 'any' || s.subjectId === subId))
+    .filter((s) => s.dayKey === dayKey && (!subId || subId === 'any' || s.subjectId === subId))
     .reduce((acc, s) => acc + (s.activeMs || 0), 0);
 
   if (state.activeTimer && dayKey === todayKey) {
     const m = getTimerMetrics(state, now);
-    if (m && m.phase !== 'break' && (subId === 'any' || state.activeTimer.subjectId === subId)) {
+    if (
+      m &&
+      m.phase !== 'break' &&
+      (!subId || subId === 'any' || state.activeTimer.subjectId === subId)
+    ) {
       ms += m.sliceActiveMs;
     }
   }
   return ms;
+}
+
+export function getDayTotalStudyMs(
+  state: PulseHabitState,
+  dayKey: string,
+  todayKey: string,
+  now = Date.now()
+): number {
+  return getTodaySubjectMs(state, 'any', dayKey, todayKey, now);
 }
 
 export function syncStudyHabitsInPlace(
@@ -463,8 +613,9 @@ export function syncStudyHabitsInPlace(
 ): boolean {
   let changed = false;
   state.habits.forEach((h) => {
-    if (!h.subjectId) return;
-    const mins = Math.floor(getTodaySubjectMs(state, h.subjectId, dayKey, todayKey, now) / 60000);
+    if (!h.subjectId && !h.autoMins) return;
+    const targetSub = h.subjectId || 'any';
+    const mins = Math.floor(getTodaySubjectMs(state, targetSub, dayKey, todayKey, now) / 60000);
     const L = (state.log[h.id] ??= {});
     const prev = L[dayKey]?.v || 0;
     if (mins !== prev) {
@@ -473,6 +624,272 @@ export function syncStudyHabitsInPlace(
     }
   });
   return changed;
+}
+
+export interface StudySummaryReport {
+  todayMs: number;
+  weekTotalMs: number;
+  weekAvgMsPerDay: number;
+  weekAvgActiveDayMs: number;
+  weekActiveDays: number;
+  prevWeekTotalMs: number;
+  weekDeltaPct: number;
+  monthTotalMs: number;
+  monthAvgMsPerDay: number;
+  monthActiveDays: number;
+  allTimeTotalMs: number;
+  totalSessionsCount: number;
+  avgSessionMs: number;
+  avgPurity: number;
+  hourlyMs: number[];
+  peakHourIndex: number;
+  peakHourWindowLabel: string;
+  peakPeriodLabel: string;
+  avgStartHourLabel: string;
+  avgEndHourLabel: string;
+  last7Days: Array<{
+    key: string;
+    dayName: string;
+    shortDate: string;
+    ms: number;
+    sessionsCount: number;
+  }>;
+  modeBreakdown: Array<{
+    mode: TimerMode;
+    label: string;
+    ms: number;
+    count: number;
+    pct: number;
+  }>;
+  headingBreakdown: Array<{
+    heading: string;
+    color: string;
+    ms: number;
+    count: number;
+    lastDayKey: string;
+    pct: number;
+  }>;
+}
+
+export function computeStudySummary(
+  state: PulseHabitState,
+  todayKey: string,
+  now = Date.now()
+): StudySummaryReport {
+  const todayMs = getDayTotalStudyMs(state, todayKey, todayKey, now);
+
+  // Last 7 days (this week window)
+  const last7Days: StudySummaryReport['last7Days'] = [];
+  let weekTotalMs = 0;
+  let weekActiveDays = 0;
+
+  for (let i = 6; i >= 0; i--) {
+    const k = addD(todayKey, -i);
+    const d = parseKey(k);
+    const daySessions = state.sessions.filter((s) => s.dayKey === k);
+    const ms = getDayTotalStudyMs(state, k, todayKey, now);
+    if (ms > 0) weekActiveDays++;
+    weekTotalMs += ms;
+    last7Days.push({
+      key: k,
+      dayName: d.toLocaleDateString(undefined, { weekday: 'short' }),
+      shortDate: d.toLocaleDateString(undefined, { month: 'short', day: 'numeric' }),
+      ms,
+      sessionsCount: daySessions.length,
+    });
+  }
+
+  // Previous 7 days for comparison
+  let prevWeekTotalMs = 0;
+  for (let i = 13; i >= 7; i--) {
+    const k = addD(todayKey, -i);
+    prevWeekTotalMs += getDayTotalStudyMs(state, k, todayKey, now);
+  }
+  const weekDeltaPct =
+    prevWeekTotalMs > 0
+      ? Math.round(((weekTotalMs - prevWeekTotalMs) / prevWeekTotalMs) * 100)
+      : weekTotalMs > 0
+        ? 100
+        : 0;
+
+  // Last 30 days (monthly window)
+  let monthTotalMs = 0;
+  let monthActiveDays = 0;
+  for (let i = 29; i >= 0; i--) {
+    const k = addD(todayKey, -i);
+    const ms = getDayTotalStudyMs(state, k, todayKey, now);
+    if (ms > 0) monthActiveDays++;
+    monthTotalMs += ms;
+  }
+
+  const allTimeTotalMs =
+    state.sessions.reduce((acc, s) => acc + (s.activeMs || 0), 0) +
+    (state.activeTimer ? getTimerMetrics(state, now)?.sliceActiveMs || 0 : 0);
+
+  const totalSessionsCount = state.sessions.length;
+  const avgSessionMs =
+    totalSessionsCount > 0 ? Math.round(allTimeTotalMs / totalSessionsCount) : 0;
+  const avgPurity =
+    totalSessionsCount > 0
+      ? Math.round(
+          state.sessions.reduce((acc, s) => acc + (s.purity ?? 100), 0) / totalSessionsCount
+        )
+      : 100;
+
+  // 24-hour activity distribution (exact overlap per clock hour)
+  const hourlyMs = new Array(24).fill(0);
+  state.sessions.forEach((s) => {
+    if (!s.startTs || !s.endTs || s.endTs <= s.startTs) return;
+    const wallDuration = s.endTs - s.startTs;
+    const ratio = wallDuration > 0 ? Math.min(1, (s.activeMs || wallDuration) / wallDuration) : 1;
+
+    let cur = s.startTs;
+    while (cur < s.endTs) {
+      const d = new Date(cur);
+      const hr = d.getHours();
+      const nextHour = new Date(
+        d.getFullYear(),
+        d.getMonth(),
+        d.getDate(),
+        hr + 1,
+        0,
+        0,
+        0
+      ).getTime();
+      const segEnd = Math.min(s.endTs, nextHour);
+      const segMs = Math.max(0, segEnd - cur) * ratio;
+      hourlyMs[hr] += segMs;
+      cur = segEnd;
+    }
+  });
+
+  // Find peak 2-hour study window and peak single hour
+  let peakHourIndex = 9;
+  let maxHourMs = -1;
+  hourlyMs.forEach((ms, hr) => {
+    if (ms > maxHourMs) {
+      maxHourMs = ms;
+      peakHourIndex = hr;
+    }
+  });
+
+  const endPeakHr = (peakHourIndex + 2) % 24;
+  const peakHourWindowLabel =
+    maxHourMs > 0
+      ? `${pad(peakHourIndex)}:00 – ${pad(endPeakHr)}:00`
+      : 'No study sessions yet';
+
+  let peakPeriodLabel = 'Morning Focus Peak';
+  if (peakHourIndex >= 5 && peakHourIndex < 12) peakPeriodLabel = 'Morning Focus Peak';
+  else if (peakHourIndex >= 12 && peakHourIndex < 17) peakPeriodLabel = 'Afternoon Focus Peak';
+  else if (peakHourIndex >= 17 && peakHourIndex < 22) peakPeriodLabel = 'Evening Focus Peak';
+  else peakPeriodLabel = 'Late-Night Focus Peak';
+
+  // Earliest start & latest wrap-up per active day
+  const byDay: Record<string, { minStart: number; maxEnd: number }> = {};
+  state.sessions.forEach((s) => {
+    if (!s.startTs || !s.endTs) return;
+    if (!byDay[s.dayKey]) {
+      byDay[s.dayKey] = { minStart: s.startTs, maxEnd: s.endTs };
+    } else {
+      byDay[s.dayKey].minStart = Math.min(byDay[s.dayKey].minStart, s.startTs);
+      byDay[s.dayKey].maxEnd = Math.max(byDay[s.dayKey].maxEnd, s.endTs);
+    }
+  });
+  const dayRecords = Object.values(byDay);
+  const avgMinsOfDay = (tsList: number[]) => {
+    if (!tsList.length) return null;
+    const avg =
+      tsList.reduce((a, ts) => {
+        const d = new Date(ts);
+        return a + d.getHours() * 60 + d.getMinutes();
+      }, 0) / tsList.length;
+    return `${pad(Math.floor(avg / 60))}:${pad(Math.round(avg % 60))}`;
+  };
+  const avgStartHourLabel = avgMinsOfDay(dayRecords.map((x) => x.minStart)) || '--:--';
+  const avgEndHourLabel = avgMinsOfDay(dayRecords.map((x) => x.maxEnd)) || '--:--';
+
+  // Mode breakdown
+  const modeLabels: Record<TimerMode, string> = {
+    pomo: '🍅 Pomodoro',
+    countdown: '⏳ Countdown',
+    stopwatch: '⏱️ Stopwatch',
+    manual: '✍️ Manual Entry',
+  };
+  const modeMap: Record<TimerMode, { ms: number; count: number }> = {
+    pomo: { ms: 0, count: 0 },
+    countdown: { ms: 0, count: 0 },
+    stopwatch: { ms: 0, count: 0 },
+    manual: { ms: 0, count: 0 },
+  };
+  state.sessions.forEach((s) => {
+    const m: TimerMode = modeMap[s.mode] ? s.mode : 'pomo';
+    modeMap[m].ms += s.activeMs || 0;
+    modeMap[m].count += 1;
+  });
+  const modeBreakdown = (Object.keys(modeMap) as TimerMode[]).map((mode) => ({
+    mode,
+    label: modeLabels[mode],
+    ms: modeMap[mode].ms,
+    count: modeMap[mode].count,
+    pct: allTimeTotalMs > 0 ? Math.round((modeMap[mode].ms / allTimeTotalMs) * 100) : 0,
+  }));
+
+  // Heading breakdown
+  const headingMap = new Map<
+    string,
+    { heading: string; ms: number; count: number; lastDayKey: string }
+  >();
+  state.sessions.forEach((s) => {
+    const h = getSessionHeading(state, s);
+    const key = h.toLowerCase();
+    const prev = headingMap.get(key);
+    if (!prev) {
+      headingMap.set(key, {
+        heading: h,
+        ms: s.activeMs || 0,
+        count: 1,
+        lastDayKey: s.dayKey,
+      });
+    } else {
+      prev.ms += s.activeMs || 0;
+      prev.count += 1;
+      if (s.dayKey > prev.lastDayKey) prev.lastDayKey = s.dayKey;
+    }
+  });
+  const headingBreakdown = Array.from(headingMap.values())
+    .sort((a, b) => b.ms - a.ms)
+    .map((item) => ({
+      ...item,
+      color: getHeadingColor(item.heading),
+      pct: allTimeTotalMs > 0 ? Math.round((item.ms / allTimeTotalMs) * 100) : 0,
+    }));
+
+  return {
+    todayMs,
+    weekTotalMs,
+    weekAvgMsPerDay: Math.round(weekTotalMs / 7),
+    weekAvgActiveDayMs: weekActiveDays > 0 ? Math.round(weekTotalMs / weekActiveDays) : 0,
+    weekActiveDays,
+    prevWeekTotalMs,
+    weekDeltaPct,
+    monthTotalMs,
+    monthAvgMsPerDay: Math.round(monthTotalMs / 30),
+    monthActiveDays,
+    allTimeTotalMs,
+    totalSessionsCount,
+    avgSessionMs,
+    avgPurity,
+    hourlyMs,
+    peakHourIndex,
+    peakHourWindowLabel,
+    peakPeriodLabel,
+    avgStartHourLabel,
+    avgEndHourLabel,
+    last7Days,
+    modeBreakdown,
+    headingBreakdown,
+  };
 }
 
 export const ent = (state: PulseHabitState, h: Habit, k: string) => state.log[h.id]?.[k];

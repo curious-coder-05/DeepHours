@@ -1,8 +1,9 @@
 import React, { useEffect, useState } from 'react';
-import type { PulseHabitState, Subject } from '../types';
+import type { PulseHabitState } from '../types';
 import {
   fmtHMShort,
-  getSubject,
+  getHeadingColor,
+  getSessionHeading,
   getTodaySubjectMs,
   pad,
 } from '../utils/studyLogic';
@@ -11,9 +12,16 @@ interface PlannerViewProps {
   state: PulseHabitState;
   sel: string;
   todayKey: string;
-  onPaintSlot: (slotIndex: number, brushSubjectId: string) => void;
+  onPaintSlot: (slotIndex: number, brushId: string) => void;
   onOpenManualSession: () => void;
 }
+
+const PLAN_BRUSHES = [
+  { id: 'sub_code', name: 'Deep Study Block', e: '⚡', color: '#6366f1' },
+  { id: 'sub_math', name: 'Problem Solving', e: '📐', color: '#10b981' },
+  { id: 'sub_lec', name: 'Lectures & Notes', e: '🎧', color: '#f59e0b' },
+  { id: 'sub_read', name: 'Reading & Review', e: '📖', color: '#ec4899' },
+] as const;
 
 export const PlannerView: React.FC<PlannerViewProps> = ({
   state,
@@ -22,9 +30,7 @@ export const PlannerView: React.FC<PlannerViewProps> = ({
   onPaintSlot,
   onOpenManualSession,
 }) => {
-  const defaultBrush =
-    state.subjects.find((x) => !x.arch)?.id || state.subjects[0].id;
-  const [planBrush, setPlanBrush] = useState<string>(defaultBrush);
+  const [planBrush, setPlanBrush] = useState<string>(PLAN_BRUSHES[0].id);
   const [isDragging, setIsDragging] = useState(false);
 
   useEffect(() => {
@@ -38,18 +44,33 @@ export const PlannerView: React.FC<PlannerViewProps> = ({
   const dayPlan = state.plans[sel] || {};
   const daySessions = state.sessions.filter((s) => s.dayKey === sel);
 
-  const actualSlots: Record<number, { sub: Subject; mins: number }> = {};
-  const paintSessionIntoSlots = (startTs: number, endTs: number, subjectId: string) => {
-    const sub = getSubject(state, subjectId);
+  const getBrushMeta = (id: string) => {
+    return (
+      PLAN_BRUSHES.find((b) => b.id === id) || {
+        id,
+        name: id,
+        e: '⚡',
+        color: getHeadingColor(id),
+      }
+    );
+  };
+
+  const actualSlots: Record<number, { heading: string; color: string; mins: number }> = {};
+  const paintSessionIntoSlots = (startTs: number, endTs: number, heading: string) => {
+    const color = getHeadingColor(heading);
     for (let ts = startTs; ts < endTs; ts += 60000) {
       const d = new Date(ts);
       const slotIdx = d.getHours() * 6 + Math.floor(d.getMinutes() / 10);
-      if (!actualSlots[slotIdx]) actualSlots[slotIdx] = { sub, mins: 0 };
+      if (!actualSlots[slotIdx]) {
+        actualSlots[slotIdx] = { heading, color, mins: 0 };
+      }
       actualSlots[slotIdx].mins = Math.min(10, actualSlots[slotIdx].mins + 1);
     }
   };
 
-  daySessions.forEach((s) => paintSessionIntoSlots(s.startTs, s.endTs, s.subjectId));
+  daySessions.forEach((s) =>
+    paintSessionIntoSlots(s.startTs, s.endTs, getSessionHeading(state, s))
+  );
   if (
     state.activeTimer &&
     sel === todayKey &&
@@ -58,7 +79,7 @@ export const PlannerView: React.FC<PlannerViewProps> = ({
     paintSessionIntoSlots(
       state.activeTimer.sliceStartTs,
       Date.now(),
-      state.activeTimer.subjectId
+      state.activeTimer.heading || 'Deep Study Session'
     );
   }
 
@@ -80,26 +101,24 @@ export const PlannerView: React.FC<PlannerViewProps> = ({
         </button>
       </div>
 
-      {/* Subject Paint Brush Selector */}
+      {/* Study Block Paint Brush Selector */}
       <div className="card" style={{ padding: '12px' }}>
         <small style={{ display: 'block', marginBottom: '6px' }}>
-          Tap or drag on <b>Planned</b> cells to paint 10-min blocks:
+          Tap or drag on <b>Planned</b> cells to paint 10-min study blocks:
         </small>
         <div className="sub-legend">
-          {state.subjects
-            .filter((s) => !s.arch)
-            .map((s) => (
-              <button
-                type="button"
-                key={s.id}
-                className={`sub-chip ${planBrush === s.id ? 'active' : ''}`}
-                style={{ '--sc': s.color } as React.CSSProperties}
-                onClick={() => setPlanBrush(s.id)}
-              >
-                <i className="dot" style={{ '--sc': s.color } as React.CSSProperties} />
-                {s.e} {s.name}
-              </button>
-            ))}
+          {PLAN_BRUSHES.map((b) => (
+            <button
+              type="button"
+              key={b.id}
+              className={`sub-chip ${planBrush === b.id ? 'active' : ''}`}
+              style={{ '--sc': b.color } as React.CSSProperties}
+              onClick={() => setPlanBrush(b.id)}
+            >
+              <i className="dot" style={{ '--sc': b.color } as React.CSSProperties} />
+              {b.e} {b.name}
+            </button>
+          ))}
           <button
             type="button"
             className={`sub-chip ${planBrush === 'erase' ? 'active' : ''}`}
@@ -129,8 +148,8 @@ export const PlannerView: React.FC<PlannerViewProps> = ({
               <div key={h} className="hr-row">
                 {[0, 1, 2, 3, 4, 5].map((idx) => {
                   const slot = h * 6 + idx;
-                  const pSubId = dayPlan[slot];
-                  const pSub = pSubId ? getSubject(state, pSubId) : null;
+                  const pId = dayPlan[slot];
+                  const pMeta = pId ? getBrushMeta(pId) : null;
                   const timeLabel = `${pad(h)}:${idx}0`;
                   return (
                     <button
@@ -139,8 +158,8 @@ export const PlannerView: React.FC<PlannerViewProps> = ({
                       className="slot"
                       style={{ padding: 0 }}
                       data-plan-slot={slot}
-                      aria-label={`Plan ${timeLabel} (${pSub ? pSub.name : 'Empty'})`}
-                      title={`${timeLabel} Planned: ${pSub ? pSub.name : 'Empty'}`}
+                      aria-label={`Plan ${timeLabel} (${pMeta ? pMeta.name : 'Empty'})`}
+                      title={`${timeLabel} Planned: ${pMeta ? pMeta.name : 'Empty'}`}
                       onPointerDown={(e) => {
                         e.preventDefault();
                         setIsDragging(true);
@@ -155,10 +174,10 @@ export const PlannerView: React.FC<PlannerViewProps> = ({
                         onPaintSlot(slot, planBrush);
                       }}
                     >
-                      {pSub && (
+                      {pMeta && (
                         <i
                           style={{
-                            background: pSub.color,
+                            background: pMeta.color,
                             opacity: 0.85,
                           }}
                         />
@@ -181,13 +200,13 @@ export const PlannerView: React.FC<PlannerViewProps> = ({
                       key={slot}
                       className="slot"
                       title={`${pad(h)}:${idx}0 Actual: ${
-                        act ? `${act.sub.name} (${act.mins}m)` : '0m'
+                        act ? `${act.heading} (${act.mins}m)` : '0m'
                       }`}
                     >
                       {act && (
                         <i
                           style={{
-                            background: act.sub.color,
+                            background: act.color,
                             width: `${fillPct}%`,
                           }}
                         />

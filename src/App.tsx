@@ -5,6 +5,7 @@
 
 import React, { useCallback, useEffect, useRef, useState } from 'react';
 import type {
+  ActiveTimerMode,
   AppSettings,
   AppTab,
   DDay,
@@ -13,7 +14,6 @@ import type {
   PulseHabitState,
   SoundscapeMode,
   StudySession,
-  Subject,
 } from './types';
 import {
   STARTERS,
@@ -25,7 +25,8 @@ import {
   fmtHMS,
   fmtHMShort,
   fmtMS,
-  getSubject,
+  getHeadingColor,
+  getSessionHeading,
   getTimerMetrics,
   logicalKey,
   mkHabit,
@@ -230,17 +231,14 @@ export default function App() {
   // Timer actions
   const startTimer = useCallback(
     (
-      subjectId?: string,
-      mode?: 'pomo' | 'countdown' | 'stopwatch',
+      heading?: string,
+      mode?: ActiveTimerMode,
       customTargetMins?: number
     ) => {
       ensureAudioEngine();
       updateAndSave((prev) => {
-        const sub =
-          subjectId ||
-          prev.subjects.find((x) => !x.arch)?.id ||
-          prev.subjects[0].id;
-        const m = mode || 'pomo';
+        const cleanHeading = (heading && heading.trim()) || 'Deep Study Session';
+        const m: ActiveTimerMode = mode || prev.set.defaultMode || 'pomo';
         const targetMins =
           m === 'pomo'
             ? prev.set.pomoWork || 25
@@ -251,11 +249,16 @@ export default function App() {
         beep('ok', !!prev.set.snd);
         return {
           ...prev,
+          set: {
+            ...prev.set,
+            defaultMode: m,
+          },
           activeTimer: {
             status: 'running',
             mode: m,
             phase: 'work',
-            subjectId: sub,
+            subjectId: 'sub_code',
+            heading: cleanHeading,
             startTs: now,
             sliceStartTs: now,
             pauseStartTs: null,
@@ -320,7 +323,7 @@ export default function App() {
   const commitSliceInState = (
     prev: PulseHabitState,
     now: number,
-    reflection: { rating: number; note: string }
+    reflection: { heading?: string; rating: number; note: string }
   ): { next: PulseHabitState; savedEntry: StudySession | null } => {
     const t = prev.activeTimer;
     if (!t || t.phase === 'break') return { next: prev, savedEntry: null };
@@ -330,7 +333,7 @@ export default function App() {
     const slicePausedMs = (t.slicePausedMs || 0) + curPause;
     const sliceActiveMs = Math.max(0, now - t.sliceStartTs - slicePausedMs);
 
-    if (sliceActiveMs < 5000) return { next: prev, savedEntry: null };
+    if (sliceActiveMs < 1000) return { next: prev, savedEntry: null };
 
     const totalPaused = (t.pausedDurationMs || 0) + curPause;
     const totalActive = Math.max(0, now - t.startTs - totalPaused);
@@ -340,10 +343,15 @@ export default function App() {
         : 0;
     const denom = sliceActiveMs + slicePausedMs;
     const purity = denom > 0 ? Math.round((sliceActiveMs / denom) * 100) : 100;
+    const finalHeading =
+      (reflection.heading && reflection.heading.trim()) ||
+      (t.heading && t.heading.trim()) ||
+      'Deep Study Session';
 
     const entry: StudySession = {
       id: uid('ses'),
-      subjectId: t.subjectId,
+      subjectId: t.subjectId || 'sub_code',
+      heading: finalHeading,
       dayKey: logicalKey(t.sliceStartTs, prev.set.dayResetHour ?? 4),
       startTs: t.sliceStartTs,
       endTs: now,
@@ -368,27 +376,28 @@ export default function App() {
     return { next, savedEntry: entry };
   };
 
-  const switchSubjectMidSession = useCallback(
-    (newSubjectId: string) => {
+  const switchHeadingMidSession = useCallback(
+    (newHeading: string) => {
+      const clean = newHeading.trim() || 'Deep Study Session';
       updateAndSave((prev) => {
         const t = prev.activeTimer;
-        if (!t || t.subjectId === newSubjectId) return prev;
+        if (!t || t.heading === clean) return prev;
         const now = Date.now();
         const { next, savedEntry } = commitSliceInState(prev, now, {
+          heading: t.heading,
           rating: 5,
-          note: 'Auto-logged on subject switch',
+          note: 'Auto-logged on topic switch',
         });
-        const newSub = getSubject(next, newSubjectId);
         showToast(
           savedEntry
-            ? `Saved ${fmtHMShort(savedEntry.activeMs)} · Switched to ${newSub.e} ${newSub.name}`
-            : `Switched to ${newSub.e} ${newSub.name}`
+            ? `Saved ${fmtHMShort(savedEntry.activeMs)} · Switched to "${clean}"`
+            : `Switched session heading to "${clean}"`
         );
         return {
           ...next,
           activeTimer: {
             ...t,
-            subjectId: newSubjectId,
+            heading: clean,
             sliceStartTs: now,
             slicePausedMs: 0,
             slicePauseCount: 0,
@@ -407,7 +416,7 @@ export default function App() {
     if (t.status === 'running') {
       pauseTimer();
     }
-    if (!m || m.sliceActiveMs < 5000 || t.phase === 'break') {
+    if (!m || m.sliceActiveMs < 1000 || t.phase === 'break') {
       updateAndSave((prev) => ({ ...prev, activeTimer: null }));
       return;
     }
@@ -425,6 +434,7 @@ export default function App() {
 
       if (t.phase === 'work') {
         const res = commitSliceInState(prev, now, {
+          heading: t.heading,
           rating: 5,
           note: 'Pomodoro work sprint',
         });
@@ -492,7 +502,7 @@ export default function App() {
           changed = true;
           beep('chime', !!prev.set.snd);
           sendNotification(
-            `${m.subject.e} ${m.subject.name} target reached!`,
+            `⚡ ${m.heading} target reached!`,
             'Entering Flow State Overtime (+00:01)'
           );
         }
@@ -597,7 +607,8 @@ export default function App() {
   );
 
   const activeMetrics = getTimerMetrics(state);
-  const pipSub = activeMetrics ? activeMetrics.subject : getSubject(state);
+  const pipHeading = activeMetrics ? activeMetrics.heading : 'Deep Study Session';
+  const pipColor = getHeadingColor(pipHeading);
 
   return (
     <>
@@ -626,14 +637,24 @@ export default function App() {
             }}
             onNewHabit={() => setModal({ type: 'habit' })}
             onEditHabit={(id) => setModal({ type: 'habit', id })}
-            onNewSubject={() => setModal({ type: 'subject' })}
-            onQuickStartSubject={(subId) => {
+            onQuickStartSession={(heading, mode) => {
               setTab('focus');
-              startTimer(subId, 'pomo');
+              startTimer(heading, mode);
             }}
             onNewDDay={() => setModal({ type: 'dday' })}
             onEditDDay={(id) => setModal({ type: 'dday', id })}
             onOpenManualSession={() => setModal({ type: 'manualSession' })}
+            onDeleteSession={(id) => {
+              updateAndSave((prev) => {
+                const next = {
+                  ...prev,
+                  sessions: prev.sessions.filter((x) => x.id !== id),
+                };
+                syncStudyHabitsInPlace(next, sel, todayKey);
+                return next;
+              });
+              showToast('Session removed');
+            }}
             onSetMood={(v) => {
               updateAndSave((prev) => ({
                 ...prev,
@@ -660,39 +681,37 @@ export default function App() {
             deskMode={deskMode}
             onToggleDeskMode={() => setDeskMode((d) => !d)}
             onOpenPiP={() => togglePiP()}
-            onSelectSubject={(subId) => {
+            onSwitchHeading={(newHeading) => {
               if (state.activeTimer) {
-                switchSubjectMidSession(subId);
-              } else {
-                updateAndSave((prev) => {
-                  const idx = prev.subjects.findIndex((x) => x.id === subId);
-                  if (idx <= 0) return prev;
-                  const copy = [...prev.subjects];
-                  const [picked] = copy.splice(idx, 1);
-                  copy.unshift(picked);
-                  return { ...prev, subjects: copy };
-                });
+                switchHeadingMidSession(newHeading);
               }
             }}
             onSetMode={(m) => {
-              if (!state.activeTimer) {
-                startTimer(state.subjects[0].id, m);
-                pauseTimer();
-                updateAndSave((prev) =>
-                  prev.activeTimer
+              updateAndSave((prev) => {
+                const targetMins =
+                  m === 'pomo'
+                    ? prev.set.pomoWork || 25
+                    : m === 'countdown'
+                      ? prev.set.countdownMins || 45
+                      : 0;
+                return {
+                  ...prev,
+                  set: {
+                    ...prev.set,
+                    defaultMode: m,
+                  },
+                  activeTimer: prev.activeTimer
                     ? {
-                        ...prev,
-                        activeTimer: {
-                          ...prev.activeTimer,
-                          pauseCount: 0,
-                          slicePauseCount: 0,
-                        },
+                        ...prev.activeTimer,
+                        mode: m,
+                        targetMs: targetMins * 60000,
+                        chimeFired: false,
                       }
-                    : prev
-                );
-              }
+                    : null,
+                };
+              });
             }}
-            onStartTimer={(subId) => startTimer(subId, 'pomo')}
+            onStartTimer={(heading, mode) => startTimer(heading, mode)}
             onTogglePause={toggleTimerPause}
             onTogglePomoPhase={togglePomoPhase}
             onStopAndReflect={stopTimerAndReflect}
@@ -711,46 +730,24 @@ export default function App() {
                 set: { ...prev.set, soundVol: vol },
               }));
             }}
-            onEditSubject={(subId) => setModal({ type: 'subject', id: subId })}
-            onAddTodo={(subId, text) => {
+            onAddTodo={(text) => {
               updateAndSave((prev) => ({
                 ...prev,
-                subjects: prev.subjects.map((s) =>
-                  s.id === subId
-                    ? {
-                        ...s,
-                        todos: [...(s.todos || []), { id: uid('td'), text, done: false }],
-                      }
-                    : s
+                todos: [...(prev.todos || []), { id: uid('td'), text, done: false }],
+              }));
+            }}
+            onToggleTodo={(todoId) => {
+              updateAndSave((prev) => ({
+                ...prev,
+                todos: (prev.todos || []).map((td) =>
+                  td.id === todoId ? { ...td, done: !td.done } : td
                 ),
               }));
             }}
-            onToggleTodo={(subId, todoId) => {
+            onDeleteTodo={(todoId) => {
               updateAndSave((prev) => ({
                 ...prev,
-                subjects: prev.subjects.map((s) =>
-                  s.id === subId
-                    ? {
-                        ...s,
-                        todos: (s.todos || []).map((td) =>
-                          td.id === todoId ? { ...td, done: !td.done } : td
-                        ),
-                      }
-                    : s
-                ),
-              }));
-            }}
-            onDeleteTodo={(subId, todoId) => {
-              updateAndSave((prev) => ({
-                ...prev,
-                subjects: prev.subjects.map((s) =>
-                  s.id === subId
-                    ? {
-                        ...s,
-                        todos: (s.todos || []).filter((td) => td.id !== todoId),
-                      }
-                    : s
-                ),
+                todos: (prev.todos || []).filter((td) => td.id !== todoId),
               }));
             }}
             onOpenManualSession={() => setModal({ type: 'manualSession' })}
@@ -784,15 +781,20 @@ export default function App() {
           />
         )}
 
-        {tab === 'stats' && <StatsView state={state} todayKey={todayKey} />}
+        {tab === 'stats' && (
+          <StatsView
+            state={state}
+            todayKey={todayKey}
+            onEditSession={(sesId) => setModal({ type: 'manualSession', id: sesId })}
+          />
+        )}
 
         {tab === 'more' && (
           <MoreView
             state={state}
-            onNewSubject={() => setModal({ type: 'subject' })}
-            onEditSubject={(id) => setModal({ type: 'subject', id })}
             onNewHabit={() => setModal({ type: 'habit' })}
             onEditHabit={(id) => setModal({ type: 'habit', id })}
+            onOpenManualSession={() => setModal({ type: 'manualSession' })}
             onUpdateSetting={async <K extends keyof AppSettings>(
               key: K,
               val: AppSettings[K]
@@ -827,11 +829,11 @@ export default function App() {
               });
             }}
             onExportCsv={() => {
-              const rows = ['type,date,name_or_subject,minutes_or_value,purity_pct,note'];
+              const rows = ['type,date,session_heading_or_habit,minutes_or_value,purity_pct,note'];
               state.sessions.forEach((s) => {
-                const sub = getSubject(state, s.subjectId);
+                const heading = getSessionHeading(state, s);
                 rows.push(
-                  `study_session,${s.dayKey},"${sub.name.replace(/"/g, '""')}",${Math.round(
+                  `study_session,${s.dayKey},"${heading.replace(/"/g, '""')}",${Math.round(
                     s.activeMs / 60000
                   )},${s.purity || 100},"${(s.note || '').replace(/"/g, '""')}"`
                 );
@@ -902,8 +904,8 @@ export default function App() {
         <button
           type="button"
           className="fab"
-          aria-label="New habit"
-          onClick={() => setModal({ type: 'habit' })}
+          aria-label="Log study session manually"
+          onClick={() => setModal({ type: 'manualSession' })}
         >
           +
         </button>
@@ -925,7 +927,7 @@ export default function App() {
             window.scrollTo(0, 0);
           }}
         >
-          <b>📊</b>Analytics
+          <b>📊</b>Summary
         </button>
         <button
           type="button"
@@ -955,9 +957,9 @@ export default function App() {
             <span style={{ display: 'flex', alignItems: 'center', gap: '5px' }}>
               <i
                 className="dot"
-                style={{ '--sc': pipSub.color } as React.CSSProperties}
+                style={{ '--sc': pipColor } as React.CSSProperties}
               />
-              {pipSub.e} {pipSub.name.slice(0, 14)}
+              ⚡ {pipHeading.slice(0, 16)}
             </span>
             <span
               style={{
@@ -1075,37 +1077,10 @@ export default function App() {
             persistState(restored);
           });
         }}
-        onSaveSubject={(id, data: Partial<Subject>) => {
-          updateAndSave((prev) => {
-            if (id) {
-              return {
-                ...prev,
-                subjects: prev.subjects.map((s) =>
-                  s.id === id ? { ...s, ...data } : s
-                ),
-              };
-            }
-            return {
-              ...prev,
-              subjects: [
-                ...prev.subjects,
-                {
-                  id: uid('sub'),
-                  name: data.name || 'Subject',
-                  e: data.e || '📚',
-                  color: data.color || '#6366f1',
-                  dailyGoalMins: data.dailyGoalMins || 120,
-                  arch: 0,
-                  todos: [],
-                },
-              ],
-            };
-          });
-          setModal({ type: 'none' });
-        }}
-        onSubmitReflection={(rating, note) => {
+        onSubmitReflection={(heading, rating, note) => {
           updateAndSave((prev) => {
             const { next } = commitSliceInState(prev, Date.now(), {
+              heading,
               rating,
               note,
             });
@@ -1118,6 +1093,7 @@ export default function App() {
           beep('win', !!state.set.snd);
           boomConfetti();
           setModal({ type: 'none' });
+          showToast(`Logged session: ${heading}`);
         }}
         onDiscardSession={() => {
           updateAndSave((prev) => ({ ...prev, activeTimer: null }));
@@ -1138,7 +1114,7 @@ export default function App() {
             return next;
           });
           setModal({ type: 'none' });
-          showToast('Study session saved');
+          showToast(`Logged "${sessionData.heading || 'Study Session'}"`);
         }}
         onDeleteSession={(id) => {
           updateAndSave((prev) => {

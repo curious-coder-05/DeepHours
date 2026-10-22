@@ -5,7 +5,7 @@ import {
   fmtHMS,
   fmtHMShort,
   fmtMS,
-  getSubject,
+  getHeadingColor,
   getTimerMetrics,
   getTodaySubjectMs,
   logicalKey,
@@ -51,9 +51,9 @@ export function useFloatingTimerPiP(
     const m = getTimerMetrics(curState, now);
     const isRunning = m && m.status === 'running';
     const isPaused = m && m.status === 'paused';
-    const sub = m ? m.subject : getSubject(curState);
+    const heading = m ? m.heading : 'Deep Study Session';
+    const dotColor = m ? getHeadingColor(heading) : '#6366F1';
     const todayTotalMs = getTodaySubjectMs(curState, 'any', todayKey, todayKey, now);
-    const subTodayMs = getTodaySubjectMs(curState, sub.id, todayKey, todayKey, now);
 
     // 1. Pure dark #090D16 background
     ctx.fillStyle = '#090D16';
@@ -80,8 +80,8 @@ export function useFloatingTimerPiP(
     ctx.strokeRect(5, 5, W - 10, H - 10);
     ctx.setLineDash([]);
 
-    // 3. Top Row: Subject Name + Color Dot & Status Badge ("STUDYING" / "PAUSED")
-    ctx.fillStyle = sub.color || '#6366F1';
+    // 3. Top Row: Session Heading + Color Dot & Status Badge ("STUDYING" / "PAUSED")
+    ctx.fillStyle = dotColor;
     ctx.beginPath();
     ctx.arc(32, 38, 8, 0, Math.PI * 2);
     ctx.fill();
@@ -89,7 +89,7 @@ export function useFloatingTimerPiP(
     ctx.fillStyle = '#F8FAFC';
     ctx.font = '700 20px system-ui, -apple-system, sans-serif';
     ctx.textAlign = 'left';
-    ctx.fillText(`${sub.e} ${sub.name}`.slice(0, 22), 48, 45);
+    ctx.fillText(`⚡ ${heading}`.slice(0, 24), 48, 45);
 
     // Status Pill on Top Right
     const statusTxt = isPaused
@@ -136,14 +136,14 @@ export function useFloatingTimerPiP(
       ctx.fillText('PRESS PLAY TO START SESSION', W / 2, 190);
     }
 
-    // 5. Bottom Bar: Today's Total Hours Studied
+    // 5. Bottom Bar: Today's Total Hours Studied & Active Session Slice
     ctx.fillStyle = '#131A2A';
     ctx.fillRect(14, H - 54, W - 28, 40);
     ctx.fillStyle = '#CBD5E1';
     ctx.font = '700 17px system-ui, -apple-system, sans-serif';
     ctx.textAlign = 'center';
     ctx.fillText(
-      `Today Total: ${fmtHMShort(todayTotalMs)}   |   Subject: ${fmtHMShort(subTodayMs)}`,
+      `Today Studied: ${fmtHMShort(todayTotalMs)}   |   Active: ${m ? fmtHMShort(m.totalActiveMs) : '0m'}`,
       W / 2,
       H - 28
     );
@@ -156,11 +156,11 @@ export function useFloatingTimerPiP(
       const now = Date.now();
       const todayKey = logicalKey(now, curState.set.dayResetHour ?? 4);
       const m = getTimerMetrics(curState, now);
-      const sub = m ? m.subject : getSubject(curState);
+      const heading = m ? m.heading : 'Deep Study Session';
 
       if (typeof MediaMetadata !== 'undefined') {
         navigator.mediaSession.metadata = new MediaMetadata({
-          title: `${sub.e} ${sub.name} (${m ? fmtHMS(m.totalActiveMs) : '00:00:00'})`,
+          title: `⚡ ${heading} (${m ? fmtHMS(m.totalActiveMs) : '00:00:00'})`,
           artist:
             m?.status === 'paused'
               ? 'PAUSED · PulseHabit Study Logger'
@@ -199,7 +199,8 @@ export function useFloatingTimerPiP(
     if (!docPipWin || docPipWin.closed) return;
     const curState = stateRef.current;
     const m = getTimerMetrics(curState);
-    const sub = m ? m.subject : getSubject(curState);
+    const heading = m ? m.heading : 'Study Session';
+    const dotColor = getHeadingColor(heading);
     const isPaused = m?.status === 'paused';
     const isRun = m?.status === 'running';
     const esc = (s: string) =>
@@ -212,8 +213,8 @@ export function useFloatingTimerPiP(
     docPipWin.document.body.innerHTML = `
       <div class="pip-top">
         <span style="display:flex;align-items:center;gap:5px">
-          <i class="dot" style="--sc:${esc(sub.color)}"></i>
-          ${esc(sub.e)} ${esc(sub.name.slice(0, 14))}
+          <i class="dot" style="--sc:${esc(dotColor)}"></i>
+          ⚡ ${esc(heading.slice(0, 16))}
         </span>
         <span style="color:${isPaused ? '#fbbf24' : '#34d399'}">
           ${m && m.overtimeMs > 0 ? `+${fmtMS(m.overtimeMs)}` : isPaused ? 'PAUSED' : isRun ? `${m.purity}%` : 'IDLE'}
@@ -454,7 +455,7 @@ export function useFloatingTimerPiP(
 
   useEffect(() => {
     syncState();
-  }, [state.activeTimer?.status, state.activeTimer?.subjectId, syncState]);
+  }, [state.activeTimer?.status, state.activeTimer?.heading, syncState]);
 
   return {
     canvasRef,

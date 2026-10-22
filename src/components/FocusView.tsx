@@ -1,11 +1,12 @@
-import React, { useState } from 'react';
-import type { PulseHabitState, SoundscapeMode } from '../types';
+import React, { useEffect, useState } from 'react';
+import type { ActiveTimerMode, PulseHabitState, SoundscapeMode } from '../types';
 import {
   fmtClockTime,
   fmtHMS,
   fmtHMShort,
   fmtMS,
-  getSubject,
+  getHeadingColor,
+  getSessionHeading,
   getTimerMetrics,
   getTodaySubjectMs,
 } from '../utils/studyLogic';
@@ -17,19 +18,18 @@ interface FocusViewProps {
   deskMode: boolean;
   onToggleDeskMode: () => void;
   onOpenPiP: () => void;
-  onSelectSubject: (subjectId: string) => void;
-  onSetMode: (mode: 'pomo' | 'countdown' | 'stopwatch') => void;
-  onStartTimer: (subjectId: string) => void;
+  onSwitchHeading: (heading: string) => void;
+  onSetMode: (mode: ActiveTimerMode) => void;
+  onStartTimer: (heading: string, mode: ActiveTimerMode) => void;
   onTogglePause: () => void;
   onTogglePomoPhase: () => void;
   onStopAndReflect: () => void;
   onOpenTimerConfig: () => void;
   onSetSoundscape: (mode: SoundscapeMode) => void;
   onSetSoundVolume: (vol: number) => void;
-  onEditSubject: (subjectId: string) => void;
-  onAddTodo: (subjectId: string, text: string) => void;
-  onToggleTodo: (subjectId: string, todoId: string) => void;
-  onDeleteTodo: (subjectId: string, todoId: string) => void;
+  onAddTodo: (text: string) => void;
+  onToggleTodo: (todoId: string) => void;
+  onDeleteTodo: (todoId: string) => void;
   onOpenManualSession: () => void;
   onEditSession: (sessionId: string) => void;
 }
@@ -41,7 +41,7 @@ export const FocusView: React.FC<FocusViewProps> = ({
   deskMode,
   onToggleDeskMode,
   onOpenPiP,
-  onSelectSubject,
+  onSwitchHeading,
   onSetMode,
   onStartTimer,
   onTogglePause,
@@ -50,25 +50,40 @@ export const FocusView: React.FC<FocusViewProps> = ({
   onOpenTimerConfig,
   onSetSoundscape,
   onSetSoundVolume,
-  onEditSubject,
   onAddTodo,
   onToggleTodo,
   onDeleteTodo,
   onOpenManualSession,
   onEditSession,
 }) => {
-  const [todoInput, setTodoInput] = useState('');
-  const [selectedMode, setSelectedMode] = useState<'pomo' | 'countdown' | 'stopwatch'>(
-    state.activeTimer?.mode || 'pomo'
-  );
-
   const t = state.activeTimer;
   const m = getTimerMetrics(state);
-  const activeSubId = t
-    ? t.subjectId
-    : state.subjects.find((x) => !x.arch)?.id || state.subjects[0].id;
-  const sub = getSubject(state, activeSubId);
-  const mode = t ? t.mode : selectedMode;
+
+  const [sessionHeading, setSessionHeading] = useState<string>(
+    t?.heading || 'Deep Study Session'
+  );
+  const [todoInput, setTodoInput] = useState('');
+  const [selectedMode, setSelectedMode] = useState<ActiveTimerMode>(
+    t?.mode || state.set.defaultMode || 'pomo'
+  );
+
+  useEffect(() => {
+    if (t?.heading) {
+      setSessionHeading(t.heading);
+    }
+  }, [t?.heading]);
+
+  useEffect(() => {
+    if (t?.mode) {
+      setSelectedMode(t.mode);
+    } else if (state.set.defaultMode) {
+      setSelectedMode(state.set.defaultMode);
+    }
+  }, [t?.mode, state.set.defaultMode]);
+
+  const mode: ActiveTimerMode = t ? t.mode : selectedMode;
+  const activeHeading = (t?.heading || sessionHeading || 'Deep Study Session').trim();
+  const accentColor = getHeadingColor(activeHeading);
 
   const clockVal = m
     ? fmtHMS(m.overtimeMs > 0 ? m.totalActiveMs : m.displayMs)
@@ -78,12 +93,34 @@ export const FocusView: React.FC<FocusViewProps> = ({
         ? fmtHMS((state.set.countdownMins || 45) * 60000)
         : '00:00:00';
 
+  // Unique recent headings for quick reuse
+  const recentHeadings = Array.from(
+    new Set(
+      state.sessions
+        .slice()
+        .reverse()
+        .map((s) => getSessionHeading(state, s))
+        .filter(Boolean)
+    )
+  ).slice(0, 5);
+
+  const todos = state.todos || [];
+
   const handleTodoSubmit = (e: React.FormEvent) => {
     e.preventDefault();
     const trimmed = todoInput.trim();
     if (!trimmed) return;
-    onAddTodo(sub.id, trimmed);
+    onAddTodo(trimmed);
     setTodoInput('');
+  };
+
+  const handleHeadingApply = (e: React.FormEvent) => {
+    e.preventDefault();
+    const clean = sessionHeading.trim() || 'Deep Study Session';
+    setSessionHeading(clean);
+    if (t) {
+      onSwitchHeading(clean);
+    }
   };
 
   return (
@@ -110,32 +147,66 @@ export const FocusView: React.FC<FocusViewProps> = ({
         </div>
       </div>
 
-      {/* Active Subject Switcher (Supports Mid-Session Switching) */}
-      <div className="chips wrap hide-desk" style={{ marginBottom: '8px' }}>
-        {state.subjects
-          .filter((s) => !s.arch)
-          .map((s) => (
-            <button
-              type="button"
-              key={s.id}
-              className={`sub-chip ${s.id === activeSubId ? 'active' : ''}`}
-              style={{ '--sc': s.color } as React.CSSProperties}
-              onClick={() => onSelectSubject(s.id)}
-            >
-              <i className="dot" style={{ '--sc': s.color } as React.CSSProperties} />
-              {s.e} {s.name}
-            </button>
-          ))}
+      {/* Manual Session Heading Input + Mid-Session Slice Switcher */}
+      <div className="card hide-desk" style={{ padding: '12px 14px' }}>
+        <form onSubmit={handleHeadingApply}>
+          <label style={{ marginTop: 0 }}>
+            Session Heading (What are you studying right now?)
+            <div className="row" style={{ marginTop: '6px', gap: '8px' }}>
+              <input
+                type="text"
+                id="sessionHeadingInput"
+                value={sessionHeading}
+                onChange={(e) => setSessionHeading(e.target.value)}
+                placeholder="e.g., Lecture 7 — B-Tree Indexing & Practice..."
+                maxLength={90}
+              />
+              {t && sessionHeading.trim() && sessionHeading.trim() !== t.heading && (
+                <button type="submit" className="s pri" style={{ whiteSpace: 'nowrap' }}>
+                  Switch Topic
+                </button>
+              )}
+            </div>
+          </label>
+        </form>
+        {recentHeadings.length > 0 && (
+          <div style={{ marginTop: '8px' }}>
+            <small style={{ display: 'block', marginBottom: '5px', fontSize: '11px' }}>
+              Recent session headings (tap to use{t ? ' & slice' : ''}):
+            </small>
+            <div className="chips wrap" style={{ paddingBottom: 0 }}>
+              {recentHeadings.map((hName) => {
+                const col = getHeadingColor(hName);
+                const isCur = activeHeading.toLowerCase() === hName.toLowerCase();
+                return (
+                  <button
+                    type="button"
+                    key={hName}
+                    className={`sub-chip ${isCur ? 'active' : ''}`}
+                    style={{ '--sc': col, padding: '5px 10px', fontSize: '12px' } as React.CSSProperties}
+                    onClick={() => {
+                      setSessionHeading(hName);
+                      if (t) onSwitchHeading(hName);
+                    }}
+                  >
+                    <i className="dot" style={{ '--sc': col } as React.CSSProperties} />
+                    {hName}
+                  </button>
+                );
+              })}
+            </div>
+          </div>
+        )}
       </div>
 
       <div
         className={`card timer-shell ${m ? m.status : ''}`}
-        style={{ '--sc': sub.color } as React.CSSProperties}
+        style={{ '--sc': accentColor } as React.CSSProperties}
       >
         <div className="row sp" style={{ marginBottom: '6px' }}>
-          <span className="pill" style={{ borderColor: sub.color }}>
-            <i className="dot" style={{ '--sc': sub.color } as React.CSSProperties} />
-            {sub.e} {sub.name}
+          <span className="pill" style={{ borderColor: accentColor }}>
+            <i className="dot" style={{ '--sc': accentColor } as React.CSSProperties} />
+            ⚡ {activeHeading.slice(0, 32)}
           </span>
           <span
             className={`status-pill ${
@@ -152,7 +223,7 @@ export const FocusView: React.FC<FocusViewProps> = ({
           </span>
         </div>
 
-        {/* Mode Tabs */}
+        {/* Mode Tabs: Pomodoro, Countdown, Stopwatch */}
         <div className="chips wrap" style={{ justifyContent: 'center', margin: '6px 0' }}>
           {(
             [
@@ -165,7 +236,6 @@ export const FocusView: React.FC<FocusViewProps> = ({
               type="button"
               key={k}
               className={mode === k ? 'on' : ''}
-              disabled={!!t}
               onClick={() => {
                 setSelectedMode(k);
                 onSetMode(k);
@@ -187,15 +257,15 @@ export const FocusView: React.FC<FocusViewProps> = ({
 
         <div className="purity-bar">
           <span>
+            Mode: <b style={{ textTransform: 'uppercase' }}>{mode}</b>
+          </span>
+          <span>
             Focus Purity: <b id="livePurity">{m ? m.purity : 100}%</b>
           </span>
           <span>
-            Pauses: <b>{m ? m.pauseCount : 0}</b>
-          </span>
-          <span>
-            Subject Today:{' '}
+            Studied Today:{' '}
             <b id="liveTodaySub">
-              {fmtHMShort(getTodaySubjectMs(state, sub.id, todayKey, todayKey))}
+              {fmtHMShort(getTodaySubjectMs(state, 'any', todayKey, todayKey))}
             </b>
           </span>
         </div>
@@ -210,9 +280,11 @@ export const FocusView: React.FC<FocusViewProps> = ({
               type="button"
               className="em-btn g"
               style={{ padding: '14px', fontSize: '16px' }}
-              onClick={() => onStartTimer(sub.id)}
+              onClick={() =>
+                onStartTimer(sessionHeading.trim() || 'Deep Study Session', mode)
+              }
             >
-              ▶ Start Session
+              ▶ Start {mode === 'stopwatch' ? 'Stopwatch' : mode === 'countdown' ? 'Countdown' : 'Pomodoro'}
             </button>
           ) : (
             <>
@@ -248,10 +320,13 @@ export const FocusView: React.FC<FocusViewProps> = ({
 
         <div
           className="row"
-          style={{ justifyContent: 'center', marginTop: '10px', gap: '8px' }}
+          style={{ justifyContent: 'center', marginTop: '10px', gap: '8px', flexWrap: 'wrap' }}
         >
           <button type="button" className="s" onClick={onOpenPiP}>
             📲 Pop-out Floating Lecture PiP
+          </button>
+          <button type="button" className="s" onClick={onOpenManualSession}>
+            + Log Manual Hours
           </button>
           {deskMode ? (
             <button type="button" className="s" onClick={onToggleDeskMode}>
@@ -308,32 +383,28 @@ export const FocusView: React.FC<FocusViewProps> = ({
         )}
       </div>
 
-      {/* Subject To-Do Checklist */}
+      {/* Session Action Checklist */}
       <div className="card hide-desk">
         <div className="row sp">
-          <h3>
-            {sub.e} {sub.name} · Sub-Tasks
-          </h3>
-          <button type="button" className="s" onClick={() => onEditSubject(sub.id)}>
-            Edit Subject
-          </button>
+          <h3>✅ Study Session Checklist</h3>
+          <small>{todos.filter((x) => x.done).length}/{todos.length} done</small>
         </div>
         <form onSubmit={handleTodoSubmit} className="row" style={{ margin: '8px 0' }}>
           <input
             name="txt"
             value={todoInput}
             onChange={(e) => setTodoInput(e.target.value)}
-            placeholder="Add topic, lecture, or problem set..."
+            placeholder="Add action item or goal for this session..."
             maxLength={80}
             required
           />
-          <button type="submit" className="pri" aria-label="Add sub-task">
+          <button type="submit" className="pri" aria-label="Add checklist item">
             +
           </button>
         </form>
         <div>
-          {(sub.todos || []).length ? (
-            (sub.todos || []).map((td) => (
+          {todos.length ? (
+            todos.map((td) => (
               <div
                 key={td.id}
                 className="row sp"
@@ -344,7 +415,7 @@ export const FocusView: React.FC<FocusViewProps> = ({
                     type="checkbox"
                     style={{ width: '18px', height: '18px' }}
                     checked={td.done}
-                    onChange={() => onToggleTodo(sub.id, td.id)}
+                    onChange={() => onToggleTodo(td.id)}
                   />
                   <span
                     style={
@@ -359,15 +430,15 @@ export const FocusView: React.FC<FocusViewProps> = ({
                 <button
                   type="button"
                   className="s dg"
-                  aria-label={`Delete sub-task ${td.text}`}
-                  onClick={() => onDeleteTodo(sub.id, td.id)}
+                  aria-label={`Delete task ${td.text}`}
+                  onClick={() => onDeleteTodo(td.id)}
                 >
                   ×
                 </button>
               </div>
             ))
           ) : (
-            <small className="mu">No sub-tasks yet for this subject.</small>
+            <small className="mu">No study tasks in your checklist yet.</small>
           )}
         </div>
       </div>
@@ -375,7 +446,7 @@ export const FocusView: React.FC<FocusViewProps> = ({
       {/* Today's Logged Sessions & Retroactive Editor */}
       <div className="card hide-desk">
         <div className="row sp" style={{ marginBottom: '8px' }}>
-          <h3>Today&apos;s Sessions ({sel})</h3>
+          <h3>Today&apos;s Logged Sessions ({sel})</h3>
           <button type="button" className="s pri" onClick={onOpenManualSession}>
             + Manual Entry
           </button>
@@ -386,7 +457,8 @@ export const FocusView: React.FC<FocusViewProps> = ({
             .slice()
             .reverse()
             .map((s) => {
-              const sbj = getSubject(state, s.subjectId);
+              const heading = getSessionHeading(state, s);
+              const col = getHeadingColor(heading);
               return (
                 <div
                   key={s.id}
@@ -397,16 +469,22 @@ export const FocusView: React.FC<FocusViewProps> = ({
                     <b>
                       <i
                         className="dot"
-                        style={{ '--sc': sbj.color } as React.CSSProperties}
+                        style={{ '--sc': col } as React.CSSProperties}
                       />{' '}
-                      {sbj.e} {sbj.name} ·{' '}
-                      <span className="mono">{fmtHMShort(s.activeMs)}</span>
+                      {heading} ·{' '}
+                      <span className="mono" style={{ color: 'var(--em)' }}>
+                        {fmtHMShort(s.activeMs)}
+                      </span>
                     </b>
-                    <small>
-                      {fmtClockTime(s.startTs)} – {fmtClockTime(s.endTs)} · Purity{' '}
+                    <small style={{ display: 'block' }}>
+                      {fmtClockTime(s.startTs)} – {fmtClockTime(s.endTs)} · {s.mode.toUpperCase()} · Purity{' '}
                       {s.purity ?? 100}% · {'★'.repeat(s.rating || 5)}
-                      {s.note ? ` · ${s.note}` : ''}
                     </small>
+                    {s.note && (
+                      <small style={{ display: 'block', color: 'var(--tx)', marginTop: '2px' }}>
+                        What I did: “{s.note}”
+                      </small>
+                    )}
                   </div>
                   <button
                     type="button"
