@@ -95,9 +95,9 @@ export function useFloatingTimerPiP(
     ctx.fillStyle = bgGrad;
     ctx.beginPath();
     if (typeof ctx.roundRect === 'function') {
-      ctx.roundRect(4, 4, W - 8, H - 8, 28);
+      ctx.roundRect(2, 2, W - 4, H - 4, 12);
     } else {
-      ctx.rect(4, 4, W - 8, H - 8);
+      ctx.rect(2, 2, W - 4, H - 4);
     }
     ctx.fill();
 
@@ -118,9 +118,9 @@ export function useFloatingTimerPiP(
     ctx.lineWidth = aesthetic === 'minimal' ? 2 : 3.5;
     ctx.beginPath();
     if (typeof ctx.roundRect === 'function') {
-      ctx.roundRect(5, 5, W - 10, H - 10, 26);
+      ctx.roundRect(2, 2, W - 4, H - 4, 12);
     } else {
-      ctx.rect(5, 5, W - 10, H - 10);
+      ctx.rect(2, 2, W - 4, H - 4);
     }
     ctx.stroke();
 

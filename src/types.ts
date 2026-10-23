@@ -96,6 +96,7 @@ export interface ActiveTimer {
   slicePauseCount: number;
   targetMs: number;
   chimeFired: boolean;
+  fiveMinWarnFired?: boolean;
 }
 
 export interface MockSubjectScore {

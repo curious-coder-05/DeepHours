@@ -50,11 +50,20 @@ export function getMediaStreamDestination(): MediaStreamAudioDestinationNode | n
   return mediaStreamDest;
 }
 
-export function beep(type: 'ok' | 'no' | 'win' | 'chime', soundEnabled = true): void {
+export function beep(
+  type: 'ok' | 'no' | 'win' | 'chime' | 'fiveMin',
+  soundEnabled = true
+): void {
   if (typeof navigator !== 'undefined' && navigator.vibrate) {
     try {
       navigator.vibrate(
-        type === 'win' ? [25, 45, 35] : type === 'chime' ? [40, 60, 80] : 12
+        type === 'win'
+          ? [25, 45, 35]
+          : type === 'chime'
+            ? [40, 60, 80]
+            : type === 'fiveMin'
+              ? [35, 70, 35]
+              : 12
       );
     } catch {
       // ignore
@@ -65,6 +74,23 @@ export function beep(type: 'ok' | 'no' | 'win' | 'chime', soundEnabled = true): 
     const { ctx, mediaStreamDest: dest } = ensureAudioEngine();
     if (!ctx) return;
     const n = ctx.currentTime;
+    if (type === 'fiveMin') {
+      // Subtle soft wrap-up cue (A4 -> D5 gentle sine pulse) at 5 minutes remaining
+      [440, 587.33].forEach((freq, idx) => {
+        const o = ctx.createOscillator();
+        const g = ctx.createGain();
+        o.type = 'sine';
+        o.frequency.setValueAtTime(freq, n + idx * 0.14);
+        g.gain.setValueAtTime(0.085, n + idx * 0.14);
+        g.gain.exponentialRampToValueAtTime(0.0008, n + idx * 0.14 + 0.55);
+        o.connect(g);
+        g.connect(ctx.destination);
+        if (dest) g.connect(dest);
+        o.start(n + idx * 0.14);
+        o.stop(n + idx * 0.14 + 0.6);
+      });
+      return;
+    }
     if (type === 'chime') {
       // Gentle two-note harmonic bell chime for Flow State Overtime transition
       [528, 792].forEach((freq, idx) => {

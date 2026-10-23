@@ -103,6 +103,34 @@ export function getDailyFocusTip(dayKey: string, offset = 0): DailyFocusTip {
   return DAILY_FOCUS_TIPS[idx];
 }
 
+export const STUDY_MOTIVATIONAL_QUOTES: string[] = [
+  'Deep focus compounds: every uninterrupted minute builds exam-day intuition.',
+  'Mastery is built one NCERT line, one derivation, and one PYQ at a time.',
+  'Protect this block of attention—what you understand deeply today stays with you.',
+  'Consistency beats intensity when practiced daily without negotiation.',
+  'Clarity comes from working through the hard problems, not skipping around them.',
+  'Your future rank is the quiet sum of blocks just like this one.',
+  'Stay with the concept for 5 more minutes; breakthroughs happen right past resistance.',
+  'Precision in practice becomes calm confidence in the examination hall.',
+  'Active recall turns fleeting reading into permanent neural wiring.',
+  'Small daily improvements in focus purity create massive syllabus momentum.',
+  'Calm mind, sharp pencil, zero distractions—own this study sprint.',
+  'Every solved mistake today is four marks rescued on exam day.',
+];
+
+export function getStudyQuoteForTimer(
+  startTs: number,
+  activeMs: number,
+  manualOffset = 0
+): string {
+  const safeStart = Number.isFinite(startTs) ? Math.max(0, Math.floor(startTs / 1000)) : 0;
+  const rotationStep = Math.max(0, Math.floor((Number(activeMs) || 0) / 180000)); // rotates every 3 mins of active time
+  const idx =
+    (safeStart + rotationStep + Math.max(0, Math.floor(manualOffset))) %
+    STUDY_MOTIVATIONAL_QUOTES.length;
+  return STUDY_MOTIVATIONAL_QUOTES[idx];
+}
+
 export const STARTERS: Array<Partial<Habit> & { name: string; e: string; c: HabitCategory }> = [
   {
     name: 'Deep Study (3 hrs)',
@@ -658,6 +686,8 @@ export function norm(raw: unknown): PulseHabitState {
         typeof at.subjectId === 'string' && at.subjectId.trim()
           ? at.subjectId
           : fallbackSubId,
+      chimeFired: Boolean(at.chimeFired),
+      fiveMinWarnFired: Boolean(at.fiveMinWarnFired),
     };
   } else {
     s.activeTimer = null;
@@ -671,6 +701,20 @@ export function norm(raw: unknown): PulseHabitState {
   s.del = Array.isArray(src.del) ? src.del.filter((x): x is string => typeof x === 'string') : [];
 
   return s;
+}
+
+export function shouldFireFiveMinWarning(
+  timer: PulseHabitState['activeTimer'],
+  metrics: TimerMetrics | null
+): boolean {
+  if (!timer || !metrics) return false;
+  if (timer.status !== 'running') return false;
+  if (timer.mode === 'stopwatch') return false;
+  if (timer.phase === 'break') return false;
+  if (timer.fiveMinWarnFired) return false;
+  const fiveMinMs = 5 * 60 * 1000;
+  if ((timer.targetMs || 0) <= fiveMinMs) return false;
+  return metrics.overtimeMs === 0 && metrics.displayMs > 0 && metrics.displayMs <= fiveMinMs;
 }
 
 export function getTimerMetrics(state: PulseHabitState, now = Date.now()): TimerMetrics | null {
