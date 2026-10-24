@@ -46,9 +46,13 @@ export const StatsView: React.FC<StatsViewProps> = ({
 }) => {
   const summary = computeStudySummary(state, todayKey);
   const consistencyCal = computeConsistencyCalendar(state, todayKey, 90);
-  const [selectedCalDay, setSelectedCalDay] = useState<ConsistencyDay | null>(
-    consistencyCal.days[consistencyCal.days.length - 1] || null
-  );
+  const [selectedCalDayKey, setSelectedCalDayKey] = useState<string | null>(todayKey);
+  const selectedCalDay: ConsistencyDay | null =
+    (selectedCalDayKey
+      ? consistencyCal.days.find((d) => d.key === selectedCalDayKey)
+      : null) ||
+    consistencyCal.days[consistencyCal.days.length - 1] ||
+    null;
 
   // 12-Week Study Depth Heatmap (84 days: 0h, <2h, 2-4h, 4-6h, 6-8h, 8h+)
   const s0 = wkS(state, addD(todayKey, -77));
@@ -653,7 +657,7 @@ export const StatsView: React.FC<StatsViewProps> = ({
                               }`}
                               title={`${day.dayName}, ${day.shortDate} (${day.key}): ${day.pct}% habits completed (${day.doneCount}/${day.dueCount}) · Studied ${fmtHMShort(day.studyMs)}`}
                               aria-label={`${day.key} ${day.pct}% completed`}
-                              onClick={() => setSelectedCalDay(day)}
+                              onClick={() => setSelectedCalDayKey(day.key)}
                             />
                           ) : (
                             <i key={`empty-${wIdx}-${dIdx}`} className="cc-cell-empty" />

@@ -33,6 +33,7 @@ import {
   fmtHMS,
   fmtHMShort,
   fmtMS,
+  getDailyStudyGoalProgress,
   getSessionHeading,
   getSortedChapterRevisions,
   getTimerMetrics,
@@ -41,6 +42,7 @@ import {
   mkHabit,
   norm,
   pad,
+  shouldFireFiveMinWarning,
   syncStudyHabitsForDays,
   syncStudyHabitsInPlace,
   uid,
@@ -352,6 +354,7 @@ export default function App() {
           slicePauseCount: 0,
           targetMs: targetMins * 60000,
           chimeFired: false,
+          fiveMinWarnFired: false,
         },
       }));
     },
@@ -422,6 +425,7 @@ export default function App() {
             ...t,
             targetMs: nextTargetMs,
             chimeFired: false,
+            fiveMinWarnFired: false,
           },
         };
       });
@@ -586,6 +590,7 @@ export default function App() {
         pauseStartTs: null,
         status: 'running',
         chimeFired: false,
+        fiveMinWarnFired: false,
       },
     };
     const curToday = logicalKey(now, updated.set.dayResetHour ?? 4);
@@ -596,14 +601,6 @@ export default function App() {
   const {
     canvasRef,
     videoRef,
-    inAppPiPOpen,
-    setInAppPiPOpen,
-    pipCollapsed,
-    setPipCollapsed,
-    pipGhost,
-    setPipGhost,
-    pipTopY,
-    setPipTopY,
     togglePiP,
     renderTick,
     closePiP,
@@ -615,69 +612,6 @@ export default function App() {
     onStopAndReflect: stopTimerAndReflect,
     onToast: showToast,
   });
-
-  const pipDragRef = useRef<{
-    active: boolean;
-    pointerId: number | null;
-    startY: number;
-    startTop: number;
-    moved: boolean;
-  }>({
-    active: false,
-    pointerId: null,
-    startY: 0,
-    startTop: 136,
-    moved: false,
-  });
-
-  const handlePipPointerDown = useCallback(
-    (e: React.PointerEvent<HTMLElement>) => {
-      pipDragRef.current = {
-        active: true,
-        pointerId: e.pointerId,
-        startY: e.clientY,
-        startTop: pipTopY,
-        moved: false,
-      };
-    },
-    [pipTopY]
-  );
-
-  const handlePipPointerMove = useCallback(
-    (e: React.PointerEvent<HTMLElement>) => {
-      const drag = pipDragRef.current;
-      if (!drag.active || drag.pointerId !== e.pointerId) return;
-      const dy = e.clientY - drag.startY;
-      if (!drag.moved && Math.abs(dy) > 6) {
-        drag.moved = true;
-        try {
-          e.currentTarget.setPointerCapture(e.pointerId);
-        } catch {
-          // ignore if capture fails
-        }
-      }
-      if (drag.moved) {
-        const maxTop =
-          typeof window !== 'undefined' ? Math.max(72, window.innerHeight - 132) : 640;
-        const nextTop = Math.min(maxTop, Math.max(56, Math.round(drag.startTop + dy)));
-        setPipTopY(nextTop);
-      }
-    },
-    [setPipTopY]
-  );
-
-  const handlePipPointerUp = useCallback((e: React.PointerEvent<HTMLElement>) => {
-    const drag = pipDragRef.current;
-    if (!drag.active) return;
-    drag.active = false;
-    try {
-      if (e.currentTarget.hasPointerCapture(e.pointerId)) {
-        e.currentTarget.releasePointerCapture(e.pointerId);
-      }
-    } catch {
-      // ignore
-    }
-  }, []);
 
   // 500ms Zero-Drift Timer Loop backed by an unthrottled Web Worker + fallback setInterval
   useEffect(() => {
@@ -692,6 +626,18 @@ export default function App() {
       const m = getTimerMetrics(prev, now);
       let changed = false;
       let nextTimer = prev.activeTimer;
+
+      // Subtle 5-minute remaining audio & vibration cue for task wrap-up planning
+      if (m && shouldFireFiveMinWarning(nextTimer, m)) {
+        nextTimer = { ...nextTimer, fiveMinWarnFired: true };
+        changed = true;
+        beep('fiveMin', !!prev.set.snd);
+        showToast('⏳ 5 minutes remaining — start planning your session wrap-up');
+        sendNotification(
+          `⏳ 5 Minutes Remaining · ${m.heading}`,
+          'Start wrapping up key takeaways before your session ends.'
+        );
+      }
 
       if (
         nextTimer.status === 'running' &&
@@ -1039,16 +985,10 @@ export default function App() {
     );
   }
 
-  const activeMetrics = getTimerMetrics(state);
-  const pipSub = activeMetrics
-    ? activeMetrics.subject
-    : state.subjects.find((s) => !s.arch) || {
-        e: '⚡',
-        name: 'Physics',
-        color: '#3b82f6',
-      };
-  const pipHeading = activeMetrics ? activeMetrics.heading : 'Deep Study Session';
-  const pipColor = pipSub.color || '#10b981';
+  const todayStudyProg = getDailyStudyGoalProgress(state, todayKey, todayKey);
+  const navRingR = 11.5;
+  const navRingCirc = 2 * Math.PI * navRingR;
+  const navRingOffset = navRingCirc * (1 - todayStudyProg.pct / 100);
 
   return (
     <>
@@ -1379,12 +1319,36 @@ export default function App() {
         <button
           type="button"
           className={tab === 'today' ? 'on' : ''}
+          title={`Today Study Progress: ${fmtHMShort(todayStudyProg.studiedMs)} / ${fmtHMShort(todayStudyProg.goalMs)} (${todayStudyProg.pct}%)`}
           onClick={() => {
             setTab('today');
             window.scrollTo(0, 0);
           }}
         >
-          <b>⚡</b>Today
+          <span className="nav-today-icon-wrap">
+            <svg
+              className="nav-today-ring-svg"
+              viewBox="0 0 28 28"
+              aria-hidden="true"
+            >
+              <circle
+                className="nav-today-ring-track"
+                cx="14"
+                cy="14"
+                r={navRingR}
+              />
+              <circle
+                className="nav-today-ring-prog"
+                cx="14"
+                cy="14"
+                r={navRingR}
+                strokeDasharray={navRingCirc.toFixed(1)}
+                strokeDashoffset={navRingOffset.toFixed(1)}
+              />
+            </svg>
+            <b>⚡</b>
+          </span>
+          Today
         </button>
         <button
           type="button"
@@ -1435,208 +1399,6 @@ export default function App() {
           <b>⚙️</b>More
         </button>
       </nav>
-
-      {/* Regain-Style Sleek Floating Edge Pill & Dockable Tab */}
-      {(inAppPiPOpen || Boolean(state.activeTimer)) &&
-        (() => {
-          const isRunning = activeMetrics?.status === 'running';
-          const isPaused = activeMetrics?.status === 'paused';
-          const rawMs = activeMetrics
-            ? activeMetrics.overtimeMs > 0
-              ? activeMetrics.totalActiveMs
-              : activeMetrics.displayMs
-            : 0;
-          const totalSec = Math.max(0, Math.floor(rawMs / 1000));
-          const hrs = Math.floor(totalSec / 3600);
-          const clockText = hrs > 0 ? fmtHMS(rawMs) : fmtMS(rawMs);
-          const pct = activeMetrics
-            ? Math.max(6, Math.min(100, activeMetrics.progressPct))
-            : 12;
-          const ringR = 19.5;
-          const ringCirc = 2 * Math.PI * ringR;
-          const ringOffset = ringCirc * (1 - pct / 100);
-          const borderAccent = isPaused
-            ? '#f59e0b'
-            : state.set.timerAesthetic === 'retro'
-              ? '#d97706'
-              : isRunning
-                ? '#10b981'
-                : '#6366f1';
-
-          return (
-            <>
-              <aside
-                className={`regain-pip-pill aesthetic-${state.set.timerAesthetic || 'neon'}${pipCollapsed ? ' is-collapsed' : ''}${pipGhost ? ' is-ghost' : ''}`}
-                aria-label="Floating Study Timer Pill"
-                style={
-                  {
-                    top: `${pipTopY}px`,
-                    '--pip-bd': borderAccent,
-                  } as React.CSSProperties
-                }
-                onPointerDown={handlePipPointerDown}
-                onPointerMove={handlePipPointerMove}
-                onPointerUp={handlePipPointerUp}
-                onPointerCancel={handlePipPointerUp}
-                onClick={() => {
-                  if (pipDragRef.current.moved) return;
-                  if (pipGhost) {
-                    setPipGhost(false);
-                  }
-                }}
-              >
-                {/* Left: Circular Glowing Play/Pause Button (44x44px) with Progress Ring */}
-                <div className="regain-pip-orb-wrap">
-                  <svg
-                    className="regain-pip-ring-svg"
-                    viewBox="0 0 44 44"
-                    aria-hidden="true"
-                  >
-                    <circle
-                      cx="22"
-                      cy="22"
-                      r={ringR}
-                      fill="none"
-                      stroke="rgba(148, 163, 184, 0.22)"
-                      strokeWidth="2.6"
-                    />
-                    <circle
-                      cx="22"
-                      cy="22"
-                      r={ringR}
-                      fill="none"
-                      stroke={isPaused ? '#fbbf24' : '#10b981'}
-                      strokeWidth="2.6"
-                      strokeLinecap="round"
-                      strokeDasharray={ringCirc.toFixed(1)}
-                      strokeDashoffset={ringOffset.toFixed(1)}
-                    />
-                  </svg>
-                  <button
-                    type="button"
-                    className={`regain-pip-orb-btn${isPaused ? ' is-paused' : ''}`}
-                    aria-label={
-                      isRunning
-                        ? 'Pause Study Timer'
-                        : isPaused
-                          ? 'Resume Study Timer'
-                          : 'Start Study Timer'
-                    }
-                    onClick={(e) => {
-                      e.stopPropagation();
-                      if (pipDragRef.current.moved) return;
-                      if (pipGhost) {
-                        setPipGhost(false);
-                        return;
-                      }
-                      if (!state.activeTimer) startTimer();
-                      else toggleTimerPause();
-                    }}
-                  >
-                    {isRunning ? (
-                      <svg width="14" height="14" viewBox="0 0 14 14" aria-hidden="true">
-                        <rect x="2.5" y="2" width="3.2" height="10" rx="1" fill="#ffffff" />
-                        <rect x="8.3" y="2" width="3.2" height="10" rx="1" fill="#ffffff" />
-                      </svg>
-                    ) : (
-                      <svg width="14" height="14" viewBox="0 0 14 14" aria-hidden="true">
-                        <path d="M3.5 2.2L11.8 7L3.5 11.8V2.2Z" fill="#ffffff" />
-                      </svg>
-                    )}
-                  </button>
-                </div>
-
-                {/* Center: Bold Monospace Clock + Active Session Heading / "Time focused" Subtitle */}
-                <div className="regain-pip-center">
-                  <div className="regain-pip-clock-row">
-                    <span className="regain-pip-clock">{clockText}</span>
-                    <span
-                      className={`regain-pip-badge${isPaused ? ' is-paused' : ''}`}
-                    >
-                      {activeMetrics && activeMetrics.overtimeMs > 0
-                        ? `+${fmtMS(activeMetrics.overtimeMs)}`
-                        : isPaused
-                          ? 'PAUSED'
-                          : isRunning
-                            ? `${activeMetrics.purity}%`
-                            : 'READY'}
-                    </span>
-                  </div>
-                  <div className="regain-pip-sub">
-                    {pipSub.e} {pipHeading} • Time focused
-                  </div>
-                </div>
-
-                {/* Right Controls: 95% Ghost Mode Toggle (👻) + Collapse Cross Button (✕) */}
-                <div className="regain-pip-actions">
-                  <button
-                    type="button"
-                    className={`regain-pip-icon-btn${pipGhost ? ' ghost-on' : ''}`}
-                    aria-label={
-                      pipGhost
-                        ? 'Restore Full Visibility'
-                        : 'Toggle 95% Transparent Ghost Mode'
-                    }
-                    title="95% Transparent Ghost Mode (Read through timer)"
-                    onClick={(e) => {
-                      e.stopPropagation();
-                      if (pipDragRef.current.moved) return;
-                      setPipGhost((g) => !g);
-                    }}
-                  >
-                    👻
-                  </button>
-                  <button
-                    type="button"
-                    className="regain-pip-icon-btn"
-                    aria-label="Collapse Timer to Edge Handle"
-                    title="Collapse to Edge Handle"
-                    onClick={(e) => {
-                      e.stopPropagation();
-                      if (pipDragRef.current.moved) return;
-                      setPipGhost(false);
-                      setPipCollapsed(true);
-                    }}
-                  >
-                    <svg width="11" height="11" viewBox="0 0 12 12" aria-hidden="true">
-                      <path
-                        d="M2.2 2.2L9.8 9.8M9.8 2.2L2.2 9.8"
-                        stroke="currentColor"
-                        strokeWidth="2"
-                        strokeLinecap="round"
-                      />
-                    </svg>
-                  </button>
-                </div>
-              </aside>
-
-              {/* Collapsed Edge Handle State (>) */}
-              <button
-                type="button"
-                className={`regain-edge-handle${pipCollapsed ? ' is-visible' : ''}`}
-                aria-label="Expand Floating Study Timer"
-                title="Expand Study Timer Pill"
-                style={
-                  {
-                    top: `${pipTopY}px`,
-                    '--pip-bd': borderAccent,
-                  } as React.CSSProperties
-                }
-                onPointerDown={handlePipPointerDown}
-                onPointerMove={handlePipPointerMove}
-                onPointerUp={handlePipPointerUp}
-                onPointerCancel={handlePipPointerUp}
-                onClick={() => {
-                  if (pipDragRef.current.moved) return;
-                  setPipCollapsed(false);
-                }}
-              >
-                <span className="regain-edge-dot" />
-                <span className="regain-edge-chev">&gt;</span>
-              </button>
-            </>
-          );
-        })()}
 
       {/* Modals */}
       <Modals
@@ -1920,12 +1682,12 @@ export default function App() {
         </div>
       )}
 
-      {/* Hidden offscreen Canvas & Video for Android Chrome PiP Stream (Compact Pill 420x150) */}
+      {/* Hidden offscreen Canvas & Video for Android Chrome PiP Stream (16:9 480x270) */}
       <canvas
         id="pipCanvas"
         ref={canvasRef}
-        width={420}
-        height={150}
+        width={480}
+        height={270}
         style={{
           position: 'fixed',
           left: '-9999px',

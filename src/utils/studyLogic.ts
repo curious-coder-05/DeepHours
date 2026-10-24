@@ -806,6 +806,25 @@ export function getDayTotalStudyMs(
   return getTodaySubjectMs(state, 'any', dayKey, todayKey, now);
 }
 
+export function getDailyStudyGoalProgress(
+  state: PulseHabitState,
+  dayKey: string,
+  todayKey: string,
+  now = Date.now()
+): { studiedMs: number; goalMs: number; pct: number } {
+  const studiedMs = getDayTotalStudyMs(state, dayKey, todayKey, now);
+  const subjectGoalMins = (state.subjects || [])
+    .filter((s) => !s.arch && (s.dailyGoalMins || 0) > 0)
+    .reduce((acc, s) => acc + (s.dailyGoalMins || 0), 0);
+  const habitGoalMins = (state.habits || [])
+    .filter((h) => !h.arch && isAutoStudyHabit(h))
+    .reduce((maxM, h) => Math.max(maxM, Number(h.tn || h.autoMins) || 0), 0);
+  const goalMins = subjectGoalMins > 0 ? subjectGoalMins : habitGoalMins > 0 ? habitGoalMins : 180;
+  const goalMs = Math.max(1, goalMins) * 60000;
+  const pct = Math.min(100, Math.max(0, Math.round((studiedMs / goalMs) * 100)));
+  return { studiedMs, goalMs, pct };
+}
+
 export function isAutoStudyHabit(h: Habit): boolean {
   return Boolean(h.subjectId || h.autoMins);
 }

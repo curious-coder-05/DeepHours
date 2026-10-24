@@ -6,6 +6,7 @@ import {
   fmtHMShort,
   fmtMS,
   getSessionHeading,
+  getStudyQuoteForTimer,
   getSubject,
   getTimerMetrics,
   getTodaySubjectMs,
@@ -81,6 +82,7 @@ export const FocusView: React.FC<FocusViewProps> = ({
   const [customCountdownMins, setCustomCountdownMins] = useState<number>(
     state.set.countdownMins || 45
   );
+  const [quoteOffset, setQuoteOffset] = useState<number>(0);
 
   useEffect(() => {
     if (t?.subjectId) {
@@ -524,6 +526,36 @@ export const FocusView: React.FC<FocusViewProps> = ({
         {m && m.overtimeMs > 0 && (
           <div id="liveOvertime" className="overtime-tag">
             FLOW OVERTIME +{fmtMS(m.overtimeMs)}
+          </div>
+        )}
+
+        {t && m && m.status === 'running' && (
+          <div
+            id="focusMotivationalQuote"
+            className="focus-quote-bar"
+            role="status"
+            aria-live="polite"
+          >
+            <span className="focus-quote-text">
+              “{getStudyQuoteForTimer(t.startTs, m.totalActiveMs, quoteOffset)}”
+            </span>
+            <button
+              type="button"
+              className="focus-quote-next"
+              aria-label="Next motivational study quote"
+              title="Next study affirmation"
+              onClick={() => setQuoteOffset((n) => n + 1)}
+            >
+              <svg width="12" height="12" viewBox="0 0 16 16" fill="none" aria-hidden="true">
+                <path
+                  d="M13.5 8A5.5 5.5 0 1 1 11.8 4.1M13.5 2.5V6H10"
+                  stroke="currentColor"
+                  strokeWidth="1.8"
+                  strokeLinecap="round"
+                  strokeLinejoin="round"
+                />
+              </svg>
+            </button>
           </div>
         )}
 

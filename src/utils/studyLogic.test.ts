@@ -8,11 +8,15 @@ import {
   computeMocksOverview,
   computeStudySummary,
   createBlankState,
+  getDailyStudyGoalProgress,
   getDueAndOverdueRevisions,
   getSortedChapterRevisions,
+  getStudyQuoteForTimer,
+  getTimerMetrics,
   logicalKey,
   mkHabit,
   norm,
+  shouldFireFiveMinWarning,
   syncStudyHabitsForDays,
 } from './studyLogic';
 
@@ -299,6 +303,46 @@ describe('Part C: Deep Hours NEET Study & Habit Logger Unit Tests', () => {
     assert.equal(todayCell.densityLevel, 4);
     assert.equal(yesterdayCell.pct, 50);
     assert.equal(yesterdayCell.densityLevel, 2);
+  });
+
+  it('7. shouldFireFiveMinWarning, getStudyQuoteForTimer, and getDailyStudyGoalProgress', () => {
+    const state = createBlankState();
+    const now = 1761120000000;
+    // 25-minute Pomodoro with 4m50s remaining (20m10s elapsed)
+    state.activeTimer = {
+      status: 'running',
+      mode: 'pomo',
+      phase: 'work',
+      subjectId: 'sub_phy',
+      heading: 'Optics',
+      startTs: now - (20 * 60 + 10) * 1000,
+      sliceStartTs: now - (20 * 60 + 10) * 1000,
+      pauseStartTs: null,
+      pausedDurationMs: 0,
+      slicePausedMs: 0,
+      pauseCount: 0,
+      slicePauseCount: 0,
+      targetMs: 25 * 60 * 1000,
+      chimeFired: false,
+      fiveMinWarnFired: false,
+    };
+    const m = getTimerMetrics(state, now);
+    assert.equal(shouldFireFiveMinWarning(state.activeTimer, m), true);
+
+    // Once fiveMinWarnFired is true, it does not fire again
+    state.activeTimer.fiveMinWarnFired = true;
+    assert.equal(shouldFireFiveMinWarning(state.activeTimer, m), false);
+
+    // Quotes rotate deterministically by activeMs and manualOffset
+    const q1 = getStudyQuoteForTimer(1000, 0, 0);
+    const q2 = getStudyQuoteForTimer(1000, 0, 1);
+    assert.ok(q1.length > 10);
+    assert.notEqual(q1, q2);
+
+    // Daily study progress ring percentage calculation
+    const prog = getDailyStudyGoalProgress(state, '2026-10-22', '2026-10-22', now);
+    assert.equal(prog.goalMs, 180 * 60000);
+    assert.equal(prog.pct, Math.round(((20 * 60 + 10) * 1000) / (180 * 60000) * 100));
   });
 });
 

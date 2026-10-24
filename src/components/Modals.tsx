@@ -1,4 +1,4 @@
-import React, { useEffect, useRef, useState } from 'react';
+import React, { useEffect, useMemo, useRef, useState } from 'react';
 import type {
   DDay,
   Habit,
@@ -81,7 +81,32 @@ export const Modals: React.FC<ModalsProps> = ({
   onConfirmResetHour,
 }) => {
   const dialogRef = useRef<HTMLDialogElement | null>(null);
-  const activeSubjects = state.subjects.filter((s) => !s.arch);
+  const activeSubjects = useMemo(
+    () => state.subjects.filter((s) => !s.arch),
+    [state.subjects]
+  );
+
+  // Keep latest references so the modal-open effect only runs when the active modal changes,
+  // preventing keystrokes or background timer ticks from resetting form inputs.
+  const stateRef = useRef(state);
+  stateRef.current = state;
+  const selRef = useRef(sel);
+  selRef.current = sel;
+  const todayKeyRef = useRef(todayKey);
+  todayKeyRef.current = todayKey;
+  const activeSubjectsRef = useRef(activeSubjects);
+  activeSubjectsRef.current = activeSubjects;
+  const modalRef = useRef(modal);
+  modalRef.current = modal;
+
+  const modalKey =
+    modal.type === 'none'
+      ? 'none'
+      : modal.type === 'confirmResetHour'
+        ? `confirmResetHour:${modal.newHour}`
+        : modal.type === 'reflect'
+          ? `reflect:${modal.metrics.subject?.id || ''}:${modal.metrics.heading || ''}`
+          : `${modal.type}:${'id' in modal ? modal.id || 'new' : ''}:${'defaultSubjectId' in modal ? modal.defaultSubjectId || '' : ''}`;
 
   // Habit modal state
   const existingHabit =
@@ -162,15 +187,21 @@ export const Modals: React.FC<ModalsProps> = ({
     const dlg = dialogRef.current;
     if (!dlg) return;
 
-    if (modal.type === 'none') {
+    const curModal = modalRef.current;
+    const curState = stateRef.current;
+    const curSel = selRef.current;
+    const curTodayKey = todayKeyRef.current;
+    const curActiveSubjects = activeSubjectsRef.current;
+
+    if (curModal.type === 'none') {
       if (dlg.open) dlg.close();
       return;
     }
 
-    if (modal.type === 'habit') {
-      const h = modal.id
-        ? state.habits.find((x) => x.id === modal.id) || mkHabit({}, todayKey)
-        : mkHabit({}, todayKey);
+    if (curModal.type === 'habit') {
+      const h = curModal.id
+        ? curState.habits.find((x) => x.id === curModal.id) || mkHabit({}, curTodayKey)
+        : mkHabit({}, curTodayKey);
       const isAuto = Boolean(h.subjectId || h.autoMins);
       setHEmoji(h.e);
       setHName(h.name);
@@ -183,16 +214,16 @@ export const Modals: React.FC<ModalsProps> = ({
       setHSubjectId(h.subjectId || 'any');
       setHWeeklyN(h.n);
       setHRem(h.rem);
-    } else if (modal.type === 'reflect') {
+    } else if (curModal.type === 'reflect') {
       setRefSubjectId(
-        modal.metrics.subject?.id || activeSubjects[0]?.id || 'sub_phy'
+        curModal.metrics.subject?.id || curActiveSubjects[0]?.id || 'sub_phy'
       );
-      setRefHeading(modal.metrics.heading || 'Deep Study Session');
+      setRefHeading(curModal.metrics.heading || 'Deep Study Session');
       setRefRating(5);
       setRefNote('');
-    } else if (modal.type === 'manualSession') {
-      const ex = modal.id
-        ? state.sessions.find((x) => x.id === modal.id)
+    } else if (curModal.type === 'manualSession') {
+      const ex = curModal.id
+        ? curState.sessions.find((x) => x.id === curModal.id)
         : undefined;
       const now = new Date();
       const oneHrAgo = new Date(now.getTime() - 5400000);
@@ -202,23 +233,23 @@ export const Modals: React.FC<ModalsProps> = ({
         : 90;
       setMsSubjectId(
         ex?.subjectId ||
-          modal.defaultSubjectId ||
-          activeSubjects[0]?.id ||
+          curModal.defaultSubjectId ||
+          curActiveSubjects[0]?.id ||
           'sub_phy'
       );
-      setMsHeading(ex ? getSessionHeading(state, ex) : '');
-      setMsDayKey(ex ? ex.dayKey : sel);
+      setMsHeading(ex ? getSessionHeading(curState, ex) : '');
+      setMsDayKey(ex ? ex.dayKey : curSel);
       setMsHours(Math.floor(totalMins / 60));
       setMsMins(totalMins % 60);
       setMsStartTime(`${pad(startD.getHours())}:${pad(startD.getMinutes())}`);
       setMsRating(ex?.rating || 5);
       setMsNote(ex?.note || '');
-    } else if (modal.type === 'mock') {
-      const ex = modal.id
-        ? state.mocks.find((x) => x.id === modal.id)
+    } else if (curModal.type === 'mock') {
+      const ex = curModal.id
+        ? curState.mocks.find((x) => x.id === curModal.id)
         : undefined;
       setMockName(ex?.name || '');
-      setMockDayKey(ex?.dayKey || todayKey);
+      setMockDayKey(ex?.dayKey || curTodayKey);
       setMockDurationMins(
         ex?.durationMins !== undefined ? String(ex.durationMins) : '180'
       );
@@ -226,7 +257,7 @@ export const Modals: React.FC<ModalsProps> = ({
       setMockMarksWrong(ex?.marksPerWrong ?? -1);
       setMockMaxMarks(ex?.maxMarks ?? 720);
       const initScores: Record<string, MockSubjectScore> = {};
-      state.subjects.forEach((s) => {
+      curState.subjects.forEach((s) => {
         const sc = ex?.subjects?.[s.id];
         initScores[s.id] = {
           correct: sc?.correct ?? 0,
@@ -236,15 +267,17 @@ export const Modals: React.FC<ModalsProps> = ({
       });
       setMockScores(initScores);
       setMockNote(ex?.note || '');
-    } else if (modal.type === 'timerConfig') {
-      setCfgPomoWork(state.set.pomoWork || 25);
-      setCfgPomoBreak(state.set.pomoBreak || 5);
-      setCfgCountdown(state.set.countdownMins || 45);
-    } else if (modal.type === 'dday') {
-      const d = modal.id ? state.ddays.find((x) => x.id === modal.id) : undefined;
+    } else if (curModal.type === 'timerConfig') {
+      setCfgPomoWork(curState.set.pomoWork || 25);
+      setCfgPomoBreak(curState.set.pomoBreak || 5);
+      setCfgCountdown(curState.set.countdownMins || 45);
+    } else if (curModal.type === 'dday') {
+      const d = curModal.id
+        ? curState.ddays.find((x) => x.id === curModal.id)
+        : undefined;
       setDdEmoji(d?.e || '🎯');
       setDdTitle(d?.title || '');
-      setDdDate(d?.date || addD(todayKey, 90));
+      setDdDate(d?.date || addD(curTodayKey, 90));
       setDdColor(d?.color || '#10b981');
     }
 
@@ -255,7 +288,7 @@ export const Modals: React.FC<ModalsProps> = ({
         dlg.setAttribute('open', 'true');
       }
     }
-  }, [activeSubjects, modal, sel, state, todayKey]);
+  }, [modalKey]);
 
   const toggleDayInHabit = (dayIdx: number) => {
     setHDays((prev) =>
@@ -1060,8 +1093,31 @@ export const Modals: React.FC<ModalsProps> = ({
           }}
         >
           <h3>{modal.id ? 'Edit' : 'New'} Exam Countdown</h3>
+          <div className="chips wrap" style={{ paddingBottom: 0 }}>
+            {[
+              { e: '🎯', title: 'NEET UG Exam', color: '#10b981' },
+              { e: '🧪', title: 'Grand Mock Test', color: '#6366f1' },
+              { e: '📚', title: 'Syllabus Completion', color: '#f59e0b' },
+              { e: '🏫', title: 'Board / Term Exam', color: '#ec4899' },
+            ].map((preset) => (
+              <button
+                type="button"
+                key={preset.title}
+                className="s"
+                style={{ fontSize: '11.5px', padding: '4px 9px' }}
+                onClick={() => {
+                  setDdEmoji(preset.e);
+                  setDdTitle(preset.title);
+                  setDdColor(preset.color);
+                }}
+              >
+                {preset.e} {preset.title}
+              </button>
+            ))}
+          </div>
           <div className="row">
             <input
+              type="text"
               className="em"
               name="e"
               value={ddEmoji}
@@ -1070,11 +1126,14 @@ export const Modals: React.FC<ModalsProps> = ({
               aria-label="D-Day Emoji"
             />
             <input
+              type="text"
+              id="ddayTitleInput"
               name="title"
               value={ddTitle}
               onChange={(e) => setDdTitle(e.target.value)}
-              placeholder="e.g. NEET UG Exam"
+              placeholder="Type custom exam or target name..."
               required
+              autoFocus
               maxLength={40}
               aria-label="D-Day Title"
             />

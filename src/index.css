@@ -234,23 +234,24 @@ small,
 }
 
 .card:hover,
+.card:active,
 .card:focus-within {
   animation-play-state: paused;
 }
 
 @keyframes cardAmbientDrift {
   0%,
+  18%,
   100% {
     transform: translate3d(0, 0, 0);
   }
-  25% {
-    transform: translate3d(1.6px, -2.2px, 0);
+  35%,
+  45% {
+    transform: translate3d(1.5px, -2px, 0);
   }
-  50% {
-    transform: translate3d(-1.2px, -3.4px, 0);
-  }
-  75% {
-    transform: translate3d(-1.6px, -1.2px, 0);
+  62%,
+  72% {
+    transform: translate3d(-1.4px, -2.8px, 0);
   }
 }
 
@@ -1270,267 +1271,86 @@ dialog form {
   cursor: pointer;
 }
 
-.pip-floating-overlay {
-  position: fixed;
-  right: 16px;
-  bottom: calc(92px + var(--sb));
-  width: 264px;
-  background: rgba(6, 10, 18, 0.95);
-  backdrop-filter: blur(16px);
-  border: 2px solid var(--pip-bd, #10b981);
-  border-radius: 18px;
-  padding: 12px 14px;
-  box-shadow: 0 18px 48px rgba(0, 0, 0, 0.65);
-  z-index: 20;
-}
-
-/* Regain-Style Sleek Edge Pill & Dockable Tab */
-.regain-pip-pill {
-  position: fixed;
-  left: 0;
-  top: 136px;
-  display: flex;
-  align-items: center;
-  gap: 11px;
-  padding: 8px 12px 8px 10px;
-  min-width: 248px;
-  max-width: min(334px, 92vw);
-  background: linear-gradient(135deg, rgba(15, 23, 42, 0.92), rgba(9, 13, 22, 0.96));
-  backdrop-filter: blur(18px);
-  -webkit-backdrop-filter: blur(18px);
-  border: 1.5px solid var(--pip-bd, #6366f1);
-  border-left: 0;
-  border-radius: 0 24px 24px 0;
-  box-shadow:
-    0 14px 36px rgba(0, 0, 0, 0.62),
-    0 0 22px color-mix(in srgb, var(--pip-bd, #6366f1) 30%, transparent),
-    inset 0 1px 0 rgba(255, 255, 255, 0.1);
-  z-index: 45;
-  touch-action: none;
-  user-select: none;
-  cursor: grab;
-  transition:
-    transform 0.28s cubic-bezier(0.22, 1, 0.36, 1),
-    opacity 0.22s ease,
-    background 0.22s ease,
-    border-color 0.22s ease,
-    box-shadow 0.22s ease;
-}
-
-.regain-pip-pill:active {
-  cursor: grabbing;
-}
-
-.regain-pip-pill.is-collapsed {
-  transform: translateX(-108%);
-  pointer-events: none;
-}
-
-.regain-pip-pill.is-ghost {
-  opacity: 0.12;
-  background: rgba(9, 13, 22, 0.05);
-  backdrop-filter: none;
-  -webkit-backdrop-filter: none;
-  box-shadow: none;
-}
-
-.regain-pip-orb-wrap {
+/* Subtle Animated Circular Progress Bar around Today Tab Icon */
+.nav-today-icon-wrap {
   position: relative;
-  width: 44px;
-  height: 44px;
-  flex-shrink: 0;
-  display: flex;
+  width: 28px;
+  height: 28px;
+  display: inline-flex;
   align-items: center;
   justify-content: center;
 }
 
-.regain-pip-ring-svg {
+.nav-today-ring-svg {
   position: absolute;
   inset: 0;
-  width: 44px;
-  height: 44px;
+  width: 28px;
+  height: 28px;
   transform: rotate(-90deg);
   pointer-events: none;
 }
 
-.regain-pip-orb-btn {
-  width: 36px;
-  height: 36px;
-  min-height: 36px;
-  border-radius: 999px;
-  border: 0;
-  padding: 0;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  background: radial-gradient(circle at 30% 30%, #6366f1, #10b981);
-  color: #ffffff;
-  font-size: 14px;
-  font-weight: 800;
-  cursor: pointer;
-  box-shadow:
-    0 0 14px rgba(16, 185, 129, 0.45),
-    inset 0 1px 1px rgba(255, 255, 255, 0.35);
-  transition: transform 0.15s ease, filter 0.15s ease;
+.nav-today-ring-track {
+  fill: none;
+  stroke: rgba(148, 163, 184, 0.22);
+  stroke-width: 2.2;
 }
 
-.regain-pip-orb-btn.is-paused {
-  background: radial-gradient(circle at 30% 30%, #fbbf24, #d97706);
-  box-shadow:
-    0 0 14px rgba(245, 158, 11, 0.45),
-    inset 0 1px 1px rgba(255, 255, 255, 0.35);
-}
-
-.regain-pip-orb-btn:hover {
-  transform: scale(1.06);
-}
-
-.regain-pip-orb-btn:active {
-  transform: scale(0.93);
-}
-
-.regain-pip-center {
-  flex: 1;
-  min-width: 0;
-  display: flex;
-  flex-direction: column;
-  justify-content: center;
-  gap: 2px;
-}
-
-.regain-pip-clock-row {
-  display: flex;
-  align-items: center;
-  gap: 6px;
-}
-
-.regain-pip-clock {
-  font: 800 22px/1.05 'JetBrains Mono', ui-monospace, monospace;
-  letter-spacing: -0.03em;
-  color: #f8fafc;
-  font-variant-numeric: tabular-nums;
-}
-
-.regain-pip-badge {
-  font: 800 9.5px/1 'JetBrains Mono', ui-monospace, monospace;
-  padding: 3px 6px;
-  border-radius: 999px;
-  background: rgba(16, 185, 129, 0.18);
-  color: #34d399;
-  border: 1px solid rgba(16, 185, 129, 0.32);
-  white-space: nowrap;
-}
-
-.regain-pip-badge.is-paused {
-  background: rgba(245, 158, 11, 0.18);
-  color: #fbbf24;
-  border-color: rgba(245, 158, 11, 0.35);
-}
-
-.regain-pip-sub {
-  font-size: 11.5px;
-  font-weight: 600;
-  color: #94a3b8;
-  white-space: nowrap;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  max-width: 158px;
-}
-
-.regain-pip-actions {
-  display: flex;
-  align-items: center;
-  gap: 5px;
-  flex-shrink: 0;
-}
-
-.regain-pip-icon-btn {
-  width: 28px;
-  height: 28px;
-  min-height: 28px;
-  border-radius: 999px;
-  border: 1px solid rgba(148, 163, 184, 0.22);
-  background: rgba(30, 41, 59, 0.72);
-  color: #cbd5e1;
-  padding: 0;
-  font-size: 12px;
-  font-weight: 800;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  cursor: pointer;
-  transition: transform 0.14s ease, background 0.14s ease, border-color 0.14s ease;
-}
-
-.regain-pip-icon-btn:hover {
-  background: rgba(51, 65, 85, 0.9);
-  border-color: rgba(148, 163, 184, 0.45);
-  color: #f8fafc;
-}
-
-.regain-pip-icon-btn:active {
-  transform: scale(0.9);
-}
-
-.regain-pip-icon-btn.ghost-on {
-  border-color: #38bdf8;
-  color: #38bdf8;
-  background: rgba(56, 189, 248, 0.18);
-}
-
-/* Collapsed Edge Handle State (>) */
-.regain-edge-handle {
-  position: fixed;
-  left: 0;
-  top: 136px;
-  width: 28px;
-  height: 52px;
-  min-height: 52px;
-  padding: 0;
-  border-radius: 0 14px 14px 0;
-  background: linear-gradient(135deg, rgba(15, 23, 42, 0.95), rgba(9, 13, 22, 0.98));
-  backdrop-filter: blur(14px);
-  -webkit-backdrop-filter: blur(14px);
-  border: 1.5px solid var(--pip-bd, #6366f1);
-  border-left: 0;
-  box-shadow:
-    0 10px 26px rgba(0, 0, 0, 0.6),
-    0 0 16px color-mix(in srgb, var(--pip-bd, #6366f1) 35%, transparent);
-  color: #f8fafc;
-  display: flex;
-  flex-direction: column;
-  align-items: center;
-  justify-content: center;
-  gap: 5px;
-  z-index: 45;
-  touch-action: none;
-  user-select: none;
-  cursor: pointer;
-  transform: translateX(-120%);
-  pointer-events: none;
+.nav-today-ring-prog {
+  fill: none;
+  stroke: var(--em);
+  stroke-width: 2.4;
+  stroke-linecap: round;
   transition:
-    transform 0.28s cubic-bezier(0.22, 1, 0.36, 1),
-    border-color 0.2s ease,
-    box-shadow 0.2s ease;
+    stroke-dashoffset 0.55s cubic-bezier(0.22, 1, 0.36, 1),
+    stroke 0.3s ease;
+  filter: drop-shadow(0 0 4px color-mix(in srgb, var(--em) 55%, transparent));
 }
 
-.regain-edge-handle.is-visible {
-  transform: translateX(0);
-  pointer-events: auto;
+/* Rotating Motivational Study Quote Bar in FocusView */
+.focus-quote-bar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  max-width: 390px;
+  margin: 6px auto 8px;
+  padding: 7px 12px;
+  border-radius: 12px;
+  background: color-mix(in srgb, var(--c2) 78%, transparent);
+  border: 1px solid color-mix(in srgb, var(--sc, var(--ac)) 28%, var(--bd));
+  animation: fadeUp 0.28s var(--ease-out) both;
 }
 
-.regain-edge-dot {
-  width: 6px;
-  height: 6px;
+.focus-quote-text {
+  font-size: 12px;
+  line-height: 1.38;
+  font-style: italic;
+  color: var(--tx);
+  opacity: 0.92;
+  text-align: left;
+  flex: 1;
+}
+
+.focus-quote-next {
+  width: 24px;
+  height: 24px;
+  min-height: 24px;
+  padding: 0;
   border-radius: 999px;
-  background: var(--pip-bd, #10b981);
-  box-shadow: 0 0 8px var(--pip-bd, #10b981);
+  font-size: 12px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
+  background: var(--c1);
+  color: var(--mu);
+  border: 1px solid var(--bd);
 }
 
-.regain-edge-chev {
-  font: 900 14px/1 'JetBrains Mono', ui-monospace, monospace;
-  color: #e2e8f0;
-  text-shadow: 0 0 8px var(--pip-bd, #6366f1);
+.focus-quote-next:hover {
+  color: var(--tx);
+  border-color: var(--ac);
 }
 
 /* Timer Aesthetics: Neon Digital | Minimalist Mono | Analog Retro */
@@ -1595,8 +1415,6 @@ body.desk-mode .retro-dial-svg {
 }
 
 /* PiP Aesthetic Variants */
-.regain-pip-pill.aesthetic-neon .regain-pip-clock,
-.pip-floating-overlay.aesthetic-neon .pip-clock,
 .pip-body.aesthetic-neon .pip-clock {
   color: #f8fafc;
   text-shadow:
@@ -1604,44 +1422,27 @@ body.desk-mode .retro-dial-svg {
     0 0 24px color-mix(in srgb, var(--pip-bd, #10b981) 50%, transparent);
 }
 
-.regain-pip-pill.aesthetic-minimal,
-.pip-floating-overlay.aesthetic-minimal,
 .pip-body.aesthetic-minimal {
   background: #090d16;
   border-width: 1px;
-  box-shadow: 0 12px 32px rgba(0, 0, 0, 0.5);
 }
 
-.regain-pip-pill.aesthetic-minimal .regain-pip-clock,
-.pip-floating-overlay.aesthetic-minimal .pip-clock,
 .pip-body.aesthetic-minimal .pip-clock {
   font-weight: 400;
   letter-spacing: 0.06em;
   text-shadow: none;
 }
 
-.regain-pip-pill.aesthetic-retro,
-.pip-floating-overlay.aesthetic-retro,
 .pip-body.aesthetic-retro {
   background: #14110d;
   border-color: #f59e0b;
 }
 
-.regain-pip-pill.aesthetic-retro .regain-pip-clock,
-.pip-floating-overlay.aesthetic-retro .pip-clock,
 .pip-body.aesthetic-retro .pip-clock {
   color: #fbbf24;
   font-weight: 700;
   letter-spacing: 0.04em;
   text-shadow: 0 0 10px rgba(245, 158, 11, 0.35);
-}
-
-.pip-retro-row {
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  gap: 10px;
-  margin: 4px 0;
 }
 
 /* 90-Day GitHub-Style Consistency Calendar Heatmap */
