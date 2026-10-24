@@ -1,17 +1,34 @@
 import type { PulseHabitState } from '../types';
-import { norm } from './studyLogic';
+import { logicalKey, norm } from './studyLogic';
+
+export class StorageLoadError extends Error {
+  constructor(message = 'Your saved data could not be loaded') {
+    super(message);
+    this.name = 'StorageLoadError';
+  }
+}
+
+export interface DailyBackupSnapshot {
+  dayKey: string;
+  savedAt: number;
+  state: PulseHabitState;
+}
 
 const idbPromise: Promise<IDBDatabase> | null =
   typeof indexedDB !== 'undefined'
     ? new Promise((resolve, reject) => {
-        const req = indexedDB.open('deephours', 1);
-        req.onupgradeneeded = () => {
-          if (!req.result.objectStoreNames.contains('kv')) {
-            req.result.createObjectStore('kv');
-          }
-        };
-        req.onsuccess = () => resolve(req.result);
-        req.onerror = () => reject(req.error);
+        try {
+          const req = indexedDB.open('deephours', 1);
+          req.onupgradeneeded = () => {
+            if (!req.result.objectStoreNames.contains('kv')) {
+              req.result.createObjectStore('kv');
+            }
+          };
+          req.onsuccess = () => resolve(req.result);
+          req.onerror = () => reject(req.error || new Error('IndexedDB open error'));
+        } catch (err) {
+          reject(err);
+        }
       })
     : null;
 
@@ -20,20 +37,48 @@ export function kv(mode: 'get' | 'put', key: string, val?: unknown): Promise<unk
   return idbPromise.then(
     (db) =>
       new Promise((resolve, reject) => {
-        const tx = db.transaction('kv', mode === 'get' ? 'readonly' : 'readwrite');
-        const store = tx.objectStore('kv');
-        const req = mode === 'get' ? store.get(key) : store.put(val, key);
-        req.onsuccess = () => resolve(req.result);
-        req.onerror = () => reject(req.error);
+        try {
+          const tx = db.transaction('kv', mode === 'get' ? 'readonly' : 'readwrite');
+          const store = tx.objectStore('kv');
+          const req = mode === 'get' ? store.get(key) : store.put(val, key);
+          req.onsuccess = () => resolve(req.result);
+          req.onerror = () => reject(req.error || new Error('IndexedDB request error'));
+        } catch (err) {
+          reject(err);
+        }
       })
   );
 }
 
-function readLegacyPulseHabitIdb(key: string): Promise<unknown> {
-  if (typeof indexedDB === 'undefined') return Promise.resolve(null);
+/**
+ * F5: Legacy IndexedDB check must not create an empty "pulsehabit" database.
+ * Check indexedDB.databases() when available, or open it and delete it again if it had no stores.
+ */
+async function readLegacyPulseHabitIdb(key: string): Promise<unknown> {
+  if (typeof indexedDB === 'undefined') return null;
+
+  const idbWithDatabases = indexedDB as IDBFactory & {
+    databases?: () => Promise<Array<{ name?: string; version?: number }>>;
+  };
+
+  if (typeof idbWithDatabases.databases === 'function') {
+    try {
+      const dbList = await idbWithDatabases.databases();
+      if (Array.isArray(dbList) && !dbList.some((d) => d && d.name === 'pulsehabit')) {
+        return null;
+      }
+    } catch {
+      // Fall through to open-and-check below if databases() fails
+    }
+  }
+
   return new Promise((resolve) => {
     try {
+      let createdDuringOpen = false;
       const req = indexedDB.open('pulsehabit');
+      req.onupgradeneeded = () => {
+        createdDuringOpen = true;
+      };
       req.onerror = () => resolve(null);
       req.onsuccess = () => {
         const db = req.result;
@@ -42,8 +87,13 @@ function readLegacyPulseHabitIdb(key: string): Promise<unknown> {
           : db.objectStoreNames.contains('pulsehabit')
             ? 'pulsehabit'
             : null;
-        if (!storeName) {
+        if (createdDuringOpen || db.objectStoreNames.length === 0 || !storeName) {
           db.close();
+          try {
+            indexedDB.deleteDatabase('pulsehabit');
+          } catch {
+            // ignore delete errors
+          }
           resolve(null);
           return;
         }
@@ -71,53 +121,204 @@ function readLegacyPulseHabitIdb(key: string): Promise<unknown> {
   });
 }
 
-export async function loadInitialState(): Promise<PulseHabitState> {
-  let raw: unknown = null;
-  let migratedFromLegacyOrLs = false;
+function isPlainStateRecord(val: unknown): val is Record<string, unknown> {
+  return Boolean(val) && typeof val === 'object' && !Array.isArray(val);
+}
 
+function getSavedAt(val: unknown): number {
+  if (!isPlainStateRecord(val)) return 0;
+  const ts = Number(val.savedAt);
+  return Number.isFinite(ts) && ts > 0 ? ts : 0;
+}
+
+let lastBackupDayKey: string | null = null;
+
+/**
+ * F4: Keep an automatic rolling safety backup in IndexedDB key "backup":
+ * the latest 3 daily snapshots, written at most once per day.
+ */
+async function maybeWriteDailyBackup(state: PulseHabitState): Promise<void> {
   try {
-    raw = await kv('get', 's');
-  } catch {
-    // fallback below
-  }
+    const dayKey = logicalKey(new Date(), state.set?.dayResetHour ?? 4);
+    if (lastBackupDayKey === dayKey) return;
 
-  if (!raw) {
-    try {
-      raw = await readLegacyPulseHabitIdb('s');
-      if (raw) migratedFromLegacyOrLs = true;
-    } catch {
-      // ignore legacy IDB errors
+    const rawBackups = await kv('get', 'backup');
+    const existing: DailyBackupSnapshot[] = Array.isArray(rawBackups)
+      ? rawBackups.filter(
+          (b): b is DailyBackupSnapshot =>
+            Boolean(b) &&
+            typeof b === 'object' &&
+            typeof (b as DailyBackupSnapshot).dayKey === 'string' &&
+            isPlainStateRecord((b as DailyBackupSnapshot).state)
+        )
+      : [];
+
+    if (existing.some((b) => b.dayKey === dayKey)) {
+      lastBackupDayKey = dayKey;
+      return;
     }
-  }
 
-  if (!raw) {
+    const snapshot: DailyBackupSnapshot = {
+      dayKey,
+      savedAt: state.savedAt || Date.now(),
+      state: JSON.parse(JSON.stringify(state)),
+    };
+
+    const updated = [snapshot, ...existing]
+      .sort((a, b) => b.dayKey.localeCompare(a.dayKey) || b.savedAt - a.savedAt)
+      .slice(0, 3);
+
+    await kv('put', 'backup', updated);
+    lastBackupDayKey = dayKey;
+  } catch {
+    // ignore backup write errors
+  }
+}
+
+export async function restoreFromLatestBackup(): Promise<PulseHabitState | null> {
+  try {
+    const rawBackups = await kv('get', 'backup');
+    if (!Array.isArray(rawBackups) || rawBackups.length === 0) return null;
+    const valid = rawBackups
+      .filter(
+        (b): b is DailyBackupSnapshot =>
+          Boolean(b) &&
+          typeof b === 'object' &&
+          typeof (b as DailyBackupSnapshot).dayKey === 'string' &&
+          isPlainStateRecord((b as DailyBackupSnapshot).state)
+      )
+      .sort((a, b) => b.savedAt - a.savedAt || b.dayKey.localeCompare(a.dayKey));
+    if (!valid.length) return null;
+
+    const restored = norm({
+      ...valid[0].state,
+      savedAt: Date.now(),
+    });
     try {
-      const ls =
-        typeof localStorage !== 'undefined'
-          ? localStorage.getItem('dh') || localStorage.getItem('ph')
-          : null;
-      if (ls) {
-        raw = JSON.parse(ls);
-        migratedFromLegacyOrLs = true;
+      if (typeof localStorage !== 'undefined') {
+        localStorage.setItem('dh', JSON.stringify(restored));
       }
     } catch {
-      // ignore parse errors
+      // ignore localStorage error
+    }
+    try {
+      await kv('put', 's', restored);
+    } catch {
+      // ignore IndexedDB error
+    }
+    return restored;
+  } catch {
+    return null;
+  }
+}
+
+export async function loadInitialState(): Promise<PulseHabitState> {
+  let idbRaw: unknown = null;
+  let idbError = false;
+  let lsRaw: unknown = null;
+  let lsError = false;
+  let migratedFromLegacy = false;
+
+  // 1. Read IndexedDB ('deephours' -> 'kv' -> 's')
+  try {
+    const val = await kv('get', 's');
+    if (val !== undefined && val !== null) {
+      if (isPlainStateRecord(val)) {
+        idbRaw = val;
+      } else {
+        idbError = true;
+      }
+    }
+  } catch {
+    idbError = true;
+  }
+
+  // 2. Read localStorage ('dh' first, fallback to legacy 'ph' for migration)
+  try {
+    if (typeof localStorage !== 'undefined') {
+      const dhStr = localStorage.getItem('dh');
+      const phStr = dhStr === null ? localStorage.getItem('ph') : null;
+      const rawStr = dhStr ?? phStr;
+      if (rawStr !== null) {
+        const parsed = JSON.parse(rawStr);
+        if (isPlainStateRecord(parsed)) {
+          lsRaw = parsed;
+          if (dhStr === null && phStr !== null) {
+            migratedFromLegacy = true;
+          }
+        } else {
+          lsError = true;
+        }
+      }
+    }
+  } catch {
+    lsError = true;
+  }
+
+  // F4: If loading real data failed (both stores unreadable/throwing, or one store corrupted and the other empty),
+  // throw StorageLoadError so App.tsx keeps readyRef false and shows the recovery screen.
+  if (
+    (idbError && lsError) ||
+    (!idbRaw && !lsRaw && (idbError || lsError))
+  ) {
+    throw new StorageLoadError('Your saved data could not be loaded');
+  }
+
+  let chosenRaw: unknown = null;
+  let needsResave = migratedFromLegacy;
+
+  // F4: Compare IndexedDB vs localStorage by savedAt and use the newer one
+  if (idbRaw && lsRaw) {
+    const idbTs = getSavedAt(idbRaw);
+    const lsTs = getSavedAt(lsRaw);
+    if (lsTs > idbTs) {
+      chosenRaw = lsRaw;
+      needsResave = true;
+    } else {
+      chosenRaw = idbRaw;
+      if (idbTs > lsTs) needsResave = true;
+    }
+  } else if (idbRaw) {
+    chosenRaw = idbRaw;
+  } else if (lsRaw) {
+    chosenRaw = lsRaw;
+    needsResave = true;
+  } else {
+    // Neither store had data and neither threw: check legacy 'pulsehabit' IndexedDB without creating an empty DB (F5)
+    try {
+      const legacyVal = await readLegacyPulseHabitIdb('s');
+      if (isPlainStateRecord(legacyVal)) {
+        chosenRaw = legacyVal;
+        needsResave = true;
+      }
+    } catch {
+      // ignore legacy IDB error
     }
   }
 
-  const state = norm(raw);
-  if (migratedFromLegacyOrLs) {
+  const state = norm(chosenRaw);
+  if (!state.savedAt) {
+    state.savedAt = Date.now();
+  }
+
+  if (needsResave) {
+    try {
+      if (typeof localStorage !== 'undefined') {
+        localStorage.setItem('dh', JSON.stringify(state));
+      }
+    } catch {
+      // ignore localStorage write error
+    }
     try {
       await kv('put', 's', state);
-      if (typeof localStorage !== 'undefined') {
-        const serialized = JSON.stringify(state);
-        localStorage.setItem('dh', serialized);
-        localStorage.setItem('ph', serialized);
-      }
+      await maybeWriteDailyBackup(state);
     } catch {
-      // ignore write errors
+      // ignore IndexedDB write error
     }
+  } else if (chosenRaw) {
+    void maybeWriteDailyBackup(state);
   }
+
   return state;
 }
 
@@ -126,21 +327,29 @@ const bc =
   typeof BroadcastChannel !== 'undefined' ? new BroadcastChannel('deephours') : null;
 
 export function persistState(state: PulseHabitState, onSaved?: () => void): void {
+  const now = Date.now();
+  state.savedAt = now;
+  const stamped: PulseHabitState = {
+    ...state,
+    savedAt: now,
+  };
+
   try {
     if (typeof localStorage !== 'undefined') {
-      const serialized = JSON.stringify(state);
-      localStorage.setItem('dh', serialized);
-      localStorage.setItem('ph', serialized);
+      // F4: Write only localStorage key "dh" going forward
+      localStorage.setItem('dh', JSON.stringify(stamped));
     }
   } catch {
     // ignore quota errors
   }
+
   if (saveTimer) clearTimeout(saveTimer);
   saveTimer = setTimeout(async () => {
     try {
-      await kv('put', 's', state);
+      await kv('put', 's', stamped);
+      await maybeWriteDailyBackup(stamped);
     } catch {
-      // fallback already written to localStorage
+      // fallback already written to localStorage "dh"
     }
     bc?.postMessage(1);
     onSaved?.();

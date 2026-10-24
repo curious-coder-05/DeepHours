@@ -170,6 +170,7 @@ export interface PulseHabitState {
   exp: number;
   ob: number;
   del: string[];
+  savedAt?: number;
   set: AppSettings;
 }
 

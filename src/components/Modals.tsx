@@ -161,7 +161,7 @@ export const Modals: React.FC<ModalsProps> = ({
   const [mockDayKey, setMockDayKey] = useState(todayKey);
   const [mockDurationMins, setMockDurationMins] = useState<string>('180');
   const [mockMarksCorrect, setMockMarksCorrect] = useState<number>(4);
-  const [mockMarksWrong, setMockMarksWrong] = useState<number>(-1);
+  const [mockMarksLost, setMockMarksLost] = useState<number>(1);
   const [mockMaxMarks, setMockMaxMarks] = useState<number>(720);
   const [mockScores, setMockScores] = useState<
     Record<string, MockSubjectScore>
@@ -254,15 +254,19 @@ export const Modals: React.FC<ModalsProps> = ({
         ex?.durationMins !== undefined ? String(ex.durationMins) : '180'
       );
       setMockMarksCorrect(ex?.marksPerCorrect ?? 4);
-      setMockMarksWrong(ex?.marksPerWrong ?? -1);
+      setMockMarksLost(
+        ex?.marksPerWrong !== undefined && Number.isFinite(ex.marksPerWrong)
+          ? Math.abs(ex.marksPerWrong)
+          : 1
+      );
       setMockMaxMarks(ex?.maxMarks ?? 720);
       const initScores: Record<string, MockSubjectScore> = {};
       curState.subjects.forEach((s) => {
         const sc = ex?.subjects?.[s.id];
         initScores[s.id] = {
-          correct: sc?.correct ?? 0,
-          wrong: sc?.wrong ?? 0,
-          unattempted: sc?.unattempted ?? 0,
+          correct: Math.max(0, Math.floor(Number(sc?.correct) || 0)),
+          wrong: Math.max(0, Math.floor(Number(sc?.wrong) || 0)),
+          unattempted: Math.max(0, Math.floor(Number(sc?.unattempted) || 0)),
         };
       });
       setMockScores(initScores);
@@ -296,13 +300,19 @@ export const Modals: React.FC<ModalsProps> = ({
     );
   };
 
+  const storedMarksPerWrong = (() => {
+    const raw = Number(mockMarksLost);
+    if (!Number.isFinite(raw)) return -1;
+    return raw === 0 ? 0 : -Math.abs(raw);
+  })();
+
   const previewMockStats = computeMockScore(
     {
       id: 'preview',
       name: mockName || 'Preview',
       dayKey: mockDayKey,
       marksPerCorrect: mockMarksCorrect,
-      marksPerWrong: mockMarksWrong,
+      marksPerWrong: storedMarksPerWrong,
       maxMarks: mockMaxMarks,
       subjects: mockScores,
       note: '',
@@ -310,6 +320,14 @@ export const Modals: React.FC<ModalsProps> = ({
     },
     state.subjects
   );
+
+  const expectedMaxQuestions =
+    mockMarksCorrect > 0 && mockMaxMarks > 0
+      ? Math.floor(mockMaxMarks / mockMarksCorrect)
+      : 0;
+  const exceedsMaxQuestions =
+    expectedMaxQuestions > 0 &&
+    previewMockStats.totalQuestions > expectedMaxQuestions;
 
   return (
     <dialog
@@ -786,6 +804,14 @@ export const Modals: React.FC<ModalsProps> = ({
             e.preventDefault();
             const cleanName = mockName.trim() || 'NEET Mock Test';
             const durNum = Number(mockDurationMins);
+            const clampedSubjects: Record<string, MockSubjectScore> = {};
+            for (const [subId, sc] of Object.entries(mockScores)) {
+              clampedSubjects[subId] = {
+                correct: Math.max(0, Math.floor(Number(sc?.correct) || 0)),
+                wrong: Math.max(0, Math.floor(Number(sc?.wrong) || 0)),
+                unattempted: Math.max(0, Math.floor(Number(sc?.unattempted) || 0)),
+              };
+            }
             onSaveMock(modal.id, {
               name: cleanName,
               dayKey: mockDayKey || todayKey,
@@ -796,14 +822,12 @@ export const Modals: React.FC<ModalsProps> = ({
               marksPerCorrect: Number.isFinite(Number(mockMarksCorrect))
                 ? Number(mockMarksCorrect)
                 : 4,
-              marksPerWrong: Number.isFinite(Number(mockMarksWrong))
-                ? Number(mockMarksWrong)
-                : -1,
+              marksPerWrong: storedMarksPerWrong,
               maxMarks:
                 Number.isFinite(Number(mockMaxMarks)) && Number(mockMaxMarks) > 0
                   ? Number(mockMaxMarks)
                   : 720,
-              subjects: mockScores,
+              subjects: clampedSubjects,
               note: mockNote.trim(),
               updatedAt: Date.now(),
             });
@@ -849,17 +873,21 @@ export const Modals: React.FC<ModalsProps> = ({
               <input
                 type="number"
                 step="0.5"
+                min={0.5}
                 value={mockMarksCorrect}
                 onChange={(e) => setMockMarksCorrect(Number(e.target.value))}
               />
             </label>
             <label className="g">
-              −Wrong Marks
+              Marks lost per wrong answer
               <input
                 type="number"
-                step="0.5"
-                value={mockMarksWrong}
-                onChange={(e) => setMockMarksWrong(Number(e.target.value))}
+                min={0}
+                step="0.25"
+                value={mockMarksLost}
+                onChange={(e) =>
+                  setMockMarksLost(Math.max(0, Number(e.target.value) || 0))
+                }
               />
             </label>
             <label className="g">
@@ -873,6 +901,26 @@ export const Modals: React.FC<ModalsProps> = ({
               />
             </label>
           </div>
+
+          {exceedsMaxQuestions && (
+            <small
+              role="status"
+              style={{
+                display: 'block',
+                marginTop: '6px',
+                padding: '6px 10px',
+                borderRadius: '8px',
+                background: 'color-mix(in srgb, var(--am) 14%, transparent)',
+                border: '1px solid color-mix(in srgb, var(--am) 42%, var(--bd))',
+                color: '#fbbf24',
+                fontWeight: 600,
+              }}
+            >
+              ⚠️ Total questions ({previewMockStats.totalQuestions}) exceed maxMarks /
+              marksPerCorrect ({expectedMaxQuestions} questions for {mockMaxMarks} max
+              marks).
+            </small>
+          )}
 
           <div
             style={{
@@ -934,13 +982,17 @@ export const Modals: React.FC<ModalsProps> = ({
                         type="number"
                         min={0}
                         max={200}
+                        step={1}
                         value={sc.correct}
                         onChange={(e) =>
                           setMockScores((prev) => ({
                             ...prev,
                             [sub.id]: {
                               ...sc,
-                              correct: Math.max(0, Number(e.target.value) || 0),
+                              correct: Math.max(
+                                0,
+                                Math.floor(Number(e.target.value) || 0)
+                              ),
                             },
                           }))
                         }
@@ -952,13 +1004,17 @@ export const Modals: React.FC<ModalsProps> = ({
                         type="number"
                         min={0}
                         max={200}
+                        step={1}
                         value={sc.wrong}
                         onChange={(e) =>
                           setMockScores((prev) => ({
                             ...prev,
                             [sub.id]: {
                               ...sc,
-                              wrong: Math.max(0, Number(e.target.value) || 0),
+                              wrong: Math.max(
+                                0,
+                                Math.floor(Number(e.target.value) || 0)
+                              ),
                             },
                           }))
                         }
@@ -970,13 +1026,17 @@ export const Modals: React.FC<ModalsProps> = ({
                         type="number"
                         min={0}
                         max={200}
+                        step={1}
                         value={sc.unattempted}
                         onChange={(e) =>
                           setMockScores((prev) => ({
                             ...prev,
                             [sub.id]: {
                               ...sc,
-                              unattempted: Math.max(0, Number(e.target.value) || 0),
+                              unattempted: Math.max(
+                                0,
+                                Math.floor(Number(e.target.value) || 0)
+                              ),
                             },
                           }))
                         }
@@ -1083,10 +1143,14 @@ export const Modals: React.FC<ModalsProps> = ({
           id="ddayForm"
           onSubmit={(e) => {
             e.preventDefault();
-            if (!ddTitle.trim()) return;
+            const formTitleInput = e.currentTarget.elements.namedItem(
+              'title'
+            ) as HTMLInputElement | null;
+            const resolvedTitle = (ddTitle || formTitleInput?.value || '').trim();
+            if (!resolvedTitle) return;
             onSaveDDay(modal.id, {
-              title: ddTitle.trim(),
-              date: ddDate,
+              title: resolvedTitle,
+              date: ddDate || addD(todayKey, 90),
               e: ddEmoji.trim() || '🎯',
               color: ddColor || '#10b981',
             });
@@ -1186,6 +1250,9 @@ export const Modals: React.FC<ModalsProps> = ({
           <small>
             This will recompute the logical study date for all existing study
             sessions and re-sync your auto-study habits across affected days.
+          </small>
+          <small style={{ color: 'var(--tx)', fontWeight: 600 }}>
+            Sessions are re-dated. Habit ticks, notes, mood and planner blocks keep their original dates.
           </small>
           <div className="row">
             <button

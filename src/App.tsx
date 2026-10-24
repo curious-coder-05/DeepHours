@@ -21,7 +21,10 @@ import type {
   StudySession,
 } from './types';
 import {
+  type DeletedEntityRecord,
   STARTERS,
+  addChapterRevisionDate,
+  applyChapterUpdate,
   cloneLog,
   computeMockScore,
   createBlankState,
@@ -30,9 +33,7 @@ import {
   due,
   dueOn,
   ent,
-  fmtHMS,
   fmtHMShort,
-  fmtMS,
   getDailyStudyGoalProgress,
   getSessionHeading,
   getSortedChapterRevisions,
@@ -42,12 +43,19 @@ import {
   mkHabit,
   norm,
   pad,
+  restoreDeletedItem,
   shouldFireFiveMinWarning,
   syncStudyHabitsForDays,
   syncStudyHabitsInPlace,
   uid,
+  updateChapterRevisionDate,
 } from './utils/studyLogic';
-import { loadInitialState, persistState, subscribeBroadcast } from './utils/storage';
+import {
+  loadInitialState,
+  persistState,
+  restoreFromLatestBackup,
+  subscribeBroadcast,
+} from './utils/storage';
 import {
   beep,
   ensureAudioEngine,
@@ -119,6 +127,10 @@ function downloadFile(name: string, content: string, mimeType: string) {
 
 export default function App() {
   const [ready, setReady] = useState(false);
+  const [loadError, setLoadError] = useState<string | null>(null);
+  const [backupRestoreMsg, setBackupRestoreMsg] = useState<string | null>(null);
+  const [confirmStartFresh, setConfirmStartFresh] = useState(false);
+
   const [state, setState] = useState<PulseHabitState>(() => createDefaultState());
   const [tab, setTab] = useState<AppTab>('today');
   const [prepSubTab, setPrepSubTab] = useState<PrepSubTab>('syllabus');
@@ -130,7 +142,10 @@ export default function App() {
   const [toastState, setToastState] = useState<{
     msg: string;
     undoFn?: () => void;
+    actionLabel?: string;
+    onTap?: () => void;
   } | null>(null);
+  const [waitingSw, setWaitingSw] = useState<ServiceWorker | null>(null);
   const [perfectDayBanner, setPerfectDayBanner] = useState(false);
   const [, setTickCounter] = useState(0);
 
@@ -142,24 +157,44 @@ export default function App() {
   const perfectDayTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const firedRemindersRef = useRef<Set<string>>(new Set());
   const wakeLockRef = useRef<WakeLockSentinel | null>(null);
+  const swReloadRequestedRef = useRef(false);
 
   const todayKey = logicalKey(new Date(), state.set.dayResetHour ?? 4);
   const prevTodayKeyRef = useRef(todayKey);
 
-  const showToast = useCallback((msg: string, undoFn?: () => void) => {
-    if (toastTimeoutRef.current) clearTimeout(toastTimeoutRef.current);
-    setToastState({ msg, undoFn });
-    toastTimeoutRef.current = setTimeout(() => {
-      setToastState(null);
-    }, 4500);
-  }, []);
+  const showToast = useCallback(
+    (
+      msg: string,
+      undoFn?: () => void,
+      opts?: { durationMs?: number; actionLabel?: string; onTap?: () => void }
+    ) => {
+      if (toastTimeoutRef.current) clearTimeout(toastTimeoutRef.current);
+      setToastState({
+        msg,
+        undoFn,
+        actionLabel: opts?.actionLabel,
+        onTap: opts?.onTap,
+      });
+      const dur = opts?.durationMs ?? 4500;
+      if (dur > 0) {
+        toastTimeoutRef.current = setTimeout(() => {
+          setToastState(null);
+        }, dur);
+      }
+    },
+    []
+  );
 
   // A3 & A4: Never persist before initial IndexedDB load completes, and never run side effects inside setState
   const saveNextState = useCallback((next: PulseHabitState) => {
-    stateRef.current = next;
-    setState(next);
+    const stamped: PulseHabitState = {
+      ...next,
+      savedAt: Date.now(),
+    };
+    stateRef.current = stamped;
+    setState(stamped);
     if (readyRef.current) {
-      persistState(next);
+      persistState(stamped);
     }
   }, []);
 
@@ -178,46 +213,151 @@ export default function App() {
     [saveNextState]
   );
 
-  // A3: Load initial state from IndexedDB / localStorage before allowing any persistence
+  const hydrateLoadedState = useCallback((loaded: PulseHabitState) => {
+    const next: PulseHabitState = {
+      ...loaded,
+      log: cloneLog(loaded.log),
+    };
+    const curToday = logicalKey(new Date(), next.set.dayResetHour ?? 4);
+    syncStudyHabitsInPlace(next, curToday, curToday);
+    readyRef.current = true;
+    stateRef.current = next;
+    prevTodayKeyRef.current = curToday;
+    setLoadError(null);
+    setBackupRestoreMsg(null);
+    setConfirmStartFresh(false);
+    setState(next);
+    setSel(curToday);
+    setReady(true);
+  }, []);
+
+  const attemptLoadState = useCallback(() => {
+    setLoadError(null);
+    setBackupRestoreMsg(null);
+    loadInitialState()
+      .then((loaded) => {
+        hydrateLoadedState(loaded);
+      })
+      .catch((err) => {
+        // F4: Do NOT start blank silently when real data could not be loaded
+        readyRef.current = false;
+        setReady(false);
+        setLoadError(
+          err instanceof Error
+            ? err.message
+            : 'Both local storage stores were unreadable or corrupted.'
+        );
+      });
+  }, [hydrateLoadedState]);
+
+  // F6: Apply waiting Service Worker only when tapped and no timer is running
+  const handleApplyWaitingSw = useCallback(
+    (worker?: ServiceWorker | null) => {
+      const targetSw = worker || waitingSw;
+      if (!targetSw) return;
+      if (stateRef.current.activeTimer?.status === 'running') {
+        showToast('Pause or finish your running timer before reloading');
+        return;
+      }
+      swReloadRequestedRef.current = true;
+      try {
+        targetSw.postMessage({ type: 'SKIP_WAITING' });
+      } catch {
+        // ignore postMessage errors
+      }
+      setTimeout(() => {
+        if (
+          swReloadRequestedRef.current &&
+          stateRef.current.activeTimer?.status !== 'running'
+        ) {
+          window.location.reload();
+        }
+      }, 600);
+    },
+    [showToast, waitingSw]
+  );
+
+  // A3, F4, F6: Load initial state and register Service Worker with update detection
   useEffect(() => {
     let mounted = true;
     loadInitialState()
       .then((loaded) => {
         if (!mounted) return;
-        const next: PulseHabitState = {
-          ...loaded,
-          log: cloneLog(loaded.log),
-        };
-        const curToday = logicalKey(new Date(), next.set.dayResetHour ?? 4);
-        syncStudyHabitsInPlace(next, curToday, curToday);
-        readyRef.current = true;
-        stateRef.current = next;
-        prevTodayKeyRef.current = curToday;
-        setState(next);
-        setSel(curToday);
-        setReady(true);
+        hydrateLoadedState(loaded);
       })
-      .catch(() => {
+      .catch((err) => {
         if (!mounted) return;
-        readyRef.current = true;
-        setReady(true);
+        readyRef.current = false;
+        setReady(false);
+        setLoadError(
+          err instanceof Error
+            ? err.message
+            : 'Both local storage stores were unreadable or corrupted.'
+        );
       });
 
     const unsub = subscribeBroadcast((latest) => {
-      if (!mounted) return;
+      if (!mounted || !readyRef.current) return;
       stateRef.current = latest;
       setState(latest);
     });
 
+    const onControllerChange = () => {
+      if (
+        swReloadRequestedRef.current &&
+        stateRef.current.activeTimer?.status !== 'running'
+      ) {
+        window.location.reload();
+      }
+    };
+
     if ('serviceWorker' in navigator && location.protocol.startsWith('http')) {
-      navigator.serviceWorker.register('/sw.js').catch(() => {});
+      navigator.serviceWorker.addEventListener('controllerchange', onControllerChange);
+      navigator.serviceWorker
+        .register('/sw.js')
+        .then((reg) => {
+          if (!mounted) return;
+          const notifyWaiting = (sw: ServiceWorker) => {
+            if (!mounted) return;
+            setWaitingSw(sw);
+            showToast('New version ready, tap to reload', undefined, {
+              durationMs: 0,
+              actionLabel: 'Reload',
+              onTap: () => handleApplyWaitingSw(sw),
+            });
+          };
+
+          if (reg.waiting) {
+            notifyWaiting(reg.waiting);
+          }
+
+          reg.addEventListener('updatefound', () => {
+            const installing = reg.installing;
+            if (!installing) return;
+            installing.addEventListener('statechange', () => {
+              if (
+                installing.state === 'installed' &&
+                navigator.serviceWorker.controller
+              ) {
+                notifyWaiting(installing);
+              }
+            });
+          });
+        })
+        .catch(() => {});
     }
 
     return () => {
       mounted = false;
       unsub();
+      if ('serviceWorker' in navigator) {
+        navigator.serviceWorker.removeEventListener(
+          'controllerchange',
+          onControllerChange
+        );
+      }
     };
-  }, []);
+  }, [handleApplyWaitingSw, hydrateLoadedState, showToast]);
 
   // A7: Idle day-rollover interval every 30s so todayKey and sel advance automatically past dayResetHour
   useEffect(() => {
@@ -692,7 +832,7 @@ export default function App() {
       if (worker) worker.terminate();
       if (workerUrl) URL.revokeObjectURL(workerUrl);
     };
-  }, [renderTick, saveNextState, state.activeTimer]);
+  }, [renderTick, saveNextState, showToast, state.activeTimer]);
 
   // Scheduled Habit Reminders check
   useEffect(() => {
@@ -792,13 +932,18 @@ export default function App() {
     [sel, updateAndSave]
   );
 
-  // A5: Delete session with multi-day habit sync + Undo toast
+  // F1 & A5: Delete session with item-only Undo at original index + multi-day habit sync
   const handleDeleteSession = useCallback(
     (id: string) => {
       const prev = stateRef.current;
-      const target = prev.sessions.find((x) => x.id === id);
-      if (!target) return;
-      const snapJson = JSON.stringify(prev);
+      const index = prev.sessions.findIndex((x) => x.id === id);
+      if (index === -1) return;
+      const target = prev.sessions[index];
+      const record: DeletedEntityRecord = {
+        kind: 'session',
+        item: JSON.parse(JSON.stringify(target)),
+        index,
+      };
 
       const next: PulseHabitState = {
         ...prev,
@@ -809,15 +954,17 @@ export default function App() {
       saveNextState(next);
 
       showToast('Session deleted', () => {
-        const restored = norm(JSON.parse(snapJson));
-        syncStudyHabitsForDays(restored, [target.dayKey, sel, todayKey], todayKey);
+        const cur = stateRef.current;
+        const restored = restoreDeletedItem(cur, record);
+        const curToday = logicalKey(new Date(), restored.set.dayResetHour ?? 4);
+        syncStudyHabitsForDays(restored, [target.dayKey, sel, curToday], curToday);
         saveNextState(restored);
       });
     },
     [saveNextState, sel, showToast, todayKey]
   );
 
-  // B2: Chapter & Revision Handlers
+  // B2 & F3: Chapter & Revision Handlers
   const handleAddChapters = useCallback(
     (subjectId: string, names: string[]) => {
       const cleanLines = names.map((l) => l.trim()).filter(Boolean);
@@ -847,29 +994,32 @@ export default function App() {
       updateAndSave((prev) => ({
         ...prev,
         chapters: prev.chapters.map((ch) =>
-          ch.id === chapterId ? { ...ch, ...patch } : ch
+          ch.id === chapterId ? applyChapterUpdate(ch, patch, todayKey) : ch
         ),
       }));
     },
-    [updateAndSave]
+    [todayKey, updateAndSave]
   );
 
   const handleAddRevision = useCallback(
     (chapterId: string, date: string) => {
       if (!/^\d{4}-\d{2}-\d{2}$/.test(date)) return;
-      updateAndSave((prev) => ({
-        ...prev,
-        chapters: prev.chapters.map((ch) => {
-          if (ch.id !== chapterId) return ch;
-          const nextRevs = [
-            ...ch.revisions,
-            { id: uid('rev'), date, done: false },
-          ].sort((a, b) => a.date.localeCompare(b.date));
-          return { ...ch, revisions: nextRevs };
-        }),
+      const prev = stateRef.current;
+      const targetCh = prev.chapters.find((c) => c.id === chapterId);
+      if (!targetCh) return;
+      const res = addChapterRevisionDate(targetCh, date, uid('rev'));
+      if (res.duplicate) {
+        showToast('Revision date already exists for this chapter');
+        return;
+      }
+      updateAndSave((cur) => ({
+        ...cur,
+        chapters: cur.chapters.map((ch) =>
+          ch.id === chapterId ? addChapterRevisionDate(ch, date, uid('rev')).chapter : ch
+        ),
       }));
     },
-    [updateAndSave]
+    [showToast, updateAndSave]
   );
 
   const handleToggleRevisionDone = useCallback(
@@ -899,21 +1049,24 @@ export default function App() {
   const handleUpdateRevisionDate = useCallback(
     (chapterId: string, revId: string, newDate: string) => {
       if (!/^\d{4}-\d{2}-\d{2}$/.test(newDate)) return;
-      updateAndSave((prev) => ({
-        ...prev,
-        chapters: prev.chapters.map((ch) => {
-          if (ch.id !== chapterId) return ch;
-          const updatedRevs = ch.revisions
-            .map((r) => (r.id === revId ? { ...r, date: newDate } : r))
-            .sort((a, b) => a.date.localeCompare(b.date));
-          return {
-            ...ch,
-            revisions: updatedRevs,
-          };
-        }),
+      const prev = stateRef.current;
+      const targetCh = prev.chapters.find((c) => c.id === chapterId);
+      if (!targetCh) return;
+      const res = updateChapterRevisionDate(targetCh, revId, newDate);
+      if (res.duplicate) {
+        showToast('Revision date already exists for this chapter');
+        return;
+      }
+      updateAndSave((cur) => ({
+        ...cur,
+        chapters: cur.chapters.map((ch) =>
+          ch.id === chapterId
+            ? updateChapterRevisionDate(ch, revId, newDate).chapter
+            : ch
+        ),
       }));
     },
-    [updateAndSave]
+    [showToast, updateAndSave]
   );
 
   const handleDeleteRevision = useCallback(
@@ -932,36 +1085,194 @@ export default function App() {
     [updateAndSave]
   );
 
+  // F1: Delete chapter with item-only Undo at original index
   const handleDeleteChapter = useCallback(
     (chapterId: string) => {
-      const snapJson = JSON.stringify(stateRef.current);
-      updateAndSave((prev) => ({
-        ...prev,
-        chapters: prev.chapters.filter((ch) => ch.id !== chapterId),
+      const prev = stateRef.current;
+      const index = prev.chapters.findIndex((ch) => ch.id === chapterId);
+      if (index === -1) return;
+      const record: DeletedEntityRecord = {
+        kind: 'chapter',
+        item: JSON.parse(JSON.stringify(prev.chapters[index])),
+        index,
+      };
+      updateAndSave((cur) => ({
+        ...cur,
+        chapters: cur.chapters.filter((ch) => ch.id !== chapterId),
       }));
       showToast('Chapter deleted', () => {
-        const restored = norm(JSON.parse(snapJson));
-        saveNextState(restored);
+        updateAndSave((cur) => restoreDeletedItem(cur, record));
       });
     },
-    [saveNextState, showToast, updateAndSave]
+    [showToast, updateAndSave]
   );
 
+  // F1: Delete mock test with item-only Undo at original index
   const handleDeleteMock = useCallback(
     (mockId: string) => {
-      const snapJson = JSON.stringify(stateRef.current);
-      updateAndSave((prev) => ({
-        ...prev,
-        mocks: prev.mocks.filter((m) => m.id !== mockId),
+      const prev = stateRef.current;
+      const index = prev.mocks.findIndex((m) => m.id === mockId);
+      if (index === -1) return;
+      const record: DeletedEntityRecord = {
+        kind: 'mock',
+        item: JSON.parse(JSON.stringify(prev.mocks[index])),
+        index,
+      };
+      updateAndSave((cur) => ({
+        ...cur,
+        mocks: cur.mocks.filter((m) => m.id !== mockId),
       }));
       setModal({ type: 'none' });
       showToast('Mock test deleted', () => {
-        const restored = norm(JSON.parse(snapJson));
-        saveNextState(restored);
+        updateAndSave((cur) => restoreDeletedItem(cur, record));
       });
     },
-    [saveNextState, showToast, updateAndSave]
+    [showToast, updateAndSave]
   );
+
+  // F1: Delete subject with item-only Undo at original index
+  const handleDeleteSubject = useCallback(
+    (subjectId: string) => {
+      const prev = stateRef.current;
+      const activeCount = prev.subjects.filter((s) => !s.arch).length;
+      if (activeCount <= 1) {
+        showToast('At least one active subject is required');
+        return;
+      }
+      const index = prev.subjects.findIndex((s) => s.id === subjectId);
+      if (index === -1) return;
+      const record: DeletedEntityRecord = {
+        kind: 'subject',
+        item: JSON.parse(JSON.stringify(prev.subjects[index])),
+        index,
+      };
+      updateAndSave((cur) => ({
+        ...cur,
+        subjects: cur.subjects.filter((s) => s.id !== subjectId),
+      }));
+      showToast('Subject deleted', () => {
+        updateAndSave((cur) => restoreDeletedItem(cur, record));
+      });
+    },
+    [showToast, updateAndSave]
+  );
+
+  // F4: Storage load failure screen (readyRef.current remains false so existing data is never overwritten)
+  if (loadError) {
+    return (
+      <main
+        id="v"
+        style={{
+          display: 'grid',
+          placeItems: 'center',
+          minHeight: '85vh',
+          padding: '20px',
+        }}
+      >
+        <div
+          className="card"
+          style={{
+            maxWidth: '430px',
+            width: '100%',
+            padding: '22px',
+            borderColor: 'rgba(239, 68, 68, 0.45)',
+          }}
+        >
+          <h2 style={{ fontSize: '19px', marginBottom: '6px', color: '#f87171' }}>
+            Your saved data could not be loaded
+          </h2>
+          <small style={{ display: 'block', marginBottom: '12px', lineHeight: 1.5 }}>
+            Deep Hours paused startup so your stored study log is not overwritten. You can
+            restore from the latest rolling backup, retry loading, or start fresh.
+          </small>
+          {backupRestoreMsg && (
+            <small
+              style={{
+                display: 'block',
+                marginBottom: '10px',
+                color: '#fbbf24',
+                fontWeight: 600,
+              }}
+            >
+              {backupRestoreMsg}
+            </small>
+          )}
+          <div style={{ display: 'grid', gap: '8px' }}>
+            <button
+              type="button"
+              className="pri"
+              onClick={async () => {
+                setBackupRestoreMsg(null);
+                const restored = await restoreFromLatestBackup();
+                if (restored) {
+                  hydrateLoadedState(restored);
+                  persistState(restored);
+                  showToast('Restored from last automatic backup');
+                } else {
+                  setBackupRestoreMsg(
+                    'No rolling backup snapshot was found in IndexedDB.'
+                  );
+                }
+              }}
+            >
+              Restore from last backup
+            </button>
+            <button
+              type="button"
+              onClick={() => {
+                attemptLoadState();
+              }}
+            >
+              Retry
+            </button>
+            {!confirmStartFresh ? (
+              <button
+                type="button"
+                className="dg-btn"
+                onClick={() => setConfirmStartFresh(true)}
+              >
+                Start fresh
+              </button>
+            ) : (
+              <div
+                className="stat-box"
+                style={{
+                  border: '1px solid rgba(239, 68, 68, 0.45)',
+                  marginTop: '4px',
+                }}
+              >
+                <small style={{ display: 'block', marginBottom: '8px', color: '#fca5a5' }}>
+                  Are you sure you want to start fresh? This will overwrite unreadable
+                  local storage with a new blank state.
+                </small>
+                <div className="row" style={{ gap: '8px' }}>
+                  <button
+                    type="button"
+                    className="g"
+                    onClick={() => setConfirmStartFresh(false)}
+                  >
+                    Cancel
+                  </button>
+                  <button
+                    type="button"
+                    className="g dg"
+                    onClick={() => {
+                      const fresh = createBlankState();
+                      readyRef.current = true;
+                      hydrateLoadedState(fresh);
+                      persistState(fresh);
+                    }}
+                  >
+                    Confirm Start fresh
+                  </button>
+                </div>
+              </div>
+            )}
+          </div>
+        </div>
+      </main>
+    );
+  }
 
   // A3: Show minimal loading splash until IndexedDB/localStorage hydration settles
   if (!ready) {
@@ -1178,6 +1489,25 @@ export default function App() {
             onNewHabit={() => setModal({ type: 'habit' })}
             onEditHabit={(id) => setModal({ type: 'habit', id })}
             onOpenManualSession={() => setModal({ type: 'manualSession' })}
+            onAddSubject={(name, e, color) => {
+              updateAndSave((prev) => ({
+                ...prev,
+                subjects: [
+                  ...prev.subjects,
+                  {
+                    id: uid('sub'),
+                    name,
+                    e,
+                    color,
+                    dailyGoalMins: 60,
+                    arch: 0,
+                    todos: [],
+                  },
+                ],
+              }));
+              showToast(`Added subject "${name}"`);
+            }}
+            onDeleteSubject={handleDeleteSubject}
             onUpdateSetting={async <K extends keyof AppSettings>(
               key: K,
               val: AppSettings[K]
@@ -1286,6 +1616,7 @@ export default function App() {
               );
             }}
             onImportJson={async (file) => {
+              // F1: Keep whole-state snapshot for JSON import
               const snapJson = JSON.stringify(stateRef.current);
               try {
                 const parsed = JSON.parse(await file.text());
@@ -1436,20 +1767,34 @@ export default function App() {
           setModal({ type: 'none' });
         }}
         onDeleteHabit={(id) => {
-          const snapJson = JSON.stringify(stateRef.current);
-          updateAndSave((prev) => {
-            const nextLog = cloneLog(prev.log);
+          // F1: Restore only deleted habit + its habit log at original index
+          const prev = stateRef.current;
+          const index = prev.habits.findIndex((x) => x.id === id);
+          if (index === -1) return;
+          const record: DeletedEntityRecord = {
+            kind: 'habit',
+            item: JSON.parse(JSON.stringify(prev.habits[index])),
+            index,
+            logEntries: prev.log[id]
+              ? JSON.parse(JSON.stringify(prev.log[id]))
+              : undefined,
+          };
+          updateAndSave((cur) => {
+            const nextLog = cloneLog(cur.log);
             delete nextLog[id];
             return {
-              ...prev,
-              habits: prev.habits.filter((x) => x.id !== id),
+              ...cur,
+              habits: cur.habits.filter((x) => x.id !== id),
               log: nextLog,
-              del: [...(prev.del || []), id],
+              del: [...(cur.del || []), id],
             };
           });
           setModal({ type: 'none' });
           showToast('Habit deleted', () => {
-            const restored = norm(JSON.parse(snapJson));
+            const cur = stateRef.current;
+            const restored = restoreDeletedItem(cur, record);
+            const curToday = logicalKey(new Date(), restored.set.dayResetHour ?? 4);
+            syncStudyHabitsForDays(restored, [sel, curToday], curToday);
             saveNextState(restored);
           });
         }}
@@ -1510,6 +1855,7 @@ export default function App() {
           const payload: MockTest = {
             id: id || uid('mock'),
             ...mockData,
+            marksPerWrong: -Math.abs(Number(mockData.marksPerWrong) || 0),
           };
           updateAndSave((prev) => ({
             ...prev,
@@ -1530,28 +1876,48 @@ export default function App() {
           setModal({ type: 'none' });
         }}
         onSaveDDay={(id, data: Omit<DDay, 'id'>) => {
+          const cleanTitle = (data.title || '').trim();
+          if (!cleanTitle || !/^\d{4}-\d{2}-\d{2}$/.test(data.date || '')) return;
           updateAndSave((prev) => {
             if (id) {
               return {
                 ...prev,
                 ddays: prev.ddays.map((d) =>
-                  d.id === id ? { ...d, ...data } : d
+                  d.id === id
+                    ? { ...d, ...data, title: cleanTitle }
+                    : d
                 ),
               };
             }
             return {
               ...prev,
-              ddays: [...prev.ddays, { id: uid('dd'), ...data }],
+              ddays: [
+                ...prev.ddays,
+                { id: uid('dd'), ...data, title: cleanTitle },
+              ],
             };
           });
           setModal({ type: 'none' });
+          showToast(`Saved countdown "${cleanTitle}"`);
         }}
         onDeleteDDay={(id) => {
-          updateAndSave((prev) => ({
-            ...prev,
-            ddays: prev.ddays.filter((x) => x.id !== id),
+          // F1: Restore only deleted D-Day at original index
+          const prev = stateRef.current;
+          const index = prev.ddays.findIndex((x) => x.id === id);
+          if (index === -1) return;
+          const record: DeletedEntityRecord = {
+            kind: 'dday',
+            item: JSON.parse(JSON.stringify(prev.ddays[index])),
+            index,
+          };
+          updateAndSave((cur) => ({
+            ...cur,
+            ddays: cur.ddays.filter((x) => x.id !== id),
           }));
           setModal({ type: 'none' });
+          showToast('Countdown deleted', () => {
+            updateAndSave((cur) => restoreDeletedItem(cur, record));
+          });
         }}
         onConfirmResetHour={(newHour) => {
           // A12: Recompute dayKey for all sessions and re-sync study habits for all affected days
@@ -1579,13 +1945,17 @@ export default function App() {
           showToast(`Day reset hour set to ${pad(newHour)}:00 AM`);
         }}
         onConfirmReset={() => {
-          // A6: Reset to a truly blank NEET state without demo sessions
+          // F1 & A6: Keep whole-state snapshot for "Erase all data"
+          const snapJson = JSON.stringify(stateRef.current);
           const fresh = createBlankState();
           const newToday = logicalKey(new Date(), fresh.set.dayResetHour);
           saveNextState(fresh);
           setSel(newToday);
           setModal({ type: 'none' });
-          showToast('All device data reset to a clean slate');
+          showToast('All device data reset to a clean slate', () => {
+            const reverted = norm(JSON.parse(snapJson));
+            saveNextState(reverted);
+          });
         }}
       />
 
@@ -1664,19 +2034,40 @@ export default function App() {
         </div>
       )}
 
-      {/* Toast Notification */}
+      {/* Toast Notification (supports Undo or Service Worker tap-to-reload) */}
       {toastState && (
-        <div id="toast" role="status">
+        <div
+          id="toast"
+          role="status"
+          style={toastState.onTap ? { cursor: 'pointer' } : undefined}
+          onClick={() => {
+            if (toastState.onTap) {
+              toastState.onTap();
+            }
+          }}
+        >
           <span>{toastState.msg}</span>
           {toastState.undoFn && (
             <button
               type="button"
-              onClick={() => {
+              onClick={(e) => {
+                e.stopPropagation();
                 toastState.undoFn?.();
                 setToastState(null);
               }}
             >
               Undo
+            </button>
+          )}
+          {toastState.onTap && (
+            <button
+              type="button"
+              onClick={(e) => {
+                e.stopPropagation();
+                toastState.onTap?.();
+              }}
+            >
+              {toastState.actionLabel || 'Reload'}
             </button>
           )}
         </div>

@@ -306,6 +306,8 @@ export const PrepView: React.FC<PrepViewProps> = ({
               const sub = getSubject(state, ch.subjectId);
               const sortedRevs = getSortedChapterRevisions(ch);
               const revDateDraft = newRevDates[ch.id] ?? todayKey;
+              const draftBeforeCompletion =
+                Boolean(ch.completedOn && revDateDraft && revDateDraft < ch.completedOn);
 
               return (
                 <div
@@ -339,7 +341,7 @@ export const PrepView: React.FC<PrepViewProps> = ({
                     </button>
                   </div>
 
-                  {/* Status & Completion Date */}
+                  {/* Status & Completion Date (F3) */}
                   <div
                     className="row wrap"
                     style={{ marginTop: '10px', gap: '8px', alignItems: 'center' }}
@@ -351,13 +353,7 @@ export const PrepView: React.FC<PrepViewProps> = ({
                         aria-label={`Status for ${ch.name}`}
                         onChange={(e) => {
                           const nextStatus = e.target.value as ChapterStatus;
-                          onUpdateChapter(ch.id, {
-                            status: nextStatus,
-                            completedOn:
-                              nextStatus === 'completed'
-                                ? ch.completedOn || todayKey
-                                : ch.completedOn,
-                          });
+                          onUpdateChapter(ch.id, { status: nextStatus });
                         }}
                       >
                         <option value="notStarted">Not Started</option>
@@ -370,13 +366,18 @@ export const PrepView: React.FC<PrepViewProps> = ({
                       Completed Date
                       <input
                         type="date"
-                        value={ch.completedOn || todayKey}
-                        aria-label={`Completion date for ${ch.name}`}
-                        onChange={(e) =>
-                          onUpdateChapter(ch.id, {
-                            completedOn: e.target.value,
-                          })
+                        value={
+                          ch.completedOn ||
+                          (ch.status === 'completed' ? todayKey : '')
                         }
+                        aria-label={`Completion date for ${ch.name}`}
+                        onChange={(e) => {
+                          const val = e.target.value.trim();
+                          if (!val) return;
+                          onUpdateChapter(ch.id, {
+                            completedOn: val,
+                          });
+                        }}
                       />
                     </label>
                   </div>
@@ -398,74 +399,90 @@ export const PrepView: React.FC<PrepViewProps> = ({
                       <div style={{ display: 'grid', gap: '6px', marginBottom: '8px' }}>
                         {sortedRevs.map((rev) => {
                           const isLate = !rev.done && rev.date < todayKey;
+                          const isBeforeCompletion = Boolean(
+                            ch.completedOn && rev.date < ch.completedOn
+                          );
                           return (
                             <div
                               key={rev.id}
-                              className="row sp"
                               style={{
                                 background: 'var(--c2)',
                                 padding: '6px 10px',
                                 borderRadius: '10px',
-                                gap: '8px',
                               }}
                             >
-                              <label
-                                className="row"
-                                style={{ cursor: 'pointer', gap: '6px', flex: 1 }}
-                              >
-                                <input
-                                  type="checkbox"
-                                  style={{ width: '17px', height: '17px' }}
-                                  checked={rev.done}
-                                  onChange={() => onToggleRevision(ch.id, rev.id)}
-                                />
-                                <span
-                                  className="pill mono"
-                                  style={{
-                                    padding: '2px 7px',
-                                    fontSize: '11px',
-                                    borderColor: sub.color,
-                                  }}
+                              <div className="row sp" style={{ gap: '8px' }}>
+                                <label
+                                  className="row"
+                                  style={{ cursor: 'pointer', gap: '6px', flex: 1 }}
                                 >
-                                  {rev.label}
-                                </span>
-                                {isLate && (
+                                  <input
+                                    type="checkbox"
+                                    style={{ width: '17px', height: '17px' }}
+                                    checked={rev.done}
+                                    onChange={() => onToggleRevision(ch.id, rev.id)}
+                                  />
                                   <span
+                                    className="pill mono"
                                     style={{
-                                      color: 'var(--dg)',
+                                      padding: '2px 7px',
                                       fontSize: '11px',
-                                      fontWeight: 700,
+                                      borderColor: sub.color,
                                     }}
                                   >
-                                    Overdue
+                                    {rev.label}
                                   </span>
-                                )}
-                                {rev.done && rev.doneOn && (
-                                  <small style={{ fontSize: '11px', color: 'var(--em)' }}>
-                                    ✓ Done ({rev.doneOn})
-                                  </small>
-                                )}
-                              </label>
-                              <input
-                                type="date"
-                                value={rev.date}
-                                aria-label={`${rev.label} date for ${ch.name}`}
-                                style={{ width: '142px', padding: '5px 8px', fontSize: '12px' }}
-                                onChange={(e) => {
-                                  if (e.target.value) {
-                                    onUpdateRevisionDate(ch.id, rev.id, e.target.value);
-                                  }
-                                }}
-                              />
-                              <button
-                                type="button"
-                                className="s dg"
-                                style={{ padding: '4px 8px' }}
-                                aria-label={`Delete ${rev.label} for ${ch.name}`}
-                                onClick={() => onDeleteRevision(ch.id, rev.id)}
-                              >
-                                ×
-                              </button>
+                                  {isLate && (
+                                    <span
+                                      style={{
+                                        color: 'var(--dg)',
+                                        fontSize: '11px',
+                                        fontWeight: 700,
+                                      }}
+                                    >
+                                      Overdue
+                                    </span>
+                                  )}
+                                  {rev.done && rev.doneOn && (
+                                    <small style={{ fontSize: '11px', color: 'var(--em)' }}>
+                                      ✓ Done ({rev.doneOn})
+                                    </small>
+                                  )}
+                                </label>
+                                <input
+                                  type="date"
+                                  value={rev.date}
+                                  aria-label={`${rev.label} date for ${ch.name}`}
+                                  style={{ width: '142px', padding: '5px 8px', fontSize: '12px' }}
+                                  onChange={(e) => {
+                                    if (e.target.value) {
+                                      onUpdateRevisionDate(ch.id, rev.id, e.target.value);
+                                    }
+                                  }}
+                                />
+                                <button
+                                  type="button"
+                                  className="s dg"
+                                  style={{ padding: '4px 8px' }}
+                                  aria-label={`Delete ${rev.label} for ${ch.name}`}
+                                  onClick={() => onDeleteRevision(ch.id, rev.id)}
+                                >
+                                  ×
+                                </button>
+                              </div>
+                              {isBeforeCompletion && (
+                                <small
+                                  style={{
+                                    display: 'block',
+                                    marginTop: '4px',
+                                    fontSize: '11px',
+                                    color: '#fbbf24',
+                                  }}
+                                >
+                                  Note: Revision date ({rev.date}) is earlier than completion date (
+                                  {ch.completedOn}).
+                                </small>
+                              )}
                             </div>
                           );
                         })}
@@ -496,6 +513,19 @@ export const PrepView: React.FC<PrepViewProps> = ({
                         + Add Revision Date
                       </button>
                     </div>
+                    {draftBeforeCompletion && (
+                      <small
+                        style={{
+                          display: 'block',
+                          marginTop: '4px',
+                          fontSize: '11px',
+                          color: '#fbbf24',
+                        }}
+                      >
+                        Note: Selected revision date ({revDateDraft}) is earlier than completion
+                        date ({ch.completedOn}).
+                      </small>
+                    )}
                   </div>
                 </div>
               );

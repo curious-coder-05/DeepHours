@@ -2,8 +2,10 @@ import type {
   Chapter,
   ChapterRevision,
   ChapterStatus,
+  DDay,
   Habit,
   HabitCategory,
+  HabitLogDay,
   HabitLogMap,
   MockSubjectScore,
   MockTest,
@@ -353,6 +355,7 @@ export function createBlankState(): PulseHabitState {
     exp: 0,
     ob: 0,
     del: [],
+    savedAt: 0,
     set: {
       theme: 'dark',
       ac: ACS[0],
@@ -561,19 +564,30 @@ export function norm(raw: unknown): PulseHabitState {
 
   // D-Days
   if (Array.isArray(src.ddays)) {
-    s.ddays = src.ddays.filter(
-      (dd): dd is PulseHabitState['ddays'][number] =>
-        Boolean(dd) &&
-        typeof dd === 'object' &&
-        typeof (dd as { id?: unknown }).id === 'string' &&
-        typeof (dd as { title?: unknown }).title === 'string' &&
-        typeof (dd as { date?: unknown }).date === 'string'
-    );
+    s.ddays = src.ddays
+      .filter(
+        (dd): dd is PulseHabitState['ddays'][number] =>
+          Boolean(dd) &&
+          typeof dd === 'object' &&
+          typeof (dd as { id?: unknown }).id === 'string' &&
+          Boolean((dd as { id: string }).id.trim()) &&
+          typeof (dd as { title?: unknown }).title === 'string' &&
+          Boolean((dd as { title: string }).title.trim()) &&
+          typeof (dd as { date?: unknown }).date === 'string' &&
+          Boolean((dd as { date: string }).date.trim())
+      )
+      .map((dd) => ({
+        id: dd.id.trim(),
+        title: dd.title.trim(),
+        date: dd.date.trim(),
+        e: typeof dd.e === 'string' && dd.e.trim() ? dd.e.trim() : '🎯',
+        color: typeof dd.color === 'string' && dd.color.trim() ? dd.color.trim() : '#10b981',
+      }));
   } else {
     s.ddays = [];
   }
 
-  // Mock Tests (B1 + A8 validation)
+  // Mock Tests (B1 + A8 + F2 validation)
   if (Array.isArray(src.mocks)) {
     s.mocks = src.mocks
       .filter(
@@ -600,6 +614,12 @@ export function norm(raw: unknown): PulseHabitState {
             }
           }
         }
+        const rawWrong = Number(m.marksPerWrong);
+        const marksPerWrong = Number.isFinite(rawWrong)
+          ? rawWrong === 0
+            ? 0
+            : -Math.abs(rawWrong)
+          : -1;
         return {
           id: m.id,
           name: m.name.trim(),
@@ -610,7 +630,7 @@ export function norm(raw: unknown): PulseHabitState {
               : undefined,
           subjects: cleanSubs,
           marksPerCorrect: Number.isFinite(m.marksPerCorrect) ? Number(m.marksPerCorrect) : 4,
-          marksPerWrong: Number.isFinite(m.marksPerWrong) ? Number(m.marksPerWrong) : -1,
+          marksPerWrong,
           maxMarks:
             Number.isFinite(m.maxMarks) && m.maxMarks > 0 ? Number(m.maxMarks) : 720,
           note: typeof m.note === 'string' ? m.note : '',
@@ -621,7 +641,8 @@ export function norm(raw: unknown): PulseHabitState {
     s.mocks = [];
   }
 
-  // Chapters (B2 + A8 validation)
+  // Chapters (B2 + A8 + F3 validation)
+  const fallbackTodayKey = logicalKey(new Date(), s.set.dayResetHour);
   if (Array.isArray(src.chapters)) {
     s.chapters = src.chapters
       .filter(
@@ -640,6 +661,7 @@ export function norm(raw: unknown): PulseHabitState {
           ch.status === 'completed' || ch.status === 'inProgress'
             ? ch.status
             : 'notStarted';
+        const seenRevDates = new Set<string>();
         const revisions: ChapterRevision[] = Array.isArray(ch.revisions)
           ? ch.revisions
               .filter(
@@ -651,6 +673,11 @@ export function norm(raw: unknown): PulseHabitState {
                   typeof (r as ChapterRevision).date === 'string' &&
                   /^\d{4}-\d{2}-\d{2}$/.test((r as ChapterRevision).date)
               )
+              .filter((r) => {
+                if (seenRevDates.has(r.date)) return false;
+                seenRevDates.add(r.date);
+                return true;
+              })
               .map((r) => ({
                 id: r.id,
                 date: r.date,
@@ -658,12 +685,22 @@ export function norm(raw: unknown): PulseHabitState {
                 doneOn: typeof r.doneOn === 'string' ? r.doneOn : undefined,
               }))
           : [];
+        const rawCompletedOn =
+          typeof ch.completedOn === 'string' && /^\d{4}-\d{2}-\d{2}$/.test(ch.completedOn.trim())
+            ? ch.completedOn.trim()
+            : undefined;
+        const completedOn =
+          status === 'notStarted'
+            ? undefined
+            : status === 'completed'
+              ? rawCompletedOn || fallbackTodayKey
+              : rawCompletedOn;
         return {
           id: ch.id,
           subjectId: ch.subjectId,
           name: ch.name.trim(),
           status,
-          completedOn: typeof ch.completedOn === 'string' ? ch.completedOn : undefined,
+          completedOn,
           revisions,
           note: typeof ch.note === 'string' ? ch.note : '',
         };
@@ -699,6 +736,7 @@ export function norm(raw: unknown): PulseHabitState {
   s.exp = Number.isFinite(src.exp) ? Number(src.exp) : 0;
   s.ob = src.ob ? 1 : 0;
   s.del = Array.isArray(src.del) ? src.del.filter((x): x is string => typeof x === 'string') : [];
+  s.savedAt = Number.isFinite(src.savedAt) ? Number(src.savedAt) : 0;
 
   return s;
 }
@@ -1307,7 +1345,12 @@ export interface MockScoreReport {
 
 export function computeMockScore(mock: MockTest, subjects: Subject[] = DEFAULT_SUBJECTS): MockScoreReport {
   const marksPerCorrect = Number.isFinite(mock.marksPerCorrect) ? mock.marksPerCorrect : 4;
-  const marksPerWrong = Number.isFinite(mock.marksPerWrong) ? mock.marksPerWrong : -1;
+  const rawWrong = Number(mock.marksPerWrong);
+  const marksPerWrong = Number.isFinite(rawWrong)
+    ? rawWrong === 0
+      ? 0
+      : -Math.abs(rawWrong)
+    : -1;
   const maxMarks = Number.isFinite(mock.maxMarks) && mock.maxMarks > 0 ? mock.maxMarks : 720;
 
   const subjectOrder: Subject[] = [...subjects];
@@ -1765,4 +1808,202 @@ export function computeConsistencyCalendar(
     activeDays,
   };
 }
+
+// ==========================================
+// PART F3: CHAPTER COMPLETION & REVISION HELPERS
+// ==========================================
+
+/**
+ * F3: Applies a patch to a chapter while enforcing:
+ * 1. The completion date can never be saved empty (ignore an empty value and keep the previous one).
+ * 2. Setting status to 'completed' sets completedOn to today's logical key when empty.
+ * 3. Setting status back to 'notStarted' clears completedOn.
+ */
+export function applyChapterUpdate(
+  chapter: Chapter,
+  patch: Partial<Chapter>,
+  todayKey: string
+): Chapter {
+  const nextStatus: ChapterStatus = patch.status ?? chapter.status;
+  let nextCompletedOn = chapter.completedOn;
+
+  if ('completedOn' in patch) {
+    const candidate = typeof patch.completedOn === 'string' ? patch.completedOn.trim() : '';
+    if (/^\d{4}-\d{2}-\d{2}$/.test(candidate)) {
+      nextCompletedOn = candidate;
+    }
+    // If candidate is empty, ignore it and keep previous chapter.completedOn
+  }
+
+  if (nextStatus === 'notStarted') {
+    nextCompletedOn = undefined;
+  } else if (nextStatus === 'completed' && !nextCompletedOn) {
+    nextCompletedOn = todayKey;
+  }
+
+  return {
+    ...chapter,
+    ...patch,
+    status: nextStatus,
+    completedOn: nextCompletedOn,
+  };
+}
+
+/**
+ * F3: Adds a revision date to a chapter, blocking duplicate revision dates on the same chapter.
+ */
+export function addChapterRevisionDate(
+  chapter: Chapter,
+  date: string,
+  revId?: string
+): { chapter: Chapter; added: boolean; duplicate: boolean } {
+  const cleanDate = typeof date === 'string' ? date.trim() : '';
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(cleanDate)) {
+    return { chapter, added: false, duplicate: false };
+  }
+  if (chapter.revisions.some((r) => r.date === cleanDate)) {
+    return { chapter, added: false, duplicate: true };
+  }
+  const nextRevs = [
+    ...chapter.revisions,
+    { id: revId || uid('rev'), date: cleanDate, done: false },
+  ].sort((a, b) => a.date.localeCompare(b.date));
+  return {
+    chapter: { ...chapter, revisions: nextRevs },
+    added: true,
+    duplicate: false,
+  };
+}
+
+/**
+ * F3: Updates an existing revision date on a chapter, blocking duplicate revision dates on the same chapter.
+ */
+export function updateChapterRevisionDate(
+  chapter: Chapter,
+  revId: string,
+  newDate: string
+): { chapter: Chapter; updated: boolean; duplicate: boolean } {
+  const cleanDate = typeof newDate === 'string' ? newDate.trim() : '';
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(cleanDate)) {
+    return { chapter, updated: false, duplicate: false };
+  }
+  const target = chapter.revisions.find((r) => r.id === revId);
+  if (!target) {
+    return { chapter, updated: false, duplicate: false };
+  }
+  if (target.date === cleanDate) {
+    return { chapter, updated: false, duplicate: false };
+  }
+  if (chapter.revisions.some((r) => r.id !== revId && r.date === cleanDate)) {
+    return { chapter, updated: false, duplicate: true };
+  }
+  const nextRevs = chapter.revisions
+    .map((r) => (r.id === revId ? { ...r, date: cleanDate } : r))
+    .sort((a, b) => a.date.localeCompare(b.date));
+  return {
+    chapter: { ...chapter, revisions: nextRevs },
+    updated: true,
+    duplicate: false,
+  };
+}
+
+// ==========================================
+// PART F1: ITEM-LEVEL UNDO RESTORE HELPER
+// ==========================================
+
+export type DeletedEntityRecord =
+  | {
+      kind: 'habit';
+      item: Habit;
+      index: number;
+      logEntries?: Record<string, HabitLogDay>;
+    }
+  | { kind: 'chapter'; item: Chapter; index: number }
+  | { kind: 'mock'; item: MockTest; index: number }
+  | { kind: 'session'; item: StudySession; index: number }
+  | { kind: 'dday'; item: DDay; index: number }
+  | { kind: 'subject'; item: Subject; index: number };
+
+export function insertAtIndex<T extends { id: string }>(
+  list: T[],
+  item: T,
+  index: number
+): T[] {
+  if (list.some((x) => x.id === item.id)) {
+    return list.map((x) => (x.id === item.id ? item : x));
+  }
+  const safeIdx = Math.max(0, Math.min(list.length, index));
+  return [...list.slice(0, safeIdx), item, ...list.slice(safeIdx)];
+}
+
+/**
+ * F1: Restores ONLY the deleted item into `currentState` at its original position,
+ * preserving all newer unrelated changes (and never reverting a running timer).
+ */
+export function restoreDeletedItem(
+  currentState: PulseHabitState,
+  record: DeletedEntityRecord,
+  todayKey = logicalKey(new Date(), currentState.set.dayResetHour ?? 4)
+): PulseHabitState {
+  const nextLog = cloneLog(currentState.log);
+
+  switch (record.kind) {
+    case 'habit': {
+      if (record.logEntries) {
+        nextLog[record.item.id] = {
+          ...(nextLog[record.item.id] || {}),
+          ...JSON.parse(JSON.stringify(record.logEntries)),
+        };
+      }
+      const next: PulseHabitState = {
+        ...currentState,
+        habits: insertAtIndex(currentState.habits, record.item, record.index),
+        log: nextLog,
+        del: (currentState.del || []).filter((id) => id !== record.item.id),
+      };
+      if (isAutoStudyHabit(record.item)) {
+        syncStudyHabitsForDays(next, [todayKey], todayKey);
+      }
+      return next;
+    }
+    case 'chapter': {
+      return {
+        ...currentState,
+        log: nextLog,
+        chapters: insertAtIndex(currentState.chapters, record.item, record.index),
+      };
+    }
+    case 'mock': {
+      return {
+        ...currentState,
+        log: nextLog,
+        mocks: insertAtIndex(currentState.mocks, record.item, record.index),
+      };
+    }
+    case 'session': {
+      const next: PulseHabitState = {
+        ...currentState,
+        log: nextLog,
+        sessions: insertAtIndex(currentState.sessions, record.item, record.index),
+      };
+      syncStudyHabitsForDays(next, [record.item.dayKey, todayKey], todayKey);
+      return next;
+    }
+    case 'dday': {
+      return {
+        ...currentState,
+        log: nextLog,
+        ddays: insertAtIndex(currentState.ddays, record.item, record.index),
+      };
+    }
+    case 'subject': {
+      return {
+        ...currentState,
+        log: nextLog,
+        subjects: insertAtIndex(currentState.subjects, record.item, record.index),
+      };
+    }
+  }
+}
+
 

@@ -8,6 +8,8 @@ interface MoreViewProps {
   onNewHabit: () => void;
   onEditHabit: (id: string) => void;
   onOpenManualSession: () => void;
+  onAddSubject?: (name: string, emoji: string, color: string) => void;
+  onDeleteSubject?: (subjectId: string) => void;
   onUpdateSetting: <K extends keyof AppSettings>(key: K, val: AppSettings[K]) => void;
   onExportJson: () => void;
   onExportCsv: () => void;
@@ -20,6 +22,8 @@ export const MoreView: React.FC<MoreViewProps> = ({
   onNewHabit,
   onEditHabit,
   onOpenManualSession,
+  onAddSubject,
+  onDeleteSubject,
   onUpdateSetting,
   onExportJson,
   onExportCsv,
@@ -29,8 +33,12 @@ export const MoreView: React.FC<MoreViewProps> = ({
   const fileInputRef = useRef<HTMLInputElement | null>(null);
   const { isInstallable, isInstalled, isIOS, install } = usePWAInstall();
   const [showIOSGuide, setShowIOSGuide] = useState(false);
+  const [newSubName, setNewSubName] = useState('');
+  const [newSubEmoji, setNewSubEmoji] = useState('📘');
+  const [newSubColor, setNewSubColor] = useState(ACS[0]);
 
   const set = state.set;
+  const activeSubjects = state.subjects.filter((s) => !s.arch);
 
   return (
     <div>
@@ -99,6 +107,83 @@ export const MoreView: React.FC<MoreViewProps> = ({
           </div>
         );
       })}
+
+      <h2>Subjects</h2>
+      <div className="card" style={{ display: 'grid', gap: '8px' }}>
+        {activeSubjects.map((sub) => (
+          <div
+            key={sub.id}
+            className="row sp"
+            style={{
+              background: 'var(--c2)',
+              padding: '8px 12px',
+              borderRadius: '12px',
+              borderLeft: `3px solid ${sub.color}`,
+            }}
+          >
+            <div className="row" style={{ gap: '8px' }}>
+              <span style={{ fontSize: '18px' }}>{sub.e}</span>
+              <b>{sub.name}</b>
+            </div>
+            {onDeleteSubject && activeSubjects.length > 1 && (
+              <button
+                type="button"
+                className="s dg"
+                aria-label={`Delete subject ${sub.name}`}
+                onClick={() => onDeleteSubject(sub.id)}
+              >
+                Delete
+              </button>
+            )}
+          </div>
+        ))}
+        {onAddSubject && (
+          <form
+            className="row wrap"
+            style={{ gap: '6px', marginTop: '4px' }}
+            onSubmit={(e) => {
+              e.preventDefault();
+              const clean = newSubName.trim();
+              if (!clean) return;
+              onAddSubject(clean, newSubEmoji.trim() || '📘', newSubColor);
+              setNewSubName('');
+            }}
+          >
+            <input
+              type="text"
+              value={newSubEmoji}
+              onChange={(e) => setNewSubEmoji(e.target.value)}
+              style={{ width: '56px', textAlign: 'center' }}
+              maxLength={4}
+              aria-label="New subject emoji"
+            />
+            <input
+              type="text"
+              value={newSubName}
+              onChange={(e) => setNewSubName(e.target.value)}
+              placeholder="New subject name..."
+              style={{ flex: '1 1 140px' }}
+              maxLength={40}
+              aria-label="New subject name"
+            />
+            <select
+              value={newSubColor}
+              onChange={(e) => setNewSubColor(e.target.value)}
+              style={{ width: '96px' }}
+              aria-label="New subject color"
+            >
+              {ACS.map((c) => (
+                <option key={c} value={c}>
+                  {c}
+                </option>
+              ))}
+            </select>
+            <button type="submit" className="s pri">
+              + Add Subject
+            </button>
+          </form>
+        )}
+      </div>
 
       <h2>Study &amp; App Settings</h2>
       <div className="card" style={{ display: 'grid', gap: '10px' }}>

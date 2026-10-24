@@ -2,6 +2,8 @@ import { describe, it } from 'node:test';
 import assert from 'node:assert/strict';
 import type { Chapter, MockTest } from '../types';
 import {
+  addChapterRevisionDate,
+  applyChapterUpdate,
   computeAvgClockTime,
   computeConsistencyCalendar,
   computeMockScore,
@@ -16,8 +18,10 @@ import {
   logicalKey,
   mkHabit,
   norm,
+  restoreDeletedItem,
   shouldFireFiveMinWarning,
   syncStudyHabitsForDays,
+  updateChapterRevisionDate,
 } from './studyLogic';
 
 describe('Part C: Deep Hours NEET Study & Habit Logger Unit Tests', () => {
@@ -344,5 +348,187 @@ describe('Part C: Deep Hours NEET Study & Habit Logger Unit Tests', () => {
     assert.equal(prog.goalMs, 180 * 60000);
     assert.equal(prog.pct, Math.round(((20 * 60 + 10) * 1000) / (180 * 60000) * 100));
   });
-});
 
+  it('8. F2: norm() converts positive marksPerWrong to negative and computeMockScore subtracts penalty accurately', () => {
+    const rawWithPositivePenalty = {
+      mocks: [
+        {
+          id: 'm_pos',
+          name: 'Allen Major Test',
+          dayKey: '2026-10-22',
+          marksPerCorrect: 4,
+          marksPerWrong: 1, // positive in legacy/mistyped input -> must become -1
+          maxMarks: 720,
+          subjects: {
+            sub_phy: { correct: 30.8, wrong: 5.2, unattempted: -3 },
+          },
+          note: '',
+          updatedAt: 1761123600000,
+        },
+      ],
+    };
+
+    const normalized = norm(rawWithPositivePenalty);
+    assert.equal(normalized.mocks.length, 1);
+    assert.equal(normalized.mocks[0].marksPerWrong, -1);
+    // Clamped to whole numbers >= 0
+    assert.equal(normalized.mocks[0].subjects.sub_phy.correct, 30);
+    assert.equal(normalized.mocks[0].subjects.sub_phy.wrong, 5);
+    assert.equal(normalized.mocks[0].subjects.sub_phy.unattempted, 0);
+
+    // Score math: 30 * 4 + 5 * (-1) = 115
+    const score = computeMockScore(normalized.mocks[0], normalized.subjects);
+    assert.equal(score.totalScore, 115);
+
+    // Even if computeMockScore receives a positive marksPerWrong directly, it applies -Math.abs
+    const directScore = computeMockScore(
+      {
+        ...normalized.mocks[0],
+        marksPerWrong: 2,
+      },
+      normalized.subjects
+    );
+    assert.equal(directScore.totalScore, 30 * 4 - 5 * 2);
+  });
+
+  it('9. F3: applyChapterUpdate ignores empty completion date, sets/clears on status transitions, and rejects duplicate revision dates', () => {
+    const ch: Chapter = {
+      id: 'ch_test',
+      subjectId: 'sub_phy',
+      name: 'Laws of Motion',
+      status: 'notStarted',
+      revisions: [],
+    };
+
+    // Setting status to completed auto-fills completedOn with todayKey when empty
+    const completedCh = applyChapterUpdate(ch, { status: 'completed' }, '2026-10-24');
+    assert.equal(completedCh.status, 'completed');
+    assert.equal(completedCh.completedOn, '2026-10-24');
+
+    // Empty completion date patch is ignored and preserves existing completedOn
+    const afterEmptyDate = applyChapterUpdate(
+      completedCh,
+      { completedOn: '' },
+      '2026-10-24'
+    );
+    assert.equal(afterEmptyDate.completedOn, '2026-10-24');
+
+    // Valid new completion date updates completedOn
+    const afterValidDate = applyChapterUpdate(
+      afterEmptyDate,
+      { completedOn: '2026-10-20' },
+      '2026-10-24'
+    );
+    assert.equal(afterValidDate.completedOn, '2026-10-20');
+
+    // Setting status back to notStarted clears completedOn
+    const resetCh = applyChapterUpdate(
+      afterValidDate,
+      { status: 'notStarted' },
+      '2026-10-24'
+    );
+    assert.equal(resetCh.status, 'notStarted');
+    assert.equal(resetCh.completedOn, undefined);
+
+    // Adding revision dates and rejecting duplicates
+    const r1 = addChapterRevisionDate(completedCh, '2026-10-28', 'rev_1');
+    assert.equal(r1.added, true);
+    assert.equal(r1.duplicate, false);
+    assert.equal(r1.chapter.revisions.length, 1);
+
+    const dupAdd = addChapterRevisionDate(r1.chapter, '2026-10-28', 'rev_2');
+    assert.equal(dupAdd.added, false);
+    assert.equal(dupAdd.duplicate, true);
+    assert.equal(dupAdd.chapter.revisions.length, 1);
+
+    // Updating a second revision to collide with an existing revision date is rejected
+    const r2 = addChapterRevisionDate(r1.chapter, '2026-11-02', 'rev_2');
+    assert.equal(r2.added, true);
+    const dupUpdate = updateChapterRevisionDate(r2.chapter, 'rev_2', '2026-10-28');
+    assert.equal(dupUpdate.updated, false);
+    assert.equal(dupUpdate.duplicate, true);
+    assert.equal(
+      dupUpdate.chapter.revisions.find((r) => r.id === 'rev_2')?.date,
+      '2026-11-02'
+    );
+  });
+
+  it('10. F1: restoreDeletedItem restores only the deleted item at its original index while keeping newer state changes and running timers', () => {
+    const state = createBlankState();
+    const h0 = mkHabit({ id: 'h_0', name: 'First Habit' }, '2026-10-01');
+    const h1 = mkHabit({ id: 'h_1', name: 'Deleted Habit' }, '2026-10-01');
+    const h2 = mkHabit({ id: 'h_2', name: 'Third Habit' }, '2026-10-01');
+    state.habits = [h0, h1, h2];
+    state.log = {
+      h_1: { '2026-10-22': { v: 1, s: 0 } },
+    };
+    state.chapters = [
+      { id: 'c_0', subjectId: 'sub_phy', name: 'Units', status: 'completed', completedOn: '2026-10-10', revisions: [] },
+      { id: 'c_1', subjectId: 'sub_phy', name: 'Kinematics', status: 'inProgress', revisions: [] },
+    ];
+
+    // Simulate deleting h_1 at index 1 and c_0 at index 0
+    const afterDelete = {
+      ...state,
+      habits: [h0, h2],
+      log: {},
+      del: ['h_1'],
+      chapters: [state.chapters[1]],
+    };
+
+    // Simulate user starting a timer and adding a note during the undo window
+    afterDelete.activeTimer = {
+      status: 'running',
+      mode: 'pomo',
+      phase: 'work',
+      subjectId: 'sub_phy',
+      heading: 'Live Timer During Undo Window',
+      startTs: 1761120000000,
+      sliceStartTs: 1761120000000,
+      pauseStartTs: null,
+      pausedDurationMs: 0,
+      slicePausedMs: 0,
+      pauseCount: 0,
+      slicePauseCount: 0,
+      targetMs: 1500000,
+      chimeFired: false,
+      fiveMinWarnFired: false,
+    };
+    afterDelete.notes['2026-10-24'] = 'New note written before clicking Undo';
+
+    // Restore h_1 at original index 1
+    const restoredHabitState = restoreDeletedItem(afterDelete, {
+      kind: 'habit',
+      item: h1,
+      index: 1,
+      logEntries: { '2026-10-22': { v: 1, s: 0 } },
+    });
+
+    assert.deepEqual(
+      restoredHabitState.habits.map((h) => h.id),
+      ['h_0', 'h_1', 'h_2']
+    );
+    assert.equal(restoredHabitState.log.h_1?.['2026-10-22']?.v, 1);
+    assert.equal(restoredHabitState.del.includes('h_1'), false);
+    // Newer changes & running timer must remain intact!
+    assert.equal(
+      restoredHabitState.activeTimer?.heading,
+      'Live Timer During Undo Window'
+    );
+    assert.equal(
+      restoredHabitState.notes['2026-10-24'],
+      'New note written before clicking Undo'
+    );
+
+    // Restore chapter c_0 at original index 0
+    const restoredChapterState = restoreDeletedItem(restoredHabitState, {
+      kind: 'chapter',
+      item: state.chapters[0],
+      index: 0,
+    });
+    assert.deepEqual(
+      restoredChapterState.chapters.map((c) => c.id),
+      ['c_0', 'c_1']
+    );
+  });
+});
