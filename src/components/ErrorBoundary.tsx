@@ -1,4 +1,5 @@
 import React from 'react';
+import { readRawSavedDataForDownload } from '../utils/storage';
 
 interface ErrorBoundaryProps {
   children: React.ReactNode;
@@ -7,6 +8,7 @@ interface ErrorBoundaryProps {
 interface ErrorBoundaryState {
   hasError: boolean;
   errorMsg: string;
+  downloadNotice: string | null;
 }
 
 export class ErrorBoundary extends React.Component<
@@ -15,22 +17,30 @@ export class ErrorBoundary extends React.Component<
 > {
   constructor(props: ErrorBoundaryProps) {
     super(props);
-    this.state = { hasError: false, errorMsg: '' };
+    this.state = {
+      hasError: false,
+      errorMsg: '',
+      downloadNotice: null,
+    };
   }
 
-  static getDerivedStateFromError(error: unknown): ErrorBoundaryState {
+  static getDerivedStateFromError(error: unknown): Partial<ErrorBoundaryState> {
     return {
       hasError: true,
       errorMsg: error instanceof Error ? error.message : String(error),
     };
   }
 
-  handleDownloadRawData = () => {
+  handleDownloadRawData = async () => {
     try {
-      const raw =
-        (typeof localStorage !== 'undefined' &&
-          (localStorage.getItem('dh') || localStorage.getItem('ph'))) ||
-        '{}';
+      this.setState({ downloadNotice: null });
+      const raw = await readRawSavedDataForDownload();
+      if (!raw) {
+        this.setState({
+          downloadNotice: 'No saved data was found on this device.',
+        });
+        return;
+      }
       const blob = new Blob([raw], { type: 'application/json' });
       const url = URL.createObjectURL(blob);
       const a = document.createElement('a');
@@ -39,7 +49,9 @@ export class ErrorBoundary extends React.Component<
       a.click();
       setTimeout(() => URL.revokeObjectURL(url), 1000);
     } catch {
-      // ignore download error
+      this.setState({
+        downloadNotice: 'No saved data was found on this device.',
+      });
     }
   };
 
@@ -85,6 +97,21 @@ export class ErrorBoundary extends React.Component<
                 }}
               >
                 {this.state.errorMsg}
+              </small>
+            )}
+            {this.state.downloadNotice && (
+              <small
+                style={{
+                  display: 'block',
+                  padding: '8px 10px',
+                  borderRadius: '8px',
+                  background: 'var(--c2)',
+                  color: '#fbbf24',
+                  fontSize: '12px',
+                  fontWeight: 600,
+                }}
+              >
+                {this.state.downloadNotice}
               </small>
             )}
             <div className="row" style={{ gap: '8px', flexWrap: 'wrap' }}>

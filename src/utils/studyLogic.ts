@@ -562,27 +562,33 @@ export function norm(raw: unknown): PulseHabitState {
   // Plans
   s.plans = src.plans && typeof src.plans === 'object' ? (src.plans as PulseHabitState['plans']) : {};
 
-  // D-Days
+  // D-Days (preserve custom title across JSON stringify/parse cycle, including legacy 'name' key)
   if (Array.isArray(src.ddays)) {
     s.ddays = src.ddays
-      .filter(
-        (dd): dd is PulseHabitState['ddays'][number] =>
-          Boolean(dd) &&
-          typeof dd === 'object' &&
-          typeof (dd as { id?: unknown }).id === 'string' &&
-          Boolean((dd as { id: string }).id.trim()) &&
-          typeof (dd as { title?: unknown }).title === 'string' &&
-          Boolean((dd as { title: string }).title.trim()) &&
-          typeof (dd as { date?: unknown }).date === 'string' &&
-          Boolean((dd as { date: string }).date.trim())
-      )
-      .map((dd) => ({
-        id: dd.id.trim(),
-        title: dd.title.trim(),
-        date: dd.date.trim(),
-        e: typeof dd.e === 'string' && dd.e.trim() ? dd.e.trim() : '🎯',
-        color: typeof dd.color === 'string' && dd.color.trim() ? dd.color.trim() : '#10b981',
-      }));
+      .map((dd): PulseHabitState['ddays'][number] | null => {
+        if (!dd || typeof dd !== 'object') return null;
+        const rec = dd as Record<string, unknown>;
+        const id = typeof rec.id === 'string' ? rec.id.trim() : '';
+        const rawTitle =
+          typeof rec.title === 'string' && rec.title.trim()
+            ? rec.title.trim()
+            : typeof rec.name === 'string' && rec.name.trim()
+              ? rec.name.trim()
+              : '';
+        const date = typeof rec.date === 'string' ? rec.date.trim() : '';
+        if (!id || !rawTitle || !date) return null;
+        return {
+          id,
+          title: rawTitle,
+          date,
+          e: typeof rec.e === 'string' && rec.e.trim() ? rec.e.trim() : '🎯',
+          color:
+            typeof rec.color === 'string' && rec.color.trim()
+              ? rec.color.trim()
+              : '#10b981',
+        };
+      })
+      .filter((dd): dd is PulseHabitState['ddays'][number] => dd !== null);
   } else {
     s.ddays = [];
   }

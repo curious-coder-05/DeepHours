@@ -51,6 +51,20 @@ export function kv(mode: 'get' | 'put', key: string, val?: unknown): Promise<unk
 }
 
 /**
+ * Marks localStorage key "dh_seen" after any successful save so future loads
+ * can distinguish a brand-new install from a device where data previously existed.
+ */
+function markDataSeen(): void {
+  try {
+    if (typeof localStorage !== 'undefined') {
+      localStorage.setItem('dh_seen', '1');
+    }
+  } catch {
+    // ignore localStorage access errors
+  }
+}
+
+/**
  * F5: Legacy IndexedDB check must not create an empty "pulsehabit" database.
  * Check indexedDB.databases() when available, or open it and delete it again if it had no stores.
  */
@@ -133,6 +147,24 @@ function getSavedAt(val: unknown): number {
 
 let lastBackupDayKey: string | null = null;
 
+async function readValidBackups(): Promise<DailyBackupSnapshot[]> {
+  try {
+    const rawBackups = await kv('get', 'backup');
+    if (!Array.isArray(rawBackups)) return [];
+    return rawBackups
+      .filter(
+        (b): b is DailyBackupSnapshot =>
+          Boolean(b) &&
+          typeof b === 'object' &&
+          typeof (b as DailyBackupSnapshot).dayKey === 'string' &&
+          isPlainStateRecord((b as DailyBackupSnapshot).state)
+      )
+      .sort((a, b) => b.savedAt - a.savedAt || b.dayKey.localeCompare(a.dayKey));
+  } catch {
+    return [];
+  }
+}
+
 /**
  * F4: Keep an automatic rolling safety backup in IndexedDB key "backup":
  * the latest 3 daily snapshots, written at most once per day.
@@ -142,16 +174,7 @@ async function maybeWriteDailyBackup(state: PulseHabitState): Promise<void> {
     const dayKey = logicalKey(new Date(), state.set?.dayResetHour ?? 4);
     if (lastBackupDayKey === dayKey) return;
 
-    const rawBackups = await kv('get', 'backup');
-    const existing: DailyBackupSnapshot[] = Array.isArray(rawBackups)
-      ? rawBackups.filter(
-          (b): b is DailyBackupSnapshot =>
-            Boolean(b) &&
-            typeof b === 'object' &&
-            typeof (b as DailyBackupSnapshot).dayKey === 'string' &&
-            isPlainStateRecord((b as DailyBackupSnapshot).state)
-        )
-      : [];
+    const existing = await readValidBackups();
 
     if (existing.some((b) => b.dayKey === dayKey)) {
       lastBackupDayKey = dayKey;
@@ -177,17 +200,7 @@ async function maybeWriteDailyBackup(state: PulseHabitState): Promise<void> {
 
 export async function restoreFromLatestBackup(): Promise<PulseHabitState | null> {
   try {
-    const rawBackups = await kv('get', 'backup');
-    if (!Array.isArray(rawBackups) || rawBackups.length === 0) return null;
-    const valid = rawBackups
-      .filter(
-        (b): b is DailyBackupSnapshot =>
-          Boolean(b) &&
-          typeof b === 'object' &&
-          typeof (b as DailyBackupSnapshot).dayKey === 'string' &&
-          isPlainStateRecord((b as DailyBackupSnapshot).state)
-      )
-      .sort((a, b) => b.savedAt - a.savedAt || b.dayKey.localeCompare(a.dayKey));
+    const valid = await readValidBackups();
     if (!valid.length) return null;
 
     const restored = norm({
@@ -197,12 +210,14 @@ export async function restoreFromLatestBackup(): Promise<PulseHabitState | null>
     try {
       if (typeof localStorage !== 'undefined') {
         localStorage.setItem('dh', JSON.stringify(restored));
+        markDataSeen();
       }
     } catch {
       // ignore localStorage error
     }
     try {
       await kv('put', 's', restored);
+      markDataSeen();
     } catch {
       // ignore IndexedDB error
     }
@@ -212,17 +227,86 @@ export async function restoreFromLatestBackup(): Promise<PulseHabitState | null>
   }
 }
 
+function isNonEmptySerializedPayload(str: string | null | undefined): str is string {
+  if (typeof str !== 'string') return false;
+  const trimmed = str.trim();
+  return Boolean(trimmed && trimmed !== '{}' && trimmed !== 'null' && trimmed !== '""');
+}
+
+/**
+ * Reads raw saved data for ErrorBoundary emergency download:
+ * 1. IndexedDB key "s" first
+ * 2. Latest IndexedDB "backup" snapshot second
+ * 3. localStorage "dh", then "ph"
+ * Never returns an empty "{}" string; returns null if nothing is found.
+ */
+export async function readRawSavedDataForDownload(): Promise<string | null> {
+  // 1. Try IndexedDB key "s"
+  try {
+    const idbState = await kv('get', 's');
+    if (typeof idbState === 'string' && isNonEmptySerializedPayload(idbState)) {
+      return idbState;
+    }
+    if (isPlainStateRecord(idbState) && Object.keys(idbState).length > 0) {
+      const serialized = JSON.stringify(idbState, null, 2);
+      if (isNonEmptySerializedPayload(serialized)) {
+        return serialized;
+      }
+    }
+  } catch {
+    // Fall through to backup
+  }
+
+  // 2. Try latest IndexedDB "backup" snapshot
+  try {
+    const validBackups = await readValidBackups();
+    if (validBackups.length > 0) {
+      const latestState = validBackups[0].state;
+      if (isPlainStateRecord(latestState) && Object.keys(latestState).length > 0) {
+        const serialized = JSON.stringify(latestState, null, 2);
+        if (isNonEmptySerializedPayload(serialized)) {
+          return serialized;
+        }
+      }
+    }
+  } catch {
+    // Fall through to localStorage
+  }
+
+  // 3. Try localStorage "dh" then "ph"
+  try {
+    if (typeof localStorage !== 'undefined') {
+      const dh = localStorage.getItem('dh');
+      if (isNonEmptySerializedPayload(dh)) {
+        return dh;
+      }
+      const ph = localStorage.getItem('ph');
+      if (isNonEmptySerializedPayload(ph)) {
+        return ph;
+      }
+    }
+  } catch {
+    // ignore localStorage read error
+  }
+
+  return null;
+}
+
 export async function loadInitialState(): Promise<PulseHabitState> {
   let idbRaw: unknown = null;
   let idbError = false;
+  let idbHadEntry = false;
   let lsRaw: unknown = null;
   let lsError = false;
+  let lsHadEntry = false;
+  let seenFlag = false;
   let migratedFromLegacy = false;
 
   // 1. Read IndexedDB ('deephours' -> 'kv' -> 's')
   try {
     const val = await kv('get', 's');
     if (val !== undefined && val !== null) {
+      idbHadEntry = true;
       if (isPlainStateRecord(val)) {
         idbRaw = val;
       } else {
@@ -233,13 +317,15 @@ export async function loadInitialState(): Promise<PulseHabitState> {
     idbError = true;
   }
 
-  // 2. Read localStorage ('dh' first, fallback to legacy 'ph' for migration)
+  // 2. Read localStorage ('dh' first, fallback to legacy 'ph' for migration, and check 'dh_seen')
   try {
     if (typeof localStorage !== 'undefined') {
+      seenFlag = localStorage.getItem('dh_seen') !== null;
       const dhStr = localStorage.getItem('dh');
       const phStr = dhStr === null ? localStorage.getItem('ph') : null;
       const rawStr = dhStr ?? phStr;
       if (rawStr !== null) {
+        lsHadEntry = true;
         const parsed = JSON.parse(rawStr);
         if (isPlainStateRecord(parsed)) {
           lsRaw = parsed;
@@ -255,12 +341,20 @@ export async function loadInitialState(): Promise<PulseHabitState> {
     lsError = true;
   }
 
-  // F4: If loading real data failed (both stores unreadable/throwing, or one store corrupted and the other empty),
-  // throw StorageLoadError so App.tsx keeps readyRef false and shows the recovery screen.
-  if (
-    (idbError && lsError) ||
-    (!idbRaw && !lsRaw && (idbError || lsError))
-  ) {
+  // 3. If no valid state was loaded yet, check whether any rolling backup exists
+  let hasBackup = false;
+  if (!idbRaw && !lsRaw) {
+    const backups = await readValidBackups();
+    hasBackup = backups.length > 0;
+  }
+
+  const hasPriorDataEvidence =
+    seenFlag || idbHadEntry || lsHadEntry || hasBackup;
+
+  // F4 (Refined): Do NOT treat a brand-new install as a load failure.
+  // Only throw StorageLoadError when no valid state could be loaded AND there is
+  // evidence that data existed before (e.g. "dh_seen", an unreadable/corrupted entry, or a backup).
+  if (!idbRaw && !lsRaw && hasPriorDataEvidence && (idbError || lsError || hasBackup)) {
     throw new StorageLoadError('Your saved data could not be loaded');
   }
 
@@ -284,7 +378,7 @@ export async function loadInitialState(): Promise<PulseHabitState> {
     chosenRaw = lsRaw;
     needsResave = true;
   } else {
-    // Neither store had data and neither threw: check legacy 'pulsehabit' IndexedDB without creating an empty DB (F5)
+    // Neither store had data: check legacy 'pulsehabit' IndexedDB without creating an empty DB (F5)
     try {
       const legacyVal = await readLegacyPulseHabitIdb('s');
       if (isPlainStateRecord(legacyVal)) {
@@ -297,20 +391,26 @@ export async function loadInitialState(): Promise<PulseHabitState> {
   }
 
   const state = norm(chosenRaw);
-  if (!state.savedAt) {
+  if (chosenRaw && !state.savedAt) {
     state.savedAt = Date.now();
   }
 
-  if (needsResave) {
+  if (chosenRaw) {
+    markDataSeen();
+  }
+
+  if (needsResave && chosenRaw) {
     try {
       if (typeof localStorage !== 'undefined') {
         localStorage.setItem('dh', JSON.stringify(state));
+        markDataSeen();
       }
     } catch {
       // ignore localStorage write error
     }
     try {
       await kv('put', 's', state);
+      markDataSeen();
       await maybeWriteDailyBackup(state);
     } catch {
       // ignore IndexedDB write error
@@ -336,8 +436,9 @@ export function persistState(state: PulseHabitState, onSaved?: () => void): void
 
   try {
     if (typeof localStorage !== 'undefined') {
-      // F4: Write only localStorage key "dh" going forward
+      // F4: Write only localStorage key "dh" going forward + mark "dh_seen"
       localStorage.setItem('dh', JSON.stringify(stamped));
+      markDataSeen();
     }
   } catch {
     // ignore quota errors
@@ -347,6 +448,7 @@ export function persistState(state: PulseHabitState, onSaved?: () => void): void
   saveTimer = setTimeout(async () => {
     try {
       await kv('put', 's', stamped);
+      markDataSeen();
       await maybeWriteDailyBackup(stamped);
     } catch {
       // fallback already written to localStorage "dh"

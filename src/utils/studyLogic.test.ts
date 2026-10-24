@@ -530,5 +530,19 @@ describe('Part C: Deep Hours NEET Study & Habit Logger Unit Tests', () => {
       restoredChapterState.chapters.map((c) => c.id),
       ['c_0', 'c_1']
     );
+
+    // Verify D-Day custom titles survive JSON stringify/parse + norm() (both title and legacy name)
+    const rawDDays = JSON.parse(
+      JSON.stringify({
+        ddays: [
+          { id: 'dd_1', title: 'AIIMS Custom Exam 2027', date: '2027-05-03', e: '🎯', color: '#10b981' },
+          { id: 'dd_2', name: 'Legacy Named Exam', date: '2027-06-01', e: '🧪', color: '#6366f1' },
+        ],
+      })
+    );
+    const normDDays = norm(rawDDays);
+    assert.equal(normDDays.ddays.length, 2);
+    assert.equal(normDDays.ddays[0].title, 'AIIMS Custom Exam 2027');
+    assert.equal(normDDays.ddays[1].title, 'Legacy Named Exam');
   });
 });
