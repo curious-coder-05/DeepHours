@@ -1,7 +1,8 @@
 import React, { useRef, useState } from 'react';
-import type { AppSettings, PulseHabitState } from '../types';
+import type { AppSettings, PulseHabitState, SubjectTargets, SyncStatus } from '../types';
 import { ACS, pad } from '../utils/studyLogic';
 import { usePWAInstall } from '../hooks/usePWAInstall';
+import { DAILY_WRITE_CAP } from '../utils/cloudSync';
 
 interface MoreViewProps {
   state: PulseHabitState;
@@ -11,11 +12,28 @@ interface MoreViewProps {
   onAddSubject?: (name: string, emoji: string, color: string) => void;
   onDeleteSubject?: (subjectId: string) => void;
   onUpdateSetting: <K extends keyof AppSettings>(key: K, val: AppSettings[K]) => void;
+  onUpdateTargets?: (patch: Partial<SubjectTargets>) => void;
+  onSelectAvatarEmoji?: (emoji: string) => void;
   onExportJson: () => void;
   onExportCsv: () => void;
   onImportJson: (file: File) => void;
   onRequestReset: () => void;
+  // Milestone 2 Cloud Sync props
+  cloudUser?: { uid: string; displayName: string | null; email: string | null } | null;
+  authUser?: { uid: string; displayName: string | null; email: string | null } | null;
+  syncStatus?: SyncStatus;
+  syncErrorMsg?: string | null;
+  lastSyncedAt?: number;
+  dailyWritesUsed?: number;
+  syncWritesToday?: number;
+  isOnline?: boolean;
+  onSignInGoogle?: () => void;
+  onSignOutGoogle?: () => void;
+  onSyncNow?: () => void;
+  onDeleteCloudData?: () => void;
 }
+
+const AVATAR_EMOJIS = ['🧑‍⚕️', '🩺', '🧬', '⚡', '🦁', '🎯', '🚀', '🦉'];
 
 export const MoreView: React.FC<MoreViewProps> = ({
   state,
@@ -25,23 +43,448 @@ export const MoreView: React.FC<MoreViewProps> = ({
   onAddSubject,
   onDeleteSubject,
   onUpdateSetting,
+  onSelectAvatarEmoji,
   onExportJson,
   onExportCsv,
   onImportJson,
   onRequestReset,
+  cloudUser: cloudUserProp,
+  authUser,
+  syncStatus = 'idle',
+  syncErrorMsg,
+  lastSyncedAt,
+  dailyWritesUsed: dailyWritesUsedProp,
+  syncWritesToday,
+  isOnline = true,
+  onSignInGoogle,
+  onSignOutGoogle,
+  onSyncNow,
+  onDeleteCloudData,
 }) => {
+  const cloudUser = cloudUserProp ?? authUser ?? null;
+  const dailyWritesUsed = dailyWritesUsedProp ?? syncWritesToday ?? 0;
   const fileInputRef = useRef<HTMLInputElement | null>(null);
   const { isInstallable, isInstalled, isIOS, install } = usePWAInstall();
   const [showIOSGuide, setShowIOSGuide] = useState(false);
   const [newSubName, setNewSubName] = useState('');
   const [newSubEmoji, setNewSubEmoji] = useState('📘');
   const [newSubColor, setNewSubColor] = useState(ACS[0]);
+  const [confirmDeleteCloud, setConfirmDeleteCloud] = useState(false);
+  const [intervalsInput, setIntervalsInput] = useState(
+    (state.set.revisionIntervals || [1, 3, 7, 21]).join(', ')
+  );
 
   const set = state.set;
   const activeSubjects = state.subjects.filter((s) => !s.arch);
+  const targets = set.targets || {
+    dailyMinutes: {},
+    weeklyMinutes: {},
+    minDayMinutes: 240,
+    restPassesPerMonth: 4,
+  };
+  const currentAvatar = set.cloudAccount?.avatarEmoji || set.avatarEmoji || '🧑‍⚕️';
+
+  const handleAvatarChange = (emoji: string) => {
+    onSelectAvatarEmoji?.(emoji);
+    onUpdateSetting('cloudAccount', {
+      ...(set.cloudAccount || {}),
+      avatarEmoji: emoji,
+    });
+  };
+
+  const handleSubjectTargetChange = (
+    subjectId: string,
+    kind: 'dailyMinutes' | 'weeklyMinutes',
+    mins: number
+  ) => {
+    const cleanMins = Math.max(0, Math.min(10080, Math.floor(mins || 0)));
+    onUpdateSetting('targets', {
+      ...targets,
+      [kind]: {
+        ...(targets[kind] || {}),
+        [subjectId]: cleanMins,
+      },
+    });
+  };
 
   return (
     <div>
+      {/* 2.1 & 2.6 Account & Cloud Sync Section */}
+      <h2>Account &amp; Cloud Sync</h2>
+      <div className="card" style={{ display: 'grid', gap: '10px' }}>
+        <div className="row sp" style={{ alignItems: 'center', gap: '8px' }}>
+          <div className="row" style={{ gap: '10px', alignItems: 'center' }}>
+            <span
+              style={{
+                width: '42px',
+                height: '42px',
+                borderRadius: '14px',
+                background: 'var(--c2)',
+                border: '1px solid var(--bd)',
+                display: 'inline-flex',
+                alignItems: 'center',
+                justifyContent: 'center',
+                fontSize: '22px',
+              }}
+            >
+              {currentAvatar}
+            </span>
+            <div>
+              <b style={{ fontSize: '14.5px', display: 'block' }}>
+                {cloudUser
+                  ? cloudUser.displayName || cloudUser.email || 'Signed-In Aspirant'
+                  : 'Local-Only Mode (Signed Out)'}
+              </b>
+              <small>
+                {cloudUser
+                  ? cloudUser.email || 'Google Account Connected'
+                  : 'App works 100% offline. Sign in to back up & sync across devices.'}
+              </small>
+            </div>
+          </div>
+
+          <span
+            className="pill mono"
+            style={{
+              fontSize: '11px',
+              borderColor: !isOnline
+                ? '#f59e0b'
+                : syncStatus === 'error' || syncStatus === 'paused-quota'
+                  ? '#ef4444'
+                  : syncStatus === 'syncing'
+                    ? '#38bdf8'
+                    : '#10b981',
+              color: !isOnline
+                ? '#fbbf24'
+                : syncStatus === 'error' || syncStatus === 'paused-quota'
+                  ? '#f87171'
+                  : syncStatus === 'syncing'
+                    ? '#38bdf8'
+                    : '#10b981',
+            }}
+          >
+            {!isOnline
+              ? '⚡ Offline'
+              : syncStatus === 'syncing'
+                ? '↻ Syncing...'
+                : syncStatus === 'paused-quota'
+                  ? '⏸ Paused (Daily Cap)'
+                  : syncStatus === 'error'
+                    ? '⚠️ Sync Error'
+                    : cloudUser
+                      ? '● Online'
+                      : '● Local Ready'}
+          </span>
+        </div>
+
+        {/* Emoji Avatar Picker (No photo upload per 2.1) */}
+        <div>
+          <small style={{ display: 'block', marginBottom: '4px', fontWeight: 700 }}>
+            Profile Avatar Emoji:
+          </small>
+          <div className="row wrap" style={{ gap: '6px' }}>
+            {AVATAR_EMOJIS.map((em) => (
+              <button
+                key={em}
+                type="button"
+                className={currentAvatar === em ? 'on' : 's'}
+                style={{ width: '36px', height: '36px', padding: 0, fontSize: '18px' }}
+                onClick={() => handleAvatarChange(em)}
+                aria-label={`Choose avatar ${em}`}
+              >
+                {em}
+              </button>
+            ))}
+          </div>
+        </div>
+
+        {syncStatus === 'paused-quota' && (
+          <div
+            style={{
+              padding: '8px 10px',
+              borderRadius: '10px',
+              background: 'rgba(245, 158, 11, 0.14)',
+              border: '1px solid rgba(245, 158, 11, 0.4)',
+              fontSize: '12px',
+              color: '#fde68a',
+            }}
+          >
+            ⏸ Cloud sync is paused for today to stay safely within the free tier quota. All changes
+            are saved locally and will automatically sync tomorrow.
+          </div>
+        )}
+
+        {syncErrorMsg && syncStatus === 'error' && (
+          <small style={{ color: '#f87171', fontWeight: 700 }}>
+            Sync notice: {syncErrorMsg} (Your data remains safe on this device.)
+          </small>
+        )}
+
+        {cloudUser ? (
+          <>
+            <div className="stat-mini" style={{ gridTemplateColumns: 'repeat(2, 1fr)', gap: '8px' }}>
+              <div className="stat-box">
+                <small>Last Synced</small>
+                <b className="mono" style={{ fontSize: '12.5px' }}>
+                  {lastSyncedAt
+                    ? new Date(lastSyncedAt).toLocaleTimeString([], {
+                        hour: '2-digit',
+                        minute: '2-digit',
+                      })
+                    : 'Not yet'}
+                </b>
+              </div>
+              <div className="stat-box">
+                <small>Today&apos;s sync usage</small>
+                <b className="mono" style={{ fontSize: '12.5px', color: 'var(--em)' }}>
+                  {dailyWritesUsed} / {DAILY_WRITE_CAP} writes
+                </b>
+              </div>
+            </div>
+
+            <div className="row wrap" style={{ gap: '6px' }}>
+              <button
+                type="button"
+                className="pri g"
+                disabled={!isOnline || syncStatus === 'syncing' || syncStatus === 'paused-quota'}
+                onClick={onSyncNow}
+              >
+                {syncStatus === 'syncing' ? 'Syncing...' : '↻ Sync now'}
+              </button>
+              <button type="button" className="s g" onClick={onExportJson}>
+                ⬇ Download backup
+              </button>
+              <button type="button" className="s" onClick={onSignOutGoogle}>
+                Sign out
+              </button>
+            </div>
+
+            {!confirmDeleteCloud ? (
+              <button
+                type="button"
+                className="s dg"
+                style={{ justifySelf: 'start', fontSize: '11.5px' }}
+                onClick={() => setConfirmDeleteCloud(true)}
+              >
+                🗑️ Delete my cloud data
+              </button>
+            ) : (
+              <div
+                style={{
+                  padding: '10px',
+                  borderRadius: '10px',
+                  background: 'rgba(239, 68, 68, 0.12)',
+                  border: '1px solid rgba(239, 68, 68, 0.4)',
+                }}
+              >
+                <small style={{ display: 'block', color: '#fca5a5', fontWeight: 700, marginBottom: '6px' }}>
+                  Delete all synced data from the cloud? Your local device data will NOT be erased.
+                </small>
+                <div className="row" style={{ gap: '6px' }}>
+                  <button
+                    type="button"
+                    className="s dg"
+                    onClick={() => {
+                      setConfirmDeleteCloud(false);
+                      onDeleteCloudData?.();
+                    }}
+                  >
+                    Yes, delete cloud data
+                  </button>
+                  <button
+                    type="button"
+                    className="s"
+                    onClick={() => setConfirmDeleteCloud(false)}
+                  >
+                    Cancel
+                  </button>
+                </div>
+              </div>
+            )}
+          </>
+        ) : (
+          <div className="row wrap" style={{ gap: '8px' }}>
+            <button
+              type="button"
+              className="pri g"
+              onClick={onSignInGoogle}
+            >
+              🔐 Sign in with Google
+            </button>
+            <button type="button" className="s" onClick={onExportJson}>
+              ⬇ Download backup
+            </button>
+          </div>
+        )}
+
+        {/* 2.6 Plain-language privacy note */}
+        <small
+          style={{
+            display: 'block',
+            paddingTop: '8px',
+            borderTop: '1px solid var(--bd)',
+            fontSize: '11px',
+            lineHeight: 1.45,
+            color: 'var(--mu)',
+          }}
+        >
+          🔒 <b>Privacy Note:</b> Your study data is stored locally on your device first (IndexedDB
+          &amp; localStorage). Signing in with Google is optional and only syncs your data to your
+          private cloud folder (<code>users/&#123;uid&#125;</code>) so you can back up or switch
+          devices. There are zero analytics, zero ads, and zero third-party trackers.
+        </small>
+      </div>
+
+      {/* 1.8, 1.2, 1.14, 1.15 Targets & Coaching Configuration */}
+      <h2>Targets &amp; Coaching Settings</h2>
+      <div className="card" style={{ display: 'grid', gap: '10px' }}>
+        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(2, 1fr)', gap: '8px' }}>
+          <label style={{ marginTop: 0 }}>
+            Min Study Day (mins)
+            <input
+              type="number"
+              min={15}
+              max={960}
+              value={targets.minDayMinutes ?? 240}
+              onChange={(e) =>
+                onUpdateSetting('targets', {
+                  ...targets,
+                  minDayMinutes: Math.max(15, Math.min(960, Number(e.target.value) || 240)),
+                })
+              }
+            />
+          </label>
+          <label style={{ marginTop: 0 }}>
+            Rest Passes / Month
+            <input
+              type="number"
+              min={0}
+              max={15}
+              value={targets.restPassesPerMonth ?? 4}
+              onChange={(e) =>
+                onUpdateSetting('targets', {
+                  ...targets,
+                  restPassesPerMonth: Math.max(0, Math.min(15, Number(e.target.value) || 0)),
+                })
+              }
+            />
+          </label>
+          <label style={{ marginTop: 0 }}>
+            Revision Buffer Days (Before Exam)
+            <input
+              type="number"
+              min={0}
+              max={180}
+              value={set.revisionBufferDays ?? 30}
+              onChange={(e) =>
+                onUpdateSetting(
+                  'revisionBufferDays',
+                  Math.max(0, Math.min(180, Number(e.target.value) || 0))
+                )
+              }
+            />
+          </label>
+          <label style={{ marginTop: 0 }}>
+            Full Mock Duration (mins)
+            <input
+              type="number"
+              min={30}
+              max={360}
+              value={set.fullMockMins ?? 200}
+              onChange={(e) =>
+                onUpdateSetting(
+                  'fullMockMins',
+                  Math.max(30, Math.min(360, Number(e.target.value) || 200))
+                )
+              }
+            />
+          </label>
+        </div>
+
+        <label style={{ marginTop: 0 }}>
+          Suggested Revision Intervals (days after completion, comma-separated)
+          <div className="row" style={{ gap: '6px', marginTop: '4px' }}>
+            <input
+              type="text"
+              value={intervalsInput}
+              onChange={(e) => setIntervalsInput(e.target.value)}
+              placeholder="1, 3, 7, 21"
+            />
+            <button
+              type="button"
+              className="s pri"
+              onClick={() => {
+                const parsed = intervalsInput
+                  .split(',')
+                  .map((s) => Math.floor(Number(s.trim())))
+                  .filter((n) => Number.isFinite(n) && n >= 1 && n <= 365);
+                const finalIntervals = parsed.length > 0 ? parsed : [1, 3, 7, 21];
+                setIntervalsInput(finalIntervals.join(', '));
+                onUpdateSetting('revisionIntervals', finalIntervals);
+              }}
+            >
+              Save
+            </button>
+          </div>
+        </label>
+
+        {/* Per-Subject Daily & Weekly Target Minutes */}
+        <div style={{ borderTop: '1px solid var(--bd)', paddingTop: '8px' }}>
+          <small style={{ display: 'block', fontWeight: 700, marginBottom: '6px' }}>
+            Subject Targets (Daily &amp; Weekly Minutes)
+          </small>
+          <div style={{ display: 'grid', gap: '8px' }}>
+            {activeSubjects.map((sub) => (
+              <div
+                key={sub.id}
+                className="row sp wrap"
+                style={{
+                  background: 'var(--c2)',
+                  padding: '8px 10px',
+                  borderRadius: '10px',
+                  borderLeft: `3px solid ${sub.color}`,
+                  gap: '8px',
+                }}
+              >
+                <b style={{ fontSize: '13px', minWidth: '100px' }}>
+                  {sub.e} {sub.name}
+                </b>
+                <div className="row" style={{ gap: '8px', flex: 1, justifyContent: 'flex-end' }}>
+                  <label style={{ margin: 0, fontSize: '11px', width: '95px' }}>
+                    Daily (m)
+                    <input
+                      type="number"
+                      min={0}
+                      max={720}
+                      step={15}
+                      value={targets.dailyMinutes?.[sub.id] ?? 0}
+                      onChange={(e) =>
+                        handleSubjectTargetChange(sub.id, 'dailyMinutes', Number(e.target.value))
+                      }
+                      style={{ padding: '4px 6px', fontSize: '12px' }}
+                    />
+                  </label>
+                  <label style={{ margin: 0, fontSize: '11px', width: '105px' }}>
+                    Weekly (m)
+                    <input
+                      type="number"
+                      min={0}
+                      max={5040}
+                      step={30}
+                      value={targets.weeklyMinutes?.[sub.id] ?? 0}
+                      onChange={(e) =>
+                        handleSubjectTargetChange(sub.id, 'weeklyMinutes', Number(e.target.value))
+                      }
+                      style={{ padding: '4px 6px', fontSize: '12px' }}
+                    />
+                  </label>
+                </div>
+              </div>
+            ))}
+          </div>
+        </div>
+      </div>
+
       <h2>Study Logger Actions</h2>
       <div className="card" style={{ display: 'grid', gap: '8px' }}>
         <small>
@@ -346,7 +789,7 @@ export const MoreView: React.FC<MoreViewProps> = ({
       <div className="card" style={{ display: 'grid', gap: '8px' }}>
         <small>
           Full IndexedDB/localStorage snapshot (Habits, Study Sessions, Syllabus
-          Chapters &amp; Revisions, Mock Tests, D-Days).{' '}
+          Chapters &amp; Revisions, Mock Tests, Mistakes, Doubts, PYQs, D-Days).{' '}
           {state.exp
             ? `Last backup: ${new Date(state.exp).toLocaleDateString()}`
             : 'No backup yet.'}

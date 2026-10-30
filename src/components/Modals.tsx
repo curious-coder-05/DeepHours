@@ -4,6 +4,7 @@ import type {
   Habit,
   HabitCategory,
   HabitSchedule,
+  MistakeReason,
   MockSubjectScore,
   MockTest,
   PulseHabitState,
@@ -25,12 +26,30 @@ export type ModalState =
   | { type: 'none' }
   | { type: 'habit'; id?: string }
   | { type: 'reflect'; metrics: TimerMetrics }
-  | { type: 'manualSession'; id?: string; defaultSubjectId?: string }
-  | { type: 'mock'; id?: string }
+  | {
+      type: 'manualSession';
+      id?: string;
+      defaultSubjectId?: string;
+      defaultChapterId?: string;
+    }
+  | {
+      type: 'mock';
+      id?: string;
+      prefillDurationMins?: number;
+      prefillNote?: string;
+      prefillDayKey?: string;
+    }
   | { type: 'timerConfig' }
   | { type: 'dday'; id?: string }
   | { type: 'confirmReset' }
   | { type: 'confirmResetHour'; newHour: number };
+
+export interface QueuedMockMistake {
+  subjectId: string;
+  chapterId?: string;
+  reason: MistakeReason;
+  note?: string;
+}
 
 interface ModalsProps {
   modal: ModalState;
@@ -45,14 +64,25 @@ interface ModalsProps {
     subjectId: string,
     heading: string,
     rating: number,
-    note: string
+    note: string,
+    chapterId?: string
   ) => void;
   onDiscardSession: () => void;
   onSaveManualSession: (id: string | undefined, session: Omit<StudySession, 'id'>) => void;
   onDeleteSession: (id: string) => void;
-  onSaveMock: (id: string | undefined, mock: Omit<MockTest, 'id'>) => void;
+  onSaveMock: (
+    id: string | undefined,
+    mock: Omit<MockTest, 'id'>,
+    queuedMistakes?: QueuedMockMistake[],
+    openMistakesTab?: boolean
+  ) => void;
   onDeleteMock: (id: string) => void;
-  onSaveTimerConfig: (pomoWork: number, pomoBreak: number, countdownMins: number) => void;
+  onSaveTimerConfig: (
+    pomoWork: number,
+    pomoBreak: number,
+    countdownMins: number,
+    fullMockMins?: number
+  ) => void;
   onSaveDDay: (id: string | undefined, data: Omit<DDay, 'id'>) => void;
   onDeleteDDay: (id: string) => void;
   onConfirmReset: () => void;
@@ -105,8 +135,10 @@ export const Modals: React.FC<ModalsProps> = ({
       : modal.type === 'confirmResetHour'
         ? `confirmResetHour:${modal.newHour}`
         : modal.type === 'reflect'
-          ? `reflect:${modal.metrics.subject?.id || ''}:${modal.metrics.heading || ''}`
-          : `${modal.type}:${'id' in modal ? modal.id || 'new' : ''}:${'defaultSubjectId' in modal ? modal.defaultSubjectId || '' : ''}`;
+          ? `reflect:${modal.metrics.subject?.id || ''}:${modal.metrics.chapterId || ''}:${modal.metrics.heading || ''}`
+          : modal.type === 'mock'
+            ? `mock:${modal.id || 'new'}:${modal.prefillDurationMins || ''}:${modal.prefillDayKey || ''}`
+            : `${modal.type}:${'id' in modal ? modal.id || 'new' : ''}:${'defaultSubjectId' in modal ? modal.defaultSubjectId || '' : ''}:${'defaultChapterId' in modal ? modal.defaultChapterId || '' : ''}`;
 
   // Habit modal state
   const existingHabit =
@@ -132,6 +164,7 @@ export const Modals: React.FC<ModalsProps> = ({
   const [refSubjectId, setRefSubjectId] = useState(
     activeSubjects[0]?.id || 'sub_phy'
   );
+  const [refChapterId, setRefChapterId] = useState('');
   const [refHeading, setRefHeading] = useState('Deep Study Session');
   const [refRating, setRefRating] = useState(5);
   const [refNote, setRefNote] = useState('');
@@ -144,6 +177,7 @@ export const Modals: React.FC<ModalsProps> = ({
   const [msSubjectId, setMsSubjectId] = useState(
     activeSubjects[0]?.id || 'sub_phy'
   );
+  const [msChapterId, setMsChapterId] = useState('');
   const [msHeading, setMsHeading] = useState('');
   const [msDayKey, setMsDayKey] = useState(sel);
   const [msHours, setMsHours] = useState(1);
@@ -167,11 +201,17 @@ export const Modals: React.FC<ModalsProps> = ({
     Record<string, MockSubjectScore>
   >({});
   const [mockNote, setMockNote] = useState('');
+  const [queuedMistakes, setQueuedMistakes] = useState<QueuedMockMistake[]>([]);
+  const [mkMisSubId, setMkMisSubId] = useState(activeSubjects[0]?.id || 'sub_phy');
+  const [mkMisChapId, setMkMisChapId] = useState('');
+  const [mkMisReason, setMkMisReason] = useState<MistakeReason>('concept');
+  const [mkMisNote, setMkMisNote] = useState('');
 
   // Timer Config state
   const [cfgPomoWork, setCfgPomoWork] = useState(state.set.pomoWork || 25);
   const [cfgPomoBreak, setCfgPomoBreak] = useState(state.set.pomoBreak || 5);
   const [cfgCountdown, setCfgCountdown] = useState(state.set.countdownMins || 45);
+  const [cfgFullMock, setCfgFullMock] = useState(state.set.fullMockMins || 200);
 
   // D-Day state
   const existingDDay =
@@ -182,6 +222,7 @@ export const Modals: React.FC<ModalsProps> = ({
   const [ddTitle, setDdTitle] = useState('');
   const [ddDate, setDdDate] = useState(addD(todayKey, 90));
   const [ddColor, setDdColor] = useState('#10b981');
+  const [ddPrimary, setDdPrimary] = useState(false);
 
   useEffect(() => {
     const dlg = dialogRef.current;
@@ -218,7 +259,8 @@ export const Modals: React.FC<ModalsProps> = ({
       setRefSubjectId(
         curModal.metrics.subject?.id || curActiveSubjects[0]?.id || 'sub_phy'
       );
-      setRefHeading(curModal.metrics.heading || 'Deep Study Session');
+      setRefChapterId(curModal.metrics.chapterId || '');
+      setRefHeading(curModal.metrics.heading || '');
       setRefRating(5);
       setRefNote('');
     } else if (curModal.type === 'manualSession') {
@@ -237,6 +279,7 @@ export const Modals: React.FC<ModalsProps> = ({
           curActiveSubjects[0]?.id ||
           'sub_phy'
       );
+      setMsChapterId(ex?.chapterId || curModal.defaultChapterId || '');
       setMsHeading(ex ? getSessionHeading(curState, ex) : '');
       setMsDayKey(ex ? ex.dayKey : curSel);
       setMsHours(Math.floor(totalMins / 60));
@@ -248,10 +291,14 @@ export const Modals: React.FC<ModalsProps> = ({
       const ex = curModal.id
         ? curState.mocks.find((x) => x.id === curModal.id)
         : undefined;
-      setMockName(ex?.name || '');
-      setMockDayKey(ex?.dayKey || curTodayKey);
+      setMockName(ex?.name || (curModal.prefillDurationMins ? 'Full Mock Test' : ''));
+      setMockDayKey(ex?.dayKey || curModal.prefillDayKey || curTodayKey);
       setMockDurationMins(
-        ex?.durationMins !== undefined ? String(ex.durationMins) : '180'
+        ex?.durationMins !== undefined
+          ? String(ex.durationMins)
+          : curModal.prefillDurationMins !== undefined
+            ? String(curModal.prefillDurationMins)
+            : '180'
       );
       setMockMarksCorrect(ex?.marksPerCorrect ?? 4);
       setMockMarksLost(
@@ -270,11 +317,17 @@ export const Modals: React.FC<ModalsProps> = ({
         };
       });
       setMockScores(initScores);
-      setMockNote(ex?.note || '');
+      setMockNote(ex?.note || curModal.prefillNote || '');
+      setQueuedMistakes([]);
+      setMkMisSubId(curActiveSubjects[0]?.id || 'sub_phy');
+      setMkMisChapId('');
+      setMkMisReason('concept');
+      setMkMisNote('');
     } else if (curModal.type === 'timerConfig') {
       setCfgPomoWork(curState.set.pomoWork || 25);
       setCfgPomoBreak(curState.set.pomoBreak || 5);
       setCfgCountdown(curState.set.countdownMins || 45);
+      setCfgFullMock(curState.set.fullMockMins || 200);
     } else if (curModal.type === 'dday') {
       const d = curModal.id
         ? curState.ddays.find((x) => x.id === curModal.id)
@@ -283,6 +336,7 @@ export const Modals: React.FC<ModalsProps> = ({
       setDdTitle(d?.title || '');
       setDdDate(d?.date || addD(curTodayKey, 90));
       setDdColor(d?.color || '#10b981');
+      setDdPrimary(Boolean(d?.primary ?? (curState.ddays.length === 0)));
     }
 
     if (!dlg.open) {
@@ -526,11 +580,20 @@ export const Modals: React.FC<ModalsProps> = ({
           id="reflectForm"
           onSubmit={(e) => {
             e.preventDefault();
+            const chosenChapter = refChapterId
+              ? state.chapters.find((c) => c.id === refChapterId)
+              : undefined;
+            const sub = state.subjects.find((s) => s.id === refSubjectId);
+            const resolvedHeading =
+              refHeading.trim() ||
+              chosenChapter?.name ||
+              (sub ? `${sub.name} Study` : 'Deep Study Session');
             onSubmitReflection(
               refSubjectId,
-              refHeading.trim() || 'Deep Study Session',
+              resolvedHeading,
               refRating,
-              refNote.trim()
+              refNote.trim(),
+              refChapterId || undefined
             );
           }}
         >
@@ -560,7 +623,10 @@ export const Modals: React.FC<ModalsProps> = ({
                 type="button"
                 className={`sub-chip ${refSubjectId === s.id ? 'active' : ''}`}
                 style={{ '--sc': s.color } as React.CSSProperties}
-                onClick={() => setRefSubjectId(s.id)}
+                onClick={() => {
+                  setRefSubjectId(s.id);
+                  setRefChapterId('');
+                }}
               >
                 <i className="dot" style={{ '--sc': s.color } as React.CSSProperties} />{' '}
                 {s.e} {s.name}
@@ -569,13 +635,29 @@ export const Modals: React.FC<ModalsProps> = ({
           </div>
 
           <label>
-            Session Heading (What did you study?)
+            Chapter (Optional)
+            <select
+              value={refChapterId}
+              onChange={(e) => setRefChapterId(e.target.value)}
+            >
+              <option value="">— Any / General —</option>
+              {state.chapters
+                .filter((ch) => ch.subjectId === refSubjectId)
+                .map((ch) => (
+                  <option key={ch.id} value={ch.id}>
+                    {ch.name}
+                  </option>
+                ))}
+            </select>
+          </label>
+
+          <label>
+            Session Heading (Defaults to chapter if blank)
             <input
               type="text"
               value={refHeading}
               onChange={(e) => setRefHeading(e.target.value)}
               placeholder="e.g. Electrostatics — Gauss Law PYQs"
-              required
               maxLength={90}
             />
           </label>
@@ -629,8 +711,12 @@ export const Modals: React.FC<ModalsProps> = ({
           onSubmit={(e) => {
             e.preventDefault();
             const sub = state.subjects.find((s) => s.id === msSubjectId);
+            const chosenChapter = msChapterId
+              ? state.chapters.find((c) => c.id === msChapterId)
+              : undefined;
             const headingClean =
               msHeading.trim() ||
+              chosenChapter?.name ||
               (sub ? `${sub.name} Study` : 'Deep Study Session');
             const totalDurationMins = Math.max(
               1,
@@ -661,6 +747,7 @@ export const Modals: React.FC<ModalsProps> = ({
 
             onSaveManualSession(modal.id, {
               subjectId: msSubjectId || activeSubjects[0]?.id || 'sub_phy',
+              chapterId: msChapterId || undefined,
               heading: headingClean,
               dayKey: msDayKey,
               startTs,
@@ -689,7 +776,10 @@ export const Modals: React.FC<ModalsProps> = ({
                 type="button"
                 className={`sub-chip ${msSubjectId === s.id ? 'active' : ''}`}
                 style={{ '--sc': s.color } as React.CSSProperties}
-                onClick={() => setMsSubjectId(s.id)}
+                onClick={() => {
+                  setMsSubjectId(s.id);
+                  setMsChapterId('');
+                }}
               >
                 <i className="dot" style={{ '--sc': s.color } as React.CSSProperties} />{' '}
                 {s.e} {s.name}
@@ -698,14 +788,30 @@ export const Modals: React.FC<ModalsProps> = ({
           </div>
 
           <label>
-            Session Heading (Chapter / Topic)
+            Chapter (Optional)
+            <select
+              value={msChapterId}
+              onChange={(e) => setMsChapterId(e.target.value)}
+            >
+              <option value="">— Any / General —</option>
+              {state.chapters
+                .filter((ch) => ch.subjectId === msSubjectId)
+                .map((ch) => (
+                  <option key={ch.id} value={ch.id}>
+                    {ch.name}
+                  </option>
+                ))}
+            </select>
+          </label>
+
+          <label>
+            Session Heading (Defaults to chapter if blank)
             <input
               type="text"
               name="heading"
               value={msHeading}
               onChange={(e) => setMsHeading(e.target.value)}
               placeholder="e.g., Rotational Motion PYQs"
-              required
               maxLength={90}
             />
           </label>
@@ -797,452 +903,611 @@ export const Modals: React.FC<ModalsProps> = ({
         </form>
       )}
 
-      {modal.type === 'mock' && (
-        <form
-          id="mockForm"
-          onSubmit={(e) => {
-            e.preventDefault();
-            const cleanName = mockName.trim() || 'NEET Mock Test';
-            const durNum = Number(mockDurationMins);
-            const clampedSubjects: Record<string, MockSubjectScore> = {};
-            for (const [subId, sc] of Object.entries(mockScores)) {
-              clampedSubjects[subId] = {
-                correct: Math.max(0, Math.floor(Number(sc?.correct) || 0)),
-                wrong: Math.max(0, Math.floor(Number(sc?.wrong) || 0)),
-                unattempted: Math.max(0, Math.floor(Number(sc?.unattempted) || 0)),
-              };
-            }
-            onSaveMock(modal.id, {
-              name: cleanName,
-              dayKey: mockDayKey || todayKey,
-              durationMins:
-                mockDurationMins.trim() && Number.isFinite(durNum) && durNum > 0
-                  ? Math.round(durNum)
-                  : undefined,
-              marksPerCorrect: Number.isFinite(Number(mockMarksCorrect))
-                ? Number(mockMarksCorrect)
-                : 4,
-              marksPerWrong: storedMarksPerWrong,
-              maxMarks:
-                Number.isFinite(Number(mockMaxMarks)) && Number(mockMaxMarks) > 0
-                  ? Number(mockMaxMarks)
-                  : 720,
-              subjects: clampedSubjects,
-              note: mockNote.trim(),
-              updatedAt: Date.now(),
-            });
-          }}
-        >
-          <h3>{existingMock ? 'Edit Mock Test' : 'Log NEET Mock Test'}</h3>
-          <label>
-            Test Name / Series
-            <input
-              type="text"
-              value={mockName}
-              onChange={(e) => setMockName(e.target.value)}
-              placeholder="e.g. Allen Major Test #4 / Aakash FTS-02"
-              required
-              maxLength={80}
-            />
-          </label>
-          <div className="row">
-            <label className="g">
-              Date
-              <input
-                type="date"
-                value={mockDayKey}
-                onChange={(e) => setMockDayKey(e.target.value)}
-                required
-              />
-            </label>
-            <label className="g">
-              Duration (mins, optional)
-              <input
-                type="number"
-                min={10}
-                max={300}
-                value={mockDurationMins}
-                onChange={(e) => setMockDurationMins(e.target.value)}
-                placeholder="180"
-              />
-            </label>
-          </div>
-          <div className="row">
-            <label className="g">
-              +Correct Marks
-              <input
-                type="number"
-                step="0.5"
-                min={0.5}
-                value={mockMarksCorrect}
-                onChange={(e) => setMockMarksCorrect(Number(e.target.value))}
-              />
-            </label>
-            <label className="g">
-              Marks lost per wrong answer
-              <input
-                type="number"
-                min={0}
-                step="0.25"
-                value={mockMarksLost}
-                onChange={(e) =>
-                  setMockMarksLost(Math.max(0, Number(e.target.value) || 0))
+          {modal.type === 'mock' && (
+            <form
+              id="mockForm"
+              onSubmit={(e) => {
+                e.preventDefault();
+                const cleanName = mockName.trim() || 'NEET Mock Test';
+                const durNum = Number(mockDurationMins);
+                const clampedSubjects: Record<string, MockSubjectScore> = {};
+                for (const [subId, sc] of Object.entries(mockScores)) {
+                  clampedSubjects[subId] = {
+                    correct: Math.max(0, Math.floor(Number(sc?.correct) || 0)),
+                    wrong: Math.max(0, Math.floor(Number(sc?.wrong) || 0)),
+                    unattempted: Math.max(0, Math.floor(Number(sc?.unattempted) || 0)),
+                  };
                 }
-              />
-            </label>
-            <label className="g">
-              Max Marks
-              <input
-                type="number"
-                min={1}
-                max={2000}
-                value={mockMaxMarks}
-                onChange={(e) => setMockMaxMarks(Number(e.target.value))}
-              />
-            </label>
-          </div>
-
-          {exceedsMaxQuestions && (
-            <small
-              role="status"
-              style={{
-                display: 'block',
-                marginTop: '6px',
-                padding: '6px 10px',
-                borderRadius: '8px',
-                background: 'color-mix(in srgb, var(--am) 14%, transparent)',
-                border: '1px solid color-mix(in srgb, var(--am) 42%, var(--bd))',
-                color: '#fbbf24',
-                fontWeight: 600,
+                onSaveMock(
+                  modal.id,
+                  {
+                    name: cleanName,
+                    dayKey: mockDayKey || todayKey,
+                    durationMins:
+                      mockDurationMins.trim() && Number.isFinite(durNum) && durNum > 0
+                        ? Math.round(durNum)
+                        : undefined,
+                    marksPerCorrect: Number.isFinite(Number(mockMarksCorrect))
+                      ? Number(mockMarksCorrect)
+                      : 4,
+                    marksPerWrong: storedMarksPerWrong,
+                    maxMarks:
+                      Number.isFinite(Number(mockMaxMarks)) && Number(mockMaxMarks) > 0
+                        ? Number(mockMaxMarks)
+                        : 720,
+                    subjects: clampedSubjects,
+                    note: mockNote.trim(),
+                    updatedAt: Date.now(),
+                  },
+                  queuedMistakes
+                );
               }}
             >
-              ⚠️ Total questions ({previewMockStats.totalQuestions}) exceed maxMarks /
-              marksPerCorrect ({expectedMaxQuestions} questions for {mockMaxMarks} max
-              marks).
-            </small>
-          )}
+              <h3>{existingMock ? 'Edit Mock Test' : 'Log NEET Mock Test'}</h3>
+              <label>
+                Test Name / Series
+                <input
+                  type="text"
+                  value={mockName}
+                  onChange={(e) => setMockName(e.target.value)}
+                  placeholder="e.g. Allen Major Test #4 / Aakash FTS-02"
+                  required
+                  maxLength={80}
+                />
+              </label>
+              <div className="row">
+                <label className="g">
+                  Date
+                  <input
+                    type="date"
+                    value={mockDayKey}
+                    onChange={(e) => setMockDayKey(e.target.value)}
+                    required
+                  />
+                </label>
+                <label className="g">
+                  Duration (mins, optional)
+                  <input
+                    type="number"
+                    min={10}
+                    max={300}
+                    value={mockDurationMins}
+                    onChange={(e) => setMockDurationMins(e.target.value)}
+                    placeholder="180"
+                  />
+                </label>
+              </div>
+              <div className="row">
+                <label className="g">
+                  +Correct Marks
+                  <input
+                    type="number"
+                    step="0.5"
+                    min={0.5}
+                    value={mockMarksCorrect}
+                    onChange={(e) => setMockMarksCorrect(Number(e.target.value))}
+                  />
+                </label>
+                <label className="g">
+                  Marks lost per wrong answer
+                  <input
+                    type="number"
+                    min={0}
+                    step="0.25"
+                    value={mockMarksLost}
+                    onChange={(e) =>
+                      setMockMarksLost(Math.max(0, Number(e.target.value) || 0))
+                    }
+                  />
+                </label>
+                <label className="g">
+                  Max Marks
+                  <input
+                    type="number"
+                    min={1}
+                    max={2000}
+                    value={mockMaxMarks}
+                    onChange={(e) => setMockMaxMarks(Number(e.target.value))}
+                  />
+                </label>
+              </div>
 
-          <div
-            style={{
-              border: '1px solid var(--bd)',
-              borderRadius: '12px',
-              padding: '10px',
-              marginTop: '6px',
-              display: 'grid',
-              gap: '8px',
-            }}
-          >
-            <div className="row" style={{ justifyContent: 'space-between' }}>
-              <small style={{ fontWeight: 700, color: 'var(--tx)' }}>
-                Subject-wise Question Counts
-              </small>
-              <span className="pill mono" style={{ color: 'var(--em)' }}>
-                Score: {previewMockStats.totalScore}/{mockMaxMarks} (
-                {previewMockStats.accuracyPct}% acc)
-              </span>
-            </div>
-
-            {activeSubjects.map((sub) => {
-              const sc = mockScores[sub.id] || {
-                correct: 0,
-                wrong: 0,
-                unattempted: 0,
-              };
-              const subDetail = previewMockStats.bySubject.find(
-                (bs) => bs.subjectId === sub.id
-              );
-              return (
-                <div
-                  key={sub.id}
+              {exceedsMaxQuestions && (
+                <small
+                  role="status"
                   style={{
-                    borderTop: '1px solid var(--bd)',
-                    paddingTop: '8px',
+                    display: 'block',
+                    marginTop: '6px',
+                    padding: '6px 10px',
+                    borderRadius: '8px',
+                    background: 'color-mix(in srgb, var(--am) 14%, transparent)',
+                    border: '1px solid color-mix(in srgb, var(--am) 42%, var(--bd))',
+                    color: '#fbbf24',
+                    fontWeight: 600,
                   }}
                 >
-                  <div
-                    className="row"
-                    style={{
-                      justifyContent: 'space-between',
-                      marginBottom: '4px',
-                    }}
-                  >
-                    <b style={{ fontSize: '12px', color: sub.color }}>
-                      {sub.e} {sub.name}
-                    </b>
-                    <small className="mono">
-                      {subDetail
-                        ? `${subDetail.score} marks · ${subDetail.accuracyPct}% acc`
-                        : ''}
-                    </small>
-                  </div>
-                  <div className="row">
-                    <label className="g" style={{ margin: 0 }}>
-                      Correct
-                      <input
-                        type="number"
-                        min={0}
-                        max={200}
-                        step={1}
-                        value={sc.correct}
-                        onChange={(e) =>
-                          setMockScores((prev) => ({
-                            ...prev,
-                            [sub.id]: {
-                              ...sc,
-                              correct: Math.max(
-                                0,
-                                Math.floor(Number(e.target.value) || 0)
-                              ),
-                            },
-                          }))
-                        }
-                      />
-                    </label>
-                    <label className="g" style={{ margin: 0 }}>
-                      Wrong
-                      <input
-                        type="number"
-                        min={0}
-                        max={200}
-                        step={1}
-                        value={sc.wrong}
-                        onChange={(e) =>
-                          setMockScores((prev) => ({
-                            ...prev,
-                            [sub.id]: {
-                              ...sc,
-                              wrong: Math.max(
-                                0,
-                                Math.floor(Number(e.target.value) || 0)
-                              ),
-                            },
-                          }))
-                        }
-                      />
-                    </label>
-                    <label className="g" style={{ margin: 0 }}>
-                      Unattempted
-                      <input
-                        type="number"
-                        min={0}
-                        max={200}
-                        step={1}
-                        value={sc.unattempted}
-                        onChange={(e) =>
-                          setMockScores((prev) => ({
-                            ...prev,
-                            [sub.id]: {
-                              ...sc,
-                              unattempted: Math.max(
-                                0,
-                                Math.floor(Number(e.target.value) || 0)
-                              ),
-                            },
-                          }))
-                        }
-                      />
-                    </label>
-                  </div>
-                </div>
-              );
-            })}
-          </div>
+                  ⚠️ Total questions ({previewMockStats.totalQuestions}) exceed maxMarks /
+                  marksPerCorrect ({expectedMaxQuestions} questions for {mockMaxMarks} max
+                  marks).
+                </small>
+              )}
 
-          <label>
-            Mistakes &amp; Analysis Note
-            <textarea
-              rows={3}
-              maxLength={400}
-              value={mockNote}
-              onChange={(e) => setMockNote(e.target.value)}
-              placeholder="Silly mistakes, weak topics to revise before next test..."
-            />
-          </label>
-
-          <div className="row">
-            <button className="pri g" type="submit">
-              Save Mock Test
-            </button>
-            <button type="button" onClick={onClose}>
-              Cancel
-            </button>
-          </div>
-          {existingMock && (
-            <button
-              type="button"
-              className="dg-btn"
-              onClick={() => onDeleteMock(existingMock.id)}
-            >
-              Delete Mock Test
-            </button>
-          )}
-        </form>
-      )}
-
-      {modal.type === 'timerConfig' && (
-        <form
-          id="cfgTimerForm"
-          onSubmit={(e) => {
-            e.preventDefault();
-            onSaveTimerConfig(
-              Math.max(5, Number(cfgPomoWork) || 25),
-              Math.max(1, Number(cfgPomoBreak) || 5),
-              Math.max(5, Number(cfgCountdown) || 45)
-            );
-          }}
-        >
-          <h3>Timer Durations</h3>
-          <div className="row">
-            <label className="g">
-              Pomodoro Work (min)
-              <input
-                type="number"
-                name="pomoWork"
-                min={5}
-                max={180}
-                value={cfgPomoWork}
-                onChange={(e) => setCfgPomoWork(Number(e.target.value))}
-              />
-            </label>
-            <label className="g">
-              Pomodoro Break (min)
-              <input
-                type="number"
-                name="pomoBreak"
-                min={1}
-                max={60}
-                value={cfgPomoBreak}
-                onChange={(e) => setCfgPomoBreak(Number(e.target.value))}
-              />
-            </label>
-          </div>
-          <label>
-            Default Countdown Target (min)
-            <input
-              type="number"
-              name="countdownMins"
-              min={5}
-              max={360}
-              value={cfgCountdown}
-              onChange={(e) => setCfgCountdown(Number(e.target.value))}
-            />
-          </label>
-          <div className="row">
-            <button className="pri g" type="submit">
-              Save
-            </button>
-            <button type="button" onClick={onClose}>
-              Cancel
-            </button>
-          </div>
-        </form>
-      )}
-
-      {modal.type === 'dday' && (
-        <form
-          id="ddayForm"
-          onSubmit={(e) => {
-            e.preventDefault();
-            const formTitleInput = e.currentTarget.elements.namedItem(
-              'title'
-            ) as HTMLInputElement | null;
-            const resolvedTitle = (ddTitle || formTitleInput?.value || '').trim();
-            if (!resolvedTitle) return;
-            onSaveDDay(modal.id, {
-              title: resolvedTitle,
-              date: ddDate || addD(todayKey, 90),
-              e: ddEmoji.trim() || '🎯',
-              color: ddColor || '#10b981',
-            });
-          }}
-        >
-          <h3>{modal.id ? 'Edit' : 'New'} Exam Countdown</h3>
-          <div className="chips wrap" style={{ paddingBottom: 0 }}>
-            {[
-              { e: '🎯', title: 'NEET UG Exam', color: '#10b981' },
-              { e: '🧪', title: 'Grand Mock Test', color: '#6366f1' },
-              { e: '📚', title: 'Syllabus Completion', color: '#f59e0b' },
-              { e: '🏫', title: 'Board / Term Exam', color: '#ec4899' },
-            ].map((preset) => (
-              <button
-                type="button"
-                key={preset.title}
-                className="s"
-                style={{ fontSize: '11.5px', padding: '4px 9px' }}
-                onClick={() => {
-                  setDdEmoji(preset.e);
-                  setDdTitle(preset.title);
-                  setDdColor(preset.color);
+              <div
+                style={{
+                  border: '1px solid var(--bd)',
+                  borderRadius: '12px',
+                  padding: '10px',
+                  marginTop: '6px',
+                  display: 'grid',
+                  gap: '8px',
                 }}
               >
-                {preset.e} {preset.title}
-              </button>
-            ))}
-          </div>
-          <div className="row">
-            <input
-              type="text"
-              className="em"
-              name="e"
-              value={ddEmoji}
-              onChange={(e) => setDdEmoji(e.target.value)}
-              maxLength={4}
-              aria-label="D-Day Emoji"
-            />
-            <input
-              type="text"
-              id="ddayTitleInput"
-              name="title"
-              value={ddTitle}
-              onChange={(e) => setDdTitle(e.target.value)}
-              placeholder="Type custom exam or target name..."
-              required
-              autoFocus
-              maxLength={40}
-              aria-label="D-Day Title"
-            />
-          </div>
-          <div className="row">
-            <label className="g">
-              Target Date
-              <input
-                type="date"
-                name="date"
-                value={ddDate}
-                onChange={(e) => setDdDate(e.target.value)}
-                required
-              />
-            </label>
-            <label className="g">
-              Badge Color
-              <input
-                type="color"
-                name="color"
-                value={ddColor}
-                onChange={(e) => setDdColor(e.target.value)}
-                style={{ height: '42px', padding: '4px' }}
-              />
-            </label>
-          </div>
-          <div className="row">
-            <button className="pri g" type="submit">
-              Save D-Day
-            </button>
-            <button type="button" onClick={onClose}>
-              Cancel
-            </button>
-          </div>
-          {modal.id && existingDDay && (
-            <button
-              type="button"
-              className="dg-btn"
-              onClick={() => onDeleteDDay(modal.id!)}
-            >
-              Remove D-Day
-            </button>
+                <div className="row" style={{ justifyContent: 'space-between' }}>
+                  <small style={{ fontWeight: 700, color: 'var(--tx)' }}>
+                    Subject-wise Question Counts
+                  </small>
+                  <span className="pill mono" style={{ color: 'var(--em)' }}>
+                    Score: {previewMockStats.totalScore}/{mockMaxMarks} (
+                    {previewMockStats.accuracyPct}% acc)
+                  </span>
+                </div>
+
+                {activeSubjects.map((sub) => {
+                  const sc = mockScores[sub.id] || {
+                    correct: 0,
+                    wrong: 0,
+                    unattempted: 0,
+                  };
+                  const subDetail = previewMockStats.bySubject.find(
+                    (bs) => bs.subjectId === sub.id
+                  );
+                  return (
+                    <div
+                      key={sub.id}
+                      style={{
+                        borderTop: '1px solid var(--bd)',
+                        paddingTop: '8px',
+                      }}
+                    >
+                      <div
+                        className="row"
+                        style={{
+                          justifyContent: 'space-between',
+                          marginBottom: '4px',
+                        }}
+                      >
+                        <b style={{ fontSize: '12px', color: sub.color }}>
+                          {sub.e} {sub.name}
+                        </b>
+                        <small className="mono">
+                          {subDetail
+                            ? `${subDetail.score} marks · ${subDetail.accuracyPct}% acc`
+                            : ''}
+                        </small>
+                      </div>
+                      <div className="row">
+                        <label className="g" style={{ margin: 0 }}>
+                          Correct
+                          <input
+                            type="number"
+                            min={0}
+                            max={200}
+                            step={1}
+                            value={sc.correct}
+                            onChange={(e) =>
+                              setMockScores((prev) => ({
+                                ...prev,
+                                [sub.id]: {
+                                  ...sc,
+                                  correct: Math.max(
+                                    0,
+                                    Math.floor(Number(e.target.value) || 0)
+                                  ),
+                                },
+                              }))
+                            }
+                          />
+                        </label>
+                        <label className="g" style={{ margin: 0 }}>
+                          Wrong
+                          <input
+                            type="number"
+                            min={0}
+                            max={200}
+                            step={1}
+                            value={sc.wrong}
+                            onChange={(e) =>
+                              setMockScores((prev) => ({
+                                ...prev,
+                                [sub.id]: {
+                                  ...sc,
+                                  wrong: Math.max(
+                                    0,
+                                    Math.floor(Number(e.target.value) || 0)
+                                  ),
+                                },
+                              }))
+                            }
+                          />
+                        </label>
+                        <label className="g" style={{ margin: 0 }}>
+                          Unattempted
+                          <input
+                            type="number"
+                            min={0}
+                            max={200}
+                            step={1}
+                            value={sc.unattempted}
+                            onChange={(e) =>
+                              setMockScores((prev) => ({
+                                ...prev,
+                                [sub.id]: {
+                                  ...sc,
+                                  unattempted: Math.max(
+                                    0,
+                                    Math.floor(Number(e.target.value) || 0)
+                                  ),
+                                },
+                              }))
+                            }
+                          />
+                        </label>
+                      </div>
+                    </div>
+                  );
+                })}
+              </div>
+
+              <label>
+                Mistakes &amp; Analysis Note
+                <textarea
+                  rows={3}
+                  maxLength={400}
+                  value={mockNote}
+                  onChange={(e) => setMockNote(e.target.value)}
+                  placeholder="Silly mistakes, weak topics to revise before next test..."
+                />
+              </label>
+
+              {/* Milestone 1.3: Add mistakes directly from the mock modal */}
+              <div
+                style={{
+                  border: '1px solid var(--bd)',
+                  borderRadius: '10px',
+                  padding: '8px 10px',
+                  marginTop: '6px',
+                  background: 'rgba(15, 23, 42, 0.35)',
+                }}
+              >
+                <div className="row" style={{ justifyContent: 'space-between', marginBottom: '6px' }}>
+                  <small style={{ fontWeight: 700, color: 'var(--tx)' }}>
+                    ⚠️ Log Mistakes from this Mock ({queuedMistakes.length} queued)
+                  </small>
+                </div>
+                <div className="row" style={{ gap: '6px', flexWrap: 'wrap' }}>
+                  <select
+                    value={mkMisSubId}
+                    onChange={(e) => {
+                      setMkMisSubId(e.target.value);
+                      setMkMisChapId('');
+                    }}
+                    style={{ flex: 1, minWidth: '105px' }}
+                    aria-label="Mistake Subject"
+                  >
+                    {activeSubjects.map((s) => (
+                      <option key={s.id} value={s.id}>
+                        {s.e} {s.name}
+                      </option>
+                    ))}
+                  </select>
+                  <select
+                    value={mkMisChapId}
+                    onChange={(e) => setMkMisChapId(e.target.value)}
+                    style={{ flex: 1, minWidth: '120px' }}
+                    aria-label="Mistake Chapter"
+                  >
+                    <option value="">— Chapter (opt) —</option>
+                    {state.chapters
+                      .filter((c) => c.subjectId === mkMisSubId)
+                      .map((c) => (
+                        <option key={c.id} value={c.id}>
+                          {c.name}
+                        </option>
+                      ))}
+                  </select>
+                  <select
+                    value={mkMisReason}
+                    onChange={(e) => setMkMisReason(e.target.value as MistakeReason)}
+                    style={{ width: 'auto' }}
+                    aria-label="Mistake Reason"
+                  >
+                    <option value="concept">Concept</option>
+                    <option value="silly">Silly</option>
+                    <option value="time">Time</option>
+                    <option value="guess">Guess</option>
+                    <option value="forgot">Forgot</option>
+                  </select>
+                </div>
+                <div className="row" style={{ gap: '6px', marginTop: '6px' }}>
+                  <input
+                    type="text"
+                    className="g"
+                    placeholder="Short mistake note (optional)..."
+                    value={mkMisNote}
+                    onChange={(e) => setMkMisNote(e.target.value)}
+                    maxLength={140}
+                  />
+                  <button
+                    type="button"
+                    className="s"
+                    onClick={() => {
+                      setQueuedMistakes((prev) => [
+                        ...prev,
+                        {
+                          subjectId: mkMisSubId,
+                          chapterId: mkMisChapId || undefined,
+                          reason: mkMisReason,
+                          note: mkMisNote.trim() || undefined,
+                        },
+                      ]);
+                      setMkMisNote('');
+                    }}
+                  >
+                    + Add Mistake
+                  </button>
+                </div>
+                {queuedMistakes.length > 0 && (
+                  <div style={{ display: 'grid', gap: '4px', marginTop: '6px' }}>
+                    {queuedMistakes.map((qm, idx) => {
+                      const sub = state.subjects.find((s) => s.id === qm.subjectId);
+                      const ch = qm.chapterId
+                        ? state.chapters.find((c) => c.id === qm.chapterId)
+                        : undefined;
+                      return (
+                        <div
+                          key={idx}
+                          className="row"
+                          style={{
+                            justifyContent: 'space-between',
+                            fontSize: '11px',
+                            padding: '3px 6px',
+                            background: 'rgba(255,255,255,0.04)',
+                            borderRadius: '6px',
+                          }}
+                        >
+                          <span>
+                            {sub?.e} <b>{qm.reason}</b>
+                            {ch ? ` · ${ch.name}` : ''}
+                            {qm.note ? ` — ${qm.note}` : ''}
+                          </span>
+                          <button
+                            type="button"
+                            className="s dg-btn"
+                            style={{ padding: '1px 5px', fontSize: '10px' }}
+                            onClick={() =>
+                              setQueuedMistakes((prev) =>
+                                prev.filter((_, i) => i !== idx)
+                              )
+                            }
+                          >
+                            ✕
+                          </button>
+                        </div>
+                      );
+                    })}
+                  </div>
+                )}
+              </div>
+
+              <div className="row" style={{ marginTop: '8px' }}>
+                <button className="pri g" type="submit">
+                  Save Mock Test
+                </button>
+                <button type="button" onClick={onClose}>
+                  Cancel
+                </button>
+              </div>
+              {existingMock && (
+                <button
+                  type="button"
+                  className="dg-btn"
+                  onClick={() => onDeleteMock(existingMock.id)}
+                >
+                  Delete Mock Test
+                </button>
+              )}
+            </form>
           )}
-        </form>
-      )}
+
+          {modal.type === 'timerConfig' && (
+            <form
+              id="cfgTimerForm"
+              onSubmit={(e) => {
+                e.preventDefault();
+                onSaveTimerConfig(
+                  Math.max(5, Number(cfgPomoWork) || 25),
+                  Math.max(1, Number(cfgPomoBreak) || 5),
+                  Math.max(5, Number(cfgCountdown) || 45),
+                  Math.max(10, Number(cfgFullMock) || 200)
+                );
+              }}
+            >
+              <h3>Timer Durations</h3>
+              <div className="row">
+                <label className="g">
+                  Pomodoro Work (min)
+                  <input
+                    type="number"
+                    name="pomoWork"
+                    min={5}
+                    max={180}
+                    value={cfgPomoWork}
+                    onChange={(e) => setCfgPomoWork(Number(e.target.value))}
+                  />
+                </label>
+                <label className="g">
+                  Pomodoro Break (min)
+                  <input
+                    type="number"
+                    name="pomoBreak"
+                    min={1}
+                    max={60}
+                    value={cfgPomoBreak}
+                    onChange={(e) => setCfgPomoBreak(Number(e.target.value))}
+                  />
+                </label>
+              </div>
+              <div className="row">
+                <label className="g">
+                  Default Countdown (min)
+                  <input
+                    type="number"
+                    name="countdownMins"
+                    min={5}
+                    max={360}
+                    value={cfgCountdown}
+                    onChange={(e) => setCfgCountdown(Number(e.target.value))}
+                  />
+                </label>
+                <label className="g">
+                  Full Mock Duration (min)
+                  <input
+                    type="number"
+                    name="fullMockMins"
+                    min={10}
+                    max={360}
+                    value={cfgFullMock}
+                    onChange={(e) => setCfgFullMock(Number(e.target.value))}
+                  />
+                </label>
+              </div>
+              <div className="row">
+                <button className="pri g" type="submit">
+                  Save
+                </button>
+                <button type="button" onClick={onClose}>
+                  Cancel
+                </button>
+              </div>
+            </form>
+          )}
+
+          {modal.type === 'dday' && (
+            <form
+              id="ddayForm"
+              onSubmit={(e) => {
+                e.preventDefault();
+                const formTitleInput = e.currentTarget.elements.namedItem(
+                  'title'
+                ) as HTMLInputElement | null;
+                const resolvedTitle = (ddTitle || formTitleInput?.value || '').trim();
+                if (!resolvedTitle) return;
+                onSaveDDay(modal.id, {
+                  title: resolvedTitle,
+                  date: ddDate || addD(todayKey, 90),
+                  e: ddEmoji.trim() || '🎯',
+                  color: ddColor || '#10b981',
+                  primary: ddPrimary,
+                  updatedAt: Date.now(),
+                });
+              }}
+            >
+              <h3>{modal.id ? 'Edit' : 'New'} Exam Countdown</h3>
+              <div className="chips wrap" style={{ paddingBottom: 0 }}>
+                {[
+                  { e: '🎯', title: 'NEET UG Exam', color: '#10b981' },
+                  { e: '🧪', title: 'Grand Mock Test', color: '#6366f1' },
+                  { e: '📚', title: 'Syllabus Completion', color: '#f59e0b' },
+                  { e: '🏫', title: 'Board / Term Exam', color: '#ec4899' },
+                ].map((preset) => (
+                  <button
+                    type="button"
+                    key={preset.title}
+                    className="s"
+                    style={{ fontSize: '11.5px', padding: '4px 9px' }}
+                    onClick={() => {
+                      setDdEmoji(preset.e);
+                      setDdTitle(preset.title);
+                      setDdColor(preset.color);
+                    }}
+                  >
+                    {preset.e} {preset.title}
+                  </button>
+                ))}
+              </div>
+              <div className="row">
+                <input
+                  type="text"
+                  className="em"
+                  name="e"
+                  value={ddEmoji}
+                  onChange={(e) => setDdEmoji(e.target.value)}
+                  maxLength={4}
+                  aria-label="D-Day Emoji"
+                />
+                <input
+                  type="text"
+                  id="ddayTitleInput"
+                  name="title"
+                  value={ddTitle}
+                  onChange={(e) => setDdTitle(e.target.value)}
+                  placeholder="Type custom exam or target name..."
+                  required
+                  autoFocus
+                  maxLength={40}
+                  aria-label="D-Day Title"
+                />
+              </div>
+              <div className="row">
+                <label className="g">
+                  Target Date
+                  <input
+                    type="date"
+                    name="date"
+                    value={ddDate}
+                    onChange={(e) => setDdDate(e.target.value)}
+                    required
+                  />
+                </label>
+                <label className="g">
+                  Badge Color
+                  <input
+                    type="color"
+                    name="color"
+                    value={ddColor}
+                    onChange={(e) => setDdColor(e.target.value)}
+                    style={{ height: '42px', padding: '4px' }}
+                  />
+                </label>
+              </div>
+              <label className="row" style={{ marginTop: '6px', cursor: 'pointer' }}>
+                <input
+                  type="checkbox"
+                  style={{ width: 'auto' }}
+                  checked={ddPrimary}
+                  onChange={(e) => setDdPrimary(e.target.checked)}
+                />
+                ★ Primary exam (used for Syllabus Pace Calculator)
+              </label>
+              <div className="row">
+                <button className="pri g" type="submit">
+                  Save D-Day
+                </button>
+                <button type="button" onClick={onClose}>
+                  Cancel
+                </button>
+              </div>
+              {modal.id && existingDDay && (
+                <button
+                  type="button"
+                  className="dg-btn"
+                  onClick={() => onDeleteDDay(modal.id!)}
+                >
+                  Remove D-Day
+                </button>
+              )}
+            </form>
+          )}
 
       {modal.type === 'confirmResetHour' && (
         <div style={{ display: 'grid', gap: '12px' }}>

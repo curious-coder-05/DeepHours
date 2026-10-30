@@ -1,8 +1,9 @@
-import React, { useState } from 'react';
+import React, { useMemo, useState } from 'react';
 import type { PulseHabitState, StatsSubTab } from '../types';
 import {
   addD,
   badges,
+  computeChapterBreakdown,
   computeConsistencyCalendar,
   computeStudySummary,
   type ConsistencyDay,
@@ -21,7 +22,9 @@ import {
   wkS,
   xp,
 } from '../utils/studyLogic';
+import { computeConsistencyScore } from '../utils/insights';
 import { PlannerView } from './PlannerView';
+import { ReviewView } from './ReviewView';
 
 interface StatsViewProps {
   state: PulseHabitState;
@@ -46,6 +49,11 @@ export const StatsView: React.FC<StatsViewProps> = ({
 }) => {
   const summary = computeStudySummary(state, todayKey);
   const consistencyCal = computeConsistencyCalendar(state, todayKey, 90);
+  const consistencyScore = useMemo(
+    () => computeConsistencyScore(state, todayKey),
+    [state, todayKey]
+  );
+  const chapterBreakdown = useMemo(() => computeChapterBreakdown(state), [state]);
   const [selectedCalDayKey, setSelectedCalDayKey] = useState<string | null>(todayKey);
   const selectedCalDay: ConsistencyDay | null =
     (selectedCalDayKey
@@ -93,17 +101,18 @@ export const StatsView: React.FC<StatsViewProps> = ({
 
   return (
     <div>
-      {/* Segmented Switch: Summary | 10m Timeline */}
-      <div className="row sp" style={{ marginBottom: '10px' }}>
-        <div>
+      {/* Segmented Switch: Summary | 10m Timeline | Weekly Review (1.13) */}
+      <div style={{ marginBottom: '12px' }}>
+        <div style={{ marginBottom: '8px' }}>
           <h2>Study Summary &amp; Timeline</h2>
           <small>
-            Weekly/monthly averages, time per subject, peak active hours &amp; 24h timeline
+            Weekly/monthly averages, time per subject &amp; chapter, consistency &amp; weekly review
           </small>
         </div>
         <div
-          className="row"
           style={{
+            display: 'flex',
+            overflowX: 'auto',
             background: 'var(--c2)',
             padding: '4px',
             borderRadius: '14px',
@@ -113,7 +122,13 @@ export const StatsView: React.FC<StatsViewProps> = ({
           <button
             type="button"
             className={subTab === 'summary' ? 'on' : ''}
-            style={{ padding: '6px 12px', fontSize: '12.5px', borderRadius: '10px' }}
+            style={{
+              padding: '6px 12px',
+              fontSize: '12.5px',
+              borderRadius: '10px',
+              whiteSpace: 'nowrap',
+              flex: '1 0 auto',
+            }}
             onClick={() => onChangeSubTab('summary')}
           >
             📊 Summary
@@ -121,10 +136,30 @@ export const StatsView: React.FC<StatsViewProps> = ({
           <button
             type="button"
             className={subTab === 'timeline' ? 'on' : ''}
-            style={{ padding: '6px 12px', fontSize: '12.5px', borderRadius: '10px' }}
+            style={{
+              padding: '6px 12px',
+              fontSize: '12.5px',
+              borderRadius: '10px',
+              whiteSpace: 'nowrap',
+              flex: '1 0 auto',
+            }}
             onClick={() => onChangeSubTab('timeline')}
           >
             🗓️ 10m Timeline
+          </button>
+          <button
+            type="button"
+            className={subTab === 'review' ? 'on' : ''}
+            style={{
+              padding: '6px 12px',
+              fontSize: '12.5px',
+              borderRadius: '10px',
+              whiteSpace: 'nowrap',
+              flex: '1 0 auto',
+            }}
+            onClick={() => onChangeSubTab('review')}
+          >
+            📋 Weekly Review
           </button>
         </div>
       </div>
@@ -136,6 +171,12 @@ export const StatsView: React.FC<StatsViewProps> = ({
           todayKey={todayKey}
           onOpenManualSession={onOpenManualSession}
           onToast={onToast}
+        />
+      ) : subTab === 'review' ? (
+        <ReviewView
+          state={state}
+          todayKey={todayKey}
+          onToast={(msg) => onToast?.(msg)}
         />
       ) : (
         <div>
@@ -573,17 +614,148 @@ export const StatsView: React.FC<StatsViewProps> = ({
                     overflow: 'hidden',
                   }}
                 >
-                  <div
-                    style={{
-                      height: '100%',
-                      width: `${item.pct}%`,
-                      background: 'var(--ac)',
-                      borderRadius: '99px',
-                    }}
-                  />
+                    <div
+                      style={{
+                        height: '100%',
+                        width: `${item.pct}%`,
+                        background: 'var(--ac)',
+                        borderRadius: '99px',
+                      }}
+                    />
+                  </div>
+                </div>
+              ))}
+          </div>
+
+          {/* 1.10 Consistency Score (0-100) Breakdown Card */}
+          <div className="card">
+            <div className="row sp" style={{ marginBottom: '8px' }}>
+              <div>
+                <h3>⚡ Consistency Score (0–100)</h3>
+                <small>
+                  Weighted across minimum-days met (40%), start-time regularity (20%), on-time
+                  revisions (20%) &amp; focus purity (20%)
+                </small>
+              </div>
+              <span
+                className="pill mono"
+                style={{ fontSize: '15px', fontWeight: 900, color: '#38bdf8' }}
+              >
+                {consistencyScore.displayLabel}
+                {consistencyScore.total !== null ? '/100' : ''}
+              </span>
+            </div>
+
+            {consistencyScore.total === null ? (
+              <small className="mu">
+                Log study sessions or revisions to compute your Consistency Score.
+              </small>
+            ) : (
+              <div
+                style={{
+                  display: 'grid',
+                  gridTemplateColumns: 'repeat(auto-fit, minmax(135px, 1fr))',
+                  gap: '8px',
+                }}
+              >
+                <div className="stat-box">
+                  <small>Min Days (40%)</small>
+                  <b className="mono">{consistencyScore.minDayScore100}/100</b>
+                  <small style={{ display: 'block', fontSize: '10.5px' }}>
+                    {consistencyScore.minDaysMetCount}/14 days met min
+                  </small>
+                </div>
+                <div className="stat-box">
+                  <small>Start Regularity (20%)</small>
+                  <b className="mono">
+                    {consistencyScore.startRegularityScore100 !== null
+                      ? `${consistencyScore.startRegularityScore100}/100`
+                      : '-'}
+                  </b>
+                  <small style={{ display: 'block', fontSize: '10.5px' }}>
+                    {consistencyScore.startStdDevMins !== null
+                      ? `±${consistencyScore.startStdDevMins}m std dev`
+                      : 'Need 2+ days'}
+                  </small>
+                </div>
+                <div className="stat-box">
+                  <small>On-Time Revs (20%)</small>
+                  <b className="mono">
+                    {consistencyScore.revisionOnTimeScore100 !== null
+                      ? `${consistencyScore.revisionOnTimeScore100}/100`
+                      : '-'}
+                  </b>
+                  <small style={{ display: 'block', fontSize: '10.5px' }}>
+                    {consistencyScore.revisionsOnTimeCount}/{consistencyScore.revisionsTotalCount} on
+                    time (30d)
+                  </small>
+                </div>
+                <div className="stat-box">
+                  <small>Focus Purity (20%)</small>
+                  <b className="mono">
+                    {consistencyScore.purityScore100 !== null
+                      ? `${consistencyScore.purityScore100}/100`
+                      : '-'}
+                  </b>
+                  <small style={{ display: 'block', fontSize: '10.5px' }}>
+                    Active vs paused ratio
+                  </small>
                 </div>
               </div>
-            ))}
+            )}
+          </div>
+
+          {/* 1.1 Hours per Chapter Breakdown Card */}
+          <div className="card">
+            <div className="row sp" style={{ marginBottom: '8px' }}>
+              <div>
+                <h3>📖 Hours per Chapter</h3>
+                <small>Cumulative study time linked to syllabus chapters</small>
+              </div>
+              <span className="pill mono">{chapterBreakdown.length} chapters</span>
+            </div>
+
+            {chapterBreakdown.length === 0 ? (
+              <small className="mu">
+                Link a chapter when starting a Focus timer or logging a Manual Session to track
+                hours per chapter.
+              </small>
+            ) : (
+              <div>
+                {chapterBreakdown.slice(0, 15).map((row) => (
+                  <div key={row.chapterId} style={{ marginBottom: '9px' }}>
+                    <div className="row sp" style={{ marginBottom: '4px' }}>
+                      <span style={{ fontSize: '13px', fontWeight: 700 }}>
+                        {row.subjectEmoji} {row.chapterName}{' '}
+                        <small style={{ color: 'var(--mu)' }}>
+                          ({row.subjectName} · {row.count}s)
+                        </small>
+                      </span>
+                      <span className="mono" style={{ fontSize: '12.5px', fontWeight: 800 }}>
+                        {fmtHMShort(row.ms)} ({row.pct}%)
+                      </span>
+                    </div>
+                    <div
+                      style={{
+                        height: '6px',
+                        background: 'var(--c2)',
+                        borderRadius: '99px',
+                        overflow: 'hidden',
+                      }}
+                    >
+                      <div
+                        style={{
+                          height: '100%',
+                          width: `${Math.max(4, row.pct)}%`,
+                          background: row.color,
+                          borderRadius: '99px',
+                        }}
+                      />
+                    </div>
+                  </div>
+                ))}
+              </div>
+            )}
           </div>
 
           {/* Consistency Calendar (Last 90 Days GitHub-Style Habit Completion Heatmap) */}

@@ -1,5 +1,5 @@
 import type { PulseHabitState } from '../types';
-import { logicalKey, norm } from './studyLogic';
+import { logicalKey, norm } from './studyLogic.ts';
 
 export class StorageLoadError extends Error {
   constructor(message = 'Your saved data could not be loaded') {
@@ -195,6 +195,35 @@ async function maybeWriteDailyBackup(state: PulseHabitState): Promise<void> {
     lastBackupDayKey = dayKey;
   } catch {
     // ignore backup write errors
+  }
+}
+
+/**
+ * 2.4: Writes an immediate local safety snapshot to the backup store (and localStorage "dh_pre_sync_backup")
+ * before the first cloud sync merge on a device with local data.
+ */
+export async function writeSafetyBackupSnapshot(state: PulseHabitState): Promise<void> {
+  try {
+    const dayKey = logicalKey(new Date(), state?.set?.dayResetHour ?? 4);
+    const snapshot: DailyBackupSnapshot = {
+      dayKey,
+      savedAt: Date.now(),
+      state: JSON.parse(JSON.stringify(state)),
+    };
+    try {
+      if (typeof localStorage !== 'undefined') {
+        localStorage.setItem('dh_pre_sync_backup', JSON.stringify(snapshot));
+      }
+    } catch {
+      // ignore localStorage quota error
+    }
+    const existing = await readValidBackups();
+    const updated = [snapshot, ...existing]
+      .sort((a, b) => b.savedAt - a.savedAt)
+      .slice(0, 5);
+    await kv('put', 'backup', updated);
+  } catch {
+    // ignore backup write error
   }
 }
 

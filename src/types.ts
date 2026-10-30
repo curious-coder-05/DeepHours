@@ -1,15 +1,25 @@
 export type HabitCategory = 'Health' | 'Mind' | 'Work' | 'Learn' | 'Social' | 'Other';
 export type HabitSchedule = 'daily' | 'days' | 'week';
-export type TimerMode = 'pomo' | 'countdown' | 'stopwatch' | 'manual';
-export type ActiveTimerMode = 'pomo' | 'countdown' | 'stopwatch';
+export type TimerMode = 'pomo' | 'countdown' | 'stopwatch' | 'manual' | 'fullMock';
+export type ActiveTimerMode = 'pomo' | 'countdown' | 'stopwatch' | 'fullMock';
 export type TimerPhase = 'work' | 'break';
 export type SoundscapeMode = 'off' | 'brown' | 'pink' | 'rain';
 export type PiPPreference = 'video' | 'doc';
 export type TimerAesthetic = 'neon' | 'minimal' | 'retro';
 export type AppTab = 'today' | 'prep' | 'focus' | 'stats' | 'more' | 'planner';
-export type PrepSubTab = 'syllabus' | 'mocks';
-export type StatsSubTab = 'summary' | 'timeline';
+export type PrepSubTab = 'syllabus' | 'mocks' | 'mistakes' | 'doubts';
+export type StatsSubTab = 'summary' | 'timeline' | 'review';
 export type ChapterStatus = 'notStarted' | 'inProgress' | 'completed';
+export type MistakeReason = 'concept' | 'silly' | 'time' | 'guess' | 'forgot';
+export type SyncStatus =
+  | 'off'
+  | 'idle'
+  | 'syncing'
+  | 'synced'
+  | 'offline'
+  | 'error'
+  | 'paused'
+  | 'paused-quota';
 
 export interface Habit {
   id: string;
@@ -27,11 +37,14 @@ export interface Habit {
   subjectId?: string;
   autoMins?: number;
   u?: number;
+  updatedAt?: number;
 }
 
 export interface HabitLogDay {
   v: number;
   s: number;
+  t?: number;
+  updatedAt?: number;
 }
 
 export type HabitLogMap = Record<string, Record<string, HabitLogDay>>;
@@ -40,6 +53,7 @@ export interface StudyTodo {
   id: string;
   text: string;
   done: boolean;
+  updatedAt?: number;
 }
 
 export interface Subject {
@@ -50,11 +64,13 @@ export interface Subject {
   dailyGoalMins?: number;
   arch: number;
   todos: StudyTodo[];
+  updatedAt?: number;
 }
 
 export interface StudySession {
   id: string;
   subjectId: string;
+  chapterId?: string;
   heading?: string;
   dayKey: string;
   startTs: number;
@@ -79,6 +95,14 @@ export interface DDay {
   date: string;
   e: string;
   color: string;
+  primary?: boolean;
+  updatedAt?: number;
+}
+
+export interface MockSectionTiming {
+  name?: string;
+  label?: string;
+  elapsedMs: number;
 }
 
 export interface ActiveTimer {
@@ -86,6 +110,7 @@ export interface ActiveTimer {
   mode: ActiveTimerMode;
   phase: TimerPhase;
   subjectId: string;
+  chapterId?: string;
   heading?: string;
   startTs: number;
   sliceStartTs: number;
@@ -97,6 +122,10 @@ export interface ActiveTimer {
   targetMs: number;
   chimeFired: boolean;
   fiveMinWarnFired?: boolean;
+  mockSections?: MockSectionTiming[];
+  sectionStartTs?: number;
+  sectionStartActiveMs?: number;
+  sectionPausedMs?: number;
 }
 
 export interface MockSubjectScore {
@@ -125,6 +154,11 @@ export interface ChapterRevision {
   doneOn?: string;
 }
 
+export interface ChapterConfidenceEntry {
+  dayKey: string;
+  value: 1 | 2 | 3 | 4 | 5;
+}
+
 export interface Chapter {
   id: string;
   subjectId: string;
@@ -133,6 +167,65 @@ export interface Chapter {
   completedOn?: string;
   revisions: ChapterRevision[];
   note?: string;
+  confidence?: 1 | 2 | 3 | 4 | 5;
+  confidenceLog?: ChapterConfidenceEntry[];
+  updatedAt?: number;
+}
+
+export interface MistakeEntry {
+  id: string;
+  mockId?: string;
+  dayKey: string;
+  subjectId: string;
+  chapterId?: string;
+  reason: MistakeReason;
+  note?: string;
+  resolved: boolean;
+  createdAt: number;
+  updatedAt?: number;
+}
+
+export interface Doubt {
+  id: string;
+  subjectId: string;
+  chapterId?: string;
+  text: string;
+  createdAt: number;
+  resolved: boolean;
+  resolvedAt?: number;
+  updatedAt?: number;
+}
+
+export interface PYQEntry {
+  id: string;
+  chapterId: string;
+  dayKey: string;
+  attempted: number;
+  correct: number;
+  updatedAt?: number;
+}
+
+export interface TargetsConfig {
+  dailyMinutes?: Record<string, number>;
+  weeklyMinutes?: Record<string, number>;
+  minDayMinutes: number;
+  restPassesPerMonth: number;
+}
+
+export type SubjectTargets = TargetsConfig;
+
+export interface WellbeingEntry {
+  sleep?: number;
+  energy?: 1 | 2 | 3 | 4 | 5;
+  updatedAt?: number;
+}
+
+export interface CloudAccountInfo {
+  uid?: string;
+  email?: string | null;
+  displayName?: string | null;
+  avatarEmoji?: string;
+  lastSyncedAt?: number;
 }
 
 export interface AppSettings {
@@ -151,6 +244,15 @@ export interface AppSettings {
   soundscape: SoundscapeMode;
   soundVol: number;
   targetMockScore?: number;
+  revisionBufferDays?: number;
+  targets?: TargetsConfig;
+  fullMockMins?: number;
+  revisionIntervals?: number[];
+  revisionSuggestDays?: number[];
+  burnoutDismissedUntil?: string;
+  avatarEmoji?: string;
+  cloudAccount?: CloudAccountInfo;
+  updatedAt?: number;
 }
 
 export interface DailyTask {
@@ -161,6 +263,7 @@ export interface DailyTask {
   createdAt: number;
   doneAt?: number;
   subjectId?: string;
+  updatedAt?: number;
 }
 
 export interface PulseHabitState {
@@ -174,6 +277,11 @@ export interface PulseHabitState {
   ddays: DDay[];
   mocks: MockTest[];
   chapters: Chapter[];
+  mistakes: MistakeEntry[];
+  doubts: Doubt[];
+  pyq: PYQEntry[];
+  restDays: string[];
+  wellbeing: Record<string, WellbeingEntry>;
   activeTimer: ActiveTimer | null;
   notes: Record<string, string>;
   mood: Record<string, number>;
@@ -181,7 +289,13 @@ export interface PulseHabitState {
   exp: number;
   ob: number;
   del: string[];
+  delAt?: Record<string, number>;
   savedAt?: number;
+  burnoutDismissedUntil?: string;
+  syncMeta?: {
+    uid?: string;
+    lastSyncedAt?: number;
+  };
   set: AppSettings;
 }
 
@@ -190,6 +304,7 @@ export interface TimerMetrics {
   mode: ActiveTimerMode;
   phase: TimerPhase;
   subject: Subject;
+  chapterId?: string;
   heading: string;
   totalActiveMs: number;
   totalPausedMs: number;

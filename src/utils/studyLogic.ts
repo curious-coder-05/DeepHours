@@ -1,20 +1,27 @@
 import type {
   Chapter,
+  ChapterConfidenceEntry,
   ChapterRevision,
   ChapterStatus,
   DDay,
   DailyTask,
+  Doubt,
   Habit,
   HabitCategory,
   HabitLogDay,
   HabitLogMap,
+  MistakeEntry,
+  MistakeReason,
   MockSubjectScore,
   MockTest,
+  PYQEntry,
   PulseHabitState,
   StudySession,
   Subject,
+  TargetsConfig,
   TimerMetrics,
   TimerMode,
+  WellbeingEntry,
 } from '../types';
 
 export const DN = ['S', 'M', 'T', 'W', 'T', 'F', 'S'] as const;
@@ -224,6 +231,8 @@ export function parseKey(k: string): Date {
   return new Date(a, (b || 1) - 1, c || 1);
 }
 
+export const parseD = parseKey;
+
 export function addD(k: string, n: number): string {
   const d = parseKey(k);
   d.setDate(d.getDate() + n);
@@ -257,6 +266,8 @@ export function fmtHMShort(ms: number): string {
   const m = mins % 60;
   return h > 0 ? `${h}h ${m}m` : `${m}m`;
 }
+
+export const fmtDuration = fmtHMShort;
 
 export function fmtHoursDecimal(ms: number): string {
   const hrs = ms / 3600000;
@@ -314,6 +325,10 @@ export function getSessionHeading(state: PulseHabitState, session: StudySession)
   if (session.heading && session.heading.trim()) {
     return session.heading.trim();
   }
+  if (session.chapterId) {
+    const ch = state.chapters?.find((c) => c.id === session.chapterId);
+    if (ch && ch.name.trim()) return ch.name.trim();
+  }
   const sub = getSubject(state, session.subjectId);
   return sub.name || 'Study Session';
 }
@@ -331,6 +346,7 @@ export function cloneLog(log: HabitLogMap | undefined): HabitLogMap {
         out[hId][dKey] = {
           v: Number(entry.v) || 0,
           s: Number(entry.s) || 0,
+          ...(Number.isFinite(entry.updatedAt) ? { updatedAt: Number(entry.updatedAt) } : {}),
         };
       }
     }
@@ -350,6 +366,11 @@ export function createBlankState(): PulseHabitState {
     ddays: [],
     mocks: [],
     chapters: [],
+    mistakes: [],
+    doubts: [],
+    pyq: [],
+    restDays: [],
+    wellbeing: {},
     activeTimer: null,
     notes: {},
     mood: {},
@@ -357,6 +378,7 @@ export function createBlankState(): PulseHabitState {
     exp: 0,
     ob: 0,
     del: [],
+    delAt: {},
     savedAt: 0,
     set: {
       theme: 'dark',
@@ -374,6 +396,18 @@ export function createBlankState(): PulseHabitState {
       soundscape: 'off',
       soundVol: 0.35,
       targetMockScore: 650,
+      revisionBufferDays: 30,
+      fullMockMins: 200,
+      revisionIntervals: [1, 3, 7, 21],
+      revisionSuggestDays: [1, 3, 7, 21],
+      avatarEmoji: '🩺',
+      targets: {
+        dailyMinutes: {},
+        weeklyMinutes: {},
+        minDayMinutes: 240,
+        restPassesPerMonth: 4,
+      },
+      updatedAt: 0,
     },
   };
 }
@@ -386,6 +420,7 @@ export function mkHabit(p: Partial<Habit>, todayKey = logicalKey(new Date(), 4))
   const isAuto = Boolean(p.subjectId || p.autoMins);
   const rawTarget = Number(p.autoMins || p.tn) || (isAuto ? 60 : 1);
   const targetVal = Math.max(1, rawTarget);
+  const now = Date.now();
   return {
     id: p.id || uid('h'),
     name: p.name || 'Habit',
@@ -401,7 +436,8 @@ export function mkHabit(p: Partial<Habit>, todayKey = logicalKey(new Date(), 4))
     created: p.created || todayKey,
     subjectId: p.subjectId || (p.autoMins ? 'any' : ''),
     autoMins: isAuto ? targetVal : 0,
-    u: Date.now(),
+    u: p.u || now,
+    updatedAt: p.updatedAt || p.u || now,
   };
 }
 
@@ -422,6 +458,74 @@ export function norm(raw: unknown): PulseHabitState {
   }
   if (!Number.isFinite(s.set.dayResetHour)) s.set.dayResetHour = 4;
   if (!Number.isFinite(s.set.targetMockScore)) s.set.targetMockScore = 650;
+  s.set.revisionBufferDays = Number.isFinite(s.set.revisionBufferDays)
+    ? Math.max(0, Math.floor(Number(s.set.revisionBufferDays)))
+    : 30;
+  s.set.fullMockMins =
+    Number.isFinite(s.set.fullMockMins) && Number(s.set.fullMockMins) >= 10
+      ? Math.floor(Number(s.set.fullMockMins))
+      : 200;
+  const rawRevInts = Array.isArray(s.set.revisionIntervals)
+    ? s.set.revisionIntervals
+    : Array.isArray(s.set.revisionSuggestDays)
+      ? s.set.revisionSuggestDays
+      : null;
+  if (rawRevInts) {
+    const cleanInts = Array.from(
+      new Set(
+        rawRevInts
+          .map((n) => Math.floor(Number(n)))
+          .filter((n) => Number.isFinite(n) && n >= 1 && n <= 365)
+      )
+    ).sort((a, b) => a - b);
+    const finalInts = cleanInts.length > 0 ? cleanInts : [1, 3, 7, 21];
+    s.set.revisionIntervals = finalInts;
+    s.set.revisionSuggestDays = [...finalInts];
+  } else {
+    s.set.revisionIntervals = [1, 3, 7, 21];
+    s.set.revisionSuggestDays = [1, 3, 7, 21];
+  }
+  const rawTargets =
+    s.set.targets && typeof s.set.targets === 'object'
+      ? (s.set.targets as unknown as Record<string, unknown>)
+      : {};
+  const cleanDailyMins: Record<string, number> = {};
+  if (rawTargets.dailyMinutes && typeof rawTargets.dailyMinutes === 'object') {
+    for (const [k, v] of Object.entries(rawTargets.dailyMinutes as Record<string, unknown>)) {
+      const n = Math.floor(Number(v));
+      if (Number.isFinite(n) && n >= 0) cleanDailyMins[k] = n;
+    }
+  }
+  const cleanWeeklyMins: Record<string, number> = {};
+  if (rawTargets.weeklyMinutes && typeof rawTargets.weeklyMinutes === 'object') {
+    for (const [k, v] of Object.entries(rawTargets.weeklyMinutes as Record<string, unknown>)) {
+      const n = Math.floor(Number(v));
+      if (Number.isFinite(n) && n >= 0) cleanWeeklyMins[k] = n;
+    }
+  }
+  const normalizedTargets: TargetsConfig = {
+    dailyMinutes: cleanDailyMins,
+    weeklyMinutes: cleanWeeklyMins,
+    minDayMinutes:
+      Number.isFinite(rawTargets.minDayMinutes) && Number(rawTargets.minDayMinutes) >= 0
+        ? Math.floor(Number(rawTargets.minDayMinutes))
+        : 240,
+    restPassesPerMonth:
+      Number.isFinite(rawTargets.restPassesPerMonth) && Number(rawTargets.restPassesPerMonth) >= 0
+        ? Math.floor(Number(rawTargets.restPassesPerMonth))
+        : 4,
+  };
+  s.set.targets = normalizedTargets;
+  s.set.avatarEmoji =
+    typeof s.set.avatarEmoji === 'string' && s.set.avatarEmoji.trim()
+      ? s.set.avatarEmoji.trim().slice(0, 8)
+      : '🩺';
+  s.set.burnoutDismissedUntil =
+    typeof s.set.burnoutDismissedUntil === 'string' &&
+    /^\d{4}-\d{2}-\d{2}$/.test(s.set.burnoutDismissedUntil)
+      ? s.set.burnoutDismissedUntil
+      : undefined;
+  s.set.updatedAt = Number.isFinite(s.set.updatedAt) ? Number(s.set.updatedAt) : 0;
 
   // Subjects: preserve existing user subjects if non-empty
   if (Array.isArray(src.subjects) && src.subjects.length > 0) {
@@ -441,6 +545,7 @@ export function norm(raw: unknown): PulseHabitState {
         color: sub.color || getHeadingColor(sub.name),
         arch: sub.arch || 0,
         todos: Array.isArray(sub.todos) ? sub.todos : [],
+        updatedAt: Number.isFinite(sub.updatedAt) ? Number(sub.updatedAt) : 0,
       }));
     if (!s.subjects.length) {
       s.subjects = JSON.parse(JSON.stringify(DEFAULT_SUBJECTS));
@@ -483,6 +588,7 @@ export function norm(raw: unknown): PulseHabitState {
               : logicalKey(new Date(), s.set.dayResetHour),
           subjectId: isAuto ? h.subjectId || 'any' : '',
           autoMins: isAuto ? syncedTarget : 0,
+          updatedAt: Number.isFinite(h.updatedAt) ? Number(h.updatedAt) : 0,
         };
       });
   } else {
@@ -494,13 +600,18 @@ export function norm(raw: unknown): PulseHabitState {
 
   // Todos
   if (Array.isArray(src.todos)) {
-    s.todos = src.todos.filter(
-      (td): td is NonNullable<PulseHabitState['todos']>[number] =>
-        Boolean(td) &&
-        typeof td === 'object' &&
-        typeof (td as { id?: unknown }).id === 'string' &&
-        typeof (td as { text?: unknown }).text === 'string'
-    );
+    s.todos = src.todos
+      .filter(
+        (td): td is NonNullable<PulseHabitState['todos']>[number] =>
+          Boolean(td) &&
+          typeof td === 'object' &&
+          typeof (td as { id?: unknown }).id === 'string' &&
+          typeof (td as { text?: unknown }).text === 'string'
+      )
+      .map((td) => ({
+        ...td,
+        updatedAt: Number.isFinite(td.updatedAt) ? Number(td.updatedAt) : 0,
+      }));
   } else {
     const mergedTodos = s.subjects.flatMap((sub) => sub.todos || []);
     s.todos = mergedTodos;
@@ -527,12 +638,16 @@ export function norm(raw: unknown): PulseHabitState {
           typeof rec.subjectId === 'string' && rec.subjectId.trim()
             ? rec.subjectId.trim()
             : undefined;
+        const updatedAt = Number.isFinite(rec.updatedAt)
+          ? Number(rec.updatedAt)
+          : doneAt || createdAt;
         return {
           id,
           title,
           dayKey,
           done: isDone,
           createdAt,
+          updatedAt,
           ...(doneAt !== undefined ? { doneAt } : {}),
           ...(subjectId ? { subjectId } : {}),
         };
@@ -560,6 +675,10 @@ export function norm(raw: unknown): PulseHabitState {
           typeof ses.subjectId === 'string' && ses.subjectId.trim()
             ? ses.subjectId
             : fallbackSubId;
+        const chapterId =
+          typeof ses.chapterId === 'string' && ses.chapterId.trim()
+            ? ses.chapterId.trim()
+            : undefined;
         const sub = getSubject(s, subjectId);
         const heading =
           typeof ses.heading === 'string' && ses.heading.trim()
@@ -574,6 +693,7 @@ export function norm(raw: unknown): PulseHabitState {
         return {
           ...ses,
           subjectId,
+          ...(chapterId ? { chapterId } : {}),
           heading,
           dayKey,
           activeMs,
@@ -585,7 +705,8 @@ export function norm(raw: unknown): PulseHabitState {
             ses.mode === 'pomo' ||
             ses.mode === 'countdown' ||
             ses.mode === 'stopwatch' ||
-            ses.mode === 'manual'
+            ses.mode === 'manual' ||
+            ses.mode === 'fullMock'
               ? ses.mode
               : 'pomo',
           rating: Number.isFinite(ses.rating) ? Math.min(5, Math.max(1, ses.rating)) : 5,
@@ -600,7 +721,7 @@ export function norm(raw: unknown): PulseHabitState {
   // Plans
   s.plans = src.plans && typeof src.plans === 'object' ? (src.plans as PulseHabitState['plans']) : {};
 
-  // D-Days (preserve custom title across JSON stringify/parse cycle, including legacy 'name' key)
+  // D-Days (preserve custom title across JSON stringify/parse cycle, including legacy 'name' key + primary flag)
   if (Array.isArray(src.ddays)) {
     s.ddays = src.ddays
       .map((dd): PulseHabitState['ddays'][number] | null => {
@@ -624,9 +745,17 @@ export function norm(raw: unknown): PulseHabitState {
             typeof rec.color === 'string' && rec.color.trim()
               ? rec.color.trim()
               : '#10b981',
+          primary: Boolean(rec.primary),
+          updatedAt: Number.isFinite(rec.updatedAt) ? Number(rec.updatedAt) : 0,
         };
       })
       .filter((dd): dd is PulseHabitState['ddays'][number] => dd !== null);
+    // Ensure at least one primary DDay if none is marked primary (default NEET or first)
+    if (s.ddays.length > 0 && !s.ddays.some((d) => d.primary)) {
+      const neetIdx = s.ddays.findIndex((d) => /neet/i.test(d.title));
+      const primaryIdx = neetIdx >= 0 ? neetIdx : 0;
+      s.ddays[primaryIdx] = { ...s.ddays[primaryIdx], primary: true };
+    }
   } else {
     s.ddays = [];
   }
@@ -685,7 +814,7 @@ export function norm(raw: unknown): PulseHabitState {
     s.mocks = [];
   }
 
-  // Chapters (B2 + A8 + F3 validation)
+  // Chapters (B2 + A8 + F3 + 1.6 confidence validation)
   const fallbackTodayKey = logicalKey(new Date(), s.set.dayResetHour);
   if (Array.isArray(src.chapters)) {
     s.chapters = src.chapters
@@ -739,6 +868,25 @@ export function norm(raw: unknown): PulseHabitState {
             : status === 'completed'
               ? rawCompletedOn || fallbackTodayKey
               : rawCompletedOn;
+        const rawConf = Number(ch.confidence);
+        const confidence =
+          Number.isFinite(rawConf) && rawConf >= 1 && rawConf <= 5
+            ? (Math.round(rawConf) as 1 | 2 | 3 | 4 | 5)
+            : undefined;
+        const confidenceLog: ChapterConfidenceEntry[] = Array.isArray(ch.confidenceLog)
+          ? ch.confidenceLog
+              .filter(
+                (entry): entry is ChapterConfidenceEntry =>
+                  Boolean(entry) &&
+                  typeof entry === 'object' &&
+                  typeof (entry as ChapterConfidenceEntry).dayKey === 'string' &&
+                  /^\d{4}-\d{2}-\d{2}$/.test((entry as ChapterConfidenceEntry).dayKey) &&
+                  Number.isFinite((entry as ChapterConfidenceEntry).value) &&
+                  (entry as ChapterConfidenceEntry).value >= 1 &&
+                  (entry as ChapterConfidenceEntry).value <= 5
+              )
+              .slice(-50)
+          : [];
         return {
           id: ch.id,
           subjectId: ch.subjectId,
@@ -747,10 +895,172 @@ export function norm(raw: unknown): PulseHabitState {
           completedOn,
           revisions,
           note: typeof ch.note === 'string' ? ch.note : '',
+          ...(confidence !== undefined ? { confidence } : {}),
+          ...(confidenceLog.length > 0 ? { confidenceLog } : {}),
+          updatedAt: Number.isFinite(ch.updatedAt) ? Number(ch.updatedAt) : 0,
         };
       });
   } else {
     s.chapters = [];
+  }
+
+  // Mistakes (1.3)
+  const validReasons = new Set<MistakeReason>(['concept', 'silly', 'time', 'guess', 'forgot']);
+  if (Array.isArray(src.mistakes)) {
+    s.mistakes = src.mistakes
+      .map((raw): MistakeEntry | null => {
+        if (!raw || typeof raw !== 'object') return null;
+        const rec = raw as Record<string, unknown>;
+        const id = typeof rec.id === 'string' ? rec.id.trim() : '';
+        const subjectId = typeof rec.subjectId === 'string' ? rec.subjectId.trim() : '';
+        const dayKey =
+          typeof rec.dayKey === 'string' && /^\d{4}-\d{2}-\d{2}$/.test(rec.dayKey.trim())
+            ? rec.dayKey.trim()
+            : fallbackTodayKey;
+        if (!id || !subjectId) return null;
+        const reason: MistakeReason = validReasons.has(rec.reason as MistakeReason)
+          ? (rec.reason as MistakeReason)
+          : 'concept';
+        const createdAt = Number.isFinite(rec.createdAt) ? Number(rec.createdAt) : Date.now();
+        const updatedAt = Number.isFinite(rec.updatedAt) ? Number(rec.updatedAt) : createdAt;
+        return {
+          id,
+          ...(typeof rec.mockId === 'string' && rec.mockId.trim()
+            ? { mockId: rec.mockId.trim() }
+            : {}),
+          dayKey,
+          subjectId,
+          ...(typeof rec.chapterId === 'string' && rec.chapterId.trim()
+            ? { chapterId: rec.chapterId.trim() }
+            : {}),
+          reason,
+          ...(typeof rec.note === 'string' ? { note: rec.note } : {}),
+          resolved: Boolean(rec.resolved),
+          createdAt,
+          updatedAt,
+        };
+      })
+      .filter((m): m is MistakeEntry => m !== null);
+  } else {
+    s.mistakes = [];
+  }
+
+  // Doubts (1.4)
+  if (Array.isArray(src.doubts)) {
+    s.doubts = src.doubts
+      .map((raw): Doubt | null => {
+        if (!raw || typeof raw !== 'object') return null;
+        const rec = raw as Record<string, unknown>;
+        const id = typeof rec.id === 'string' ? rec.id.trim() : '';
+        const subjectId = typeof rec.subjectId === 'string' ? rec.subjectId.trim() : '';
+        const text = typeof rec.text === 'string' ? rec.text.trim() : '';
+        if (!id || !subjectId || !text) return null;
+        const createdAt = Number.isFinite(rec.createdAt) ? Number(rec.createdAt) : Date.now();
+        const resolved = Boolean(rec.resolved);
+        const resolvedAt =
+          resolved && Number.isFinite(rec.resolvedAt) ? Number(rec.resolvedAt) : undefined;
+        const updatedAt = Number.isFinite(rec.updatedAt)
+          ? Number(rec.updatedAt)
+          : resolvedAt || createdAt;
+        return {
+          id,
+          subjectId,
+          ...(typeof rec.chapterId === 'string' && rec.chapterId.trim()
+            ? { chapterId: rec.chapterId.trim() }
+            : {}),
+          text,
+          createdAt,
+          resolved,
+          ...(resolvedAt !== undefined ? { resolvedAt } : {}),
+          updatedAt,
+        };
+      })
+      .filter((d): d is Doubt => d !== null);
+  } else {
+    s.doubts = [];
+  }
+
+  // PYQ Entries (1.5)
+  if (Array.isArray(src.pyq)) {
+    s.pyq = src.pyq
+      .map((raw): PYQEntry | null => {
+        if (!raw || typeof raw !== 'object') return null;
+        const rec = raw as Record<string, unknown>;
+        const id = typeof rec.id === 'string' ? rec.id.trim() : '';
+        const chapterId = typeof rec.chapterId === 'string' ? rec.chapterId.trim() : '';
+        const dayKey =
+          typeof rec.dayKey === 'string' && /^\d{4}-\d{2}-\d{2}$/.test(rec.dayKey.trim())
+            ? rec.dayKey.trim()
+            : fallbackTodayKey;
+        const attempted = Math.max(0, Math.floor(Number(rec.attempted) || 0));
+        const correct = Math.min(attempted, Math.max(0, Math.floor(Number(rec.correct) || 0)));
+        if (!id || !chapterId || attempted <= 0) return null;
+        const updatedAt = Number.isFinite(rec.updatedAt) ? Number(rec.updatedAt) : Date.now();
+        return {
+          id,
+          chapterId,
+          dayKey,
+          attempted,
+          correct,
+          updatedAt,
+        };
+      })
+      .filter((p): p is PYQEntry => p !== null);
+  } else {
+    s.pyq = [];
+  }
+
+  // Rest Days (1.9)
+  if (Array.isArray(src.restDays)) {
+    const uniqueRest = Array.from(
+      new Set(
+        src.restDays.filter(
+          (dk): dk is string => typeof dk === 'string' && /^\d{4}-\d{2}-\d{2}$/.test(dk.trim())
+        )
+      )
+    ).sort();
+    s.restDays = uniqueRest;
+  } else {
+    s.restDays = [];
+  }
+
+  // Wellbeing (1.11)
+  if (src.wellbeing && typeof src.wellbeing === 'object') {
+    const wb: Record<string, WellbeingEntry> = {};
+    for (const [dk, val] of Object.entries(src.wellbeing as Record<string, unknown>)) {
+      if (!/^\d{4}-\d{2}-\d{2}$/.test(dk) || !val || typeof val !== 'object') continue;
+      const rec = val as Record<string, unknown>;
+      const rawSleep = Number(rec.sleep);
+      const sleep =
+        Number.isFinite(rawSleep) && rawSleep >= 0 && rawSleep <= 14
+          ? Math.round(rawSleep * 2) / 2
+          : undefined;
+      const rawEnergy = Number(rec.energy);
+      const energy =
+        Number.isFinite(rawEnergy) && rawEnergy >= 1 && rawEnergy <= 5
+          ? (Math.round(rawEnergy) as 1 | 2 | 3 | 4 | 5)
+          : undefined;
+      if (sleep !== undefined || energy !== undefined) {
+        wb[dk] = {
+          ...(sleep !== undefined ? { sleep } : {}),
+          ...(energy !== undefined ? { energy } : {}),
+          updatedAt: Number.isFinite(rec.updatedAt) ? Number(rec.updatedAt) : 0,
+        };
+      }
+    }
+    s.wellbeing = wb;
+  } else {
+    s.wellbeing = {};
+  }
+
+  // Burnout dismissal (1.12)
+  if (
+    typeof src.burnoutDismissedUntil === 'string' &&
+    /^\d{4}-\d{2}-\d{2}$/.test(src.burnoutDismissedUntil.trim())
+  ) {
+    s.burnoutDismissedUntil = src.burnoutDismissedUntil.trim();
+  } else {
+    s.burnoutDismissedUntil = undefined;
   }
 
   // ActiveTimer
@@ -767,8 +1077,15 @@ export function norm(raw: unknown): PulseHabitState {
         typeof at.subjectId === 'string' && at.subjectId.trim()
           ? at.subjectId
           : fallbackSubId,
+      ...(typeof at.chapterId === 'string' && at.chapterId.trim()
+        ? { chapterId: at.chapterId.trim() }
+        : {}),
       chimeFired: Boolean(at.chimeFired),
       fiveMinWarnFired: Boolean(at.fiveMinWarnFired),
+      ...(Array.isArray(at.mockSections) ? { mockSections: at.mockSections } : {}),
+      ...(Number.isFinite(at.sectionStartActiveMs)
+        ? { sectionStartActiveMs: Number(at.sectionStartActiveMs) }
+        : {}),
     };
   } else {
     s.activeTimer = null;
@@ -779,7 +1096,46 @@ export function norm(raw: unknown): PulseHabitState {
   s.bonus = Number.isFinite(src.bonus) ? Number(src.bonus) : 0;
   s.exp = Number.isFinite(src.exp) ? Number(src.exp) : 0;
   s.ob = src.ob ? 1 : 0;
-  s.del = Array.isArray(src.del) ? src.del.filter((x): x is string => typeof x === 'string') : [];
+
+  // Tombstones (2.3: support string[] in s.del + timestamps in s.delAt, and accept { id, deletedAt } in raw.del)
+  const delSet = new Set<string>();
+  const delAtMap: Record<string, number> = {};
+  if (src.delAt && typeof src.delAt === 'object') {
+    for (const [id, ts] of Object.entries(src.delAt as Record<string, unknown>)) {
+      if (typeof id === 'string' && id.trim() && Number.isFinite(ts)) {
+        delAtMap[id.trim()] = Number(ts);
+      }
+    }
+  }
+  if (Array.isArray(src.del)) {
+    for (const item of src.del) {
+      if (typeof item === 'string' && item.trim()) {
+        delSet.add(item.trim());
+        if (!delAtMap[item.trim()]) delAtMap[item.trim()] = 0;
+      } else if (item && typeof item === 'object') {
+        const rec = item as { id?: unknown; deletedAt?: unknown };
+        if (typeof rec.id === 'string' && rec.id.trim()) {
+          const cleanId = rec.id.trim();
+          delSet.add(cleanId);
+          if (Number.isFinite(rec.deletedAt)) {
+            delAtMap[cleanId] = Number(rec.deletedAt);
+          }
+        }
+      }
+    }
+  }
+  // Prune tombstones older than 90 days when they have a non-zero timestamp
+  const ninetyDaysAgo = Date.now() - 90 * 86400000;
+  for (const id of Array.from(delSet)) {
+    const ts = delAtMap[id];
+    if (ts && ts > 0 && ts < ninetyDaysAgo) {
+      delSet.delete(id);
+      delete delAtMap[id];
+    }
+  }
+  s.del = Array.from(delSet);
+  s.delAt = delAtMap;
+
   s.savedAt = Number.isFinite(src.savedAt) ? Number(src.savedAt) : 0;
 
   return s;
@@ -833,13 +1189,21 @@ export function getTimerMetrics(state: PulseHabitState, now = Date.now()): Timer
   const denom = totalActiveMs + totalPausedMs;
   const purity = denom > 0 ? Math.round((totalActiveMs / denom) * 100) : 100;
   const baseSub = getSubject(state, t.subjectId);
-  const heading = (t.heading && t.heading.trim()) || baseSub.name || 'Study Session';
+  const linkedChapter = t.chapterId
+    ? state.chapters.find((ch) => ch.id === t.chapterId)
+    : undefined;
+  const heading =
+    (t.heading && t.heading.trim()) ||
+    linkedChapter?.name ||
+    baseSub.name ||
+    'Study Session';
 
   return {
     status: t.status,
     mode: t.mode,
     phase: t.phase || 'work',
     subject: baseSub,
+    chapterId: t.chapterId,
     heading,
     totalActiveMs,
     totalPausedMs,
@@ -857,7 +1221,7 @@ export function getTodaySubjectMs(
   state: PulseHabitState,
   subId: string,
   dayKey: string,
-  todayKey: string,
+  todayKey: string | boolean = '',
   now = Date.now()
 ): number {
   let ms = state.sessions
@@ -866,7 +1230,10 @@ export function getTodaySubjectMs(
     )
     .reduce((acc, s) => acc + (s.activeMs || 0), 0);
 
-  if (state.activeTimer && dayKey === todayKey) {
+  const effectiveTodayKey =
+    typeof todayKey === 'boolean' ? (todayKey ? dayKey : '') : todayKey;
+
+  if (state.activeTimer && effectiveTodayKey && dayKey === effectiveTodayKey) {
     const m = getTimerMetrics(state, now);
     if (
       m &&
@@ -882,10 +1249,19 @@ export function getTodaySubjectMs(
 export function getDayTotalStudyMs(
   state: PulseHabitState,
   dayKey: string,
-  todayKey: string,
+  todayKey: string | boolean = '',
   now = Date.now()
 ): number {
   return getTodaySubjectMs(state, 'any', dayKey, todayKey, now);
+}
+
+export function getDayStudyMs(
+  state: PulseHabitState,
+  dayKey: string,
+  includeRunning: string | boolean = false,
+  now = Date.now()
+): number {
+  return getDayTotalStudyMs(state, dayKey, includeRunning, now);
 }
 
 export function getDailyStudyGoalProgress(
@@ -1216,12 +1592,14 @@ export function computeStudySummary(
     countdown: '⏳ Countdown',
     stopwatch: '⏱️ Stopwatch',
     manual: '✍️ Manual Entry',
+    fullMock: '📝 Full Mock',
   };
   const modeMap: Record<TimerMode, { ms: number; count: number }> = {
     pomo: { ms: 0, count: 0 },
     countdown: { ms: 0, count: 0 },
     stopwatch: { ms: 0, count: 0 },
     manual: { ms: 0, count: 0 },
+    fullMock: { ms: 0, count: 0 },
   };
   state.sessions.forEach((s) => {
     const m: TimerMode = modeMap[s.mode] ? s.mode : 'pomo';
@@ -1377,6 +1755,7 @@ export interface MockSubjectComputed {
 export interface MockScoreReport {
   totalScore: number;
   maxMarks: number;
+  pct: number;
   totalCorrect: number;
   totalWrong: number;
   totalUnattempted: number;
@@ -1455,9 +1834,12 @@ export function computeMockScore(mock: MockTest, subjects: Subject[] = DEFAULT_S
   const attemptRatePct =
     totalQuestions > 0 ? Math.round((totalAttempted / totalQuestions) * 100) : 0;
 
+  const pct = maxMarks > 0 ? Math.max(0, Math.round((totalScore / maxMarks) * 100)) : 0;
+
   return {
     totalScore,
     maxMarks,
+    pct,
     totalCorrect,
     totalWrong,
     totalUnattempted,
@@ -1942,7 +2324,8 @@ export function computeConsistencyCalendar(
 export function applyChapterUpdate(
   chapter: Chapter,
   patch: Partial<Chapter>,
-  todayKey: string
+  todayKey: string,
+  now = Date.now()
 ): Chapter {
   const nextStatus: ChapterStatus = patch.status ?? chapter.status;
   let nextCompletedOn = chapter.completedOn;
@@ -1961,12 +2344,166 @@ export function applyChapterUpdate(
     nextCompletedOn = todayKey;
   }
 
+  let nextConfidence = chapter.confidence;
+  let nextConfidenceLog = chapter.confidenceLog ? [...chapter.confidenceLog] : [];
+  if (
+    patch.confidence !== undefined &&
+    patch.confidence >= 1 &&
+    patch.confidence <= 5
+  ) {
+    nextConfidence = patch.confidence;
+    nextConfidenceLog = [
+      ...nextConfidenceLog,
+      { dayKey: todayKey, value: patch.confidence },
+    ].slice(-50);
+  }
+
   return {
     ...chapter,
     ...patch,
     status: nextStatus,
     completedOn: nextCompletedOn,
+    ...(nextConfidence !== undefined ? { confidence: nextConfidence } : {}),
+    ...(nextConfidenceLog.length > 0 ? { confidenceLog: nextConfidenceLog } : {}),
+    updatedAt: patch.updatedAt ?? now,
   };
+}
+
+/**
+ * 1.1: Returns total study milliseconds and session count linked to a chapter.
+ */
+export function getChapterStudyMs(
+  state: PulseHabitState,
+  chapterId: string
+): { totalMs: number; sessionCount: number } {
+  let totalMs = 0;
+  let sessionCount = 0;
+  for (const ses of state.sessions) {
+    if (ses.chapterId === chapterId) {
+      totalMs += ses.activeMs || 0;
+      sessionCount += 1;
+    }
+  }
+  return { totalMs, sessionCount };
+}
+
+/**
+ * 1.1: Computes hours-per-chapter breakdown for StatsView.
+ */
+export function computeChapterBreakdown(state: PulseHabitState): Array<{
+  chapterId: string;
+  chapterName: string;
+  subjectId: string;
+  subjectName: string;
+  subjectEmoji: string;
+  color: string;
+  ms: number;
+  studiedMs: number;
+  pct: number;
+  count: number;
+}> {
+  const map: Record<string, { ms: number; count: number }> = {};
+  let totalLinkedMs = 0;
+  for (const ses of state.sessions) {
+    if (!ses.chapterId) continue;
+    const ms = ses.activeMs || 0;
+    if (!map[ses.chapterId]) {
+      map[ses.chapterId] = { ms: 0, count: 0 };
+    }
+    map[ses.chapterId].ms += ms;
+    map[ses.chapterId].count += 1;
+    totalLinkedMs += ms;
+  }
+  const rows: Array<{
+    chapterId: string;
+    chapterName: string;
+    subjectId: string;
+    subjectName: string;
+    subjectEmoji: string;
+    color: string;
+    ms: number;
+    studiedMs: number;
+    pct: number;
+    count: number;
+  }> = [];
+  for (const [chapterId, stat] of Object.entries(map)) {
+    const ch = state.chapters.find((c) => c.id === chapterId);
+    const sub = getSubject(state, ch?.subjectId || '');
+    rows.push({
+      chapterId,
+      chapterName: ch?.name || 'Deleted Chapter',
+      subjectId: ch?.subjectId || sub.id,
+      subjectName: sub.name,
+      subjectEmoji: sub.e,
+      color: sub.color,
+      ms: stat.ms,
+      studiedMs: stat.ms,
+      pct: totalLinkedMs > 0 ? Math.round((stat.ms / totalLinkedMs) * 100) : 0,
+      count: stat.count,
+    });
+  }
+  return rows.sort((a, b) => b.ms - a.ms);
+}
+
+/**
+ * 1.5: Cumulative PYQ stats for a chapter.
+ */
+export function getChapterPYQStats(
+  state: PulseHabitState,
+  chapterId: string
+): { attempted: number; correct: number; accuracyPct: number | null; entries: PYQEntry[] } {
+  const entries = (state.pyq || []).filter((p) => p.chapterId === chapterId);
+  let attempted = 0;
+  let correct = 0;
+  for (const e of entries) {
+    attempted += e.attempted || 0;
+    correct += e.correct || 0;
+  }
+  return {
+    attempted,
+    correct,
+    accuracyPct: attempted > 0 ? Math.round((correct / attempted) * 100) : null,
+    entries,
+  };
+}
+
+/**
+ * 2.3: Adds a tombstone ID with a timestamp so cloud sync deletions beat older edits.
+ */
+export function addTombstone(
+  state: PulseHabitState,
+  id: string,
+  now = Date.now()
+): PulseHabitState {
+  const del = state.del.includes(id) ? state.del : [...state.del, id];
+  const delAt = { ...(state.delAt || {}), [id]: now };
+  return { ...state, del, delAt };
+}
+
+export function removeTombstone(
+  state: PulseHabitState,
+  id: string
+): { del: string[]; delAt: Record<string, number> } {
+  const del = (state.del || []).filter((x) => x !== id);
+  const delAt = { ...(state.delAt || {}) };
+  delete delAt[id];
+  return { del, delAt };
+}
+
+export function pruneExpiredTombstones(
+  delAt: Record<string, number> | undefined,
+  now = Date.now(),
+  ttlMs = 90 * 86400000
+): Record<string, number> {
+  const out: Record<string, number> = {};
+  if (!delAt || typeof delAt !== 'object') return out;
+  const cutoff = now - ttlMs;
+  for (const [id, ts] of Object.entries(delAt)) {
+    if (typeof id === 'string' && id.trim() && Number.isFinite(ts) && Number(ts) >= cutoff) {
+      out[id.trim()] = Number(ts);
+    }
+  }
+  return out;
 }
 
 /**
@@ -1975,7 +2512,8 @@ export function applyChapterUpdate(
 export function addChapterRevisionDate(
   chapter: Chapter,
   date: string,
-  revId?: string
+  revId?: string,
+  now = Date.now()
 ): { chapter: Chapter; added: boolean; duplicate: boolean } {
   const cleanDate = typeof date === 'string' ? date.trim() : '';
   if (!/^\d{4}-\d{2}-\d{2}$/.test(cleanDate)) {
@@ -1989,7 +2527,7 @@ export function addChapterRevisionDate(
     { id: revId || uid('rev'), date: cleanDate, done: false },
   ].sort((a, b) => a.date.localeCompare(b.date));
   return {
-    chapter: { ...chapter, revisions: nextRevs },
+    chapter: { ...chapter, revisions: nextRevs, updatedAt: now },
     added: true,
     duplicate: false,
   };
@@ -2001,7 +2539,8 @@ export function addChapterRevisionDate(
 export function updateChapterRevisionDate(
   chapter: Chapter,
   revId: string,
-  newDate: string
+  newDate: string,
+  now = Date.now()
 ): { chapter: Chapter; updated: boolean; duplicate: boolean } {
   const cleanDate = typeof newDate === 'string' ? newDate.trim() : '';
   if (!/^\d{4}-\d{2}-\d{2}$/.test(cleanDate)) {
@@ -2021,7 +2560,7 @@ export function updateChapterRevisionDate(
     .map((r) => (r.id === revId ? { ...r, date: cleanDate } : r))
     .sort((a, b) => a.date.localeCompare(b.date));
   return {
-    chapter: { ...chapter, revisions: nextRevs },
+    chapter: { ...chapter, revisions: nextRevs, updatedAt: now },
     updated: true,
     duplicate: false,
   };
@@ -2043,7 +2582,10 @@ export type DeletedEntityRecord =
   | { kind: 'session'; item: StudySession; index: number }
   | { kind: 'dday'; item: DDay; index: number }
   | { kind: 'subject'; item: Subject; index: number }
-  | { kind: 'task'; item: DailyTask; index: number };
+  | { kind: 'task'; item: DailyTask; index: number }
+  | { kind: 'mistake'; item: MistakeEntry; index: number }
+  | { kind: 'doubt'; item: Doubt; index: number }
+  | { kind: 'pyq'; item: PYQEntry; index: number };
 
 export function insertAtIndex<T extends { id: string }>(
   list: T[],
@@ -2067,6 +2609,9 @@ export function restoreDeletedItem(
   todayKey = logicalKey(new Date(), currentState.set.dayResetHour ?? 4)
 ): PulseHabitState {
   const nextLog = cloneLog(currentState.log);
+  const { del, delAt } = removeTombstone(currentState, record.item.id);
+  const now = Date.now();
+  const restoredWithTs = { ...record.item, updatedAt: now };
 
   switch (record.kind) {
     case 'habit': {
@@ -2078,9 +2623,10 @@ export function restoreDeletedItem(
       }
       const next: PulseHabitState = {
         ...currentState,
-        habits: insertAtIndex(currentState.habits, record.item, record.index),
+        habits: insertAtIndex(currentState.habits, restoredWithTs as Habit, record.index),
         log: nextLog,
-        del: (currentState.del || []).filter((id) => id !== record.item.id),
+        del,
+        delAt,
       };
       if (isAutoStudyHabit(record.item)) {
         syncStudyHabitsForDays(next, [todayKey], todayKey);
@@ -2091,21 +2637,27 @@ export function restoreDeletedItem(
       return {
         ...currentState,
         log: nextLog,
-        chapters: insertAtIndex(currentState.chapters, record.item, record.index),
+        del,
+        delAt,
+        chapters: insertAtIndex(currentState.chapters, restoredWithTs as Chapter, record.index),
       };
     }
     case 'mock': {
       return {
         ...currentState,
         log: nextLog,
-        mocks: insertAtIndex(currentState.mocks, record.item, record.index),
+        del,
+        delAt,
+        mocks: insertAtIndex(currentState.mocks, restoredWithTs as MockTest, record.index),
       };
     }
     case 'session': {
       const next: PulseHabitState = {
         ...currentState,
         log: nextLog,
-        sessions: insertAtIndex(currentState.sessions, record.item, record.index),
+        del,
+        delAt,
+        sessions: insertAtIndex(currentState.sessions, restoredWithTs as StudySession, record.index),
       };
       syncStudyHabitsForDays(next, [record.item.dayKey, todayKey], todayKey);
       return next;
@@ -2114,21 +2666,54 @@ export function restoreDeletedItem(
       return {
         ...currentState,
         log: nextLog,
-        ddays: insertAtIndex(currentState.ddays, record.item, record.index),
+        del,
+        delAt,
+        ddays: insertAtIndex(currentState.ddays, restoredWithTs as DDay, record.index),
       };
     }
     case 'subject': {
       return {
         ...currentState,
         log: nextLog,
-        subjects: insertAtIndex(currentState.subjects, record.item, record.index),
+        del,
+        delAt,
+        subjects: insertAtIndex(currentState.subjects, restoredWithTs as Subject, record.index),
       };
     }
     case 'task': {
       return {
         ...currentState,
         log: nextLog,
-        tasks: insertAtIndex(currentState.tasks || [], record.item, record.index),
+        del,
+        delAt,
+        tasks: insertAtIndex(currentState.tasks || [], restoredWithTs as DailyTask, record.index),
+      };
+    }
+    case 'mistake': {
+      return {
+        ...currentState,
+        log: nextLog,
+        del,
+        delAt,
+        mistakes: insertAtIndex(currentState.mistakes || [], restoredWithTs as MistakeEntry, record.index),
+      };
+    }
+    case 'doubt': {
+      return {
+        ...currentState,
+        log: nextLog,
+        del,
+        delAt,
+        doubts: insertAtIndex(currentState.doubts || [], restoredWithTs as Doubt, record.index),
+      };
+    }
+    case 'pyq': {
+      return {
+        ...currentState,
+        log: nextLog,
+        del,
+        delAt,
+        pyq: insertAtIndex(currentState.pyq || [], restoredWithTs as PYQEntry, record.index),
       };
     }
   }

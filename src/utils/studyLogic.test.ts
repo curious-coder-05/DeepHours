@@ -1,16 +1,26 @@
 import { describe, it } from 'node:test';
 import assert from 'node:assert/strict';
-import type { Chapter, DailyTask, MockTest } from '../types';
+import type {
+  Chapter,
+  DailyTask,
+  Doubt,
+  MistakeEntry,
+  MockTest,
+  PYQEntry,
+} from '../types';
 import {
   addChapterRevisionDate,
+  addTombstone,
   applyChapterUpdate,
   computeAvgClockTime,
+  computeChapterBreakdown,
   computeConsistencyCalendar,
   computeMockScore,
   computeMocksOverview,
   computeStudySummary,
   createBlankState,
   createDailyTask,
+  getChapterPYQStats,
   getDailyStudyGoalProgress,
   getDayProgress,
   getDueAndOverdueRevisions,
@@ -22,11 +32,30 @@ import {
   moveUnfinishedTasksToToday,
   norm,
   pct,
+  pruneExpiredTombstones,
   restoreDeletedItem,
   shouldFireFiveMinWarning,
   syncStudyHabitsForDays,
   updateChapterRevisionDate,
 } from './studyLogic.ts';
+import {
+  computePaceReport,
+  computeStudyNext,
+  suggestRevisionDates,
+} from './pace.ts';
+import {
+  checkBurnoutStatus,
+  computeConsistencyScore,
+  computeMinDayStreak,
+  computeWeeklyReview,
+  toggleRestDay,
+} from './insights.ts';
+import {
+  SyncBudgetController,
+  mergeEntityCollectionsLWW,
+  mergeStateWithCloudDocs,
+  partitionStateToCloudDocs,
+} from './cloudSync.ts';
 
 describe('Part C: Deep Hours NEET Study & Habit Logger Unit Tests', () => {
   it('1. logicalKey around midnight and the reset hour (04:00 AM)', () => {
@@ -48,7 +77,7 @@ describe('Part C: Deep Hours NEET Study & Habit Logger Unit Tests', () => {
     assert.equal(logicalKey(ts0400, resetHour), '2026-10-23');
   });
 
-  it('2. computeStudySummary average start time with sessions at 22:00 and 00:30 equals 23:15 and never formats xx:60', () => {
+  it('2. computeStudySummary average start time with sessions at 22:00 and 00:30 equals 22:15/23:15 and never formats xx:60', () => {
     const resetHour = 4;
     const s2200 = new Date(2026, 9, 21, 22, 0, 0).getTime();
     const s0030 = new Date(2026, 9, 23, 0, 30, 0).getTime();
@@ -707,4 +736,620 @@ describe('Part C: Deep Hours NEET Study & Habit Logger Unit Tests', () => {
     // Completed earlier task (t2) stays on its original dayKey
     assert.equal(movedAll.tasks.find((t) => t.id === t2.id)?.dayKey, '2026-10-24');
   });
+
+  it('14. Milestone 3.1: Pace calculation (ahead, behind, on track, past exam, zero chapters, no history)', () => {
+    const todayKey = '2026-10-01';
+    const state = createBlankState();
+    state.set.revisionBufferDays = 30;
+    // syllabusEnd = 2026-11-28 minus 30 days = 2026-10-29 -> 28 days (4.0 weeks) left from 2026-10-01
+    state.ddays = [
+      {
+        id: 'dd_neet',
+        title: 'NEET UG',
+        date: '2026-11-28',
+        e: '🎯',
+        color: '#10b981',
+        primary: true,
+      },
+    ];
+
+    // Case A: Zero chapters
+    const zeroRep = computePaceReport(state, todayKey);
+    assert.equal(zeroRep.overall.total, 0);
+    assert.equal(zeroRep.overall.remaining, 0);
+    assert.equal(zeroRep.overall.status, 'ahead');
+
+    // Case B: No history (remaining chapters > 0, 0 completed in last 28 days) -> behind
+    state.chapters = [
+      { id: 'c1', subjectId: 'sub_phy', name: 'Ch 1', status: 'notStarted', revisions: [] },
+      { id: 'c2', subjectId: 'sub_phy', name: 'Ch 2', status: 'notStarted', revisions: [] },
+      { id: 'c3', subjectId: 'sub_phy', name: 'Ch 3', status: 'notStarted', revisions: [] },
+      { id: 'c4', subjectId: 'sub_phy', name: 'Ch 4', status: 'notStarted', revisions: [] },
+    ];
+    const noHistRep = computePaceReport(state, todayKey);
+    assert.equal(noHistRep.overall.remaining, 4);
+    assert.equal(noHistRep.overall.actualPerWeek, 0);
+    assert.equal(noHistRep.overall.requiredPerWeek, 1); // 4 chapters / 4 weeks
+    assert.equal(noHistRep.overall.status, 'behind');
+    assert.equal(noHistRep.overall.behindByChapters, 4);
+
+    // Case C: On track (4 remaining over 4 weeks = 1/wk required; 4 completed in last 28 days = 1/wk actual -> finishes right on syllabusEnd)
+    state.chapters.push(
+      { id: 'c5', subjectId: 'sub_phy', name: 'Ch 5', status: 'completed', completedOn: '2026-09-10', revisions: [] },
+      { id: 'c6', subjectId: 'sub_phy', name: 'Ch 6', status: 'completed', completedOn: '2026-09-15', revisions: [] },
+      { id: 'c7', subjectId: 'sub_phy', name: 'Ch 7', status: 'completed', completedOn: '2026-09-20', revisions: [] },
+      { id: 'c8', subjectId: 'sub_phy', name: 'Ch 8', status: 'completed', completedOn: '2026-09-25', revisions: [] }
+    );
+    const onTrackRep = computePaceReport(state, todayKey);
+    assert.equal(onTrackRep.overall.actualPerWeek, 1);
+    assert.equal(onTrackRep.overall.requiredPerWeek, 1);
+    assert.equal(onTrackRep.overall.status, 'on track');
+
+    // Case D: Ahead (only 2 remaining over 4 weeks, actual pace = 1/wk -> projected finish in 14 days, 14 days before syllabusEnd >= 7)
+    state.chapters[0].status = 'completed';
+    state.chapters[0].completedOn = '2026-09-28';
+    state.chapters[1].status = 'completed';
+    state.chapters[1].completedOn = '2026-09-29';
+    // Now 6 completed in last 28 days (1.5/wk), 2 remaining -> finishes in ~9 days (19 days before syllabusEnd)
+    const aheadRep = computePaceReport(state, todayKey);
+    assert.equal(aheadRep.overall.status, 'ahead');
+    assert.equal(aheadRep.overall.behindByChapters, 0);
+
+    // Case E: Past exam date
+    state.ddays[0].date = '2026-09-15';
+    const pastExamRep = computePaceReport(state, todayKey);
+    assert.equal(pastExamRep.pastExam, true);
+    assert.equal(pastExamRep.overall.status, 'behind');
+  });
+
+  it('15. Milestone 3.2: Study-next scoring, reason badges, and top-3 ordering (+ revision date suggestions)', () => {
+    const todayKey = '2026-10-30';
+    const state = createBlankState();
+    state.chapters = [
+      {
+        id: 'ch_high_conf_done',
+        subjectId: 'sub_phy',
+        name: 'Units & Measurements',
+        status: 'completed',
+        completedOn: '2026-10-29',
+        confidence: 5,
+        revisions: [],
+      },
+      {
+        id: 'ch_urgent',
+        subjectId: 'sub_phy',
+        name: 'Rotational Motion',
+        status: 'inProgress',
+        confidence: 1, // low confidence -> (6-1)/5 = 1.0 * 0.4 = 0.4
+        revisions: [{ id: 'r1', date: '2026-09-01', done: true, doneOn: '2026-09-01' }], // 59 days ago
+      },
+      {
+        id: 'ch_mistakes',
+        subjectId: 'sub_che',
+        name: 'Ionic Equilibrium',
+        status: 'inProgress',
+        confidence: 2,
+        revisions: [],
+      },
+      {
+        id: 'ch_untouched',
+        subjectId: 'sub_bio',
+        name: 'Genetics',
+        status: 'notStarted',
+        confidence: 3,
+        revisions: [],
+      },
+    ];
+    state.mistakes = [
+      { id: 'm1', subjectId: 'sub_che', chapterId: 'ch_mistakes', dayKey: '2026-10-20', reason: 'concept', resolved: false, createdAt: 100 },
+      { id: 'm2', subjectId: 'sub_che', chapterId: 'ch_mistakes', dayKey: '2026-10-21', reason: 'silly', resolved: false, createdAt: 200 },
+      { id: 'm3', subjectId: 'sub_che', chapterId: 'ch_mistakes', dayKey: '2026-10-22', reason: 'time', resolved: false, createdAt: 300 },
+      { id: 'm4', subjectId: 'sub_che', chapterId: 'ch_mistakes', dayKey: '2026-10-23', reason: 'forgot', resolved: false, createdAt: 400 },
+      { id: 'm5_res', subjectId: 'sub_che', chapterId: 'ch_mistakes', dayKey: '2026-10-23', reason: 'guess', resolved: true, createdAt: 500 },
+    ];
+
+    const top3 = computeStudyNext(state, todayKey, 3);
+    assert.equal(top3.length, 3);
+    // ch_mistakes has confidence 2, 4 open mistakes, never touched, not completed -> highest score
+    assert.equal(top3[0].chapterId, 'ch_mistakes');
+    assert.ok(top3[0].reasons.includes('low confidence'));
+    assert.ok(top3[0].reasons.includes('4 open mistakes'));
+
+    // ch_urgent has confidence 1, 59 days since last touched, not completed -> second highest
+    assert.equal(top3[1].chapterId, 'ch_urgent');
+    assert.ok(top3[1].reasons.includes('low confidence'));
+    assert.ok(top3[1].reasons.includes('not touched in 59 days'));
+
+    // ch_high_conf_done is excluded from top 3
+    assert.ok(!top3.some((x) => x.chapterId === 'ch_high_conf_done'));
+
+    // Revision date suggestions (+1, +3, +7, +21)
+    const suggested = suggestRevisionDates(
+      state.chapters[0],
+      '2026-10-30',
+      [1, 3, 7, 21]
+    );
+    assert.deepEqual(suggested, [
+      '2026-10-31',
+      '2026-11-02',
+      '2026-11-06',
+      '2026-11-20',
+    ]);
+  });
+
+  it('16. Milestone 3.3: Minimum-day streak with rest days, monthly pass limits, and incomplete today not breaking streak', () => {
+    const todayKey = '2026-10-10';
+    const state = createBlankState();
+    state.set.targets = {
+      dailyMinutes: {},
+      weeklyMinutes: {},
+      minDayMinutes: 240, // 4 hours
+      restPassesPerMonth: 2,
+    };
+
+    // Studied >= 240m on Oct 7 and Oct 8, Rest day on Oct 9, Today (Oct 10) has 0m studied so far
+    state.sessions = [
+      {
+        id: 's1',
+        subjectId: 'sub_phy',
+        heading: 'Phy',
+        dayKey: '2026-10-07',
+        startTs: 1000,
+        endTs: 1000 + 250 * 60000,
+        activeMs: 250 * 60000,
+        pausedMs: 0,
+        pauseCount: 0,
+        overtimeMs: 0,
+        purity: 100,
+        mode: 'pomo',
+        rating: 5,
+        note: '',
+        updatedAt: 2000,
+      },
+      {
+        id: 's2',
+        subjectId: 'sub_che',
+        heading: 'Che',
+        dayKey: '2026-10-08',
+        startTs: 3000,
+        endTs: 3000 + 240 * 60000,
+        activeMs: 240 * 60000,
+        pausedMs: 0,
+        pauseCount: 0,
+        overtimeMs: 0,
+        purity: 100,
+        mode: 'pomo',
+        rating: 5,
+        note: '',
+        updatedAt: 4000,
+      },
+    ];
+    state.restDays = ['2026-10-09'];
+
+    // Incomplete today (Oct 10) must NOT break the streak of Oct 7, 8, 9 (streak = 3)
+    const streakInfo = computeMinDayStreak(state, todayKey);
+    assert.equal(streakInfo.todayMet, false);
+    assert.equal(streakInfo.streak, 3);
+    assert.equal(streakInfo.passesUsedThisMonth, 1);
+    assert.equal(streakInfo.passesRemainingThisMonth, 1);
+
+    // Toggling today (Oct 10) as a rest day uses the 2nd pass and increments streak to 4
+    const t1 = toggleRestDay(state, todayKey);
+    assert.equal(t1.allowed, true);
+    const streakAfterRest = computeMinDayStreak(t1.nextState, todayKey);
+    assert.equal(streakAfterRest.streak, 4);
+    assert.equal(streakAfterRest.passesRemainingThisMonth, 0);
+
+    // Attempting a 3rd rest day in the same month (2026-10) is blocked by restPassesPerMonth: 2
+    const t2 = toggleRestDay(t1.nextState, '2026-10-06');
+    assert.equal(t2.allowed, false);
+  });
+
+  it('17. Milestone 3.4: Consistency score (0-100) and "-" with missing data', () => {
+    const todayKey = '2026-10-20';
+    const emptyState = createBlankState();
+    const emptyScore = computeConsistencyScore(emptyState, todayKey);
+    assert.equal(emptyScore.hasData, false);
+    assert.equal(emptyScore.totalScore, null);
+    assert.equal(emptyScore.displayLabel, '-');
+
+    // Populate 14 days meeting minDayMinutes (240m), starting at exact 08:00 AM every day (0 std dev = 100 regularity),
+    // 100% purity, and on-time revisions
+    const fullState = createBlankState();
+    fullState.set.targets = {
+      dailyMinutes: {},
+      weeklyMinutes: {},
+      minDayMinutes: 240,
+      restPassesPerMonth: 4,
+    };
+    for (let i = 0; i < 14; i++) {
+      const dk = `2026-10-${String(7 + i).padStart(2, '0')}`;
+      const startTs = new Date(2026, 9, 7 + i, 8, 0, 0).getTime();
+      fullState.sessions.push({
+        id: `s_${i}`,
+        subjectId: 'sub_phy',
+        heading: 'Morning Block',
+        dayKey: dk,
+        startTs,
+        endTs: startTs + 240 * 60000,
+        activeMs: 240 * 60000,
+        pausedMs: 0,
+        pauseCount: 0,
+        overtimeMs: 0,
+        purity: 100,
+        mode: 'pomo',
+        rating: 5,
+        note: '',
+        updatedAt: startTs + 1000,
+      });
+    }
+    fullState.chapters = [
+      {
+        id: 'c_rev',
+        subjectId: 'sub_phy',
+        name: 'Optics',
+        status: 'completed',
+        completedOn: '2026-10-01',
+        revisions: [
+          { id: 'r1', date: '2026-10-10', done: true, doneOn: '2026-10-10' },
+          { id: 'r2', date: '2026-10-15', done: true, doneOn: '2026-10-14' },
+        ],
+      },
+    ];
+
+    const score = computeConsistencyScore(fullState, todayKey);
+    assert.equal(score.hasData, true);
+    assert.equal(score.minDaysScore, 100);
+    assert.equal(score.regularityScore, 100);
+    assert.equal(score.revisionScore, 100);
+    assert.equal(score.purityScore, 100);
+    assert.equal(score.totalScore, 100);
+    assert.equal(score.displayLabel, '100');
+  });
+
+  it('18. Milestone 3.5: Burnout triggers (10+ consecutive days, low energy <= 2, low sleep < 6h, and 3-day dismissal)', () => {
+    const todayKey = '2026-10-20';
+
+    // Trigger 1: 10 consecutive days meeting minDayMinutes with no rest day
+    const s1 = createBlankState();
+    for (let i = 0; i < 10; i++) {
+      const dk = `2026-10-${String(11 + i).padStart(2, '0')}`;
+      s1.sessions.push({
+        id: `b_${i}`,
+        subjectId: 'sub_phy',
+        heading: 'Heavy day',
+        dayKey: dk,
+        startTs: 1000,
+        endTs: 1000 + 250 * 60000,
+        activeMs: 250 * 60000,
+        pausedMs: 0,
+        pauseCount: 0,
+        overtimeMs: 0,
+        purity: 100,
+        mode: 'pomo',
+        rating: 5,
+        note: '',
+        updatedAt: 2000,
+      });
+    }
+    const b1 = checkBurnoutStatus(s1, todayKey);
+    assert.equal(b1.triggered, true);
+    assert.equal(b1.consecutiveHardDays, 10);
+
+    // Dismissal hides the card until burnoutDismissedUntil > todayKey
+    s1.burnoutDismissedUntil = '2026-10-23';
+    assert.equal(checkBurnoutStatus(s1, todayKey).triggered, false);
+
+    // Trigger 2: Last 5 logged energy values average <= 2
+    const s2 = createBlankState();
+    s2.wellbeing = {
+      '2026-10-16': { energy: 2 },
+      '2026-10-17': { energy: 2 },
+      '2026-10-18': { energy: 1 },
+      '2026-10-19': { energy: 2 },
+      '2026-10-20': { energy: 2 },
+    };
+    const b2 = checkBurnoutStatus(s2, todayKey);
+    assert.equal(b2.triggered, true);
+    assert.ok(b2.avgEnergyLast5 !== null && b2.avgEnergyLast5 <= 2);
+
+    // Trigger 3: Last 5 logged sleep values average < 6h
+    const s3 = createBlankState();
+    s3.wellbeing = {
+      '2026-10-16': { sleep: 5.5 },
+      '2026-10-17': { sleep: 5.0 },
+      '2026-10-18': { sleep: 6.0 },
+      '2026-10-19': { sleep: 5.5 },
+      '2026-10-20': { sleep: 5.0 },
+    };
+    const b3 = checkBurnoutStatus(s3, todayKey);
+    assert.equal(b3.triggered, true);
+    assert.ok(b3.avgSleepLast5 !== null && b3.avgSleepLast5 < 6);
+  });
+
+  it('19. Milestone 3.6: norm() loads an OLD state and an OLD backup JSON with zero data loss and initializes all new coaching fields', () => {
+    const oldBackupJson = JSON.stringify({
+      v: 5,
+      habits: [
+        {
+          id: 'h_legacy',
+          name: 'Morning Revision',
+          e: '🌅',
+          c: 'Study',
+          sch: 'daily',
+          days: [0, 1, 2, 3, 4, 5, 6],
+          n: 7,
+          tn: 1,
+          tu: 'times',
+          rem: '07:00',
+          arch: 0,
+          created: '2026-01-01',
+        },
+      ],
+      log: { h_legacy: { '2026-10-01': { v: 1, s: 0 } } },
+      notes: { '2026-10-01': 'Old backup note' },
+      mood: { '2026-10-01': 4 },
+      subjects: [
+        { id: 'sub_phy', name: 'Physics', e: '⚡', color: '#38bdf8', dailyGoalMins: 120, arch: 0, todos: [] },
+      ],
+      sessions: [
+        {
+          id: 'ses_old',
+          subjectId: 'sub_phy',
+          heading: 'Kinematics',
+          dayKey: '2026-10-01',
+          startTs: 1759300000000,
+          endTs: 1759303600000,
+          activeMs: 3600000,
+          pausedMs: 0,
+          pauseCount: 0,
+          overtimeMs: 0,
+          purity: 100,
+          mode: 'pomo',
+          rating: 5,
+          note: 'Legacy session',
+          updatedAt: 1759303600000,
+        },
+      ],
+      ddays: [{ id: 'dd_old', title: 'NEET 2027', date: '2027-05-02', e: '🎯', color: '#10b981' }],
+    });
+
+    const restored = norm(JSON.parse(oldBackupJson));
+    assert.equal(restored.habits.length, 1);
+    assert.equal(restored.habits[0].name, 'Morning Revision');
+    assert.equal(restored.sessions.length, 1);
+    assert.equal(restored.sessions[0].heading, 'Kinematics');
+    assert.equal(restored.notes['2026-10-01'], 'Old backup note');
+    // Default NEET D-Day automatically marked primary when none had primary flag
+    assert.equal(restored.ddays[0].primary, true);
+    // All new Milestone 1 & 2 collections initialized cleanly
+    assert.deepEqual(restored.mistakes, []);
+    assert.deepEqual(restored.doubts, []);
+    assert.deepEqual(restored.pyq, []);
+    assert.deepEqual(restored.restDays, []);
+    assert.deepEqual(restored.wellbeing, {});
+    assert.deepEqual(restored.delAt, {});
+    assert.equal(restored.set.revisionBufferDays, 30);
+    assert.equal(restored.set.fullMockMins, 200);
+    assert.deepEqual(restored.set.revisionSuggestDays, [1, 3, 7, 21]);
+    assert.equal(restored.set.targets?.minDayMinutes, 240);
+    assert.equal(restored.set.targets?.restPassesPerMonth, 4);
+  });
+
+  it('20. Milestone 3.7: Merge/conflict rules (LWW by updatedAt), tombstones beating older edits, and 90-day tombstone pruning', () => {
+    const now = 1762000000000;
+    const localItems = [
+      { id: 'item_keep_local', name: 'Newer Local', updatedAt: now - 1000 },
+      { id: 'item_keep_remote', name: 'Older Local', updatedAt: now - 5000 },
+      { id: 'item_deleted_remotely', name: 'Stale Local Edit', updatedAt: now - 3000 },
+    ];
+    const remoteItems = [
+      { id: 'item_keep_local', name: 'Older Remote', updatedAt: now - 4000 },
+      { id: 'item_keep_remote', name: 'Newer Remote', updatedAt: now - 500 },
+      { id: 'item_deleted_locally', name: 'Stale Remote Edit', updatedAt: now - 6000 },
+    ];
+    const delAt: Record<string, number> = {
+      // Deleted at now - 2000, which is newer than item_deleted_remotely's updatedAt (now - 3000)
+      item_deleted_remotely: now - 2000,
+      // Deleted at now - 2000, which is newer than item_deleted_locally's updatedAt (now - 6000)
+      item_deleted_locally: now - 2000,
+    };
+
+    const merged = mergeEntityCollectionsLWW(localItems, remoteItems, delAt);
+    assert.equal(merged.length, 2);
+    assert.equal(merged.find((x) => x.id === 'item_keep_local')?.name, 'Newer Local');
+    assert.equal(merged.find((x) => x.id === 'item_keep_remote')?.name, 'Newer Remote');
+    assert.equal(merged.find((x) => x.id === 'item_deleted_remotely'), undefined);
+    assert.equal(merged.find((x) => x.id === 'item_deleted_locally'), undefined);
+
+    // 90-day tombstone pruning
+    const ninetyOneDaysAgo = now - 91 * 86400000;
+    const pruned = pruneExpiredTombstones(
+      {
+        old_tomb: ninetyOneDaysAgo,
+        recent_tomb: now - 5 * 86400000,
+      },
+      now
+    );
+    assert.equal(pruned.old_tomb, undefined);
+    assert.equal(pruned.recent_tomb, now - 5 * 86400000);
+
+    // Full partition + mergeStateWithCloudDocs round-trip preserves activeTimer locally and never syncs it
+    const state = createBlankState();
+    state.activeTimer = {
+      status: 'running',
+      mode: 'pomo',
+      phase: 'work',
+      subjectId: 'sub_phy',
+      heading: 'Local Active Timer',
+      startTs: now - 60000,
+      sliceStartTs: now - 60000,
+      pauseStartTs: null,
+      pausedDurationMs: 0,
+      slicePausedMs: 0,
+      pauseCount: 0,
+      slicePauseCount: 0,
+      targetMs: 1500000,
+      chimeFired: false,
+      fiveMinWarnFired: false,
+    };
+    const docs = partitionStateToCloudDocs(state, now);
+    assert.equal('activeTimer' in (docs.metaDocs.core as Record<string, unknown>), false);
+    const roundTrip = mergeStateWithCloudDocs(state, {
+      metaDocs: docs.metaDocs,
+      monthDocs: docs.monthDocs,
+    });
+    assert.equal(roundTrip.activeTimer?.heading, 'Local Active Timer');
+  });
+
+  it('21. Milestone 3.8: restoreDeletedItem for mistake, doubt, and pyq (plus chapter hours & PYQ stats)', () => {
+    let state = createBlankState();
+    const m1: MistakeEntry = {
+      id: 'mis_1',
+      subjectId: 'sub_phy',
+      chapterId: 'ch_1',
+      dayKey: '2026-10-25',
+      reason: 'concept',
+      note: 'Sign convention',
+      resolved: false,
+      createdAt: 1000,
+      updatedAt: 1000,
+    };
+    const d1: Doubt = {
+      id: 'dbt_1',
+      subjectId: 'sub_che',
+      chapterId: 'ch_2',
+      text: 'Why does bond angle decrease here?',
+      createdAt: 2000,
+      resolved: false,
+      updatedAt: 2000,
+    };
+    const p1: PYQEntry = {
+      id: 'pyq_1',
+      chapterId: 'ch_1',
+      dayKey: '2026-10-25',
+      attempted: 40,
+      correct: 34,
+      updatedAt: 3000,
+    };
+
+    state.mistakes = [m1];
+    state.doubts = [d1];
+    state.pyq = [p1];
+
+    // Delete all three with tombstones
+    state = addTombstone(state, 'mis_1', 5000);
+    state = addTombstone(state, 'dbt_1', 5000);
+    state = addTombstone(state, 'pyq_1', 5000);
+    state.mistakes = [];
+    state.doubts = [];
+    state.pyq = [];
+
+    // Restore each one via restoreDeletedItem
+    state = restoreDeletedItem(state, { kind: 'mistake', item: m1, index: 0 });
+    state = restoreDeletedItem(state, { kind: 'doubt', item: d1, index: 0 });
+    state = restoreDeletedItem(state, { kind: 'pyq', item: p1, index: 0 });
+
+    assert.equal(state.mistakes.length, 1);
+    assert.equal(state.mistakes[0].id, 'mis_1');
+    assert.equal(state.delAt?.mis_1, undefined);
+
+    assert.equal(state.doubts.length, 1);
+    assert.equal(state.doubts[0].id, 'dbt_1');
+    assert.equal(state.delAt?.dbt_1, undefined);
+
+    assert.equal(state.pyq.length, 1);
+    assert.equal(state.pyq[0].id, 'pyq_1');
+    assert.equal(state.delAt?.pyq_1, undefined);
+
+    // Verify PYQ stats & chapter hours breakdown
+    const pyqStats = getChapterPYQStats(state, 'ch_1');
+    assert.equal(pyqStats.attempted, 40);
+    assert.equal(pyqStats.correct, 34);
+    assert.equal(pyqStats.accuracyPct, 85);
+
+    state.chapters = [
+      { id: 'ch_1', subjectId: 'sub_phy', name: 'Ray Optics', status: 'inProgress', revisions: [] },
+    ];
+    state.sessions = [
+      {
+        id: 'ses_ch1',
+        subjectId: 'sub_phy',
+        chapterId: 'ch_1',
+        heading: 'Ray Optics',
+        dayKey: '2026-10-25',
+        startTs: 1000,
+        endTs: 3601000,
+        activeMs: 3600000,
+        pausedMs: 0,
+        pauseCount: 0,
+        overtimeMs: 0,
+        purity: 100,
+        mode: 'pomo',
+        rating: 5,
+        note: '',
+        updatedAt: 3601000,
+      },
+    ];
+    const chapBreakdown = computeChapterBreakdown(state);
+    assert.equal(chapBreakdown.length, 1);
+    assert.equal(chapBreakdown[0].chapterId, 'ch_1');
+    assert.equal(chapBreakdown[0].studiedMs, 3600000);
+
+    // Weekly Review computation smoke check
+    const review = computeWeeklyReview(state, '2026-10-19', '2026-10-25');
+    assert.equal(review.totalStudiedMs, 3600000);
+    assert.equal(review.mistakesAdded, 1);
+  });
+
+  it('22. Milestone 3.9: SyncBudgetController debounce (60s), coalescing, 5-min minimum interval, 150/day cap, and pause on quota error with fake timers', async (t) => {
+    t.mock.timers.enable({ apis: ['Date', 'setTimeout'] });
+    t.mock.timers.setTime(new Date('2026-10-30T10:00:00Z').getTime());
+
+    let flushCalls = 0;
+    const ctrl = new SyncBudgetController(async () => {
+      flushCalls += 1;
+    });
+
+    // Coalesce multiple rapid edits into a single flush after 60s
+    ctrl.markDirty();
+    t.mock.timers.tick(20_000);
+    ctrl.markDirty();
+    t.mock.timers.tick(30_000);
+    assert.equal(flushCalls, 0);
+
+    // Advance past 60s from the last markDirty -> triggers 1st flush
+    t.mock.timers.tick(31_000);
+    await Promise.resolve();
+    assert.equal(flushCalls, 1);
+
+    // Marking dirty again 30s later must wait until the 5-minute (300_000ms) minimum interval since lastFlushTs
+    ctrl.markDirty();
+    t.mock.timers.tick(65_000);
+    await Promise.resolve();
+    assert.equal(flushCalls, 1); // still throttled by 5m min interval
+
+    t.mock.timers.tick(240_000);
+    await Promise.resolve();
+    assert.equal(flushCalls, 2);
+
+    // Daily write budget cap at 150 writes/day
+    assert.equal(ctrl.canWrite(100), true);
+    ctrl.recordWrites(150);
+    assert.equal(ctrl.getTodayWrites(), 150);
+    assert.equal(ctrl.isPausedForToday(), true);
+    assert.equal(ctrl.canWrite(1), false);
+
+    // Advancing to the next UTC day resets the daily write counter and unpauses
+    t.mock.timers.tick(24 * 3600 * 1000);
+    assert.equal(ctrl.getTodayWrites(), 0);
+    assert.equal(ctrl.isPausedForToday(), false);
+
+    // Quota error immediately pauses sync until tomorrow
+    ctrl.pauseForQuotaError();
+    assert.equal(ctrl.isPausedForToday(), true);
+
+    ctrl.dispose();
+  });
 });
+

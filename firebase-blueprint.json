@@ -1,0 +1,28 @@
+{
+  "entities": {
+    "CloudDocPayload": {
+      "title": "CloudDocPayload",
+      "description": "Partitioned user study state document (meta/index, meta/core, meta/habits, meta/syllabus, meta/mocks, meta/mistakes, meta/doubts, meta/pyq, meta/tasks, or months/YYYY-MM)",
+      "type": "object",
+      "properties": {
+        "updatedAt": {
+          "type": "number",
+          "description": "Last modification epoch timestamp in milliseconds"
+        },
+        "v": {
+          "type": "number",
+          "description": "Schema version"
+        }
+      },
+      "required": ["updatedAt"]
+    }
+  },
+  "firestore": {
+    "/users/{userId}/{document=**}": {
+      "schema": {
+        "$ref": "#/entities/CloudDocPayload"
+      },
+      "description": "Strict per-user partitioned study documents under /users/{uid}/meta/* and /users/{uid}/months/*"
+    }
+  }
+}

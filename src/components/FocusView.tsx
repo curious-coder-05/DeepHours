@@ -19,17 +19,19 @@ interface FocusViewProps {
   deskMode: boolean;
   onToggleDeskMode: () => void;
   onOpenPiP: () => void;
-  onSwitchTopic: (subjectId: string, heading: string) => void;
+  onSwitchTopic: (subjectId: string, heading: string, chapterId?: string) => void;
   onSetMode: (mode: ActiveTimerMode) => void;
   onStartTimer: (
     subjectId: string,
     heading: string,
     mode: ActiveTimerMode,
-    customTargetMins?: number
+    customTargetMins?: number,
+    chapterId?: string
   ) => void;
   onExtendTarget?: (extraMins: number) => void;
   onTogglePause: () => void;
   onTogglePomoPhase: () => void;
+  onNextMockSection?: () => void;
   onStopAndReflect: () => void;
   onOpenTimerConfig: () => void;
   onSetSoundscape: (mode: SoundscapeMode) => void;
@@ -37,7 +39,7 @@ interface FocusViewProps {
   onAddTodo: (text: string) => void;
   onToggleTodo: (todoId: string) => void;
   onDeleteTodo: (todoId: string) => void;
-  onOpenManualSession: (defaultSubjectId?: string) => void;
+  onOpenManualSession: (defaultSubjectId?: string, defaultChapterId?: string) => void;
   onEditSession: (sessionId: string) => void;
 }
 
@@ -54,6 +56,7 @@ export const FocusView: React.FC<FocusViewProps> = ({
   onExtendTarget,
   onTogglePause,
   onTogglePomoPhase,
+  onNextMockSection,
   onStopAndReflect,
   onOpenTimerConfig,
   onSetSoundscape,
@@ -72,6 +75,9 @@ export const FocusView: React.FC<FocusViewProps> = ({
   const [selectedSubjectId, setSelectedSubjectId] = useState<string>(
     t?.subjectId || defaultSubId
   );
+  const [selectedChapterId, setSelectedChapterId] = useState<string>(
+    t?.chapterId || ''
+  );
   const [sessionHeading, setSessionHeading] = useState<string>(
     t?.heading || ''
   );
@@ -89,6 +95,12 @@ export const FocusView: React.FC<FocusViewProps> = ({
       setSelectedSubjectId(t.subjectId);
     }
   }, [t?.subjectId]);
+
+  useEffect(() => {
+    if (t?.chapterId !== undefined) {
+      setSelectedChapterId(t.chapterId || '');
+    }
+  }, [t?.chapterId]);
 
   useEffect(() => {
     if (t?.heading) {
@@ -112,9 +124,16 @@ export const FocusView: React.FC<FocusViewProps> = ({
 
   const mode: ActiveTimerMode = t ? t.mode : selectedMode;
   const activeSubject = getSubject(state, t ? t.subjectId : selectedSubjectId);
+  const subjectChapters = state.chapters.filter(
+    (ch) => ch.subjectId === (t ? t.subjectId : selectedSubjectId)
+  );
+  const selectedChapterObj = state.chapters.find(
+    (ch) => ch.id === (t ? t.chapterId : selectedChapterId)
+  );
   const activeHeading = (
     t?.heading ||
     sessionHeading ||
+    (mode === 'fullMock' ? 'Full Mock' : selectedChapterObj?.name) ||
     `${activeSubject.name} Study Session`
   ).trim();
   const accentColor = activeSubject.color || '#3b82f6';
@@ -133,9 +152,18 @@ export const FocusView: React.FC<FocusViewProps> = ({
       } else {
         onStartTimer(
           selectedSubjectId,
-          sessionHeading.trim() || `${activeSubject.name} Study Session`,
+          mode === 'fullMock'
+            ? 'Full Mock'
+            : sessionHeading.trim() ||
+                selectedChapterObj?.name ||
+                `${activeSubject.name} Study Session`,
           mode,
-          mode === 'countdown' ? customCountdownMins : undefined
+          mode === 'countdown'
+            ? customCountdownMins
+            : mode === 'fullMock'
+              ? state.set.fullMockMins || 200
+              : undefined,
+          selectedChapterId || undefined
         );
       }
     };
@@ -147,8 +175,11 @@ export const FocusView: React.FC<FocusViewProps> = ({
     mode,
     onStartTimer,
     onTogglePause,
+    selectedChapterId,
+    selectedChapterObj?.name,
     selectedSubjectId,
     sessionHeading,
+    state.set.fullMockMins,
     t,
   ]);
 
@@ -160,7 +191,9 @@ export const FocusView: React.FC<FocusViewProps> = ({
       ? (state.set.pomoWork || 25) * 60000
       : mode === 'countdown'
         ? customCountdownMins * 60000
-        : 0;
+        : mode === 'fullMock'
+          ? (state.set.fullMockMins || 200) * 60000
+          : 0;
   const clockVal = fmtHMS(clockMs);
   const aesthetic = state.set.timerAesthetic || 'neon';
   const totalSec = Math.max(0, Math.floor(clockMs / 1000));
@@ -194,10 +227,14 @@ export const FocusView: React.FC<FocusViewProps> = ({
   const handleHeadingApply = (e: React.FormEvent) => {
     e.preventDefault();
     const sub = getSubject(state, selectedSubjectId);
-    const clean = sessionHeading.trim() || `${sub.name} Study Session`;
+    const chap = selectedChapterId
+      ? state.chapters.find((c) => c.id === selectedChapterId)
+      : undefined;
+    const clean =
+      sessionHeading.trim() || chap?.name || `${sub.name} Study Session`;
     setSessionHeading(clean);
     if (t) {
-      onSwitchTopic(selectedSubjectId, clean);
+      onSwitchTopic(selectedSubjectId, clean, selectedChapterId || undefined);
     }
   };
 
@@ -227,7 +264,7 @@ export const FocusView: React.FC<FocusViewProps> = ({
         </div>
       </div>
 
-      {/* Subject Picker + Manual Session Heading Input + Mid-Session Slice Switcher */}
+      {/* Subject Picker + Chapter Dropdown + Manual Session Heading Input + Mid-Session Slice Switcher */}
       <div className="card hide-desk" style={{ padding: '12px 14px' }}>
         <small style={{ display: 'block', marginBottom: '6px', fontWeight: 700 }}>
           Subject {t ? '(tap another subject to slice & switch)' : ''}:
@@ -243,6 +280,7 @@ export const FocusView: React.FC<FocusViewProps> = ({
                 style={{ '--sc': sub.color } as React.CSSProperties}
                 onClick={() => {
                   setSelectedSubjectId(sub.id);
+                  setSelectedChapterId('');
                   if (t && t.subjectId !== sub.id) {
                     const nextHeading =
                       sessionHeading.trim() &&
@@ -250,7 +288,7 @@ export const FocusView: React.FC<FocusViewProps> = ({
                         ? sessionHeading.trim()
                         : `${sub.name} Study Session`;
                     setSessionHeading(nextHeading);
-                    onSwitchTopic(sub.id, nextHeading);
+                    onSwitchTopic(sub.id, nextHeading, undefined);
                   }
                 }}
               >
@@ -261,6 +299,41 @@ export const FocusView: React.FC<FocusViewProps> = ({
           })}
         </div>
 
+        {/* 1.1 Optional Chapter Dropdown Filtered by Selected Subject */}
+        {subjectChapters.length > 0 && (
+          <div style={{ marginBottom: '10px' }}>
+            <label style={{ marginTop: 0, fontSize: '12px' }}>
+              Link Syllabus Chapter (Optional)
+              <select
+                value={selectedChapterId}
+                onChange={(e) => {
+                  const nextChapId = e.target.value;
+                  setSelectedChapterId(nextChapId);
+                  const chap = state.chapters.find((c) => c.id === nextChapId);
+                  if (chap && !sessionHeading.trim()) {
+                    setSessionHeading(chap.name);
+                  }
+                  if (t) {
+                    onSwitchTopic(
+                      selectedSubjectId,
+                      sessionHeading.trim() || chap?.name || `${activeSubject.name} Study Session`,
+                      nextChapId || undefined
+                    );
+                  }
+                }}
+                style={{ marginTop: '4px' }}
+              >
+                <option value="">— None / General {activeSubject.name} —</option>
+                {subjectChapters.map((ch) => (
+                  <option key={ch.id} value={ch.id}>
+                    {ch.name}
+                  </option>
+                ))}
+              </select>
+            </label>
+          </div>
+        )}
+
         <form onSubmit={handleHeadingApply}>
           <label style={{ marginTop: 0 }}>
             Session Heading (What are you studying right now?)
@@ -270,12 +343,13 @@ export const FocusView: React.FC<FocusViewProps> = ({
                 id="sessionHeadingInput"
                 value={sessionHeading}
                 onChange={(e) => setSessionHeading(e.target.value)}
-                placeholder={`e.g., ${activeSubject.name} — NCERT Ch 3 & PYQs...`}
+                placeholder={`e.g., ${selectedChapterObj?.name || `${activeSubject.name} — NCERT & PYQs...`}`}
                 maxLength={90}
               />
               {t &&
                 ((sessionHeading.trim() && sessionHeading.trim() !== t.heading) ||
-                  selectedSubjectId !== t.subjectId) && (
+                  selectedSubjectId !== t.subjectId ||
+                  (selectedChapterId || undefined) !== t.chapterId) && (
                   <button type="submit" className="s pri" style={{ whiteSpace: 'nowrap' }}>
                     Switch Topic
                   </button>
@@ -347,13 +421,14 @@ export const FocusView: React.FC<FocusViewProps> = ({
           </span>
         </div>
 
-        {/* Mode Tabs: Pomodoro, Countdown, Stopwatch */}
+        {/* Mode Tabs: Pomodoro, Countdown, Stopwatch, Full Mock (1.14) */}
         <div className="chips wrap" style={{ justifyContent: 'center', margin: '6px 0' }}>
           {(
             [
               ['pomo', '🍅 Pomodoro'],
               ['countdown', '⏳ Countdown'],
               ['stopwatch', '⏱️ Stopwatch'],
+              ['fullMock', '📝 Full Mock'],
             ] as const
           ).map(([k, lbl]) => (
             <button
@@ -369,6 +444,20 @@ export const FocusView: React.FC<FocusViewProps> = ({
             </button>
           ))}
         </div>
+
+        {!t && mode === 'fullMock' && (
+          <small
+            style={{
+              display: 'block',
+              textAlign: 'center',
+              color: '#a5b4fc',
+              fontWeight: 700,
+              marginBottom: '4px',
+            }}
+          >
+            NEET Full Mock Exam Mode ({state.set.fullMockMins || 200}m countdown + section split tracker)
+          </small>
+        )}
 
         {!t && mode === 'countdown' && (
           <div
@@ -601,10 +690,36 @@ export const FocusView: React.FC<FocusViewProps> = ({
           </div>
         )}
 
+        {/* 1.14 Full Mock Recorded Section Splits */}
+        {t && t.mode === 'fullMock' && Array.isArray(t.mockSections) && t.mockSections.length > 0 && (
+          <div
+            style={{
+              margin: '6px auto',
+              padding: '6px 10px',
+              borderRadius: '10px',
+              background: 'var(--c2)',
+              display: 'flex',
+              gap: '6px',
+              flexWrap: 'wrap',
+              justifyContent: 'center',
+            }}
+          >
+            {t.mockSections.map((sec, i) => (
+              <span
+                key={i}
+                className="pill mono"
+                style={{ fontSize: '11px', padding: '2px 8px', borderColor: '#6366f1' }}
+              >
+                {sec.label}: {fmtMS(sec.elapsedMs)}
+              </span>
+            ))}
+          </div>
+        )}
+
         {/* Primary Controls */}
         <div
           className="row"
-          style={{ justifyContent: 'center', gap: '10px', marginTop: '8px' }}
+          style={{ justifyContent: 'center', gap: '10px', marginTop: '8px', flexWrap: 'wrap' }}
         >
           {!t ? (
             <button
@@ -614,9 +729,18 @@ export const FocusView: React.FC<FocusViewProps> = ({
               onClick={() =>
                 onStartTimer(
                   selectedSubjectId,
-                  sessionHeading.trim() || `${activeSubject.name} Study Session`,
+                  mode === 'fullMock'
+                    ? 'Full Mock'
+                    : sessionHeading.trim() ||
+                        selectedChapterObj?.name ||
+                        `${activeSubject.name} Study Session`,
                   mode,
-                  mode === 'countdown' ? customCountdownMins : undefined
+                  mode === 'countdown'
+                    ? customCountdownMins
+                    : mode === 'fullMock'
+                      ? state.set.fullMockMins || 200
+                      : undefined,
+                  selectedChapterId || undefined
                 )
               }
             >
@@ -625,7 +749,9 @@ export const FocusView: React.FC<FocusViewProps> = ({
                 ? 'Stopwatch'
                 : mode === 'countdown'
                   ? 'Countdown'
-                  : 'Pomodoro'}
+                  : mode === 'fullMock'
+                    ? `Full Mock (${state.set.fullMockMins || 200}m)`
+                    : 'Pomodoro'}
             </button>
           ) : (
             <>
@@ -645,6 +771,16 @@ export const FocusView: React.FC<FocusViewProps> = ({
                   onClick={onTogglePomoPhase}
                 >
                   {t.phase === 'work' ? '☕ Break' : '🔥 Work'}
+                </button>
+              )}
+              {t.mode === 'fullMock' && onNextMockSection && (
+                <button
+                  type="button"
+                  className="s pri"
+                  style={{ padding: '14px' }}
+                  onClick={onNextMockSection}
+                >
+                  ⏭ Next section
                 </button>
               )}
               <button

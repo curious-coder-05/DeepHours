@@ -1,4 +1,4 @@
-import React, { useRef, useState } from 'react';
+import React, { useMemo, useRef, useState } from 'react';
 import type { ActiveTimerMode, AppTab, DailyTask, Habit, HabitCategory, PulseHabitState } from '../types';
 import {
   CATS,
@@ -27,6 +27,13 @@ import {
   wkC,
   xp,
 } from '../utils/studyLogic';
+import { computePaceReport, computeStudyNext } from '../utils/pace';
+import {
+  checkBurnoutStatus,
+  computeConsistencyScore,
+  computeMinDayStreak,
+  getSubjectTargetProgress,
+} from '../utils/insights';
 
 interface TodayViewProps {
   state: PulseHabitState;
@@ -42,10 +49,15 @@ interface TodayViewProps {
   onAddStarter: (index: number) => void;
   onNewHabit: () => void;
   onEditHabit: (id: string) => void;
-  onQuickStartSession: (subjectId: string, heading: string, mode: ActiveTimerMode) => void;
+  onQuickStartSession: (
+    subjectId: string,
+    heading: string,
+    mode: ActiveTimerMode,
+    chapterId?: string
+  ) => void;
   onNewDDay: () => void;
   onEditDDay: (id: string) => void;
-  onOpenManualSession: (defaultSubjectId?: string) => void;
+  onOpenManualSession: (defaultSubjectId?: string, defaultChapterId?: string) => void;
   onDeleteSession: (id: string) => void;
   onCompleteRevision: (chapterId: string, revId: string) => void;
   onRescheduleRevision: (chapterId: string, revId: string, newDate: string) => void;
@@ -58,6 +70,12 @@ interface TodayViewProps {
   onMoveAllUnfinishedToToday: () => void;
   onSetMood: (val: number) => void;
   onSetNote: (txt: string) => void;
+  onToggleRestDay?: (dayKey: string) => void;
+  onUpdateWellbeing?: (
+    dayKey: string,
+    patch: { sleep?: number; energy?: 1 | 2 | 3 | 4 | 5 }
+  ) => void;
+  onDismissBurnout?: () => void;
 }
 
 export const TodayView: React.FC<TodayViewProps> = ({
@@ -90,16 +108,41 @@ export const TodayView: React.FC<TodayViewProps> = ({
   onMoveAllUnfinishedToToday,
   onSetMood,
   onSetNote,
+  onToggleRestDay,
+  onUpdateWellbeing,
+  onDismissBurnout,
 }) => {
   const subjects = state.subjects.filter((s) => !s.arch);
   const [tipOffset, setTipOffset] = useState(0);
   const [quickSubjectId, setQuickSubjectId] = useState<string>(
     subjects[0]?.id || 'sub_phy'
   );
+  const [quickChapterId, setQuickChapterId] = useState<string>('');
   const [quickHeading, setQuickHeading] = useState('');
   const [reschedulingRevId, setReschedulingRevId] = useState<string | null>(null);
   const [rescheduleDateDraft, setRescheduleDateDraft] = useState<string>(
     addD(todayKey, 1)
+  );
+
+  // Coaching calculations (1.2, 1.7, 1.8, 1.9, 1.10, 1.12)
+  const paceReport = useMemo(() => computePaceReport(state, todayKey), [state, todayKey]);
+  const studyNextTop3 = useMemo(() => computeStudyNext(state, todayKey, 3), [state, todayKey]);
+  const minStreakInfo = useMemo(() => computeMinDayStreak(state, todayKey), [state, todayKey]);
+  const consistencyInfo = useMemo(
+    () => computeConsistencyScore(state, todayKey),
+    [state, todayKey]
+  );
+  const burnoutStatus = useMemo(
+    () => checkBurnoutStatus(state, todayKey),
+    [state, todayKey]
+  );
+  const subjectTargets = useMemo(
+    () => getSubjectTargetProgress(state, sel),
+    [state, sel]
+  );
+  const quickSubjectChapters = useMemo(
+    () => state.chapters.filter((ch) => ch.subjectId === quickSubjectId),
+    [state.chapters, quickSubjectId]
   );
 
   // Daily Tasks UI state
@@ -303,7 +346,7 @@ export const TodayView: React.FC<TodayViewProps> = ({
           </small>
           <h1>Deep Hours</h1>
         </div>
-        <div className="row">
+        <div className="row" style={{ flexWrap: 'wrap', justifyContent: 'flex-end' }}>
           {activeMetrics && (
             <button
               type="button"
@@ -312,6 +355,29 @@ export const TodayView: React.FC<TodayViewProps> = ({
             >
               ⏱️ {fmtMS(activeMetrics.totalActiveMs)}
             </button>
+          )}
+          {/* 1.9 Minimum-day streak chip */}
+          <span
+            className="pill mono"
+            style={{
+              borderColor: minStreakInfo.todayMetMinimum || minStreakInfo.todayIsRestDay
+                ? '#10b981'
+                : 'var(--bd)',
+              color: minStreakInfo.todayMetMinimum || minStreakInfo.todayIsRestDay
+                ? '#10b981'
+                : 'var(--tx)',
+            }}
+            title={`Minimum study day streak (≥${minStreakInfo.minDayMinutes}m/day or Rest Pass)`}
+          >
+            🔥 {minStreakInfo.streak}d min-streak
+          </span>
+          {consistencyInfo.total !== null && (
+            <span
+              className="pill mono"
+              title="14-day Consistency Score (0-100)"
+            >
+              ⚡ {consistencyInfo.displayLabel}
+            </span>
           )}
           <span className="pill">
             Lv {level} · {totalXp} XP
@@ -359,7 +425,7 @@ export const TodayView: React.FC<TodayViewProps> = ({
                 <span className="dday-badge">{badge}</span>
                 <div className="g">
                   <b style={{ fontSize: '13px' }}>
-                    {d.e || '🎯'} {d.title}
+                    {d.e || '🎯'} {d.title}{d.primary ? ' ★' : ''}
                   </b>
                   <small style={{ fontSize: '11px' }}>{d.date}</small>
                 </div>
@@ -376,6 +442,87 @@ export const TodayView: React.FC<TodayViewProps> = ({
           + D-Day
         </button>
       </div>
+
+      {/* 1.2 Compact Pace Line + 1.9 Rest Day Pass Button */}
+      <div
+        className="row sp wrap"
+        style={{
+          padding: '6px 11px',
+          marginBottom: '8px',
+          borderRadius: '12px',
+          background: 'var(--c1)',
+          border: '1px solid var(--bd)',
+          gap: '8px',
+        }}
+      >
+        <small
+          style={{
+            fontWeight: 700,
+            color:
+              paceReport.status === 'behind'
+                ? '#fca5a5'
+                : paceReport.status === 'ahead' || paceReport.status === 'completed'
+                  ? '#6ee7b7'
+                  : 'var(--tx)',
+          }}
+        >
+          🧭 {paceReport.compactSummary}
+        </small>
+        {onToggleRestDay && (
+          <button
+            type="button"
+            className="s"
+            style={{
+              padding: '3px 9px',
+              fontSize: '11px',
+              borderColor: (state.restDays || []).includes(sel) ? '#10b981' : 'var(--bd)',
+              color: (state.restDays || []).includes(sel) ? '#10b981' : 'var(--mu)',
+            }}
+            onClick={() => onToggleRestDay(sel)}
+            title="Mark as a Rest Day so your minimum-day streak stays protected"
+          >
+            {(state.restDays || []).includes(sel)
+              ? '🛌 Rest Day Active'
+              : `🛌 Rest Pass (${minStreakInfo.restPassesRemaining}/${minStreakInfo.restPassesPerMonth} left)`}
+          </button>
+        )}
+      </div>
+
+      {/* 1.12 Gentle Dismissible Burnout Check Card */}
+      {burnoutStatus.visible && (
+        <div
+          className="card"
+          style={{
+            borderLeft: '4px solid #f59e0b',
+            background: 'color-mix(in srgb, #f59e0b 10%, var(--c1))',
+            padding: '10px 14px',
+          }}
+        >
+          <div className="row sp" style={{ alignItems: 'flex-start', gap: '8px' }}>
+            <div>
+              <b style={{ fontSize: '13.5px', color: '#fde68a' }}>
+                🌿 Gentle Pace &amp; Wellbeing Check-In
+              </b>
+              <small style={{ display: 'block', marginTop: '3px', color: 'var(--tx)', lineHeight: 1.4 }}>
+                {burnoutStatus.message}
+              </small>
+              <small style={{ display: 'block', marginTop: '4px', color: 'var(--mu)', fontSize: '11px' }}>
+                {burnoutStatus.supportNote}
+              </small>
+            </div>
+            {onDismissBurnout && (
+              <button
+                type="button"
+                className="s"
+                style={{ padding: '4px 9px', fontSize: '11px', whiteSpace: 'nowrap' }}
+                onClick={onDismissBurnout}
+              >
+                Dismiss (3d)
+              </button>
+            )}
+          </div>
+        </div>
+      )}
 
       {/* 7-Day Week Strip */}
       <div className="wk">
@@ -502,13 +649,123 @@ export const TodayView: React.FC<TodayViewProps> = ({
             type="button"
             className="stat-box"
             style={{ cursor: 'pointer', textAlign: 'left' }}
-            onClick={() => onOpenManualSession(quickSubjectId)}
+            onClick={() => onOpenManualSession(quickSubjectId, quickChapterId || undefined)}
           >
             <small>+ Log Hours</small>
             <b style={{ color: 'var(--ac)', fontSize: '13px' }}>Manual +</b>
           </button>
         </div>
       </div>
+
+      {/* 1.8 Subject Daily Target-vs-Actual Bars (Compact) & 1.7 Study Next Top 3 */}
+      {(subjectTargets.some((r) => r.dailyTargetMins > 0 || r.dailyActualMins > 0) ||
+        studyNextTop3.length > 0) && (
+        <div className="card" style={{ padding: '12px 14px' }}>
+          {subjectTargets.some((r) => r.dailyTargetMins > 0 || r.dailyActualMins > 0) && (
+            <div style={{ marginBottom: studyNextTop3.length > 0 ? '12px' : 0 }}>
+              <div className="row sp" style={{ marginBottom: '6px' }}>
+                <small style={{ fontWeight: 800, textTransform: 'uppercase', letterSpacing: '0.04em' }}>
+                  🎯 Subject Targets ({sel === todayKey ? 'Today' : sel})
+                </small>
+                <small className="mono">
+                  Min Day: {minStreakInfo.todayStudiedMins}/{minStreakInfo.minDayMinutes}m
+                </small>
+              </div>
+              <div
+                style={{
+                  display: 'grid',
+                  gridTemplateColumns: 'repeat(auto-fit, minmax(125px, 1fr))',
+                  gap: '8px',
+                }}
+              >
+                {subjectTargets.map((row) => (
+                  <div
+                    key={row.subjectId}
+                    style={{
+                      background: 'var(--c2)',
+                      padding: '6px 9px',
+                      borderRadius: '10px',
+                      borderLeft: `3px solid ${row.color}`,
+                    }}
+                  >
+                    <div className="row sp" style={{ fontSize: '11.5px' }}>
+                      <b>
+                        {row.subjectEmoji} {row.subjectName}
+                      </b>
+                      <span className="mono" style={{ fontSize: '11px' }}>
+                        {row.dailyActualMins}m
+                        {row.dailyTargetMins > 0 ? `/${row.dailyTargetMins}m` : ''}
+                      </span>
+                    </div>
+                    {row.dailyTargetMins > 0 && (
+                      <div className="pbar" style={{ height: '4px', marginTop: '4px' }}>
+                        <i style={{ width: `${row.dailyPct}%`, background: row.color }} />
+                      </div>
+                    )}
+                  </div>
+                ))}
+              </div>
+            </div>
+          )}
+
+          {studyNextTop3.length > 0 && (
+            <div>
+              <div className="row sp" style={{ marginBottom: '6px' }}>
+                <small style={{ fontWeight: 800, textTransform: 'uppercase', letterSpacing: '0.04em' }}>
+                  🧭 Study Next (Top 3 Chapters)
+                </small>
+                <button
+                  type="button"
+                  className="s"
+                  style={{ padding: '2px 8px', fontSize: '11px' }}
+                  onClick={() => onSwitchTab('prep')}
+                >
+                  Syllabus →
+                </button>
+              </div>
+              <div style={{ display: 'grid', gap: '6px' }}>
+                {studyNextTop3.map((item, idx) => (
+                  <div
+                    key={item.chapter.id}
+                    className="row sp"
+                    style={{
+                      padding: '6px 9px',
+                      borderRadius: '10px',
+                      background: 'var(--c2)',
+                      borderLeft: `3px solid ${item.subjectColor}`,
+                      gap: '8px',
+                    }}
+                  >
+                    <div style={{ minWidth: 0, flex: 1 }}>
+                      <b style={{ fontSize: '12.5px', display: 'block' }}>
+                        {idx + 1}. {item.subjectEmoji} {item.chapter.name}
+                      </b>
+                      <small style={{ fontSize: '11px', color: 'var(--mu)' }}>
+                        {item.reasons.join(' • ')}
+                      </small>
+                    </div>
+                    <button
+                      type="button"
+                      className="s pri"
+                      style={{ padding: '4px 9px', fontSize: '11px', whiteSpace: 'nowrap' }}
+                      onClick={() =>
+                        onQuickStartSession(
+                          item.chapter.subjectId,
+                          item.chapter.name,
+                          'pomo',
+                          item.chapter.id
+                        )
+                      }
+                    >
+                      ▶ Focus
+                    </button>
+                  </div>
+                ))}
+              </div>
+            </div>
+          )}
+        </div>
+      )}
 
       {/* Daily Tasks Card (directly under Ring card and above Revisions Due) */}
       <div className="card" id="dailyTasksCard">
@@ -1191,7 +1448,10 @@ export const TodayView: React.FC<TodayViewProps> = ({
               key={sub.id}
               className={`sub-chip ${quickSubjectId === sub.id ? 'active' : ''}`}
               style={{ '--sc': sub.color } as React.CSSProperties}
-              onClick={() => setQuickSubjectId(sub.id)}
+              onClick={() => {
+                setQuickSubjectId(sub.id);
+                setQuickChapterId('');
+              }}
             >
               <i className="dot" style={{ '--sc': sub.color } as React.CSSProperties} />
               {sub.e} {sub.name}
@@ -1199,11 +1459,28 @@ export const TodayView: React.FC<TodayViewProps> = ({
           ))}
         </div>
 
+        {/* 1.1 Optional Chapter Dropdown Filtered by Selected Subject */}
+        {quickSubjectChapters.length > 0 && (
+          <select
+            value={quickChapterId}
+            onChange={(e) => setQuickChapterId(e.target.value)}
+            aria-label="Link session to syllabus chapter"
+            style={{ marginBottom: '8px' }}
+          >
+            <option value="">📖 Link Chapter (Optional) — General {getSubject(state, quickSubjectId).name}</option>
+            {quickSubjectChapters.map((ch) => (
+              <option key={ch.id} value={ch.id}>
+                {ch.name}
+              </option>
+            ))}
+          </select>
+        )}
+
         <input
           type="text"
           value={quickHeading}
           onChange={(e) => setQuickHeading(e.target.value)}
-          placeholder="Session heading (e.g., Rotational Mechanics PYQs, NCERT Ch 4...)"
+          placeholder="Session heading (leave blank to use chapter or subject name)"
           style={{ marginBottom: '8px' }}
         />
         <div className="row" style={{ gap: '6px', flexWrap: 'wrap' }}>
@@ -1213,10 +1490,14 @@ export const TodayView: React.FC<TodayViewProps> = ({
             style={{ flex: 1 }}
             onClick={() => {
               const sub = getSubject(state, quickSubjectId);
+              const linkedChap = quickChapterId
+                ? state.chapters.find((c) => c.id === quickChapterId)
+                : undefined;
               onQuickStartSession(
                 sub.id,
-                quickHeading.trim() || `${sub.name} Study Session`,
-                'pomo'
+                quickHeading.trim() || linkedChap?.name || `${sub.name} Study Session`,
+                'pomo',
+                quickChapterId || undefined
               );
             }}
           >
@@ -1228,10 +1509,14 @@ export const TodayView: React.FC<TodayViewProps> = ({
             style={{ flex: 1, borderColor: 'var(--em)', color: 'var(--em)' }}
             onClick={() => {
               const sub = getSubject(state, quickSubjectId);
+              const linkedChap = quickChapterId
+                ? state.chapters.find((c) => c.id === quickChapterId)
+                : undefined;
               onQuickStartSession(
                 sub.id,
-                quickHeading.trim() || `${sub.name} Study Session`,
-                'stopwatch'
+                quickHeading.trim() || linkedChap?.name || `${sub.name} Study Session`,
+                'stopwatch',
+                quickChapterId || undefined
               );
             }}
           >
@@ -1243,10 +1528,14 @@ export const TodayView: React.FC<TodayViewProps> = ({
             style={{ flex: 1 }}
             onClick={() => {
               const sub = getSubject(state, quickSubjectId);
+              const linkedChap = quickChapterId
+                ? state.chapters.find((c) => c.id === quickChapterId)
+                : undefined;
               onQuickStartSession(
                 sub.id,
-                quickHeading.trim() || `${sub.name} Study Session`,
-                'countdown'
+                quickHeading.trim() || linkedChap?.name || `${sub.name} Study Session`,
+                'countdown',
+                quickChapterId || undefined
               );
             }}
           >
@@ -1382,9 +1671,9 @@ export const TodayView: React.FC<TodayViewProps> = ({
         </>
       )}
 
-      {/* Daily Reflection & Mood */}
+      {/* Daily Reflection, Mood, Sleep & Energy (1.11) */}
       <div className="card mood">
-        <h3>Daily Reflection &amp; Mood</h3>
+        <h3>Daily Reflection, Mood &amp; Wellbeing</h3>
         <div className="row">
           {['😞', '😕', '😐', '🙂', '😄'].map((m, i) => (
             <button
@@ -1399,6 +1688,80 @@ export const TodayView: React.FC<TodayViewProps> = ({
             </button>
           ))}
         </div>
+
+        {/* 1.11 Compact Sleep Stepper (0-14h, step 0.5) & Energy Chips (1-5) */}
+        {onUpdateWellbeing && (
+          <div
+            className="row sp wrap"
+            style={{
+              marginTop: '10px',
+              padding: '8px 10px',
+              borderRadius: '12px',
+              background: 'var(--c2)',
+              gap: '10px',
+            }}
+          >
+            <div className="row" style={{ gap: '6px', alignItems: 'center' }}>
+              <small style={{ fontWeight: 700 }}>😴 Sleep:</small>
+              <button
+                type="button"
+                className="s"
+                style={{ padding: '3px 9px' }}
+                aria-label="Decrease sleep hours"
+                onClick={() => {
+                  const cur = state.wellbeing?.[sel]?.sleep ?? 7;
+                  onUpdateWellbeing(sel, { sleep: Math.max(0, cur - 0.5) });
+                }}
+              >
+                −
+              </button>
+              <b className="mono" style={{ fontSize: '13px', minWidth: '42px', textAlign: 'center' }}>
+                {state.wellbeing?.[sel]?.sleep !== undefined
+                  ? `${state.wellbeing[sel].sleep}h`
+                  : '—'}
+              </b>
+              <button
+                type="button"
+                className="s"
+                style={{ padding: '3px 9px' }}
+                aria-label="Increase sleep hours"
+                onClick={() => {
+                  const cur = state.wellbeing?.[sel]?.sleep ?? 6.5;
+                  onUpdateWellbeing(sel, { sleep: Math.min(14, cur + 0.5) });
+                }}
+              >
+                +
+              </button>
+            </div>
+
+            <div className="row" style={{ gap: '4px', alignItems: 'center' }}>
+              <small style={{ fontWeight: 700, marginRight: '2px' }}>⚡ Energy:</small>
+              {([1, 2, 3, 4, 5] as const).map((eVal) => {
+                const isSelected = state.wellbeing?.[sel]?.energy === eVal;
+                return (
+                  <button
+                    key={eVal}
+                    type="button"
+                    className={isSelected ? 'on' : 's'}
+                    style={{
+                      width: '28px',
+                      height: '28px',
+                      padding: 0,
+                      borderRadius: '8px',
+                      fontSize: '12px',
+                      fontWeight: 800,
+                    }}
+                    onClick={() => onUpdateWellbeing(sel, { energy: eVal })}
+                    aria-label={`Energy ${eVal} of 5`}
+                  >
+                    {eVal}
+                  </button>
+                );
+              })}
+            </div>
+          </div>
+        )}
+
         <textarea
           id="note"
           rows={2}

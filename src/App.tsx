@@ -11,19 +11,27 @@ import type {
   Chapter,
   ChapterStatus,
   DDay,
+  Doubt,
   Habit,
   HabitCategory,
+  MistakeEntry,
   MockTest,
+  PYQEntry,
   PrepSubTab,
   PulseHabitState,
   SoundscapeMode,
   StatsSubTab,
   StudySession,
+  SubjectTargets,
+  SyncStatus,
+  WellbeingEntry,
 } from './types';
 import {
   type DeletedEntityRecord,
   STARTERS,
   addChapterRevisionDate,
+  addD,
+  addTombstone,
   applyChapterUpdate,
   cloneLog,
   computeMockScore,
@@ -34,6 +42,7 @@ import {
   due,
   dueOn,
   ent,
+  fmtHMS,
   fmtHMShort,
   getDailyStudyGoalProgress,
   getSessionHeading,
@@ -52,12 +61,25 @@ import {
   uid,
   updateChapterRevisionDate,
 } from './utils/studyLogic';
+import { toggleRestDay } from './utils/insights';
 import {
   loadInitialState,
   persistState,
   restoreFromLatestBackup,
   subscribeBroadcast,
+  writeSafetyBackupSnapshot,
 } from './utils/storage';
+import {
+  SyncBudgetController,
+  checkRedirectSignInResult,
+  deleteAllUserCloudData,
+  getSyncTodayWrites,
+  performCloudSyncCycle,
+  signInWithGoogleAccount,
+  signOutGoogleAccount,
+  subscribeToAuthChanges,
+  testFirestoreConnection,
+} from './utils/cloudSync';
 import {
   beep,
   ensureAudioEngine,
@@ -151,9 +173,25 @@ export default function App() {
   const [perfectDayBanner, setPerfectDayBanner] = useState(false);
   const [, setTickCounter] = useState(0);
 
+  // Milestone 2: Firebase Auth & Cloud Sync state
+  const [authUser, setAuthUser] = useState<{
+    uid: string;
+    email: string | null;
+    displayName: string | null;
+  } | null>(null);
+  const [syncStatus, setSyncStatus] = useState<SyncStatus>('off');
+  const [syncErrorMsg, setSyncErrorMsg] = useState<string | null>(null);
+  const [lastSyncedAt, setLastSyncedAt] = useState<number | undefined>(undefined);
+  const [syncWritesToday, setSyncWritesToday] = useState<number>(() =>
+    getSyncTodayWrites()
+  );
+
   const readyRef = useRef(false);
   const stateRef = useRef<PulseHabitState>(state);
   stateRef.current = state;
+  const authUserRef = useRef(authUser);
+  authUserRef.current = authUser;
+  const syncControllerRef = useRef<SyncBudgetController | null>(null);
 
   const toastTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const perfectDayTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
@@ -197,6 +235,9 @@ export default function App() {
     setState(stamped);
     if (readyRef.current) {
       persistState(stamped);
+      if (authUserRef.current && syncControllerRef.current) {
+        syncControllerRef.current.markDirty();
+      }
     }
   }, []);
 
@@ -446,13 +487,122 @@ export default function App() {
     );
   }, [state.set.soundscape, state.activeTimer?.status, state.set.soundVol]);
 
+  // Milestone 2: Cloud Sync Controller & Firebase Auth lifecycle
+  const runCloudSync = useCallback(
+    async (opts?: { forcePull?: boolean; isFirstSignIn?: boolean }) => {
+      const user = authUserRef.current;
+      const controller = syncControllerRef.current;
+      if (!user || !controller || !readyRef.current) return;
+      if (typeof navigator !== 'undefined' && !navigator.onLine) {
+        setSyncStatus('offline');
+        return;
+      }
+
+      setSyncStatus('syncing');
+      setSyncErrorMsg(null);
+
+      // 2.4: On first sign-in on a device that already has local data, write a safety snapshot first
+      if (opts?.isFirstSignIn && stateRef.current.syncMeta?.uid !== user.uid) {
+        await writeSafetyBackupSnapshot(stateRef.current);
+      }
+
+      const res = await performCloudSyncCycle(
+        user.uid,
+        stateRef.current,
+        controller,
+        { forcePull: opts?.forcePull }
+      );
+      setSyncWritesToday(getSyncTodayWrites());
+      setSyncStatus(res.status);
+      if (res.errorMessage) {
+        setSyncErrorMsg(res.errorMessage);
+      }
+      if (res.mergedState.syncMeta?.lastSyncedAt) {
+        setLastSyncedAt(res.mergedState.syncMeta.lastSyncedAt);
+      }
+      if (res.status === 'synced' || res.pulledDocs > 0) {
+        const curToday = logicalKey(
+          new Date(),
+          res.mergedState.set.dayResetHour ?? 4
+        );
+        const syncedState: PulseHabitState = {
+          ...res.mergedState,
+          log: cloneLog(res.mergedState.log),
+          savedAt: Date.now(),
+        };
+        syncStudyHabitsInPlace(syncedState, curToday, curToday);
+        stateRef.current = syncedState;
+        setState(syncedState);
+        persistState(syncedState);
+      }
+    },
+    []
+  );
+
+  useEffect(() => {
+    const controller = new SyncBudgetController(async () => {
+      await runCloudSync({ forcePull: false });
+    });
+    syncControllerRef.current = controller;
+
+    checkRedirectSignInResult().catch(() => {});
+
+    const unsubAuth = subscribeToAuthChanges((user) => {
+      if (user) {
+        const u = {
+          uid: user.uid,
+          email: user.email,
+          displayName: user.displayName,
+        };
+        authUserRef.current = u;
+        setAuthUser(u);
+        setLastSyncedAt(stateRef.current.syncMeta?.lastSyncedAt);
+        testFirestoreConnection().catch(() => {});
+        if (readyRef.current) {
+          runCloudSync({ forcePull: true, isFirstSignIn: true });
+        }
+      } else {
+        authUserRef.current = null;
+        setAuthUser(null);
+        setSyncStatus('off');
+      }
+    });
+
+    const onVisHide = () => {
+      if (document.visibilityState === 'hidden' && authUserRef.current) {
+        controller.flushOnBackground();
+      } else if (document.visibilityState === 'visible' && authUserRef.current) {
+        runCloudSync({ forcePull: false });
+      }
+    };
+    const onOnline = () => {
+      if (authUserRef.current) runCloudSync({ forcePull: false });
+    };
+    const onOffline = () => {
+      if (authUserRef.current) setSyncStatus('offline');
+    };
+
+    document.addEventListener('visibilitychange', onVisHide);
+    window.addEventListener('online', onOnline);
+    window.addEventListener('offline', onOffline);
+
+    return () => {
+      unsubAuth();
+      controller.dispose();
+      document.removeEventListener('visibilitychange', onVisHide);
+      window.removeEventListener('online', onOnline);
+      window.removeEventListener('offline', onOffline);
+    };
+  }, [runCloudSync]);
+
   // Timer actions (A4: side effects outside state updaters)
   const startTimer = useCallback(
     (
       subjectId?: string,
       heading?: string,
       mode?: ActiveTimerMode,
-      customTargetMins?: number
+      customTargetMins?: number,
+      chapterId?: string
     ) => {
       ensureAudioEngine();
       const prev = stateRef.current;
@@ -462,16 +612,28 @@ export default function App() {
         prev.subjects.find((s) => !s.arch)?.id ||
         'sub_phy';
       const sub = prev.subjects.find((s) => s.id === resolvedSubId);
+      const resolvedChapId =
+        chapterId !== undefined ? chapterId || undefined : prev.activeTimer?.chapterId;
+      const chap = resolvedChapId
+        ? prev.chapters.find((c) => c.id === resolvedChapId)
+        : undefined;
+      const m: ActiveTimerMode = mode || prev.set.defaultMode || 'pomo';
       const cleanHeading =
         (heading && heading.trim()) ||
-        (sub ? `${sub.name} Study` : 'Deep Study Session');
-      const m: ActiveTimerMode = mode || prev.set.defaultMode || 'pomo';
+        chap?.name ||
+        (m === 'fullMock'
+          ? 'Full Mock'
+          : sub
+            ? `${sub.name} Study`
+            : 'Deep Study Session');
       const targetMins =
         m === 'pomo'
           ? prev.set.pomoWork || 25
           : m === 'countdown'
             ? customTargetMins || prev.set.countdownMins || 45
-            : 0;
+            : m === 'fullMock'
+              ? customTargetMins || prev.set.fullMockMins || 200
+              : 0;
       const now = Date.now();
 
       beep('ok', !!prev.set.snd);
@@ -486,6 +648,7 @@ export default function App() {
           mode: m,
           phase: 'work',
           subjectId: resolvedSubId,
+          chapterId: resolvedChapId,
           heading: cleanHeading,
           startTs: now,
           sliceStartTs: now,
@@ -497,11 +660,43 @@ export default function App() {
           targetMs: targetMins * 60000,
           chimeFired: false,
           fiveMinWarnFired: false,
+          mockSections: m === 'fullMock' ? [] : undefined,
+          sectionStartActiveMs: m === 'fullMock' ? 0 : undefined,
         },
       }));
     },
     [updateAndSave]
   );
+
+  // Milestone 1.14: Record elapsed time per section in Full Mock mode from timestamps
+  const handleNextMockSection = useCallback(() => {
+    const prev = stateRef.current;
+    const t = prev.activeTimer;
+    if (!t || t.mode !== 'fullMock') return;
+    const now = Date.now();
+    const curPause =
+      t.status === 'paused' && t.pauseStartTs ? Math.max(0, now - t.pauseStartTs) : 0;
+    const totalPaused = (t.pausedDurationMs || 0) + curPause;
+    const totalActive = Math.max(0, now - t.startTs - totalPaused);
+    const prevSplit = t.sectionStartActiveMs || 0;
+    const elapsedMs = Math.max(0, totalActive - prevSplit);
+    const existing = t.mockSections || [];
+    const nextLabel = `Section ${existing.length + 1}`;
+
+    beep('ok', !!prev.set.snd);
+    updateAndSave((cur) => {
+      if (!cur.activeTimer || cur.activeTimer.mode !== 'fullMock') return cur;
+      return {
+        ...cur,
+        activeTimer: {
+          ...cur.activeTimer,
+          mockSections: [...existing, { label: nextLabel, elapsedMs }],
+          sectionStartActiveMs: totalActive,
+        },
+      };
+    });
+    showToast(`${nextLabel} recorded (${fmtHMS(elapsedMs)})`);
+  }, [showToast, updateAndSave]);
 
   const pauseTimer = useCallback(() => {
     const prev = stateRef.current;
@@ -579,7 +774,13 @@ export default function App() {
   const commitSliceInState = (
     prev: PulseHabitState,
     now: number,
-    reflection: { subjectId?: string; heading?: string; rating: number; note: string }
+    reflection: {
+      subjectId?: string;
+      chapterId?: string;
+      heading?: string;
+      rating: number;
+      note: string;
+    }
   ): { next: PulseHabitState; savedEntry: StudySession | null } => {
     const t = prev.activeTimer;
     if (!t || t.phase === 'break') return { next: prev, savedEntry: null };
@@ -604,15 +805,28 @@ export default function App() {
       t.subjectId ||
       prev.subjects.find((s) => !s.arch)?.id ||
       'sub_phy';
+    const finalChapterId =
+      reflection.chapterId !== undefined
+        ? reflection.chapterId || undefined
+        : t.chapterId;
+    const chap = finalChapterId
+      ? prev.chapters.find((c) => c.id === finalChapterId)
+      : undefined;
     const sub = prev.subjects.find((s) => s.id === finalSubjectId);
     const finalHeading =
       (reflection.heading && reflection.heading.trim()) ||
+      chap?.name ||
       (t.heading && t.heading.trim()) ||
-      (sub ? `${sub.name} Study` : 'Deep Study Session');
+      (t.mode === 'fullMock'
+        ? 'Full Mock'
+        : sub
+          ? `${sub.name} Study`
+          : 'Deep Study Session');
 
     const entry: StudySession = {
       id: uid('ses'),
       subjectId: finalSubjectId,
+      chapterId: finalChapterId,
       heading: finalHeading,
       dayKey: logicalKey(t.sliceStartTs, prev.set.dayResetHour ?? 4),
       startTs: t.sliceStartTs,
@@ -640,18 +854,30 @@ export default function App() {
   };
 
   const switchTopicMidSession = useCallback(
-    (newSubjectId: string, newHeading: string) => {
+    (newSubjectId: string, newHeading: string, newChapterId?: string) => {
       const prev = stateRef.current;
       const t = prev.activeTimer;
       if (!t) return;
       const sub = prev.subjects.find((s) => s.id === newSubjectId);
+      const chap = newChapterId
+        ? prev.chapters.find((c) => c.id === newChapterId)
+        : undefined;
       const clean =
-        newHeading.trim() || (sub ? `${sub.name} Study` : 'Deep Study Session');
-      if (t.subjectId === newSubjectId && t.heading === clean) return;
+        newHeading.trim() ||
+        chap?.name ||
+        (sub ? `${sub.name} Study` : 'Deep Study Session');
+      if (
+        t.subjectId === newSubjectId &&
+        t.heading === clean &&
+        (t.chapterId || '') === (newChapterId || '')
+      ) {
+        return;
+      }
 
       const now = Date.now();
       const { next, savedEntry } = commitSliceInState(prev, now, {
         subjectId: t.subjectId,
+        chapterId: t.chapterId,
         heading: t.heading,
         rating: 5,
         note: 'Auto-logged on topic switch',
@@ -661,6 +887,7 @@ export default function App() {
         activeTimer: {
           ...t,
           subjectId: newSubjectId,
+          chapterId: newChapterId || undefined,
           heading: clean,
           sliceStartTs: now,
           slicePausedMs: 0,
@@ -685,7 +912,8 @@ export default function App() {
     const cur = stateRef.current;
     const t = cur.activeTimer;
     if (!t) return;
-    const m = getTimerMetrics(cur);
+    const now = Date.now();
+    const m = getTimerMetrics(cur, now);
     if (t.status === 'running') {
       pauseTimer();
     }
@@ -693,8 +921,55 @@ export default function App() {
       updateAndSave((prev) => ({ ...prev, activeTimer: null }));
       return;
     }
+
+    // Milestone 1.14: On Full Mock stop, save as normal study session with heading "Full Mock"
+    // and open the mock modal pre-filled with date, duration, and section times in note.
+    if (t.mode === 'fullMock') {
+      const existingSplits = t.mockSections || [];
+      const finalSplitElapsed = Math.max(
+        0,
+        m.totalActiveMs - (t.sectionStartActiveMs || 0)
+      );
+      const allSplits =
+        finalSplitElapsed >= 1000
+          ? [
+              ...existingSplits,
+              {
+                label: `Section ${existingSplits.length + 1}`,
+                elapsedMs: finalSplitElapsed,
+              },
+            ]
+          : existingSplits;
+      const splitsSummary =
+        allSplits.length > 0
+          ? `Section times: ${allSplits
+              .map((s) => `${s.label}: ${fmtHMS(s.elapsedMs)}`)
+              .join(' | ')}`
+          : 'Full Mock completed';
+
+      const { next } = commitSliceInState(cur, now, {
+        subjectId: t.subjectId,
+        chapterId: t.chapterId,
+        heading: 'Full Mock',
+        rating: 5,
+        note: splitsSummary,
+      });
+      saveNextState({
+        ...next,
+        activeTimer: null,
+      });
+      setModal({
+        type: 'mock',
+        prefillDayKey: logicalKey(now, cur.set.dayResetHour ?? 4),
+        prefillDurationMins: Math.max(1, Math.round(m.totalActiveMs / 60000)),
+        prefillNote: splitsSummary,
+      });
+      showToast('Logged Full Mock study session · Enter your mock scores');
+      return;
+    }
+
     setModal({ type: 'reflect', metrics: m });
-  }, [pauseTimer, updateAndSave]);
+  }, [pauseTimer, saveNextState, showToast, updateAndSave]);
 
   const togglePomoPhase = useCallback(() => {
     const prev = stateRef.current;
@@ -934,7 +1209,7 @@ export default function App() {
     [sel, updateAndSave]
   );
 
-  // F1 & A5: Delete session with item-only Undo at original index + multi-day habit sync
+  // F1 & A5: Delete session with item-only Undo at original index + multi-day habit sync + tombstone
   const handleDeleteSession = useCallback(
     (id: string) => {
       const prev = stateRef.current;
@@ -947,8 +1222,9 @@ export default function App() {
         index,
       };
 
+      const withTomb = addTombstone(prev, id);
       const next: PulseHabitState = {
-        ...prev,
+        ...withTomb,
         log: cloneLog(prev.log),
         sessions: prev.sessions.filter((x) => x.id !== id),
       };
@@ -971,6 +1247,7 @@ export default function App() {
     (subjectId: string, names: string[]) => {
       const cleanLines = names.map((l) => l.trim()).filter(Boolean);
       if (!cleanLines.length) return;
+      const now = Date.now();
       updateAndSave((prev) => ({
         ...prev,
         chapters: [
@@ -981,6 +1258,8 @@ export default function App() {
             name: name.slice(0, 100),
             status: 'notStarted' as ChapterStatus,
             revisions: [],
+            confidenceLog: [],
+            updatedAt: now,
           })),
         ],
       }));
@@ -993,10 +1272,11 @@ export default function App() {
 
   const handleUpdateChapter = useCallback(
     (chapterId: string, patch: Partial<Chapter>) => {
+      const now = Date.now();
       updateAndSave((prev) => ({
         ...prev,
         chapters: prev.chapters.map((ch) =>
-          ch.id === chapterId ? applyChapterUpdate(ch, patch, todayKey) : ch
+          ch.id === chapterId ? applyChapterUpdate(ch, patch, todayKey, now) : ch
         ),
       }));
     },
@@ -1014,10 +1294,13 @@ export default function App() {
         showToast('Revision date already exists for this chapter');
         return;
       }
+      const now = Date.now();
       updateAndSave((cur) => ({
         ...cur,
         chapters: cur.chapters.map((ch) =>
-          ch.id === chapterId ? addChapterRevisionDate(ch, date, uid('rev')).chapter : ch
+          ch.id === chapterId
+            ? { ...addChapterRevisionDate(ch, date, uid('rev')).chapter, updatedAt: now }
+            : ch
         ),
       }));
     },
@@ -1026,12 +1309,14 @@ export default function App() {
 
   const handleToggleRevisionDone = useCallback(
     (chapterId: string, revId: string) => {
+      const now = Date.now();
       updateAndSave((prev) => ({
         ...prev,
         chapters: prev.chapters.map((ch) => {
           if (ch.id !== chapterId) return ch;
           return {
             ...ch,
+            updatedAt: now,
             revisions: ch.revisions.map((r) =>
               r.id === revId
                 ? {
@@ -1059,11 +1344,12 @@ export default function App() {
         showToast('Revision date already exists for this chapter');
         return;
       }
+      const now = Date.now();
       updateAndSave((cur) => ({
         ...cur,
         chapters: cur.chapters.map((ch) =>
           ch.id === chapterId
-            ? updateChapterRevisionDate(ch, revId, newDate).chapter
+            ? { ...updateChapterRevisionDate(ch, revId, newDate).chapter, updatedAt: now }
             : ch
         ),
       }));
@@ -1073,12 +1359,14 @@ export default function App() {
 
   const handleDeleteRevision = useCallback(
     (chapterId: string, revId: string) => {
+      const now = Date.now();
       updateAndSave((prev) => ({
         ...prev,
         chapters: prev.chapters.map((ch) => {
           if (ch.id !== chapterId) return ch;
           return {
             ...ch,
+            updatedAt: now,
             revisions: ch.revisions.filter((r) => r.id !== revId),
           };
         }),
@@ -1099,7 +1387,7 @@ export default function App() {
         index,
       };
       updateAndSave((cur) => ({
-        ...cur,
+        ...addTombstone(cur, chapterId),
         chapters: cur.chapters.filter((ch) => ch.id !== chapterId),
       }));
       showToast('Chapter deleted', () => {
@@ -1121,7 +1409,7 @@ export default function App() {
         index,
       };
       updateAndSave((cur) => ({
-        ...cur,
+        ...addTombstone(cur, mockId),
         mocks: cur.mocks.filter((m) => m.id !== mockId),
       }));
       setModal({ type: 'none' });
@@ -1149,7 +1437,7 @@ export default function App() {
         index,
       };
       updateAndSave((cur) => ({
-        ...cur,
+        ...addTombstone(cur, subjectId),
         subjects: cur.subjects.filter((s) => s.id !== subjectId),
       }));
       showToast('Subject deleted', () => {
@@ -1157,6 +1445,251 @@ export default function App() {
       });
     },
     [showToast, updateAndSave]
+  );
+
+  // Milestone 1.3: Mistake Log handlers (pure updaters + item-only Undo)
+  const handleAddMistake = useCallback(
+    (
+      entry: Omit<MistakeEntry, 'id' | 'createdAt' | 'updatedAt' | 'resolved'>
+    ) => {
+      const now = Date.now();
+      const newMistake: MistakeEntry = {
+        id: uid('mis'),
+        subjectId: entry.subjectId,
+        chapterId: entry.chapterId,
+        mockId: entry.mockId,
+        dayKey: entry.dayKey || todayKey,
+        reason: entry.reason,
+        note: entry.note,
+        resolved: false,
+        createdAt: now,
+        updatedAt: now,
+      };
+      updateAndSave((cur) => ({
+        ...cur,
+        mistakes: [...(cur.mistakes || []), newMistake],
+      }));
+      showToast('Mistake logged');
+    },
+    [showToast, todayKey, updateAndSave]
+  );
+
+  const handleToggleMistakeResolved = useCallback(
+    (mistakeId: string) => {
+      const now = Date.now();
+      updateAndSave((cur) => ({
+        ...cur,
+        mistakes: (cur.mistakes || []).map((m) =>
+          m.id === mistakeId
+            ? { ...m, resolved: !m.resolved, updatedAt: now }
+            : m
+        ),
+      }));
+    },
+    [updateAndSave]
+  );
+
+  const handleDeleteMistake = useCallback(
+    (mistakeId: string) => {
+      const prev = stateRef.current;
+      const list = prev.mistakes || [];
+      const index = list.findIndex((m) => m.id === mistakeId);
+      if (index === -1) return;
+      const record: DeletedEntityRecord = {
+        kind: 'mistake',
+        item: JSON.parse(JSON.stringify(list[index])),
+        index,
+      };
+      updateAndSave((cur) => ({
+        ...addTombstone(cur, mistakeId),
+        mistakes: (cur.mistakes || []).filter((m) => m.id !== mistakeId),
+      }));
+      showToast('Mistake deleted', () => {
+        updateAndSave((cur) => restoreDeletedItem(cur, record));
+      });
+    },
+    [showToast, updateAndSave]
+  );
+
+  // Milestone 1.4: Doubt List handlers (pure updaters + item-only Undo)
+  const handleAddDoubt = useCallback(
+    (subjectId: string, text: string, chapterId?: string) => {
+      const clean = text.trim().slice(0, 300);
+      if (!clean) return;
+      const now = Date.now();
+      const doubt: Doubt = {
+        id: uid('dbt'),
+        subjectId,
+        chapterId: chapterId || undefined,
+        text: clean,
+        createdAt: now,
+        resolved: false,
+        updatedAt: now,
+      };
+      updateAndSave((cur) => ({
+        ...cur,
+        doubts: [...(cur.doubts || []), doubt],
+      }));
+      showToast('Doubt added to queue');
+    },
+    [showToast, updateAndSave]
+  );
+
+  const handleToggleDoubtResolved = useCallback(
+    (doubtId: string) => {
+      const now = Date.now();
+      updateAndSave((cur) => ({
+        ...cur,
+        doubts: (cur.doubts || []).map((d) =>
+          d.id === doubtId
+            ? {
+                ...d,
+                resolved: !d.resolved,
+                resolvedAt: !d.resolved ? now : undefined,
+                updatedAt: now,
+              }
+            : d
+        ),
+      }));
+    },
+    [updateAndSave]
+  );
+
+  const handleDeleteDoubt = useCallback(
+    (doubtId: string) => {
+      const prev = stateRef.current;
+      const list = prev.doubts || [];
+      const index = list.findIndex((d) => d.id === doubtId);
+      if (index === -1) return;
+      const record: DeletedEntityRecord = {
+        kind: 'doubt',
+        item: JSON.parse(JSON.stringify(list[index])),
+        index,
+      };
+      updateAndSave((cur) => ({
+        ...addTombstone(cur, doubtId),
+        doubts: (cur.doubts || []).filter((d) => d.id !== doubtId),
+      }));
+      showToast('Doubt deleted', () => {
+        updateAndSave((cur) => restoreDeletedItem(cur, record));
+      });
+    },
+    [showToast, updateAndSave]
+  );
+
+  // Milestone 1.5: PYQ Tracker handlers (pure updaters + item-only Undo)
+  const handleAddPYQ = useCallback(
+    (chapterId: string, attempted: number, correct: number, dayKey: string) => {
+      const att = Math.max(1, Math.round(attempted));
+      const cor = Math.min(att, Math.max(0, Math.round(correct)));
+      const now = Date.now();
+      const entry: PYQEntry = {
+        id: uid('pyq'),
+        chapterId,
+        dayKey: dayKey || todayKey,
+        attempted: att,
+        correct: cor,
+        updatedAt: now,
+      };
+      updateAndSave((cur) => ({
+        ...cur,
+        pyq: [...(cur.pyq || []), entry],
+      }));
+      showToast(`Logged ${cor}/${att} PYQs`);
+    },
+    [showToast, todayKey, updateAndSave]
+  );
+
+  const handleDeletePYQ = useCallback(
+    (pyqId: string) => {
+      const prev = stateRef.current;
+      const list = prev.pyq || [];
+      const index = list.findIndex((p) => p.id === pyqId);
+      if (index === -1) return;
+      const record: DeletedEntityRecord = {
+        kind: 'pyq',
+        item: JSON.parse(JSON.stringify(list[index])),
+        index,
+      };
+      updateAndSave((cur) => ({
+        ...addTombstone(cur, pyqId),
+        pyq: (cur.pyq || []).filter((p) => p.id !== pyqId),
+      }));
+      showToast('PYQ entry deleted', () => {
+        updateAndSave((cur) => restoreDeletedItem(cur, record));
+      });
+    },
+    [showToast, updateAndSave]
+  );
+
+  // Milestone 1.8, 1.9, 1.11, 1.12: Targets, Rest Days, Wellbeing, Burnout Dismissal
+  const handleToggleRestDay = useCallback(
+    (dayKey: string) => {
+      const prev = stateRef.current;
+      const res = toggleRestDay(prev, dayKey);
+      if (!res.allowed) {
+        showToast(res.reason || 'Monthly rest pass limit reached');
+        return;
+      }
+      saveNextState(res.nextState);
+      const isNowRest = res.nextState.restDays.includes(dayKey);
+      showToast(
+        isNowRest
+          ? 'Rest Day pass activated — minimum-day streak protected'
+          : 'Rest Day pass removed'
+      );
+    },
+    [saveNextState, showToast]
+  );
+
+  const handleDismissBurnout = useCallback(() => {
+    const until = addD(todayKey, 3);
+    updateAndSave((cur) => ({
+      ...cur,
+      burnoutDismissedUntil: until,
+    }));
+  }, [todayKey, updateAndSave]);
+
+  const handleUpdateWellbeing = useCallback(
+    (dayKey: string, patch: Partial<WellbeingEntry>) => {
+      const now = Date.now();
+      updateAndSave((cur) => {
+        const existing = cur.wellbeing?.[dayKey] || {};
+        return {
+          ...cur,
+          wellbeing: {
+            ...(cur.wellbeing || {}),
+            [dayKey]: {
+              ...existing,
+              ...patch,
+              updatedAt: now,
+            },
+          },
+        };
+      });
+    },
+    [updateAndSave]
+  );
+
+  const handleUpdateTargets = useCallback(
+    (patch: Partial<SubjectTargets>) => {
+      updateAndSave((cur) => ({
+        ...cur,
+        set: {
+          ...cur.set,
+          targets: {
+            ...(cur.set.targets || {
+              dailyMinutes: {},
+              weeklyMinutes: {},
+              minDayMinutes: 240,
+              restPassesPerMonth: 4,
+            }),
+            ...patch,
+          },
+        },
+      }));
+    },
+    [updateAndSave]
   );
 
   // Daily Task Handlers (pure updaters, item-only Undo, same beep/haptic as habit completion)
@@ -1187,6 +1720,7 @@ export default function App() {
                 ...t,
                 done: nowDone,
                 doneAt: nowDone ? now : undefined,
+                updatedAt: now,
               }
             : t
         ),
@@ -1200,10 +1734,11 @@ export default function App() {
     (taskId: string, newTitle: string) => {
       const clean = newTitle.trim().slice(0, 140);
       if (!clean) return;
+      const now = Date.now();
       updateAndSave((cur) => ({
         ...cur,
         tasks: (cur.tasks || []).map((t) =>
-          t.id === taskId ? { ...t, title: clean } : t
+          t.id === taskId ? { ...t, title: clean, updatedAt: now } : t
         ),
       }));
     },
@@ -1214,10 +1749,11 @@ export default function App() {
     (taskId: string, newDayKey: string) => {
       const cleanDate = newDayKey.trim();
       if (!/^\d{4}-\d{2}-\d{2}$/.test(cleanDate)) return;
+      const now = Date.now();
       updateAndSave((cur) => ({
         ...cur,
         tasks: (cur.tasks || []).map((t) =>
-          t.id === taskId ? { ...t, dayKey: cleanDate } : t
+          t.id === taskId ? { ...t, dayKey: cleanDate, updatedAt: now } : t
         ),
       }));
     },
@@ -1236,7 +1772,7 @@ export default function App() {
         index,
       };
       updateAndSave((cur) => ({
-        ...cur,
+        ...addTombstone(cur, taskId),
         tasks: (cur.tasks || []).filter((t) => t.id !== taskId),
       }));
       showToast('Task deleted', () => {
@@ -1428,14 +1964,14 @@ export default function App() {
             }}
             onNewHabit={() => setModal({ type: 'habit' })}
             onEditHabit={(id) => setModal({ type: 'habit', id })}
-            onQuickStartSession={(subjectId, heading, mode) => {
+            onQuickStartSession={(subjectId, heading, mode, chapterId) => {
               setTab('focus');
-              startTimer(subjectId, heading, mode);
+              startTimer(subjectId, heading, mode, undefined, chapterId);
             }}
             onNewDDay={() => setModal({ type: 'dday' })}
             onEditDDay={(id) => setModal({ type: 'dday', id })}
-            onOpenManualSession={(defaultSubjectId) =>
-              setModal({ type: 'manualSession', defaultSubjectId })
+            onOpenManualSession={(defaultSubjectId, defaultChapterId) =>
+              setModal({ type: 'manualSession', defaultSubjectId, defaultChapterId })
             }
             onDeleteSession={handleDeleteSession}
             onCompleteRevision={handleToggleRevisionDone}
@@ -1447,6 +1983,9 @@ export default function App() {
             onDeleteTask={handleDeleteTask}
             onMoveTaskToToday={handleMoveTaskToToday}
             onMoveAllUnfinishedToToday={handleMoveAllUnfinishedToToday}
+            onToggleRestDay={handleToggleRestDay}
+            onDismissBurnout={handleDismissBurnout}
+            onUpdateWellbeing={handleUpdateWellbeing}
             onSetMood={(v) => {
               updateAndSave((prev) => ({
                 ...prev,
@@ -1487,6 +2026,26 @@ export default function App() {
                 set: { ...prev.set, targetMockScore: target },
               }));
             }}
+            onAddMistake={handleAddMistake}
+            onToggleMistakeResolved={handleToggleMistakeResolved}
+            onDeleteMistake={handleDeleteMistake}
+            onAddDoubt={(doubt) =>
+              handleAddDoubt(doubt.subjectId, doubt.text, doubt.chapterId)
+            }
+            onToggleDoubtResolved={handleToggleDoubtResolved}
+            onDeleteDoubt={handleDeleteDoubt}
+            onAddPYQ={(entry) =>
+              handleAddPYQ(entry.chapterId, entry.attempted, entry.correct, entry.dayKey)
+            }
+            onDeletePYQ={handleDeletePYQ}
+            onStartChapterFocus={(
+              subjectId: string,
+              chapterId: string,
+              chapterName: string
+            ) => {
+              setTab('focus');
+              startTimer(subjectId, chapterName, undefined, undefined, chapterId);
+            }}
           />
         )}
 
@@ -1498,9 +2057,9 @@ export default function App() {
             deskMode={deskMode}
             onToggleDeskMode={() => setDeskMode((d) => !d)}
             onOpenPiP={() => togglePiP()}
-            onSwitchTopic={(newSubId, newHeading) => {
+            onSwitchTopic={(newSubId, newHeading, newChapId) => {
               if (state.activeTimer) {
-                switchTopicMidSession(newSubId, newHeading);
+                switchTopicMidSession(newSubId, newHeading, newChapId);
               }
             }}
             onSetMode={(m) => {
@@ -1510,7 +2069,9 @@ export default function App() {
                     ? prev.set.pomoWork || 25
                     : m === 'countdown'
                       ? prev.set.countdownMins || 45
-                      : 0;
+                      : m === 'fullMock'
+                        ? prev.set.fullMockMins || 200
+                        : 0;
                 return {
                   ...prev,
                   set: {
@@ -1523,14 +2084,23 @@ export default function App() {
                         mode: m,
                         targetMs: targetMins * 60000,
                         chimeFired: false,
+                        mockSections:
+                          m === 'fullMock'
+                            ? prev.activeTimer.mockSections || []
+                            : undefined,
+                        sectionStartActiveMs:
+                          m === 'fullMock'
+                            ? prev.activeTimer.sectionStartActiveMs || 0
+                            : undefined,
                       }
                     : null,
                 };
               });
             }}
-            onStartTimer={(subjectId, heading, mode, customTargetMins) =>
-              startTimer(subjectId, heading, mode, customTargetMins)
+            onStartTimer={(subjectId, heading, mode, customTargetMins, chapterId) =>
+              startTimer(subjectId, heading, mode, customTargetMins, chapterId)
             }
+            onNextMockSection={handleNextMockSection}
             onExtendTarget={extendTimerTarget}
             onTogglePause={toggleTimerPause}
             onTogglePomoPhase={togglePomoPhase}
@@ -1570,8 +2140,8 @@ export default function App() {
                 todos: (prev.todos || []).filter((td) => td.id !== todoId),
               }));
             }}
-            onOpenManualSession={(defaultSubjectId) =>
-              setModal({ type: 'manualSession', defaultSubjectId })
+            onOpenManualSession={(defaultSubjectId, defaultChapterId) =>
+              setModal({ type: 'manualSession', defaultSubjectId, defaultChapterId })
             }
             onEditSession={(sesId) => setModal({ type: 'manualSession', id: sesId })}
           />
@@ -1593,10 +2163,57 @@ export default function App() {
         {tab === 'more' && (
           <MoreView
             state={state}
+            authUser={authUser}
+            syncStatus={syncStatus}
+            syncErrorMsg={syncErrorMsg}
+            lastSyncedAt={lastSyncedAt ?? state.syncMeta?.lastSyncedAt}
+            syncWritesToday={syncWritesToday}
+            onSignInGoogle={async () => {
+              try {
+                await signInWithGoogleAccount();
+              } catch (err) {
+                showToast(
+                  err instanceof Error ? err.message : 'Google sign-in could not start'
+                );
+              }
+            }}
+            onSignOutGoogle={async () => {
+              await signOutGoogleAccount();
+              showToast('Signed out of Cloud Sync');
+            }}
+            onSyncNow={async () => {
+              await runCloudSync({ forcePull: true });
+              showToast('Cloud sync complete');
+            }}
+            onDeleteCloudData={async () => {
+              if (!authUser) return;
+              try {
+                setSyncStatus('syncing');
+                await deleteAllUserCloudData(authUser.uid);
+                setSyncWritesToday(getSyncTodayWrites());
+                setSyncStatus('synced');
+                showToast('Deleted all your cloud data from Firestore');
+              } catch (err) {
+                setSyncStatus('error');
+                showToast(
+                  err instanceof Error
+                    ? err.message
+                    : 'Could not delete cloud data'
+                );
+              }
+            }}
+            onSelectAvatarEmoji={(emoji) => {
+              updateAndSave((prev) => ({
+                ...prev,
+                set: { ...prev.set, avatarEmoji: emoji },
+              }));
+            }}
+            onUpdateTargets={handleUpdateTargets}
             onNewHabit={() => setModal({ type: 'habit' })}
             onEditHabit={(id) => setModal({ type: 'habit', id })}
             onOpenManualSession={() => setModal({ type: 'manualSession' })}
             onAddSubject={(name, e, color) => {
+              const now = Date.now();
               updateAndSave((prev) => ({
                 ...prev,
                 subjects: [
@@ -1609,6 +2226,7 @@ export default function App() {
                     dailyGoalMins: 60,
                     arch: 0,
                     todos: [],
+                    updatedAt: now,
                   },
                 ],
               }));
@@ -1701,7 +2319,7 @@ export default function App() {
                     `chapter,${ch.completedOn || ''},"${subName.replace(
                       /"/g,
                       '""'
-                    )}","${ch.name.replace(/"/g, '""')}",0,100,"status:${ch.status}"`
+                    )}","${ch.name.replace(/"/g, '""')}",${ch.confidence || 0},100,"status:${ch.status}"`
                   );
                 } else {
                   revs.forEach((r) => {
@@ -1715,6 +2333,54 @@ export default function App() {
                     );
                   });
                 }
+              });
+              (cur.mistakes || []).forEach((m) => {
+                const sub = cur.subjects.find((x) => x.id === m.subjectId);
+                const subName = sub ? sub.name : 'Subject';
+                rows.push(
+                  `mistake,${m.dayKey},"${subName.replace(/"/g, '""')}","${m.reason}",${
+                    m.resolved ? 1 : 0
+                  },100,"${(m.note || '').replace(/"/g, '""')}"`
+                );
+              });
+              (cur.doubts || []).forEach((d) => {
+                const sub = cur.subjects.find((x) => x.id === d.subjectId);
+                const subName = sub ? sub.name : 'Subject';
+                const dateStr = logicalKey(d.createdAt, cur.set.dayResetHour ?? 4);
+                rows.push(
+                  `doubt,${dateStr},"${subName.replace(/"/g, '""')}","${d.text.replace(
+                    /"/g,
+                    '""'
+                  )}",${d.resolved ? 1 : 0},100,"${d.resolved ? 'resolved' : 'open'}"`
+                );
+              });
+              (cur.pyq || []).forEach((p) => {
+                const ch = cur.chapters.find((c) => c.id === p.chapterId);
+                const sub = ch
+                  ? cur.subjects.find((x) => x.id === ch.subjectId)
+                  : undefined;
+                const subName = sub ? sub.name : 'Subject';
+                const chName = ch ? ch.name : p.chapterId;
+                const acc =
+                  p.attempted > 0 ? Math.round((p.correct / p.attempted) * 100) : 0;
+                rows.push(
+                  `pyq,${p.dayKey},"${subName.replace(/"/g, '""')}","${chName.replace(
+                    /"/g,
+                    '""'
+                  )}",${p.attempted},${acc},"correct:${p.correct}/${p.attempted}"`
+                );
+              });
+              Object.entries(cur.wellbeing || {})
+                .sort(([a], [b]) => a.localeCompare(b))
+                .forEach(([dk, wb]) => {
+                  rows.push(
+                    `wellbeing,${dk},"Wellbeing","Sleep & Energy",${wb.sleep ?? 0},${
+                      wb.energy ?? 0
+                    },"sleep:${wb.sleep ?? '-'}h energy:${wb.energy ?? '-'}"`
+                  );
+                });
+              (cur.restDays || []).forEach((dk) => {
+                rows.push(`rest_day,${dk},"Rest Pass","Protected Rest Day",1,100,""`);
               });
               rows.push('date,task,done,subject');
               (cur.tasks || []).forEach((t) => {
@@ -1899,13 +2565,13 @@ export default function App() {
               : undefined,
           };
           updateAndSave((cur) => {
+            const withTomb = addTombstone(cur, id);
             const nextLog = cloneLog(cur.log);
             delete nextLog[id];
             return {
-              ...cur,
+              ...withTomb,
               habits: cur.habits.filter((x) => x.id !== id),
               log: nextLog,
-              del: [...(cur.del || []), id],
             };
           });
           setModal({ type: 'none' });
@@ -1917,10 +2583,11 @@ export default function App() {
             saveNextState(restored);
           });
         }}
-        onSubmitReflection={(subjectId, heading, rating, note) => {
+        onSubmitReflection={(subjectId, heading, rating, note, chapterId) => {
           const prev = stateRef.current;
           const { next } = commitSliceInState(prev, Date.now(), {
             subjectId,
+            chapterId,
             heading,
             rating,
             note,
@@ -1970,50 +2637,82 @@ export default function App() {
           handleDeleteSession(id);
           setModal({ type: 'none' });
         }}
-        onSaveMock={(id, mockData) => {
+        onSaveMock={(id, mockData, queuedMistakes) => {
+          const now = Date.now();
           const payload: MockTest = {
             id: id || uid('mock'),
             ...mockData,
             marksPerWrong: -Math.abs(Number(mockData.marksPerWrong) || 0),
+            updatedAt: now,
           };
+          const newMistakes: MistakeEntry[] = (queuedMistakes || []).map((qm) => ({
+            id: uid('mis'),
+            subjectId: qm.subjectId,
+            chapterId: qm.chapterId,
+            mockId: payload.id,
+            dayKey: payload.dayKey,
+            reason: qm.reason,
+            note: qm.note,
+            resolved: false,
+            createdAt: now,
+            updatedAt: now,
+          }));
           updateAndSave((prev) => ({
             ...prev,
             mocks: id
               ? prev.mocks.map((m) => (m.id === id ? payload : m))
               : [...prev.mocks, payload],
+            mistakes:
+              newMistakes.length > 0
+                ? [...(prev.mistakes || []), ...newMistakes]
+                : prev.mistakes || [],
           }));
           setModal({ type: 'none' });
           const sc = computeMockScore(payload, stateRef.current.subjects);
-          showToast(`Saved "${payload.name}" (${sc.totalScore}/${payload.maxMarks})`);
+          showToast(
+            `Saved "${payload.name}" (${sc.totalScore}/${payload.maxMarks})${
+              newMistakes.length > 0 ? ` + ${newMistakes.length} mistakes` : ''
+            }`
+          );
         }}
         onDeleteMock={handleDeleteMock}
-        onSaveTimerConfig={(pomoWork, pomoBreak, countdownMins) => {
+        onSaveTimerConfig={(pomoWork, pomoBreak, countdownMins, fullMockMins) => {
           updateAndSave((prev) => ({
             ...prev,
-            set: { ...prev.set, pomoWork, pomoBreak, countdownMins },
+            set: {
+              ...prev.set,
+              pomoWork,
+              pomoBreak,
+              countdownMins,
+              fullMockMins: fullMockMins ?? prev.set.fullMockMins ?? 200,
+            },
           }));
           setModal({ type: 'none' });
         }}
         onSaveDDay={(id, data: Omit<DDay, 'id'>) => {
           const cleanTitle = (data.title || '').trim();
           if (!cleanTitle || !/^\d{4}-\d{2}-\d{2}$/.test(data.date || '')) return;
+          const now = Date.now();
           updateAndSave((prev) => {
-            if (id) {
-              return {
-                ...prev,
-                ddays: prev.ddays.map((d) =>
+            const targetId = id || uid('dd');
+            const isPrimary = Boolean(data.primary);
+            const baseList = id
+              ? prev.ddays.map((d) =>
                   d.id === id
-                    ? { ...d, ...data, title: cleanTitle }
-                    : d
-                ),
-              };
-            }
+                    ? { ...d, ...data, title: cleanTitle, updatedAt: now }
+                    : isPrimary
+                      ? { ...d, primary: false, updatedAt: now }
+                      : d
+                )
+              : [
+                  ...prev.ddays.map((d) =>
+                    isPrimary ? { ...d, primary: false, updatedAt: now } : d
+                  ),
+                  { id: targetId, ...data, title: cleanTitle, updatedAt: now },
+                ];
             return {
               ...prev,
-              ddays: [
-                ...prev.ddays,
-                { id: uid('dd'), ...data, title: cleanTitle },
-              ],
+              ddays: baseList,
             };
           });
           setModal({ type: 'none' });
@@ -2030,7 +2729,7 @@ export default function App() {
             index,
           };
           updateAndSave((cur) => ({
-            ...cur,
+            ...addTombstone(cur, id),
             ddays: cur.ddays.filter((x) => x.id !== id),
           }));
           setModal({ type: 'none' });
