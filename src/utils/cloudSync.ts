@@ -10,6 +10,7 @@ import {
   type User,
 } from 'firebase/auth';
 import {
+  initializeFirestore,
   getFirestore,
   doc,
   getDoc,
@@ -47,9 +48,21 @@ const app =
 export const auth = app
   ? getAuth(app)
   : (null as unknown as ReturnType<typeof getAuth>);
-export const db = app
-  ? getFirestore(app, firebaseConfig.firestoreDatabaseId)
-  : (null as unknown as ReturnType<typeof getFirestore>);
+
+function initFirestoreDb(): ReturnType<typeof getFirestore> {
+  if (!app) return null as unknown as ReturnType<typeof getFirestore>;
+  try {
+    return initializeFirestore(
+      app,
+      { ignoreUndefinedProperties: true },
+      firebaseConfig.firestoreDatabaseId
+    );
+  } catch {
+    return getFirestore(app, firebaseConfig.firestoreDatabaseId);
+  }
+}
+
+export const db = initFirestoreDb();
 
 export const OperationType = {
   CREATE: 'create',
@@ -206,17 +219,53 @@ function arrayToIdMap<T extends { id: string }>(arr: T[]): Record<string, T> {
   return out;
 }
 
-function maxUpdatedAt<T extends { updatedAt?: number }>(
+function maxUpdatedAt<T extends { updatedAt?: number; u?: number }>(
   arr: T[],
   fallback = 1
 ): number {
   let max = fallback;
   for (const item of arr || []) {
-    if (item && Number.isFinite(item.updatedAt) && (item.updatedAt as number) > max) {
-      max = item.updatedAt as number;
+    if (!item) continue;
+    const ts = Number(item.updatedAt ?? item.u ?? 0);
+    if (Number.isFinite(ts) && ts > max) {
+      max = ts;
     }
   }
   return max;
+}
+
+/**
+ * Recursively strips `undefined` properties and normalizes non-finite numbers
+ * so Firestore `writeBatch.set()` never throws on optional fields.
+ */
+export function sanitizeForFirestore<T>(val: T): T {
+  if (val === undefined) {
+    return null as unknown as T;
+  }
+  if (val === null) {
+    return null as unknown as T;
+  }
+  if (Array.isArray(val)) {
+    return val
+      .filter((item) => item !== undefined)
+      .map((item) => sanitizeForFirestore(item)) as unknown as T;
+  }
+  if (typeof val === 'object') {
+    const out: Record<string, unknown> = {};
+    for (const [k, v] of Object.entries(val as Record<string, unknown>)) {
+      if (v === undefined) continue;
+      if (typeof v === 'number' && !Number.isFinite(v)) {
+        out[k] = 0;
+        continue;
+      }
+      out[k] = sanitizeForFirestore(v);
+    }
+    return out as T;
+  }
+  if (typeof val === 'number' && !Number.isFinite(val)) {
+    return 0 as unknown as T;
+  }
+  return val;
 }
 
 /**
@@ -373,20 +422,23 @@ export function partitionStateToCloudDocs(
     }
   }
 
+  const maxTombstoneTs = Math.max(0, ...Object.values(prunedDel));
+
   const coreUpdatedAt = Math.max(
     state.set.updatedAt || 0,
     maxUpdatedAt(state.subjects, 0),
     maxUpdatedAt(state.ddays, 0),
-    ...Object.values(prunedDel),
+    maxTombstoneTs,
+    state.exp || 0,
     1
   );
 
   // Strip local-only timer state; never sync activeTimer
-  const cleanSet = { ...state.set };
+  const cleanSet = sanitizeForFirestore({ ...state.set });
   const coreDoc: MetaCoreDoc = {
     set: cleanSet,
-    subjects: arrayToIdMap(state.subjects),
-    ddays: arrayToIdMap(state.ddays),
+    subjects: sanitizeForFirestore(arrayToIdMap(state.subjects)),
+    ddays: sanitizeForFirestore(arrayToIdMap(state.ddays)),
     restDays: [...(state.restDays || [])],
     del: prunedDel,
     bonus: state.bonus || 0,
@@ -396,32 +448,32 @@ export function partitionStateToCloudDocs(
   };
 
   const habitsDoc: EntityMapDoc<Habit> = {
-    items: arrayToIdMap(state.habits),
-    updatedAt: maxUpdatedAt(state.habits, 1),
+    items: sanitizeForFirestore(arrayToIdMap(state.habits)),
+    updatedAt: Math.max(maxUpdatedAt(state.habits, 1), maxTombstoneTs),
   };
   const syllabusDoc: EntityMapDoc<Chapter> = {
-    items: arrayToIdMap(state.chapters),
-    updatedAt: maxUpdatedAt(state.chapters, 1),
+    items: sanitizeForFirestore(arrayToIdMap(state.chapters)),
+    updatedAt: Math.max(maxUpdatedAt(state.chapters, 1), maxTombstoneTs),
   };
   const mocksDoc: EntityMapDoc<MockTest> = {
-    items: arrayToIdMap(state.mocks),
-    updatedAt: maxUpdatedAt(state.mocks, 1),
+    items: sanitizeForFirestore(arrayToIdMap(state.mocks)),
+    updatedAt: Math.max(maxUpdatedAt(state.mocks, 1), maxTombstoneTs),
   };
   const mistakesDoc: EntityMapDoc<MistakeEntry> = {
-    items: arrayToIdMap(state.mistakes || []),
-    updatedAt: maxUpdatedAt(state.mistakes || [], 1),
+    items: sanitizeForFirestore(arrayToIdMap(state.mistakes || [])),
+    updatedAt: Math.max(maxUpdatedAt(state.mistakes || [], 1), maxTombstoneTs),
   };
   const doubtsDoc: EntityMapDoc<Doubt> = {
-    items: arrayToIdMap(state.doubts || []),
-    updatedAt: maxUpdatedAt(state.doubts || [], 1),
+    items: sanitizeForFirestore(arrayToIdMap(state.doubts || [])),
+    updatedAt: Math.max(maxUpdatedAt(state.doubts || [], 1), maxTombstoneTs),
   };
   const pyqDoc: EntityMapDoc<PYQEntry> = {
-    items: arrayToIdMap(state.pyq || []),
-    updatedAt: maxUpdatedAt(state.pyq || [], 1),
+    items: sanitizeForFirestore(arrayToIdMap(state.pyq || [])),
+    updatedAt: Math.max(maxUpdatedAt(state.pyq || [], 1), maxTombstoneTs),
   };
   const tasksDoc: EntityMapDoc<DailyTask> = {
-    items: arrayToIdMap(state.tasks || []),
-    updatedAt: maxUpdatedAt(state.tasks || [], 1),
+    items: sanitizeForFirestore(arrayToIdMap(state.tasks || [])),
+    updatedAt: Math.max(maxUpdatedAt(state.tasks || [], 1), maxTombstoneTs),
   };
 
   // Group time-based data by YYYY-MM
@@ -518,7 +570,12 @@ export function partitionStateToCloudDocs(
   };
 
   for (const [ym, mDoc] of Object.entries(monthsMap)) {
-    rawDocs[`months/${ym}`] = mDoc as unknown as Record<string, unknown>;
+    if (maxTombstoneTs > mDoc.updatedAt) {
+      mDoc.updatedAt = maxTombstoneTs;
+    }
+    rawDocs[`months/${ym}`] = sanitizeForFirestore(
+      mDoc as unknown as Record<string, unknown>
+    );
   }
 
   const finalDocs: Record<string, Record<string, unknown>> = {};
@@ -526,20 +583,26 @@ export function partitionStateToCloudDocs(
   const indexChunksMap: Record<string, string[]> = {};
 
   for (const [baseKey, payload] of Object.entries(rawDocs)) {
-    const { docs: splitDocs, chunkKeys } = splitDocIfOversized(baseKey, payload, maxBytes);
+    const cleanPayload = sanitizeForFirestore(payload);
+    const { docs: splitDocs, chunkKeys } = splitDocIfOversized(
+      baseKey,
+      cleanPayload,
+      maxBytes
+    );
     if (chunkKeys && chunkKeys.length > 1) {
       indexChunksMap[baseKey] = chunkKeys;
     }
     for (const [docKey, docPayload] of Object.entries(splitDocs)) {
-      finalDocs[docKey] = docPayload;
-      indexDocsMap[docKey] = Number(docPayload.updatedAt) || now;
+      const sanitizedDoc = sanitizeForFirestore(docPayload);
+      finalDocs[docKey] = sanitizedDoc;
+      indexDocsMap[docKey] = Math.max(1, Number(sanitizedDoc.updatedAt) || now);
     }
   }
 
   const index: MetaIndexDoc = {
     docs: indexDocsMap,
     ...(Object.keys(indexChunksMap).length > 0 ? { chunks: indexChunksMap } : {}),
-    updatedAt: now,
+    updatedAt: Math.max(1, now),
   };
 
   return { index, docs: finalDocs, metaDocs, monthDocs: monthsMap };
@@ -950,6 +1013,17 @@ export function getSyncTodayWrites(now = Date.now()): number {
   return meta.dailyWritesCount || 0;
 }
 
+export function addDirtyDocsToOutbox(docKeys: string[]): void {
+  if (!Array.isArray(docKeys) || docKeys.length === 0) return;
+  const meta = loadSyncOutboxMeta();
+  const set = new Set(meta.dirtyDocs);
+  for (const k of docKeys) {
+    if (k && k.trim()) set.add(k.trim());
+  }
+  meta.dirtyDocs = Array.from(set);
+  saveSyncOutboxMeta(meta);
+}
+
 /**
  * Pure/testable SyncBudgetController enforcing:
  * - 60s debounce after last change
@@ -972,7 +1046,7 @@ export class SyncBudgetController {
 
   constructor(
     optionsOrCallback:
-      | (() => Promise<void> | void)
+      | ((dirtyDocKeys: string[]) => Promise<void> | void)
       | {
           initialMeta?: Partial<SyncOutboxMeta>;
           getNow?: () => number;
@@ -984,8 +1058,10 @@ export class SyncBudgetController {
     if (typeof optionsOrCallback === 'function') {
       this.getNow = () => Date.now();
       this.getDayKey = (now: number) => new Date(now).toISOString().slice(0, 10);
-      this.onFlushDocs = () =>
-        Promise.resolve(optionsOrCallback()).then(() => ({ writesUsed: 0 }));
+      this.onFlushDocs = (dirtyDocKeys: string[]) =>
+        Promise.resolve(optionsOrCallback(dirtyDocKeys)).then(() => ({
+          writesUsed: 0,
+        }));
       this.meta = {
         ...DEFAULT_OUTBOX_META,
         dirtyDocs: [],
@@ -1291,7 +1367,8 @@ export function detectDirtyDocKeys(
     prevState.restDays !== nextState.restDays ||
     prevState.del !== nextState.del ||
     prevState.bonus !== nextState.bonus ||
-    prevState.exp !== nextState.exp
+    prevState.exp !== nextState.exp ||
+    prevState.ob !== nextState.ob
   ) {
     dirty.add('meta/core');
   }
@@ -1303,19 +1380,101 @@ export function detectDirtyDocKeys(
   if (prevState.pyq !== nextState.pyq) dirty.add('meta/pyq');
   if (prevState.tasks !== nextState.tasks) dirty.add('meta/tasks');
 
-  if (
-    prevState.sessions !== nextState.sessions ||
-    prevState.log !== nextState.log ||
-    prevState.notes !== nextState.notes ||
-    prevState.mood !== nextState.mood ||
-    prevState.wellbeing !== nextState.wellbeing ||
-    prevState.plans !== nextState.plans ||
-    prevState.tasks !== nextState.tasks
-  ) {
-    const activeYm = new Date().toISOString().slice(0, 7);
-    dirty.add(`months/${activeYm}`);
-    for (const ses of nextState.sessions) {
-      if (ses.dayKey) dirty.add(`months/${ses.dayKey.slice(0, 7)}`);
+  const addYm = (dk?: string) => {
+    if (dk && /^\d{4}-\d{2}/.test(dk)) {
+      dirty.add(`months/${dk.slice(0, 7)}`);
+    }
+  };
+
+  if (prevState.sessions !== nextState.sessions) {
+    const prevIds = new Map(prevState.sessions.map((s) => [s.id, s]));
+    const nextIds = new Map(nextState.sessions.map((s) => [s.id, s]));
+    for (const [id, s] of nextIds) {
+      if (prevIds.get(id) !== s) addYm(s.dayKey);
+    }
+    for (const [id, s] of prevIds) {
+      if (!nextIds.has(id)) addYm(s.dayKey);
+    }
+  }
+
+  if (prevState.tasks !== nextState.tasks) {
+    const prevIds = new Map((prevState.tasks || []).map((t) => [t.id, t]));
+    const nextIds = new Map((nextState.tasks || []).map((t) => [t.id, t]));
+    for (const [id, t] of nextIds) {
+      if (prevIds.get(id) !== t) addYm(t.dayKey);
+    }
+    for (const [id, t] of prevIds) {
+      if (!nextIds.has(id)) addYm(t.dayKey);
+    }
+  }
+
+  if (prevState.log !== nextState.log) {
+    const allHabitIds = new Set([
+      ...Object.keys(prevState.log || {}),
+      ...Object.keys(nextState.log || {}),
+    ]);
+    for (const hid of allHabitIds) {
+      const pMap = prevState.log?.[hid] || {};
+      const nMap = nextState.log?.[hid] || {};
+      if (pMap === nMap) continue;
+      const allDays = new Set([...Object.keys(pMap), ...Object.keys(nMap)]);
+      for (const dk of allDays) {
+        if (
+          pMap[dk]?.v !== nMap[dk]?.v ||
+          pMap[dk]?.s !== nMap[dk]?.s ||
+          pMap[dk]?.t !== nMap[dk]?.t
+        ) {
+          addYm(dk);
+        }
+      }
+    }
+  }
+
+  if (prevState.notes !== nextState.notes) {
+    const allDays = new Set([
+      ...Object.keys(prevState.notes || {}),
+      ...Object.keys(nextState.notes || {}),
+    ]);
+    for (const dk of allDays) {
+      if ((prevState.notes?.[dk] || '') !== (nextState.notes?.[dk] || '')) {
+        addYm(dk);
+      }
+    }
+  }
+
+  if (prevState.mood !== nextState.mood) {
+    const allDays = new Set([
+      ...Object.keys(prevState.mood || {}),
+      ...Object.keys(nextState.mood || {}),
+    ]);
+    for (const dk of allDays) {
+      if (prevState.mood?.[dk] !== nextState.mood?.[dk]) {
+        addYm(dk);
+      }
+    }
+  }
+
+  if (prevState.wellbeing !== nextState.wellbeing) {
+    const allDays = new Set([
+      ...Object.keys(prevState.wellbeing || {}),
+      ...Object.keys(nextState.wellbeing || {}),
+    ]);
+    for (const dk of allDays) {
+      if (prevState.wellbeing?.[dk] !== nextState.wellbeing?.[dk]) {
+        addYm(dk);
+      }
+    }
+  }
+
+  if (prevState.plans !== nextState.plans) {
+    const allDays = new Set([
+      ...Object.keys(prevState.plans || {}),
+      ...Object.keys(nextState.plans || {}),
+    ]);
+    for (const dk of allDays) {
+      if (prevState.plans?.[dk] !== nextState.plans?.[dk]) {
+        addYm(dk);
+      }
     }
   }
 
@@ -1337,7 +1496,7 @@ export async function performCloudSyncCycle(
       },
   localStateArg?: PulseHabitState,
   controllerArg?: SyncBudgetController,
-  extraOpts?: { forcePull?: boolean }
+  extraOpts?: { forcePull?: boolean; dirtyDocKeys?: string[] }
 ): Promise<{
   status: SyncStatus;
   errorMessage?: string;
@@ -1503,46 +1662,84 @@ export async function performCloudSyncCycle(
   // 4. Determine docs to push (first sign-in pushes all non-empty partitioned docs; otherwise dirtyDocKeys)
   const partitioned = partitionStateToCloudDocs(mergedState, now);
   const isFirstSignIn = !meta.firstSignInMergedUids.includes(uid);
+  const explicitDirtySet = new Set([
+    ...meta.dirtyDocs,
+    ...(controllerArg?.getMeta().dirtyDocs || []),
+    ...(extraOpts?.dirtyDocKeys || []),
+  ]);
   const candidateKeys = isFirstSignIn
     ? Object.keys(partitioned.docs)
-    : Array.from(new Set([...meta.dirtyDocs, ...dirtyDocKeys]));
+    : Array.from(new Set([...explicitDirtySet, ...dirtyDocKeys]));
+
+  // Ensure any dirty or previously synced month doc that became empty locally still gets written as an empty month doc
+  for (const k of candidateKeys) {
+    if (!partitioned.docs[k] && /^months\/\d{4}-\d{2}$/.test(k)) {
+      if (explicitDirtySet.has(k) || remoteIndex?.docs?.[k] || meta.knownRemoteDocTs[k]) {
+        const ym = k.slice(7);
+        partitioned.docs[k] = {
+          month: ym,
+          sessions: {},
+          log: {},
+          notes: {},
+          mood: {},
+          wellbeing: {},
+          plans: {},
+          tasks: {},
+          updatedAt: now,
+        };
+      }
+    }
+  }
 
   const keysToWrite = candidateKeys.filter((k) => {
     if (!partitioned.docs[k]) return false;
     if (isFirstSignIn) return true;
     const docUpdatedAt = Number(partitioned.docs[k].updatedAt) || 0;
     const knownTs = meta.knownRemoteDocTs[k] || 0;
-    return docUpdatedAt > knownTs || meta.dirtyDocs.includes(k);
+    return docUpdatedAt > knownTs || explicitDirtySet.has(k);
   });
   const remainingBudget = Math.max(0, DAILY_WRITE_CAP - meta.dailyWritesCount);
 
   if (keysToWrite.length > 0 && remainingBudget > 1) {
     const allowedDocKeys = keysToWrite.slice(0, remainingBudget - 1);
-    const batch = writeBatch(db);
-
-    for (const docKey of allowedDocKeys) {
-      const parts = docKey.split('/');
-      if (parts.length !== 2) continue;
-      const ref = doc(db, 'users', uid, parts[0], parts[1]);
-      batch.set(ref, partitioned.docs[docKey]);
-      writesUsed += 1;
-      meta.knownRemoteDocTs[docKey] =
-        Number(partitioned.docs[docKey].updatedAt) || now;
-    }
-
-    const updatedIndex: MetaIndexDoc = {
-      docs: {
-        ...(remoteIndex?.docs || {}),
-        ...meta.knownRemoteDocTs,
-      },
-      ...(partitioned.index.chunks ? { chunks: partitioned.index.chunks } : {}),
-      updatedAt: now,
-    };
-    batch.set(indexRef, updatedIndex);
-    writesUsed += 1;
 
     try {
+      const batch = writeBatch(db);
+      const pendingRemoteTs: Record<string, number> = {};
+
+      for (const docKey of allowedDocKeys) {
+        const parts = docKey.split('/');
+        if (parts.length !== 2) continue;
+        const ref = doc(db, 'users', uid, parts[0], parts[1]);
+        const rawPayload = sanitizeForFirestore(partitioned.docs[docKey]);
+        const knownTs = meta.knownRemoteDocTs[docKey] || 0;
+        const rawUpdatedAt = Number(rawPayload.updatedAt) || 1;
+        const nextUpdatedAt = explicitDirtySet.has(docKey)
+          ? Math.max(rawUpdatedAt, knownTs + 1, now)
+          : Math.max(1, rawUpdatedAt);
+        const payloadToWrite = {
+          ...rawPayload,
+          updatedAt: nextUpdatedAt,
+        };
+        batch.set(ref, payloadToWrite);
+        writesUsed += 1;
+        pendingRemoteTs[docKey] = nextUpdatedAt;
+      }
+
+      const updatedIndex: MetaIndexDoc = sanitizeForFirestore({
+        docs: {
+          ...(remoteIndex?.docs || {}),
+          ...meta.knownRemoteDocTs,
+          ...pendingRemoteTs,
+        },
+        ...(partitioned.index.chunks ? { chunks: partitioned.index.chunks } : {}),
+        updatedAt: Math.max(1, now),
+      });
+      batch.set(indexRef, updatedIndex);
+      writesUsed += 1;
+
       await batch.commit();
+      Object.assign(meta.knownRemoteDocTs, pendingRemoteTs);
     } catch (err) {
       if (isQuotaOrResourceExhaustedError(err)) {
         meta.quotaPausedUntilDayKey = new Date(now + 86400000)
@@ -1573,7 +1770,7 @@ export async function performCloudSyncCycle(
     }
 
     const writtenSet = new Set(allowedDocKeys);
-    meta.dirtyDocs = keysToWrite.filter((k) => !writtenSet.has(k));
+    meta.dirtyDocs = Array.from(explicitDirtySet).filter((k) => !writtenSet.has(k));
     meta.dailyWritesCount += writesUsed;
     meta.lastPushTs = now;
     controllerArg?.recordWrites(writesUsed);

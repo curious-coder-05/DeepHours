@@ -52,9 +52,11 @@ import {
 } from './insights.ts';
 import {
   SyncBudgetController,
+  detectDirtyDocKeys,
   mergeEntityCollectionsLWW,
   mergeStateWithCloudDocs,
   partitionStateToCloudDocs,
+  sanitizeForFirestore,
 } from './cloudSync.ts';
 
 describe('Part C: Deep Hours NEET Study & Habit Logger Unit Tests', () => {
@@ -1350,6 +1352,124 @@ describe('Part C: Deep Hours NEET Study & Habit Logger Unit Tests', () => {
     assert.equal(ctrl.isPausedForToday(), true);
 
     ctrl.dispose();
+  });
+
+  it('23. Firebase Sync Hardening: sanitizeForFirestore strips undefined fields, tombstones advance updatedAt, and detectDirtyDocKeys ignores local timer ticks', () => {
+    const now = 1762500000000;
+    const state = createBlankState();
+    state.sessions.push({
+      id: 'ses_undef',
+      subjectId: 'sub_phy',
+      chapterId: undefined,
+      heading: 'Session without chapterId',
+      dayKey: '2026-10-30',
+      startTs: now - 3600000,
+      endTs: now,
+      activeMs: 3600000,
+      pausedMs: 0,
+      pauseCount: 0,
+      overtimeMs: 0,
+      purity: 100,
+      mode: 'pomo',
+      rating: 5,
+      note: '',
+      updatedAt: now,
+    });
+    state.tasks.push({
+      id: 'tsk_undef',
+      title: 'Task with undefined doneAt & subjectId',
+      dayKey: '2026-10-30',
+      done: false,
+      createdAt: now,
+      doneAt: undefined,
+      subjectId: undefined,
+      updatedAt: now,
+    });
+    state.doubts.push({
+      id: 'dbt_undef',
+      subjectId: 'sub_che',
+      chapterId: undefined,
+      text: 'Doubt with undefined resolvedAt',
+      createdAt: now,
+      resolved: false,
+      resolvedAt: undefined,
+      updatedAt: now,
+    });
+
+    const partitioned = partitionStateToCloudDocs(state, now);
+
+    // Ensure no document in partitioned.docs has any `undefined` property value anywhere in its tree
+    const hasUndefinedValue = (val: unknown): boolean => {
+      if (val === undefined) return true;
+      if (!val || typeof val !== 'object') return false;
+      if (Array.isArray(val)) return val.some(hasUndefinedValue);
+      return Object.values(val as Record<string, unknown>).some(hasUndefinedValue);
+    };
+
+    for (const [docKey, docPayload] of Object.entries(partitioned.docs)) {
+      assert.equal(
+        hasUndefinedValue(docPayload),
+        false,
+        `Document ${docKey} must not contain undefined values`
+      );
+      assert.equal(typeof docPayload.updatedAt, 'number');
+      assert.ok((docPayload.updatedAt as number) > 0);
+    }
+
+    // Verify sanitizeForFirestore normalizes NaN / Infinity and strips undefined
+    const cleaned = sanitizeForFirestore({
+      a: 1,
+      b: undefined,
+      c: Number.NaN,
+      d: [1, undefined, { nested: undefined, ok: 'yes' }],
+    });
+    assert.deepEqual(cleaned, {
+      a: 1,
+      c: 0,
+      d: [1, { ok: 'yes' }],
+    });
+
+    // Verify deleting an item via addTombstone advances updatedAt on entity & month docs
+    const tombTime = now + 50000;
+    const afterDelete = addTombstone(
+      {
+        ...state,
+        tasks: [],
+        sessions: [],
+      },
+      'tsk_undef',
+      tombTime
+    );
+    const partitionedAfterDelete = partitionStateToCloudDocs(afterDelete, tombTime);
+    assert.equal(partitionedAfterDelete.metaDocs.tasks.updatedAt, tombTime);
+
+    // Verify detectDirtyDocKeys ignores activeTimer-only changes and detects deleted session month
+    const timerOnlyNext = {
+      ...state,
+      activeTimer: {
+        status: 'running' as const,
+        mode: 'pomo' as const,
+        phase: 'work' as const,
+        subjectId: 'sub_phy',
+        heading: 'Optics',
+        startTs: now,
+        sliceStartTs: now,
+        pauseStartTs: null,
+        pausedDurationMs: 0,
+        slicePausedMs: 0,
+        pauseCount: 0,
+        slicePauseCount: 0,
+        targetMs: 1500000,
+        chimeFired: false,
+        fiveMinWarnFired: false,
+      },
+    };
+    assert.deepEqual(detectDirtyDocKeys(state, timerOnlyNext), []);
+
+    const dirtyOnDelete = detectDirtyDocKeys(state, afterDelete);
+    assert.ok(dirtyOnDelete.includes('meta/core'));
+    assert.ok(dirtyOnDelete.includes('meta/tasks'));
+    assert.ok(dirtyOnDelete.includes('months/2026-10'));
   });
 });
 

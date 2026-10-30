@@ -1,6 +1,6 @@
 import React, { useMemo, useState } from 'react';
 import { PulseHabitState } from '../types';
-import { getSubject } from '../utils/studyLogic';
+import { getSubject, logicalKey } from '../utils/studyLogic';
 
 interface DoubtsViewProps {
   state: PulseHabitState;
@@ -260,7 +260,7 @@ export const DoubtsView: React.FC<DoubtsViewProps> = ({
             const ch = d.chapterId
               ? state.chapters.find((c) => c.id === d.chapterId)
               : undefined;
-            const dateStr = new Date(d.createdAt).toISOString().slice(0, 10);
+            const dateStr = logicalKey(d.createdAt, state.set.dayResetHour ?? 4);
 
             return (
               <div

@@ -71,8 +71,10 @@ import {
 } from './utils/storage';
 import {
   SyncBudgetController,
+  addDirtyDocsToOutbox,
   checkRedirectSignInResult,
   deleteAllUserCloudData,
+  detectDirtyDocKeys,
   getSyncTodayWrites,
   performCloudSyncCycle,
   signInWithGoogleAccount,
@@ -227,6 +229,8 @@ export default function App() {
 
   // A3 & A4: Never persist before initial IndexedDB load completes, and never run side effects inside setState
   const saveNextState = useCallback((next: PulseHabitState) => {
+    const prev = stateRef.current;
+    const dirtyKeys = readyRef.current ? detectDirtyDocKeys(prev, next) : [];
     const stamped: PulseHabitState = {
       ...next,
       savedAt: Date.now(),
@@ -235,8 +239,11 @@ export default function App() {
     setState(stamped);
     if (readyRef.current) {
       persistState(stamped);
-      if (authUserRef.current && syncControllerRef.current) {
-        syncControllerRef.current.markDirty();
+      if (dirtyKeys.length > 0) {
+        addDirtyDocsToOutbox(dirtyKeys);
+        if (authUserRef.current && syncControllerRef.current) {
+          syncControllerRef.current.markDirty(dirtyKeys);
+        }
       }
     }
   }, []);
@@ -489,59 +496,80 @@ export default function App() {
 
   // Milestone 2: Cloud Sync Controller & Firebase Auth lifecycle
   const runCloudSync = useCallback(
-    async (opts?: { forcePull?: boolean; isFirstSignIn?: boolean }) => {
+    async (opts?: {
+      forcePull?: boolean;
+      isFirstSignIn?: boolean;
+      dirtyDocKeys?: string[];
+    }): Promise<SyncStatus> => {
       const user = authUserRef.current;
       const controller = syncControllerRef.current;
-      if (!user || !controller || !readyRef.current) return;
+      if (!user || !controller || !readyRef.current) return 'off';
       if (typeof navigator !== 'undefined' && !navigator.onLine) {
         setSyncStatus('offline');
-        return;
+        return 'offline';
       }
 
       setSyncStatus('syncing');
       setSyncErrorMsg(null);
 
-      // 2.4: On first sign-in on a device that already has local data, write a safety snapshot first
-      if (opts?.isFirstSignIn && stateRef.current.syncMeta?.uid !== user.uid) {
-        await writeSafetyBackupSnapshot(stateRef.current);
-      }
+      try {
+        // 2.4: On first sign-in on a device that already has local data, write a safety snapshot first
+        if (opts?.isFirstSignIn && stateRef.current.syncMeta?.uid !== user.uid) {
+          await writeSafetyBackupSnapshot(stateRef.current);
+        }
 
-      const res = await performCloudSyncCycle(
-        user.uid,
-        stateRef.current,
-        controller,
-        { forcePull: opts?.forcePull }
-      );
-      setSyncWritesToday(getSyncTodayWrites());
-      setSyncStatus(res.status);
-      if (res.errorMessage) {
-        setSyncErrorMsg(res.errorMessage);
-      }
-      if (res.mergedState.syncMeta?.lastSyncedAt) {
-        setLastSyncedAt(res.mergedState.syncMeta.lastSyncedAt);
-      }
-      if (res.status === 'synced' || res.pulledDocs > 0) {
-        const curToday = logicalKey(
-          new Date(),
-          res.mergedState.set.dayResetHour ?? 4
+        const res = await performCloudSyncCycle(
+          user.uid,
+          stateRef.current,
+          controller,
+          { forcePull: opts?.forcePull, dirtyDocKeys: opts?.dirtyDocKeys }
         );
-        const syncedState: PulseHabitState = {
-          ...res.mergedState,
-          log: cloneLog(res.mergedState.log),
-          savedAt: Date.now(),
-        };
-        syncStudyHabitsInPlace(syncedState, curToday, curToday);
-        stateRef.current = syncedState;
-        setState(syncedState);
-        persistState(syncedState);
+        setSyncWritesToday(getSyncTodayWrites());
+        setSyncStatus(res.status);
+        if (res.errorMessage) {
+          setSyncErrorMsg(res.errorMessage);
+        }
+        if (res.mergedState.syncMeta?.lastSyncedAt) {
+          setLastSyncedAt(res.mergedState.syncMeta.lastSyncedAt);
+        }
+        if (res.status === 'synced' || res.pulledDocs > 0) {
+          const curToday = logicalKey(
+            new Date(),
+            res.mergedState.set.dayResetHour ?? 4
+          );
+          const syncedState: PulseHabitState = {
+            ...res.mergedState,
+            log: cloneLog(res.mergedState.log),
+            savedAt: Date.now(),
+          };
+          syncStudyHabitsInPlace(syncedState, curToday, curToday);
+          stateRef.current = syncedState;
+          setState(syncedState);
+          persistState(syncedState);
+        }
+        return res.status;
+      } catch (err) {
+        const msg =
+          err instanceof Error ? err.message : 'Cloud sync encountered an unexpected error';
+        setSyncStatus('error');
+        setSyncErrorMsg(msg);
+        return 'error';
       }
     },
     []
   );
 
+  // Trigger initial cloud sync once IndexedDB state is ready if auth resolved first
   useEffect(() => {
-    const controller = new SyncBudgetController(async () => {
-      await runCloudSync({ forcePull: false });
+    if (ready && authUser) {
+      setLastSyncedAt((prev) => prev ?? stateRef.current.syncMeta?.lastSyncedAt);
+      void runCloudSync({ forcePull: true, isFirstSignIn: true });
+    }
+  }, [ready, authUser, runCloudSync]);
+
+  useEffect(() => {
+    const controller = new SyncBudgetController(async (dirtyDocKeys) => {
+      await runCloudSync({ forcePull: false, dirtyDocKeys });
     });
     syncControllerRef.current = controller;
 
@@ -558,9 +586,6 @@ export default function App() {
         setAuthUser(u);
         setLastSyncedAt(stateRef.current.syncMeta?.lastSyncedAt);
         testFirestoreConnection().catch(() => {});
-        if (readyRef.current) {
-          runCloudSync({ forcePull: true, isFirstSignIn: true });
-        }
       } else {
         authUserRef.current = null;
         setAuthUser(null);
@@ -1148,11 +1173,14 @@ export default function App() {
       const nextH = next.habits.find((x) => x.id === id);
       if (!nextH) return;
 
+      const now = Date.now();
       const L = (next.log[id] ??= {});
       const e = (L[dayKey] ??= { v: 0, s: 0 });
       const wasDone = done(next, nextH, dayKey);
       e.s = 0;
       e.v = Math.max(0, e.v + delta);
+      e.t = now;
+      e.updatedAt = now;
       if (!e.v) delete L[dayKey];
       if (dayKey < nextH.created) nextH.created = dayKey;
       const nowDone = done(next, nextH, dayKey);
@@ -1196,12 +1224,15 @@ export default function App() {
 
   const skipHabit = useCallback(
     (id: string) => {
+      const now = Date.now();
       updateAndSave((prev) => {
         const next: PulseHabitState = JSON.parse(JSON.stringify(prev));
         const L = (next.log[id] ??= {});
         const e = (L[sel] ??= { v: 0, s: 0 });
         e.s = e.s ? 0 : 1;
         if (e.s) e.v = 0;
+        e.t = now;
+        e.updatedAt = now;
         if (!e.s && !e.v) delete L[sel];
         return next;
       });
@@ -1673,10 +1704,12 @@ export default function App() {
 
   const handleUpdateTargets = useCallback(
     (patch: Partial<SubjectTargets>) => {
+      const now = Date.now();
       updateAndSave((cur) => ({
         ...cur,
         set: {
           ...cur.set,
+          updatedAt: now,
           targets: {
             ...(cur.set.targets || {
               dailyMinutes: {},
@@ -2182,8 +2215,16 @@ export default function App() {
               showToast('Signed out of Cloud Sync');
             }}
             onSyncNow={async () => {
-              await runCloudSync({ forcePull: true });
-              showToast('Cloud sync complete');
+              const status = await runCloudSync({ forcePull: true });
+              if (status === 'synced') {
+                showToast('Cloud sync complete');
+              } else if (status === 'paused-quota') {
+                showToast('Cloud sync paused for today (daily write cap)');
+              } else if (status === 'offline') {
+                showToast('You are offline — changes saved locally');
+              } else if (status === 'error') {
+                showToast('Cloud sync failed — check Sync Notice for details');
+              }
             }}
             onDeleteCloudData={async () => {
               if (!authUser) return;
@@ -2203,9 +2244,10 @@ export default function App() {
               }
             }}
             onSelectAvatarEmoji={(emoji) => {
+              const now = Date.now();
               updateAndSave((prev) => ({
                 ...prev,
-                set: { ...prev.set, avatarEmoji: emoji },
+                set: { ...prev.set, avatarEmoji: emoji, updatedAt: now },
               }));
             }}
             onUpdateTargets={handleUpdateTargets}
@@ -2253,9 +2295,10 @@ export default function App() {
                 setModal({ type: 'confirmResetHour', newHour: newHr });
                 return;
               }
+              const now = Date.now();
               updateAndSave((prev) => ({
                 ...prev,
-                set: { ...prev.set, [key]: val },
+                set: { ...prev.set, [key]: val, updatedAt: now },
               }));
             }}
             onExportJson={() => {
@@ -2273,6 +2316,10 @@ export default function App() {
             }}
             onExportCsv={() => {
               const cur = stateRef.current;
+              const escCsv = (val: string): string => {
+                const safe = /^[=+\-@]/.test(val) ? `'${val}` : val;
+                return `"${safe.replace(/"/g, '""')}"`;
+              };
               const rows = [
                 'type,date,subject,heading_or_title,minutes_or_score,purity_or_accuracy_pct,note',
               ];
@@ -2281,12 +2328,9 @@ export default function App() {
                 const subName = sub ? sub.name : 'General';
                 const heading = getSessionHeading(cur, s);
                 rows.push(
-                  `study_session,${s.dayKey},"${subName.replace(/"/g, '""')}","${heading.replace(
-                    /"/g,
-                    '""'
-                  )}",${Math.round(s.activeMs / 60000)},${s.purity || 100},"${(
-                    s.note || ''
-                  ).replace(/"/g, '""')}"`
+                  `study_session,${s.dayKey},${escCsv(subName)},${escCsv(heading)},${Math.round(
+                    s.activeMs / 60000
+                  )},${s.purity || 100},${escCsv(s.note || '')}`
                 );
               });
               cur.habits.forEach((h) =>
@@ -2294,20 +2338,16 @@ export default function App() {
                   .sort()
                   .forEach(([k, e]) => {
                     rows.push(
-                      `habit,${k},"Habit","${h.name.replace(/"/g, '""')}",${e.v},100,""`
+                      `habit,${k},"Habit",${escCsv(h.name)},${e.v},100,""`
                     );
                   })
               );
               cur.mocks.forEach((m) => {
                 const sc = computeMockScore(m, cur.subjects);
                 rows.push(
-                  `mock_test,${m.dayKey},"All Subjects","${m.name.replace(
-                    /"/g,
-                    '""'
-                  )}",${sc.totalScore},${sc.accuracyPct},"${(m.note || '').replace(
-                    /"/g,
-                    '""'
-                  )}"`
+                  `mock_test,${m.dayKey},"All Subjects",${escCsv(m.name)},${sc.totalScore},${
+                    sc.accuracyPct
+                  },${escCsv(m.note || '')}`
                 );
               });
               cur.chapters.forEach((ch) => {
@@ -2316,20 +2356,18 @@ export default function App() {
                 const revs = getSortedChapterRevisions(ch);
                 if (revs.length === 0) {
                   rows.push(
-                    `chapter,${ch.completedOn || ''},"${subName.replace(
-                      /"/g,
-                      '""'
-                    )}","${ch.name.replace(/"/g, '""')}",${ch.confidence || 0},100,"status:${ch.status}"`
+                    `chapter,${ch.completedOn || ''},${escCsv(subName)},${escCsv(ch.name)},${
+                      ch.confidence || 0
+                    },100,${escCsv(`status:${ch.status}`)}`
                   );
                 } else {
                   revs.forEach((r) => {
                     rows.push(
-                      `chapter_revision,${r.date},"${subName.replace(
-                        /"/g,
-                        '""'
-                      )}","${ch.name.replace(/"/g, '""')} (${r.label})",${
-                        r.done ? 1 : 0
-                      },100,"${r.done ? `done:${r.doneOn || r.date}` : 'pending'}"`
+                      `chapter_revision,${r.date},${escCsv(subName)},${escCsv(
+                        `${ch.name} (${r.label})`
+                      )},${r.done ? 1 : 0},100,${escCsv(
+                        r.done ? `done:${r.doneOn || r.date}` : 'pending'
+                      )}`
                     );
                   });
                 }
@@ -2338,9 +2376,9 @@ export default function App() {
                 const sub = cur.subjects.find((x) => x.id === m.subjectId);
                 const subName = sub ? sub.name : 'Subject';
                 rows.push(
-                  `mistake,${m.dayKey},"${subName.replace(/"/g, '""')}","${m.reason}",${
+                  `mistake,${m.dayKey},${escCsv(subName)},${escCsv(m.reason)},${
                     m.resolved ? 1 : 0
-                  },100,"${(m.note || '').replace(/"/g, '""')}"`
+                  },100,${escCsv(m.note || '')}`
                 );
               });
               (cur.doubts || []).forEach((d) => {
@@ -2348,10 +2386,9 @@ export default function App() {
                 const subName = sub ? sub.name : 'Subject';
                 const dateStr = logicalKey(d.createdAt, cur.set.dayResetHour ?? 4);
                 rows.push(
-                  `doubt,${dateStr},"${subName.replace(/"/g, '""')}","${d.text.replace(
-                    /"/g,
-                    '""'
-                  )}",${d.resolved ? 1 : 0},100,"${d.resolved ? 'resolved' : 'open'}"`
+                  `doubt,${dateStr},${escCsv(subName)},${escCsv(d.text)},${
+                    d.resolved ? 1 : 0
+                  },100,"${d.resolved ? 'resolved' : 'open'}"`
                 );
               });
               (cur.pyq || []).forEach((p) => {
@@ -2364,10 +2401,9 @@ export default function App() {
                 const acc =
                   p.attempted > 0 ? Math.round((p.correct / p.attempted) * 100) : 0;
                 rows.push(
-                  `pyq,${p.dayKey},"${subName.replace(/"/g, '""')}","${chName.replace(
-                    /"/g,
-                    '""'
-                  )}",${p.attempted},${acc},"correct:${p.correct}/${p.attempted}"`
+                  `pyq,${p.dayKey},${escCsv(subName)},${escCsv(chName)},${
+                    p.attempted
+                  },${acc},"correct:${p.correct}/${p.attempted}"`
                 );
               });
               Object.entries(cur.wellbeing || {})
@@ -2389,9 +2425,9 @@ export default function App() {
                   : undefined;
                 const subName = sub ? sub.name : '';
                 rows.push(
-                  `${t.dayKey},"${t.title.replace(/"/g, '""')}",${
+                  `${t.dayKey},${escCsv(t.title)},${
                     t.done ? 'true' : 'false'
-                  },"${subName.replace(/"/g, '""')}"`
+                  },${escCsv(subName)}`
                 );
               });
               downloadFile(
@@ -2401,6 +2437,10 @@ export default function App() {
               );
             }}
             onImportJson={async (file) => {
+              if (file.size > 10 * 1024 * 1024) {
+                showToast('Backup file exceeds the 10 MB limit');
+                return;
+              }
               // F1: Keep whole-state snapshot for JSON import
               const snapJson = JSON.stringify(stateRef.current);
               try {
