@@ -28,6 +28,7 @@ import {
   cloneLog,
   computeMockScore,
   createBlankState,
+  createDailyTask,
   createDefaultState,
   done,
   due,
@@ -41,6 +42,7 @@ import {
   isAutoStudyHabit,
   logicalKey,
   mkHabit,
+  moveUnfinishedTasksToToday,
   norm,
   pad,
   restoreDeletedItem,
@@ -1157,6 +1159,104 @@ export default function App() {
     [showToast, updateAndSave]
   );
 
+  // Daily Task Handlers (pure updaters, item-only Undo, same beep/haptic as habit completion)
+  const handleAddTask = useCallback(
+    (title: string, dayKey: string, subjectId?: string) => {
+      const task = createDailyTask(title, dayKey, subjectId, Date.now());
+      if (!task) return;
+      updateAndSave((cur) => ({
+        ...cur,
+        tasks: [...(cur.tasks || []), task],
+      }));
+    },
+    [updateAndSave]
+  );
+
+  const handleToggleTask = useCallback(
+    (taskId: string) => {
+      const prev = stateRef.current;
+      const target = (prev.tasks || []).find((t) => t.id === taskId);
+      if (!target) return;
+      const nowDone = !target.done;
+      const now = Date.now();
+      updateAndSave((cur) => ({
+        ...cur,
+        tasks: (cur.tasks || []).map((t) =>
+          t.id === taskId
+            ? {
+                ...t,
+                done: nowDone,
+                doneAt: nowDone ? now : undefined,
+              }
+            : t
+        ),
+      }));
+      beep(nowDone ? 'ok' : 'no', !!prev.set.snd);
+    },
+    [updateAndSave]
+  );
+
+  const handleEditTaskTitle = useCallback(
+    (taskId: string, newTitle: string) => {
+      const clean = newTitle.trim().slice(0, 140);
+      if (!clean) return;
+      updateAndSave((cur) => ({
+        ...cur,
+        tasks: (cur.tasks || []).map((t) =>
+          t.id === taskId ? { ...t, title: clean } : t
+        ),
+      }));
+    },
+    [updateAndSave]
+  );
+
+  const handleChangeTaskDate = useCallback(
+    (taskId: string, newDayKey: string) => {
+      const cleanDate = newDayKey.trim();
+      if (!/^\d{4}-\d{2}-\d{2}$/.test(cleanDate)) return;
+      updateAndSave((cur) => ({
+        ...cur,
+        tasks: (cur.tasks || []).map((t) =>
+          t.id === taskId ? { ...t, dayKey: cleanDate } : t
+        ),
+      }));
+    },
+    [updateAndSave]
+  );
+
+  const handleDeleteTask = useCallback(
+    (taskId: string) => {
+      const prev = stateRef.current;
+      const list = prev.tasks || [];
+      const index = list.findIndex((t) => t.id === taskId);
+      if (index === -1) return;
+      const record: DeletedEntityRecord = {
+        kind: 'task',
+        item: JSON.parse(JSON.stringify(list[index])),
+        index,
+      };
+      updateAndSave((cur) => ({
+        ...cur,
+        tasks: (cur.tasks || []).filter((t) => t.id !== taskId),
+      }));
+      showToast('Task deleted', () => {
+        updateAndSave((cur) => restoreDeletedItem(cur, record));
+      });
+    },
+    [showToast, updateAndSave]
+  );
+
+  const handleMoveTaskToToday = useCallback(
+    (taskId: string) => {
+      updateAndSave((cur) => moveUnfinishedTasksToToday(cur, todayKey, taskId));
+    },
+    [todayKey, updateAndSave]
+  );
+
+  const handleMoveAllUnfinishedToToday = useCallback(() => {
+    updateAndSave((cur) => moveUnfinishedTasksToToday(cur, todayKey));
+  }, [todayKey, updateAndSave]);
+
   // F4: Storage load failure screen (readyRef.current remains false so existing data is never overwritten)
   if (loadError) {
     return (
@@ -1340,6 +1440,13 @@ export default function App() {
             onDeleteSession={handleDeleteSession}
             onCompleteRevision={handleToggleRevisionDone}
             onRescheduleRevision={handleUpdateRevisionDate}
+            onAddTask={handleAddTask}
+            onToggleTask={handleToggleTask}
+            onEditTaskTitle={handleEditTaskTitle}
+            onChangeTaskDate={handleChangeTaskDate}
+            onDeleteTask={handleDeleteTask}
+            onMoveTaskToToday={handleMoveTaskToToday}
+            onMoveAllUnfinishedToToday={handleMoveAllUnfinishedToToday}
             onSetMood={(v) => {
               updateAndSave((prev) => ({
                 ...prev,
@@ -1608,6 +1715,18 @@ export default function App() {
                     );
                   });
                 }
+              });
+              rows.push('date,task,done,subject');
+              (cur.tasks || []).forEach((t) => {
+                const sub = t.subjectId
+                  ? cur.subjects.find((x) => x.id === t.subjectId)
+                  : undefined;
+                const subName = sub ? sub.name : '';
+                rows.push(
+                  `${t.dayKey},"${t.title.replace(/"/g, '""')}",${
+                    t.done ? 'true' : 'false'
+                  },"${subName.replace(/"/g, '""')}"`
+                );
               });
               downloadFile(
                 `deep-hours-export-${todayKey}.csv`,

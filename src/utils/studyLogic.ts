@@ -3,6 +3,7 @@ import type {
   ChapterRevision,
   ChapterStatus,
   DDay,
+  DailyTask,
   Habit,
   HabitCategory,
   HabitLogDay,
@@ -343,6 +344,7 @@ export function createBlankState(): PulseHabitState {
     log: {},
     subjects: JSON.parse(JSON.stringify(DEFAULT_SUBJECTS)),
     todos: [],
+    tasks: [],
     sessions: [],
     plans: {},
     ddays: [],
@@ -502,6 +504,42 @@ export function norm(raw: unknown): PulseHabitState {
   } else {
     const mergedTodos = s.subjects.flatMap((sub) => sub.todos || []);
     s.todos = mergedTodos;
+  }
+
+  // Daily Tasks (one-off items per dayKey)
+  if (Array.isArray(src.tasks)) {
+    s.tasks = src.tasks
+      .map((rawTask): DailyTask | null => {
+        if (!rawTask || typeof rawTask !== 'object') return null;
+        const rec = rawTask as Record<string, unknown>;
+        const id = typeof rec.id === 'string' ? rec.id.trim() : '';
+        const title =
+          typeof rec.title === 'string' ? rec.title.trim().slice(0, 140) : '';
+        const dayKey = typeof rec.dayKey === 'string' ? rec.dayKey.trim() : '';
+        if (!id || !title || !/^\d{4}-\d{2}-\d{2}$/.test(dayKey)) return null;
+        const isDone = Boolean(rec.done);
+        const createdAt = Number.isFinite(rec.createdAt)
+          ? Number(rec.createdAt)
+          : Date.now();
+        const doneAt =
+          isDone && Number.isFinite(rec.doneAt) ? Number(rec.doneAt) : undefined;
+        const subjectId =
+          typeof rec.subjectId === 'string' && rec.subjectId.trim()
+            ? rec.subjectId.trim()
+            : undefined;
+        return {
+          id,
+          title,
+          dayKey,
+          done: isDone,
+          createdAt,
+          ...(doneAt !== undefined ? { doneAt } : {}),
+          ...(subjectId ? { subjectId } : {}),
+        };
+      })
+      .filter((t): t is DailyTask => t !== null);
+  } else {
+    s.tasks = [];
   }
 
   // Sessions (A8 validation: drop sessions without string id or finite startTs/endTs)
@@ -1658,6 +1696,82 @@ export const pct = (state: PulseHabitState, k: string): number => {
   return a.length ? a.filter((h) => done(state, h, k)).length / a.length : 0;
 };
 
+export interface DayProgress {
+  habitsDone: number;
+  habitsTotal: number;
+  tasksDone: number;
+  tasksTotal: number;
+  done: number;
+  total: number;
+  pct: number;
+}
+
+export function getDayProgress(state: PulseHabitState, dayKey: string): DayProgress {
+  const dueHabits = dueOn(state, dayKey);
+  const habitsTotal = dueHabits.length;
+  const habitsDone = dueHabits.filter((h) => done(state, h, dayKey)).length;
+  const dayTasks = (state.tasks || []).filter((t) => t.dayKey === dayKey);
+  const tasksTotal = dayTasks.length;
+  const tasksDone = dayTasks.filter((t) => t.done).length;
+  const doneCount = habitsDone + tasksDone;
+  const totalCount = habitsTotal + tasksTotal;
+  const progressPct = totalCount ? doneCount / totalCount : 0;
+  return {
+    habitsDone,
+    habitsTotal,
+    tasksDone,
+    tasksTotal,
+    done: doneCount,
+    total: totalCount,
+    pct: progressPct,
+  };
+}
+
+export function createDailyTask(
+  title: string,
+  dayKey: string,
+  subjectId?: string,
+  now = Date.now()
+): DailyTask | null {
+  const cleanTitle = typeof title === 'string' ? title.trim().slice(0, 140) : '';
+  const cleanDayKey = typeof dayKey === 'string' ? dayKey.trim() : '';
+  if (!cleanTitle || !/^\d{4}-\d{2}-\d{2}$/.test(cleanDayKey)) return null;
+  const cleanSubjectId =
+    typeof subjectId === 'string' && subjectId.trim() ? subjectId.trim() : undefined;
+  return {
+    id: uid('tsk'),
+    title: cleanTitle,
+    dayKey: cleanDayKey,
+    done: false,
+    createdAt: now,
+    ...(cleanSubjectId ? { subjectId: cleanSubjectId } : {}),
+  };
+}
+
+export function moveUnfinishedTasksToToday(
+  state: PulseHabitState,
+  todayKey: string,
+  taskId?: string
+): PulseHabitState {
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(todayKey)) return state;
+  const currentTasks = state.tasks || [];
+  let changed = false;
+  const nextTasks = currentTasks.map((t) => {
+    const isEligible = !t.done && t.dayKey < todayKey;
+    const matchesTarget = taskId ? t.id === taskId : true;
+    if (isEligible && matchesTarget) {
+      changed = true;
+      return { ...t, dayKey: todayKey };
+    }
+    return t;
+  });
+  if (!changed) return state;
+  return {
+    ...state,
+    tasks: nextTasks,
+  };
+}
+
 export function rate(state: PulseHabitState, h: Habit, n: number, todayKey: string): number {
   let d = 0;
   let c = 0;
@@ -1928,7 +2042,8 @@ export type DeletedEntityRecord =
   | { kind: 'mock'; item: MockTest; index: number }
   | { kind: 'session'; item: StudySession; index: number }
   | { kind: 'dday'; item: DDay; index: number }
-  | { kind: 'subject'; item: Subject; index: number };
+  | { kind: 'subject'; item: Subject; index: number }
+  | { kind: 'task'; item: DailyTask; index: number };
 
 export function insertAtIndex<T extends { id: string }>(
   list: T[],
@@ -2007,6 +2122,13 @@ export function restoreDeletedItem(
         ...currentState,
         log: nextLog,
         subjects: insertAtIndex(currentState.subjects, record.item, record.index),
+      };
+    }
+    case 'task': {
+      return {
+        ...currentState,
+        log: nextLog,
+        tasks: insertAtIndex(currentState.tasks || [], record.item, record.index),
       };
     }
   }

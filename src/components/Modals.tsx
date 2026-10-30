@@ -1252,7 +1252,7 @@ export const Modals: React.FC<ModalsProps> = ({
             sessions and re-sync your auto-study habits across affected days.
           </small>
           <small style={{ color: 'var(--tx)', fontWeight: 600 }}>
-            Sessions are re-dated. Habit ticks, notes, mood and planner blocks keep their original dates.
+            Sessions are re-dated. Habit ticks, tasks, notes, mood and planner blocks keep their original dates.
           </small>
           <div className="row">
             <button

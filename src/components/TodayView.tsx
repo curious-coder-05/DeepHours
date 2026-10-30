@@ -1,5 +1,5 @@
-import React, { useState } from 'react';
-import type { ActiveTimerMode, AppTab, Habit, HabitCategory, PulseHabitState } from '../types';
+import React, { useRef, useState } from 'react';
+import type { ActiveTimerMode, AppTab, DailyTask, Habit, HabitCategory, PulseHabitState } from '../types';
 import {
   CATS,
   CC,
@@ -13,6 +13,7 @@ import {
   fmtHMShort,
   fmtMS,
   getDailyFocusTip,
+  getDayProgress,
   getDueAndOverdueRevisions,
   getSessionHeading,
   getSubject,
@@ -21,7 +22,6 @@ import {
   lvl,
   pad,
   parseKey,
-  pct,
   skip,
   streak,
   wkC,
@@ -49,6 +49,13 @@ interface TodayViewProps {
   onDeleteSession: (id: string) => void;
   onCompleteRevision: (chapterId: string, revId: string) => void;
   onRescheduleRevision: (chapterId: string, revId: string, newDate: string) => void;
+  onAddTask: (title: string, dayKey: string, subjectId?: string) => void;
+  onToggleTask: (taskId: string) => void;
+  onEditTaskTitle: (taskId: string, newTitle: string) => void;
+  onChangeTaskDate: (taskId: string, newDayKey: string) => void;
+  onDeleteTask: (taskId: string) => void;
+  onMoveTaskToToday: (taskId: string) => void;
+  onMoveAllUnfinishedToToday: () => void;
   onSetMood: (val: number) => void;
   onSetNote: (txt: string) => void;
 }
@@ -74,6 +81,13 @@ export const TodayView: React.FC<TodayViewProps> = ({
   onDeleteSession,
   onCompleteRevision,
   onRescheduleRevision,
+  onAddTask,
+  onToggleTask,
+  onEditTaskTitle,
+  onChangeTaskDate,
+  onDeleteTask,
+  onMoveTaskToToday,
+  onMoveAllUnfinishedToToday,
   onSetMood,
   onSetNote,
 }) => {
@@ -88,10 +102,21 @@ export const TodayView: React.FC<TodayViewProps> = ({
     addD(todayKey, 1)
   );
 
+  // Daily Tasks UI state
+  const [taskTitleDraft, setTaskTitleDraft] = useState('');
+  const [taskSubjectId, setTaskSubjectId] = useState<string>('');
+  const lastTaskSubmitRef = useRef<{ title: string; ts: number }>({ title: '', ts: 0 });
+  const [openMenuTaskId, setOpenMenuTaskId] = useState<string | null>(null);
+  const [editingTaskId, setEditingTaskId] = useState<string | null>(null);
+  const [editingTitleDraft, setEditingTitleDraft] = useState('');
+  const [changingDateTaskId, setChangingDateTaskId] = useState<string | null>(null);
+  const [changingDateDraft, setChangingDateDraft] = useState('');
+  const [earlierOpen, setEarlierOpen] = useState(true);
+
   const allDue = dueOn(state, sel);
   const hs = allDue.filter((h) => cat === 'All' || h.c === cat);
-  const completedCount = allDue.filter((h) => done(state, h, sel)).length;
-  const p = Math.round(pct(state, sel) * 100);
+  const dayProg = getDayProgress(state, sel);
+  const p = Math.round(dayProg.pct * 100);
   const totalXp = xp(state, todayKey);
   const level = lvl(totalXp);
   const currentMood = state.mood[sel] || 0;
@@ -109,6 +134,24 @@ export const TodayView: React.FC<TodayViewProps> = ({
   // Deduplicate if sel < todayKey so an overdue revision on sel isn't shown twice
   const overdueIds = new Set(overdue.map((r) => r.revisionId));
   const dueFiltered = dueOnSel.filter((r) => !overdueIds.has(r.revisionId));
+
+  // Selected day tasks: pending (oldest createdAt first) then completed
+  const allTasks = state.tasks || [];
+  const dayTasks: DailyTask[] = allTasks
+    .filter((t) => t.dayKey === sel)
+    .slice()
+    .sort((a, b) => {
+      if (a.done !== b.done) return a.done ? 1 : -1;
+      return (a.createdAt || 0) - (b.createdAt || 0);
+    });
+
+  // Unfinished tasks from earlier days (dayKey < todayKey)
+  const unfinishedEarlier: DailyTask[] = allTasks
+    .filter((t) => !t.done && t.dayKey < todayKey)
+    .slice()
+    .sort((a, b) => a.dayKey.localeCompare(b.dayKey) || (a.createdAt || 0) - (b.createdAt || 0));
+
+  const isFutureDay = sel > todayKey;
 
   const renderHabitCard = (h: Habit) => {
     const e = ent(state, h, sel);
@@ -338,7 +381,7 @@ export const TodayView: React.FC<TodayViewProps> = ({
       <div className="wk">
         {[...Array(7)].map((_, i) => {
           const k = addD(todayKey, i - 6);
-          const dayPct = Math.round(pct(state, k) * 100);
+          const dayPct = Math.round(getDayProgress(state, k).pct * 100);
           return (
             <button
               type="button"
@@ -363,7 +406,7 @@ export const TodayView: React.FC<TodayViewProps> = ({
             {
               '--p': p,
               boxShadow:
-                p === 100 && allDue.length > 0
+                p === 100 && dayProg.total > 0
                   ? '0 0 42px color-mix(in srgb, var(--em) 48%, transparent)'
                   : undefined,
             } as React.CSSProperties
@@ -410,13 +453,33 @@ export const TodayView: React.FC<TodayViewProps> = ({
           </svg>
           <i>
             <div>
-              <b>
-                {p}
-                <small style={{ fontSize: '14px' }}>%</small>
-              </b>
-              <small style={{ display: 'block', fontSize: '11px' }}>
-                {completedCount}/{allDue.length} habits
-              </small>
+              {dayProg.total === 0 ? (
+                <>
+                  <b>
+                    {p}
+                    <small style={{ fontSize: '14px' }}>%</small>
+                  </b>
+                  <small style={{ display: 'block', fontSize: '11px' }}>
+                    {dayProg.habitsDone}/{dayProg.habitsTotal} habits
+                  </small>
+                </>
+              ) : (
+                <>
+                  <b style={{ fontSize: '17px', lineHeight: 1.15 }}>
+                    {dayProg.done}/{dayProg.total} done
+                  </b>
+                  <small
+                    style={{
+                      display: 'block',
+                      fontSize: '10px',
+                      lineHeight: 1.25,
+                      marginTop: '3px',
+                    }}
+                  >
+                    {dayProg.habitsDone}/{dayProg.habitsTotal} habits · {dayProg.tasksDone}/{dayProg.tasksTotal} tasks
+                  </small>
+                </>
+              )}
             </div>
           </i>
         </div>
@@ -445,6 +508,384 @@ export const TodayView: React.FC<TodayViewProps> = ({
             <b style={{ color: 'var(--ac)', fontSize: '13px' }}>Manual +</b>
           </button>
         </div>
+      </div>
+
+      {/* Daily Tasks Card (directly under Ring card and above Revisions Due) */}
+      <div className="card" id="dailyTasksCard">
+        <div className="row sp" style={{ marginBottom: '8px' }}>
+          <div>
+            <h3>
+              Tasks {dayProg.tasksDone}/{dayProg.tasksTotal}
+            </h3>
+            <small>
+              One-off tasks for {sel === todayKey ? 'today' : sel}
+            </small>
+          </div>
+        </div>
+
+        {!isFutureDay ? (
+          <form
+            onSubmit={(e) => {
+              e.preventDefault();
+              const clean = taskTitleDraft.trim().slice(0, 140);
+              if (!clean) return;
+              const now = Date.now();
+              if (
+                lastTaskSubmitRef.current.title === clean &&
+                now - lastTaskSubmitRef.current.ts < 400
+              ) {
+                return;
+              }
+              lastTaskSubmitRef.current = { title: clean, ts: now };
+              setTaskTitleDraft('');
+              onAddTask(clean, sel, taskSubjectId || undefined);
+            }}
+            style={{
+              display: 'grid',
+              gridTemplateColumns: '1fr auto auto',
+              gap: '6px',
+              alignItems: 'center',
+              marginBottom: '10px',
+            }}
+          >
+            <input
+              type="text"
+              value={taskTitleDraft}
+              maxLength={140}
+              placeholder={`Add a task for ${sel === todayKey ? 'today' : sel}...`}
+              aria-label="New task title"
+              onChange={(e) => setTaskTitleDraft(e.target.value)}
+              style={{ margin: 0, minHeight: '44px' }}
+            />
+            <select
+              value={taskSubjectId}
+              aria-label="Task subject (optional)"
+              onChange={(e) => setTaskSubjectId(e.target.value)}
+              style={{
+                margin: 0,
+                width: 'auto',
+                maxWidth: '126px',
+                minHeight: '44px',
+                padding: '0 8px',
+                fontSize: '12px',
+              }}
+            >
+              <option value="">No subject</option>
+              {subjects.map((s) => (
+                <option key={s.id} value={s.id}>
+                  {s.e} {s.name}
+                </option>
+              ))}
+            </select>
+            <button
+              type="submit"
+              className="pri"
+              aria-label="Add task"
+              style={{
+                minWidth: '44px',
+                minHeight: '44px',
+                padding: '0 14px',
+                fontWeight: 800,
+                fontSize: '18px',
+              }}
+            >
+              +
+            </button>
+          </form>
+        ) : (
+          <small className="mu" style={{ display: 'block', marginBottom: '10px' }}>
+            Future days only get tasks via &ldquo;Move to tomorrow&rdquo; or &ldquo;Change date&rdquo;.
+          </small>
+        )}
+
+        {dayTasks.length === 0 ? (
+          <small className="mu" style={{ display: 'block' }}>
+            No tasks for {sel === todayKey ? 'today' : sel} yet.
+          </small>
+        ) : (
+          <div style={{ display: 'grid', gap: '6px' }}>
+            {dayTasks.map((t) => {
+              const sub = t.subjectId ? getSubject(state, t.subjectId) : null;
+              const isMenuOpen = openMenuTaskId === t.id;
+              const isEditing = editingTaskId === t.id;
+              const isChangingDate = changingDateTaskId === t.id;
+
+              return (
+                <div
+                  key={t.id}
+                  className="stat-box"
+                  style={{
+                    padding: '8px 10px',
+                    borderLeft: sub ? `3px solid ${sub.color}` : '3px solid var(--ac)',
+                  }}
+                >
+                  <div className="row sp" style={{ gap: '8px', flexWrap: 'nowrap' }}>
+                    <button
+                      type="button"
+                      className={`ck ${t.done ? 'on' : ''}`}
+                      aria-pressed={t.done}
+                      aria-label={`Mark task "${t.title}" as ${t.done ? 'incomplete' : 'complete'}`}
+                      onClick={() => onToggleTask(t.id)}
+                      style={{
+                        minWidth: '44px',
+                        minHeight: '44px',
+                        width: '44px',
+                        height: '44px',
+                        flexShrink: 0,
+                      }}
+                    >
+                      {t.done ? '✓' : ''}
+                    </button>
+
+                    <div style={{ flex: 1, minWidth: 0 }}>
+                      {isEditing ? (
+                        <form
+                          onSubmit={(e) => {
+                            e.preventDefault();
+                            const clean = editingTitleDraft.trim().slice(0, 140);
+                            if (!clean) return;
+                            onEditTaskTitle(t.id, clean);
+                            setEditingTaskId(null);
+                            setOpenMenuTaskId(null);
+                          }}
+                          style={{ display: 'flex', gap: '6px', alignItems: 'center' }}
+                        >
+                          <input
+                            type="text"
+                            value={editingTitleDraft}
+                            maxLength={140}
+                            aria-label="Edit task title"
+                            onChange={(e) => setEditingTitleDraft(e.target.value)}
+                            style={{ margin: 0, flex: 1, minHeight: '38px' }}
+                            autoFocus
+                          />
+                          <button type="submit" className="s pri">
+                            Save
+                          </button>
+                          <button
+                            type="button"
+                            className="s"
+                            onClick={() => setEditingTaskId(null)}
+                          >
+                            Cancel
+                          </button>
+                        </form>
+                      ) : (
+                        <>
+                          <b
+                            style={{
+                              display: 'block',
+                              fontSize: '14px',
+                              textDecoration: t.done ? 'line-through' : 'none',
+                              opacity: t.done ? 0.6 : 1,
+                              wordBreak: 'break-word',
+                            }}
+                          >
+                            {t.title}
+                          </b>
+                          {sub && (
+                            <span
+                              className="pill"
+                              style={{
+                                marginTop: '4px',
+                                padding: '1px 7px',
+                                fontSize: '10.5px',
+                                borderColor: sub.color,
+                                color: sub.color,
+                              }}
+                            >
+                              {sub.e} {sub.name}
+                            </span>
+                          )}
+                        </>
+                      )}
+                    </div>
+
+                    <button
+                      type="button"
+                      className="ic"
+                      aria-label={`Task actions for ${t.title}`}
+                      aria-expanded={isMenuOpen}
+                      onClick={() => {
+                        setOpenMenuTaskId(isMenuOpen ? null : t.id);
+                        setEditingTaskId(null);
+                        setChangingDateTaskId(null);
+                      }}
+                      style={{
+                        minWidth: '44px',
+                        minHeight: '44px',
+                        width: '44px',
+                        height: '44px',
+                        flexShrink: 0,
+                      }}
+                    >
+                      ⋯
+                    </button>
+                  </div>
+
+                  {isMenuOpen && (
+                    <div
+                      className="row"
+                      style={{
+                        marginTop: '8px',
+                        paddingTop: '8px',
+                        borderTop: '1px solid var(--bd)',
+                        gap: '6px',
+                      }}
+                    >
+                      <button
+                        type="button"
+                        className="s"
+                        onClick={() => {
+                          setEditingTaskId(t.id);
+                          setEditingTitleDraft(t.title);
+                          setChangingDateTaskId(null);
+                        }}
+                      >
+                        Edit title
+                      </button>
+                      <button
+                        type="button"
+                        className="s"
+                        onClick={() => {
+                          onChangeTaskDate(t.id, addD(t.dayKey, 1));
+                          setOpenMenuTaskId(null);
+                        }}
+                      >
+                        Move to tomorrow
+                      </button>
+                      <button
+                        type="button"
+                        className="s"
+                        onClick={() => {
+                          setChangingDateTaskId(isChangingDate ? null : t.id);
+                          setChangingDateDraft(t.dayKey);
+                          setEditingTaskId(null);
+                        }}
+                      >
+                        Change date
+                      </button>
+                      <button
+                        type="button"
+                        className="s dg"
+                        onClick={() => {
+                          setOpenMenuTaskId(null);
+                          onDeleteTask(t.id);
+                        }}
+                      >
+                        Delete
+                      </button>
+                    </div>
+                  )}
+
+                  {isChangingDate && (
+                    <div
+                      className="row"
+                      style={{
+                        marginTop: '8px',
+                        paddingTop: '8px',
+                        borderTop: '1px solid var(--bd)',
+                        gap: '6px',
+                      }}
+                    >
+                      <input
+                        type="date"
+                        value={changingDateDraft}
+                        aria-label="New task date"
+                        onChange={(e) => setChangingDateDraft(e.target.value)}
+                        style={{ margin: 0, width: 'auto', flex: 1, minHeight: '38px' }}
+                      />
+                      <button
+                        type="button"
+                        className="s pri"
+                        onClick={() => {
+                          if (/^\d{4}-\d{2}-\d{2}$/.test(changingDateDraft)) {
+                            onChangeTaskDate(t.id, changingDateDraft);
+                            setChangingDateTaskId(null);
+                            setOpenMenuTaskId(null);
+                          }
+                        }}
+                      >
+                        Apply Date
+                      </button>
+                      <button
+                        type="button"
+                        className="s"
+                        onClick={() => setChangingDateTaskId(null)}
+                      >
+                        Cancel
+                      </button>
+                    </div>
+                  )}
+                </div>
+              );
+            })}
+          </div>
+        )}
+
+        {unfinishedEarlier.length > 0 && (
+          <div
+            style={{
+              marginTop: '12px',
+              paddingTop: '10px',
+              borderTop: '1px solid var(--bd)',
+            }}
+          >
+            <div className="row sp" style={{ gap: '8px' }}>
+              <button
+                type="button"
+                className="s"
+                aria-expanded={earlierOpen}
+                onClick={() => setEarlierOpen((o) => !o)}
+                style={{ fontWeight: 700 }}
+              >
+                {earlierOpen ? '▾' : '▸'} Unfinished from earlier days ({unfinishedEarlier.length})
+              </button>
+              <button
+                type="button"
+                className="s pri"
+                onClick={onMoveAllUnfinishedToToday}
+              >
+                Move all to today
+              </button>
+            </div>
+
+            {earlierOpen && (
+              <div style={{ display: 'grid', gap: '6px', marginTop: '8px' }}>
+                {unfinishedEarlier.map((t) => {
+                  const sub = t.subjectId ? getSubject(state, t.subjectId) : null;
+                  return (
+                    <div
+                      key={t.id}
+                      className="stat-box row sp"
+                      style={{
+                        padding: '8px 10px',
+                        borderLeft: '3px solid var(--wa)',
+                      }}
+                    >
+                      <div style={{ flex: 1, minWidth: 0, paddingRight: '8px' }}>
+                        <b style={{ display: 'block', fontSize: '13px', wordBreak: 'break-word' }}>
+                          {t.title}
+                        </b>
+                        <small className="mu">
+                          From {t.dayKey}
+                          {sub ? ` · ${sub.e} ${sub.name}` : ''}
+                        </small>
+                      </div>
+                      <button
+                        type="button"
+                        className="s pri"
+                        onClick={() => onMoveTaskToToday(t.id)}
+                      >
+                        Move to today
+                      </button>
+                    </div>
+                  );
+                })}
+              </div>
+            )}
+          </div>
+        )}
       </div>
 
       {/* Revisions Due Card (Part B2 Today Integration) */}

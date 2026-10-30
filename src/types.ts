@@ -153,11 +153,22 @@ export interface AppSettings {
   targetMockScore?: number;
 }
 
+export interface DailyTask {
+  id: string;
+  title: string;
+  dayKey: string;
+  done: boolean;
+  createdAt: number;
+  doneAt?: number;
+  subjectId?: string;
+}
+
 export interface PulseHabitState {
   habits: Habit[];
   log: HabitLogMap;
   subjects: Subject[];
   todos?: StudyTodo[];
+  tasks: DailyTask[];
   sessions: StudySession[];
   plans: PlansMap;
   ddays: DDay[];

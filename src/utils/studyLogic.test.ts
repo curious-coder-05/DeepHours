@@ -1,6 +1,6 @@
 import { describe, it } from 'node:test';
 import assert from 'node:assert/strict';
-import type { Chapter, MockTest } from '../types';
+import type { Chapter, DailyTask, MockTest } from '../types';
 import {
   addChapterRevisionDate,
   applyChapterUpdate,
@@ -10,19 +10,23 @@ import {
   computeMocksOverview,
   computeStudySummary,
   createBlankState,
+  createDailyTask,
   getDailyStudyGoalProgress,
+  getDayProgress,
   getDueAndOverdueRevisions,
   getSortedChapterRevisions,
   getStudyQuoteForTimer,
   getTimerMetrics,
   logicalKey,
   mkHabit,
+  moveUnfinishedTasksToToday,
   norm,
+  pct,
   restoreDeletedItem,
   shouldFireFiveMinWarning,
   syncStudyHabitsForDays,
   updateChapterRevisionDate,
-} from './studyLogic';
+} from './studyLogic.ts';
 
 describe('Part C: Deep Hours NEET Study & Habit Logger Unit Tests', () => {
   it('1. logicalKey around midnight and the reset hour (04:00 AM)', () => {
@@ -544,5 +548,163 @@ describe('Part C: Deep Hours NEET Study & Habit Logger Unit Tests', () => {
     assert.equal(normDDays.ddays.length, 2);
     assert.equal(normDDays.ddays[0].title, 'AIIMS Custom Exam 2027');
     assert.equal(normDDays.ddays[1].title, 'Legacy Named Exam');
+  });
+
+  it('11. Daily Tasks: getDayProgress mixes habits and tasks (including 0 totals and tasks on other days) while leaving pct() untouched', () => {
+    const state = createBlankState();
+    const emptyProg = getDayProgress(state, '2026-10-25');
+    assert.deepEqual(emptyProg, {
+      habitsDone: 0,
+      habitsTotal: 0,
+      tasksDone: 0,
+      tasksTotal: 0,
+      done: 0,
+      total: 0,
+      pct: 0,
+    });
+
+    const h1 = mkHabit({ id: 'h_1', name: 'Revise Bio', tn: 1 }, '2026-10-01');
+    const h2 = mkHabit({ id: 'h_2', name: 'Physics PYQ', tn: 1 }, '2026-10-01');
+    state.habits = [h1, h2];
+    state.log = {
+      h_1: { '2026-10-25': { v: 1, s: 0 } },
+    };
+
+    const t1: DailyTask = {
+      id: 't_1',
+      title: 'Solve 30 Organic Chem MCQs',
+      dayKey: '2026-10-25',
+      done: true,
+      createdAt: 1000,
+      doneAt: 2000,
+      subjectId: 'sub_che',
+    };
+    const t2: DailyTask = {
+      id: 't_2',
+      title: 'Read NCERT Plant Kingdom',
+      dayKey: '2026-10-25',
+      done: false,
+      createdAt: 1500,
+      subjectId: 'sub_bio',
+    };
+    const tOtherDay: DailyTask = {
+      id: 't_other',
+      title: 'Earlier Unfinished Task',
+      dayKey: '2026-10-24',
+      done: false,
+      createdAt: 500,
+    };
+    state.tasks = [t1, t2, tOtherDay];
+
+    // Existing pct() only measures habits (1/2 = 0.5)
+    assert.equal(pct(state, '2026-10-25'), 0.5);
+
+    // getDayProgress combines habits (1/2) and tasks for that dayKey only (1/2) -> 2/4 = 0.5
+    const prog = getDayProgress(state, '2026-10-25');
+    assert.deepEqual(prog, {
+      habitsDone: 1,
+      habitsTotal: 2,
+      tasksDone: 1,
+      tasksTotal: 2,
+      done: 2,
+      total: 4,
+      pct: 0.5,
+    });
+
+    // Check day with only tasks (2026-10-24 has 2 habits due, 0 done, 1 task due, 0 done -> 0/3)
+    const prevDayProg = getDayProgress(state, '2026-10-24');
+    assert.equal(prevDayProg.habitsTotal, 2);
+    assert.equal(prevDayProg.tasksTotal, 1);
+    assert.equal(prevDayProg.tasksDone, 0);
+    assert.equal(prevDayProg.done, 0);
+    assert.equal(prevDayProg.total, 3);
+    assert.equal(prevDayProg.pct, 0);
+  });
+
+  it('12. Daily Tasks: norm() loads an OLD saved state with no tasks field and drops malformed tasks on import', () => {
+    const legacyRaw = {
+      habits: [],
+      log: {},
+      sessions: [],
+      notes: { '2026-10-25': 'Legacy study note' },
+    };
+    const loadedFromLegacy = norm(legacyRaw);
+    assert.ok(Array.isArray(loadedFromLegacy.tasks));
+    assert.equal(loadedFromLegacy.tasks.length, 0);
+    assert.equal(loadedFromLegacy.notes['2026-10-25'], 'Legacy study note');
+
+    const longTitle = 'A'.repeat(180);
+    const importedWithMalformed = norm({
+      tasks: [
+        {
+          id: 't_valid',
+          title: `  ${longTitle}  `,
+          dayKey: '2026-10-25',
+          done: true,
+          createdAt: 1761000000000,
+          doneAt: 1761000500000,
+          subjectId: 'sub_phy',
+        },
+        // Malformed: empty id
+        { id: '   ', title: 'Valid Title', dayKey: '2026-10-25', done: false, createdAt: 100 },
+        // Malformed: non-string id
+        { id: 123, title: 'Valid Title', dayKey: '2026-10-25', done: false, createdAt: 100 },
+        // Malformed: empty title
+        { id: 't_bad_title', title: '   ', dayKey: '2026-10-25', done: false, createdAt: 100 },
+        // Malformed: invalid dayKey
+        { id: 't_bad_date', title: 'Task with bad date', dayKey: '25-10-2026', done: false, createdAt: 100 },
+        null,
+      ],
+    });
+
+    assert.equal(importedWithMalformed.tasks.length, 1);
+    assert.equal(importedWithMalformed.tasks[0].id, 't_valid');
+    assert.equal(importedWithMalformed.tasks[0].title.length, 140);
+    assert.equal(importedWithMalformed.tasks[0].dayKey, '2026-10-25');
+    assert.equal(importedWithMalformed.tasks[0].done, true);
+    assert.equal(importedWithMalformed.tasks[0].subjectId, 'sub_phy');
+  });
+
+  it('13. Daily Tasks: restoreDeletedItem for a task keeps newer unrelated changes and moveUnfinishedTasksToToday updates dayKey', () => {
+    const state = createBlankState();
+    const t0 = createDailyTask('Task Zero', '2026-10-23', 'sub_phy', 1000)!;
+    const t1 = createDailyTask('Task One (Deleted)', '2026-10-24', 'sub_che', 2000)!;
+    const t2 = createDailyTask('Task Two (Completed Earlier)', '2026-10-24', 'sub_bio', 3000)!;
+    t2.done = true;
+    t2.doneAt = 3500;
+
+    state.tasks = [t0, t1, t2];
+
+    // Delete t1 at index 1
+    const afterDelete = {
+      ...state,
+      tasks: [t0, t2],
+    };
+    // Make an unrelated change during the undo window
+    afterDelete.notes = { ...afterDelete.notes, '2026-10-25': 'Added while undo toast visible' };
+
+    const restored = restoreDeletedItem(afterDelete, {
+      kind: 'task',
+      item: t1,
+      index: 1,
+    });
+
+    assert.deepEqual(
+      restored.tasks.map((t) => t.id),
+      [t0.id, t1.id, t2.id]
+    );
+    assert.equal(restored.notes['2026-10-25'], 'Added while undo toast visible');
+
+    // Move single unfinished task (t0) to today ('2026-10-25')
+    const movedOne = moveUnfinishedTasksToToday(restored, '2026-10-25', t0.id);
+    assert.equal(movedOne.tasks.find((t) => t.id === t0.id)?.dayKey, '2026-10-25');
+    assert.equal(movedOne.tasks.find((t) => t.id === t1.id)?.dayKey, '2026-10-24');
+
+    // Move all remaining unfinished earlier tasks to today ('2026-10-25')
+    const movedAll = moveUnfinishedTasksToToday(movedOne, '2026-10-25');
+    assert.equal(movedAll.tasks.find((t) => t.id === t0.id)?.dayKey, '2026-10-25');
+    assert.equal(movedAll.tasks.find((t) => t.id === t1.id)?.dayKey, '2026-10-25');
+    // Completed earlier task (t2) stays on its original dayKey
+    assert.equal(movedAll.tasks.find((t) => t.id === t2.id)?.dayKey, '2026-10-24');
   });
 });
