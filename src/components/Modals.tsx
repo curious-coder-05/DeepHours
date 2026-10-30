@@ -758,6 +758,9 @@ export const Modals: React.FC<ModalsProps> = ({
               overtimeMs: 0,
               purity: existingSes ? existingSes.purity : 100,
               mode: existingSes?.mode || 'manual',
+              source:
+                existingSes?.source ||
+                (existingSes && existingSes.mode !== 'manual' ? 'timer' : 'manual'),
               rating: Math.min(5, Math.max(1, Number(msRating) || 5)),
               note: msNote.trim(),
               updatedAt: Date.now(),

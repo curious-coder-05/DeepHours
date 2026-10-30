@@ -12,6 +12,7 @@ import {
 import {
   initializeFirestore,
   getFirestore,
+  setLogLevel,
   doc,
   getDoc,
   getDocFromServer,
@@ -52,6 +53,11 @@ export const auth = app
 function initFirestoreDb(): ReturnType<typeof getFirestore> {
   if (!app) return null as unknown as ReturnType<typeof getFirestore>;
   try {
+    setLogLevel('silent');
+  } catch {
+    // ignore log level errors
+  }
+  try {
     return initializeFirestore(
       app,
       { ignoreUndefinedProperties: true },
@@ -63,6 +69,64 @@ function initFirestoreDb(): ReturnType<typeof getFirestore> {
 }
 
 export const db = initFirestoreDb();
+
+export function isOfflineOrTokenError(err: unknown): boolean {
+  const msg =
+    err instanceof Error
+      ? `${err.name} ${err.message} ${(err as { code?: string }).code || ''}`
+      : String(err);
+  return /client is offline|unavailable|network-request-failed|fetching auth token failed|token-service-api|securetoken|user-token-expired|invalid-user-token/i.test(
+    msg
+  );
+}
+
+/**
+ * Verifies that the current Firebase Auth user has a valid, refreshable ID token
+ * before any Firestore read/write is attempted. If a cached session has an expired
+ * token that cannot be refreshed (e.g., Token Service API disabled or revoked token),
+ * signs out cleanly so Firestore never enters a broken auth-token loop.
+ */
+export async function ensureValidAuthToken(): Promise<{
+  valid: boolean;
+  offline?: boolean;
+  errorMessage?: string;
+}> {
+  if (!auth?.currentUser) {
+    return { valid: false, errorMessage: 'Not signed in' };
+  }
+  if (typeof navigator !== 'undefined' && !navigator.onLine) {
+    return { valid: false, offline: true, errorMessage: 'Device is offline' };
+  }
+  try {
+    await auth.currentUser.getIdToken(false);
+    return { valid: true };
+  } catch (err) {
+    const msg =
+      err instanceof Error
+        ? `${err.name} ${err.message} ${(err as { code?: string }).code || ''}`
+        : String(err);
+    if (
+      /token-service-api|securetoken|user-token-expired|invalid-user-token|user-disabled|user-not-found/i.test(
+        msg
+      )
+    ) {
+      try {
+        await fbSignOut(auth);
+      } catch {
+        // ignore sign-out error
+      }
+      return {
+        valid: false,
+        errorMessage: 'Session expired — please sign in with Google again.',
+      };
+    }
+    return {
+      valid: false,
+      offline: true,
+      errorMessage: 'Network unavailable — operating offline',
+    };
+  }
+}
 
 export const OperationType = {
   CREATE: 'create',
@@ -117,20 +181,19 @@ export function handleFirestoreError(
     operationType,
     path,
   };
-  console.error('Firestore Error: ', JSON.stringify(errInfo));
+  if (!isOfflineOrTokenError(error)) {
+    console.error('Firestore Error: ', JSON.stringify(errInfo));
+  }
   return errInfo;
 }
 
 export async function testFirestoreConnection(): Promise<void> {
+  const tokenCheck = await ensureValidAuthToken();
+  if (!tokenCheck.valid) return;
   try {
     await getDocFromServer(doc(db, 'test', 'connection'));
-  } catch (error) {
-    if (
-      error instanceof Error &&
-      error.message.includes('the client is offline')
-    ) {
-      console.error('Please check your Firebase configuration.');
-    }
+  } catch {
+    // Probe completed (permission-denied or offline state handled silently)
   }
 }
 
@@ -161,6 +224,9 @@ export interface MetaCoreDoc {
   bonus: number;
   exp: number;
   ob: number;
+  profile?: PulseHabitState['profile'];
+  groupHistory?: PulseHabitState['groupHistory'];
+  groupsConfig?: PulseHabitState['groupsConfig'];
   updatedAt: number;
 }
 
@@ -426,6 +492,8 @@ export function partitionStateToCloudDocs(
 
   const coreUpdatedAt = Math.max(
     state.set.updatedAt || 0,
+    state.profile?.updatedAt || 0,
+    state.groupsConfig?.updatedAt || 0,
     maxUpdatedAt(state.subjects, 0),
     maxUpdatedAt(state.ddays, 0),
     maxTombstoneTs,
@@ -444,6 +512,13 @@ export function partitionStateToCloudDocs(
     bonus: state.bonus || 0,
     exp: state.exp || 0,
     ob: state.ob || 0,
+    profile: sanitizeForFirestore(
+      state.profile || { nick: '', emoji: state.set.avatarEmoji || '🩺' }
+    ),
+    groupHistory: sanitizeForFirestore(state.groupHistory || {}),
+    groupsConfig: sanitizeForFirestore(
+      state.groupsConfig || { consentAccepted: false, joined: [] }
+    ),
     updatedAt: coreUpdatedAt,
   };
 
@@ -901,6 +976,62 @@ export function mergeStateWithCloudDocs(
     new Set([...(localState.restDays || []), ...(remoteCore?.restDays || [])])
   ).sort();
 
+  // Merge profile (LWW by updatedAt, fallback to non-empty nick)
+  let mergedProfile = {
+    ...(localState.profile || { nick: '', emoji: mergedSet.avatarEmoji || '🩺' }),
+  };
+  if (remoteCore?.profile && typeof remoteCore.profile === 'object') {
+    const localProfTs = localState.profile?.updatedAt ?? 0;
+    const remoteProfTs = Number(remoteCore.profile.updatedAt) || 0;
+    if (
+      remoteProfTs > localProfTs ||
+      (!mergedProfile.nick && remoteCore.profile.nick)
+    ) {
+      mergedProfile = {
+        ...mergedProfile,
+        ...remoteCore.profile,
+      };
+    }
+  }
+
+  // Merge groupHistory (union per groupId and weekKey, norm() trims to last 12 weeks)
+  const mergedGroupHistory: PulseHabitState['groupHistory'] = {
+    ...(localState.groupHistory || {}),
+  };
+  if (remoteCore?.groupHistory && typeof remoteCore.groupHistory === 'object') {
+    for (const [gid, remoteWeeks] of Object.entries(remoteCore.groupHistory)) {
+      if (!remoteWeeks || typeof remoteWeeks !== 'object') continue;
+      mergedGroupHistory[gid] = {
+        ...remoteWeeks,
+        ...(mergedGroupHistory[gid] || {}),
+      };
+    }
+  }
+
+  // Merge groupsConfig (LWW by updatedAt)
+  let mergedGroupsConfig = localState.groupsConfig || {
+    consentAccepted: false,
+    joined: [],
+  };
+  if (remoteCore?.groupsConfig && typeof remoteCore.groupsConfig === 'object') {
+    const localGcTs = localState.groupsConfig?.updatedAt ?? 0;
+    const remoteGcTs = Number(remoteCore.groupsConfig.updatedAt) || 0;
+    if (
+      remoteGcTs > localGcTs ||
+      (mergedGroupsConfig.joined.length === 0 &&
+        Array.isArray(remoteCore.groupsConfig.joined) &&
+        remoteCore.groupsConfig.joined.length > 0)
+    ) {
+      mergedGroupsConfig = {
+        ...mergedGroupsConfig,
+        ...remoteCore.groupsConfig,
+        consentAccepted: Boolean(
+          mergedGroupsConfig.consentAccepted || remoteCore.groupsConfig.consentAccepted
+        ),
+      };
+    }
+  }
+
   const candidate: PulseHabitState = norm({
     ...localState,
     set: mergedSet,
@@ -925,6 +1056,9 @@ export function mergeStateWithCloudDocs(
     ob: localState.ob || remoteCore?.ob ? 1 : 0,
     del: Object.keys(mergedTombstones),
     delAt: mergedTombstones,
+    profile: mergedProfile,
+    groupHistory: mergedGroupHistory,
+    groupsConfig: mergedGroupsConfig,
     activeTimer: preservedActiveTimer,
   });
 
@@ -1336,7 +1470,24 @@ export async function signOutGoogleAccount(): Promise<void> {
 }
 
 export function subscribeToAuthChanges(cb: (user: User | null) => void): () => void {
-  return onAuthStateChanged(auth, cb);
+  if (!auth) {
+    cb(null);
+    return () => {};
+  }
+  return onAuthStateChanged(auth, (user) => {
+    if (!user) {
+      cb(null);
+      return;
+    }
+    void (async () => {
+      const check = await ensureValidAuthToken();
+      if (!check.valid && !check.offline) {
+        cb(null);
+        return;
+      }
+      cb(auth.currentUser);
+    })();
+  });
 }
 
 export function hasMeaningfulLocalData(state: PulseHabitState): boolean {
@@ -1368,7 +1519,10 @@ export function detectDirtyDocKeys(
     prevState.del !== nextState.del ||
     prevState.bonus !== nextState.bonus ||
     prevState.exp !== nextState.exp ||
-    prevState.ob !== nextState.ob
+    prevState.ob !== nextState.ob ||
+    prevState.profile !== nextState.profile ||
+    prevState.groupHistory !== nextState.groupHistory ||
+    prevState.groupsConfig !== nextState.groupsConfig
   ) {
     dirty.add('meta/core');
   }
@@ -1524,6 +1678,21 @@ export async function performCloudSyncCycle(
     forcePullAll = Boolean(uidOrOptions.forcePullAll);
   }
 
+  if (typeof window !== 'undefined') {
+    const tokenCheck = await ensureValidAuthToken();
+    if (!tokenCheck.valid) {
+      return {
+        status: tokenCheck.offline ? 'offline' : 'off',
+        errorMessage: tokenCheck.errorMessage,
+        pulledDocs: 0,
+        mergedState: localState,
+        writesUsed: 0,
+        readsUsed: 0,
+        quotaExhausted: false,
+      };
+    }
+  }
+
   const meta = loadSyncOutboxMeta();
   const now = Date.now();
   const todayKey = new Date(now).toISOString().slice(0, 10);
@@ -1583,6 +1752,16 @@ export async function performCloudSyncCycle(
         quotaExhausted: true,
       };
     }
+    if (isOfflineOrTokenError(err)) {
+      return {
+        status: 'offline',
+        pulledDocs: 0,
+        mergedState: localState,
+        writesUsed: 0,
+        readsUsed,
+        quotaExhausted: false,
+      };
+    }
     handleFirestoreError(err, OperationType.GET, `users/${uid}/meta/index`);
     return {
       status: 'error',
@@ -1625,6 +1804,16 @@ export async function performCloudSyncCycle(
                 writesUsed: 0,
                 readsUsed,
                 quotaExhausted: true,
+              };
+            }
+            if (isOfflineOrTokenError(err)) {
+              return {
+                status: 'offline',
+                pulledDocs: Object.keys(downloadedDocs).length,
+                mergedState: localState,
+                writesUsed: 0,
+                readsUsed,
+                quotaExhausted: false,
               };
             }
             handleFirestoreError(err, OperationType.GET, `users/${uid}/${docKey}`);
@@ -1755,6 +1944,16 @@ export async function performCloudSyncCycle(
           writesUsed: 0,
           readsUsed,
           quotaExhausted: true,
+        };
+      }
+      if (isOfflineOrTokenError(err)) {
+        return {
+          status: 'offline',
+          pulledDocs: pulledDocsCount,
+          mergedState,
+          writesUsed: 0,
+          readsUsed,
+          quotaExhausted: false,
         };
       }
       handleFirestoreError(err, OperationType.WRITE, `users/${uid}/batch`);

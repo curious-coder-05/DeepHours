@@ -15,14 +15,92 @@
         }
       },
       "required": ["updatedAt"]
+    },
+    "StudyGroupDoc": {
+      "title": "StudyGroupDoc",
+      "description": "Private invite-code study group document holding up to 50 anonymous member stat entries",
+      "type": "object",
+      "properties": {
+        "name": {
+          "type": "string",
+          "minLength": 2,
+          "maxLength": 32
+        },
+        "emoji": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 8
+        },
+        "ownerUid": {
+          "type": "string"
+        },
+        "createdAt": {
+          "type": "number"
+        },
+        "updatedAt": {
+          "type": "number"
+        },
+        "memberCap": {
+          "type": "number"
+        },
+        "mockBoard": {
+          "type": "boolean"
+        },
+        "members": {
+          "type": "object"
+        }
+      },
+      "required": ["name", "emoji", "ownerUid", "createdAt", "updatedAt", "memberCap", "mockBoard", "members"]
+    },
+    "GroupCheerDoc": {
+      "title": "GroupCheerDoc",
+      "description": "Daily peer cheer document inside a study group",
+      "type": "object",
+      "properties": {
+        "from": {
+          "type": "string"
+        },
+        "to": {
+          "type": "string"
+        },
+        "fromNick": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 20
+        },
+        "dayKey": {
+          "type": "string",
+          "pattern": "^\\d{4}-\\d{2}-\\d{2}$"
+        },
+        "e": {
+          "type": "string",
+          "enum": ["👏", "🔥", "💪"]
+        },
+        "ts": {
+          "type": "number"
+        }
+      },
+      "required": ["from", "to", "fromNick", "dayKey", "e", "ts"]
     }
   },
   "firestore": {
-    "/users/{userId}/{document=**}": {
+    "/users/{userId}/{coll}/{docId}": {
       "schema": {
         "$ref": "#/entities/CloudDocPayload"
       },
       "description": "Strict per-user partitioned study documents under /users/{uid}/meta/* and /users/{uid}/months/*"
+    },
+    "/groups/{groupId}": {
+      "schema": {
+        "$ref": "#/entities/StudyGroupDoc"
+      },
+      "description": "Study group document addressed by its 10-character unambiguous invite code"
+    },
+    "/groups/{groupId}/cheers/{cheerId}": {
+      "schema": {
+        "$ref": "#/entities/GroupCheerDoc"
+      },
+      "description": "Peer cheers sent between study group members"
     }
   }
 }

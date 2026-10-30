@@ -1,34 +1,200 @@
 rules_version = '2';
+
+// ============================================================================
+// Deep Hours NEET Study Logger — Firestore Security Rules
+// ============================================================================
+// Manual Firebase Console Rules Playground Test Cases:
+// 1. Personal Sync (users/{uid}/meta/core):
+//    - Auth uid="userA", write /users/userA/meta/core with { updatedAt: 1762000000000 } -> ALLOW
+//    - Auth uid="userB", read or write /users/userA/meta/core -> DENY
+//    - Auth uid="userA", write /users/userA/otherColl/doc1 -> DENY (coll must be 'meta' or 'months')
+// 2. Group Creation & Listing (groups/{groupId}):
+//    - Auth uid="userA", list /groups -> DENY (prevents scraping invite codes)
+//    - Auth uid="userA", get /groups/ABCDE23456 -> ALLOW
+//    - Auth uid="userA", create /groups/ABCDE23456 with ownerUid="userA" and members={ userA: validEntry } -> ALLOW
+//    - Auth uid="userA", create /groups/bad-code with invalid ID -> DENY
+// 3. Group Join, Self-Update & Tampering:
+//    - Auth uid="userB", update /groups/ABCDE23456 adding only members.userB -> ALLOW (if size <= memberCap)
+//    - Auth uid="userB", update /groups/ABCDE23456 modifying members.userA -> DENY
+//    - Auth uid="userB" (non-owner), update /groups/ABCDE23456 changing name or mockBoard -> DENY
+//    - Auth uid="userA" (owner), update /groups/ABCDE23456 removing members.userB -> ALLOW
+// 4. Cheers (groups/{groupId}/cheers/{cheerId}):
+//    - Auth uid="userA", set /groups/ABCDE23456/cheers/2026-10-30_userA_userB with from="userA", to="userB", e="🔥" -> ALLOW
+//    - Auth uid="userA", set cheer with from="userA", to="userA" (self-cheer) -> DENY
+// ============================================================================
+
 service cloud.firestore {
   match /databases/{database}/documents {
-    function isOwner(userId) {
-      return request.auth != null && request.auth.uid == userId;
+
+    function signedIn() {
+      return request.auth != null;
     }
 
-    function isValidCollection(collectionName) {
-      return collectionName in ['meta', 'months'];
-    }
-
-    function isValidDocId(docId) {
-      return docId is string && docId.size() >= 1 && docId.size() <= 128;
-    }
-
-    match /users/{userId}/{collectionName}/{docId} {
-      allow read: if isOwner(userId)
-        && isValidCollection(collectionName);
-
-      allow create, update: if isOwner(userId)
-        && isValidCollection(collectionName)
-        && isValidDocId(docId)
-        && request.resource.data is map
+    // Personal sync (unchanged)
+    match /users/{userId}/{coll}/{docId} {
+      allow read, delete: if signedIn()
+        && request.auth.uid == userId
+        && coll in ['meta', 'months'];
+      allow create, update: if signedIn()
+        && request.auth.uid == userId
+        && coll in ['meta', 'months']
         && request.resource.data.updatedAt is number
-        && request.resource.data.updatedAt > 0
-        && request.resource.data.size() <= 50;
+        && request.resource.size() < 800000;
+    }
 
-      allow delete: if isOwner(userId)
-        && isValidCollection(collectionName)
-        && isValidDocId(docId);
+    function isValidMemberEntry(m) {
+      return m is map
+        && m.keys().hasAll(['nick', 'emoji', 'joinedAt', 'updatedAt', 'sh'])
+        && m.keys().hasOnly([
+          'nick','emoji','examYear','joinedAt','updatedAt','sh','paused',
+          'days','xpDays','xpTotal','streak','consistency','mocks','live','weeks'
+        ])
+        && m.nick is string && m.nick.size() >= 2 && m.nick.size() <= 20
+        && m.emoji is string && m.emoji.size() >= 1 && m.emoji.size() <= 8
+        && m.joinedAt is int && m.joinedAt > 0
+        && m.updatedAt is int && m.updatedAt > 0
+        && (!('examYear' in m) || (m.examYear is int && m.examYear >= 2020 && m.examYear <= 2035))
+        && (!('paused' in m) || m.paused is bool)
+        && m.sh is map
+        && m.sh.keys().hasAll(['t','x','s','m','l'])
+        && m.sh.keys().hasOnly(['t','x','s','m','l'])
+        && m.sh.t is bool && m.sh.x is bool && m.sh.s is bool && m.sh.m is bool && m.sh.l is bool
+        && (!('days' in m) || (m.days is map && m.days.size() <= 25))
+        && (!('xpDays' in m) || (m.xpDays is map && m.xpDays.size() <= 25))
+        && (!('xpTotal' in m) || (m.xpTotal is int && m.xpTotal >= 0 && m.xpTotal <= 10000000))
+        && (!('streak' in m) || (m.streak is int && m.streak >= 0 && m.streak <= 3650))
+        && (!('consistency' in m) || (m.consistency is int && m.consistency >= 0 && m.consistency <= 100))
+        && (!('mocks' in m) || (m.mocks is list && m.mocks.size() <= 10))
+        && (!('live' in m) || m.live == null || (
+          m.live is map
+          && m.live.keys().hasAll(['since','until'])
+          && m.live.keys().hasOnly(['since','until'])
+          && m.live.since is int && m.live.until is int
+          && m.live.until > m.live.since
+          && m.live.until - m.live.since <= 7200000
+        ))
+        && (!('weeks' in m) || (m.weeks is map && m.weeks.size() <= 14));
+    }
+
+    function isValidGoal(g) {
+      return g is map
+        && g.keys().hasAll(['weeklyMinutes','updatedAt'])
+        && g.keys().hasOnly(['weeklyMinutes','updatedAt'])
+        && g.weeklyMinutes is int && g.weeklyMinutes >= 60 && g.weeklyMinutes <= 300000
+        && g.updatedAt is int;
+    }
+
+    match /groups/{groupId} {
+      // Anyone signed in who knows the 10-char code may read that document; listing all groups is forbidden.
+      allow get: if signedIn();
+      allow list: if false;
+
+      allow create: if signedIn()
+        && groupId.matches('^[ABCDEFGHJKLMNPQRSTUVWXYZ23456789]{10}$')
+        && request.resource.size() < 300000
+        && request.resource.data.keys().hasAll([
+          'name','emoji','ownerUid','createdAt','updatedAt','memberCap','mockBoard','members'
+        ])
+        && request.resource.data.keys().hasOnly([
+          'name','emoji','ownerUid','createdAt','updatedAt','memberCap','mockBoard','goal','members'
+        ])
+        && request.resource.data.name is string
+        && request.resource.data.name.size() >= 2 && request.resource.data.name.size() <= 32
+        && request.resource.data.emoji is string
+        && request.resource.data.emoji.size() >= 1 && request.resource.data.emoji.size() <= 8
+        && request.resource.data.ownerUid == request.auth.uid
+        && request.resource.data.createdAt is int
+        && request.resource.data.updatedAt is int
+        && request.resource.data.memberCap is int
+        && request.resource.data.memberCap >= 2 && request.resource.data.memberCap <= 50
+        && request.resource.data.mockBoard is bool
+        && (!('goal' in request.resource.data) || isValidGoal(request.resource.data.goal))
+        && request.resource.data.members is map
+        && request.resource.data.members.size() == 1
+        && request.auth.uid in request.resource.data.members
+        && isValidMemberEntry(request.resource.data.members[request.auth.uid]);
+
+      allow update: if signedIn()
+        && request.resource.size() < 600000
+        && request.resource.data.ownerUid == resource.data.ownerUid
+        && request.resource.data.createdAt == resource.data.createdAt
+        && request.resource.data.memberCap == resource.data.memberCap
+        && request.resource.data.updatedAt is int
+        && request.resource.data.members is map
+        && request.resource.data.members.size() <= resource.data.memberCap
+        && request.resource.data.members.size() <= 50
+        && (
+          // Case A: JOIN — non-member adds only their own key
+          (
+            !(request.auth.uid in resource.data.members)
+            && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['members','updatedAt'])
+            && request.resource.data.members.diff(resource.data.members).addedKeys().hasOnly([request.auth.uid])
+            && request.resource.data.members.diff(resource.data.members).changedKeys().size() == 0
+            && request.resource.data.members.diff(resource.data.members).removedKeys().size() == 0
+            && isValidMemberEntry(request.resource.data.members[request.auth.uid])
+          )
+          ||
+          // Case B: SELF — existing member updates or removes only their own key
+          (
+            request.auth.uid in resource.data.members
+            && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['members','updatedAt'])
+            && request.resource.data.members.diff(resource.data.members).addedKeys().size() == 0
+            && (
+              (
+                request.resource.data.members.diff(resource.data.members).changedKeys().hasOnly([request.auth.uid])
+                && request.resource.data.members.diff(resource.data.members).removedKeys().size() == 0
+                && isValidMemberEntry(request.resource.data.members[request.auth.uid])
+              )
+              ||
+              (
+                request.resource.data.members.diff(resource.data.members).removedKeys().hasOnly([request.auth.uid])
+                && request.resource.data.members.diff(resource.data.members).changedKeys().size() == 0
+              )
+            )
+          )
+          ||
+          // Case C: OWNER — rename, emoji, goal, mockBoard, or remove a single member
+          (
+            resource.data.ownerUid == request.auth.uid
+            && request.resource.data.diff(resource.data).affectedKeys()
+              .hasOnly(['name','emoji','goal','mockBoard','members','updatedAt'])
+            && request.resource.data.name is string
+            && request.resource.data.name.size() >= 2 && request.resource.data.name.size() <= 32
+            && request.resource.data.emoji is string
+            && request.resource.data.emoji.size() >= 1 && request.resource.data.emoji.size() <= 8
+            && request.resource.data.mockBoard is bool
+            && (!('goal' in request.resource.data) || isValidGoal(request.resource.data.goal))
+            && request.resource.data.members.diff(resource.data.members).addedKeys().size() == 0
+            && request.resource.data.members.diff(resource.data.members).changedKeys().size() == 0
+            && request.resource.data.members.diff(resource.data.members).removedKeys().size() <= 1
+          )
+        );
+
+      allow delete: if signedIn() && resource.data.ownerUid == request.auth.uid;
+
+      match /cheers/{cheerId} {
+        allow read: if signedIn()
+          && (resource.data.to == request.auth.uid || resource.data.from == request.auth.uid);
+        allow create, update: if signedIn()
+          && request.resource.size() < 1024
+          && request.resource.data.keys().hasAll(['from','to','fromNick','dayKey','e','ts'])
+          && request.resource.data.keys().hasOnly(['from','to','fromNick','dayKey','e','ts'])
+          && request.resource.data.from == request.auth.uid
+          && request.resource.data.to is string
+          && request.resource.data.to != request.auth.uid
+          && request.resource.data.fromNick is string
+          && request.resource.data.fromNick.size() >= 1 && request.resource.data.fromNick.size() <= 20
+          && request.resource.data.dayKey is string
+          && request.resource.data.dayKey.matches('^\\d{4}-\\d{2}-\\d{2}$')
+          && request.resource.data.e in ['👏', '🔥', '💪']
+          && request.resource.data.ts is int
+          && cheerId == request.resource.data.dayKey + '_' + request.auth.uid + '_' + request.resource.data.to;
+        allow delete: if signedIn() && resource.data.from == request.auth.uid;
+      }
+    }
+
+    match /{document=**} {
+      allow read, write: if false;
     }
   }
 }
-

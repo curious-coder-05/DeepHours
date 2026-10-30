@@ -19,13 +19,11 @@ import {
   getSubject,
   getTimerMetrics,
   getTodaySubjectMs,
-  lvl,
   pad,
   parseKey,
   skip,
   streak,
   wkC,
-  xp,
 } from '../utils/studyLogic';
 import { computePaceReport, computeStudyNext } from '../utils/pace';
 import {
@@ -34,6 +32,7 @@ import {
   computeMinDayStreak,
   getSubjectTargetProgress,
 } from '../utils/insights';
+import { computeLevelInfo, computeTotalXp } from '../utils/xp';
 
 interface TodayViewProps {
   state: PulseHabitState;
@@ -160,8 +159,8 @@ export const TodayView: React.FC<TodayViewProps> = ({
   const hs = allDue.filter((h) => cat === 'All' || h.c === cat);
   const dayProg = getDayProgress(state, sel);
   const p = Math.round(dayProg.pct * 100);
-  const totalXp = xp(state, todayKey);
-  const level = lvl(totalXp);
+  const totalXp = computeTotalXp(state, todayKey);
+  const level = computeLevelInfo(totalXp).level;
   const currentMood = state.mood[sel] || 0;
   const dayStudyMs = getTodaySubjectMs(state, 'any', sel, todayKey);
   const daySessions = state.sessions

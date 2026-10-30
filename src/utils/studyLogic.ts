@@ -6,10 +6,13 @@ import type {
   DDay,
   DailyTask,
   Doubt,
+  GroupHistoryMap,
+  GroupsUserConfig,
   Habit,
   HabitCategory,
   HabitLogDay,
   HabitLogMap,
+  JoinedGroupPreference,
   MistakeEntry,
   MistakeReason,
   MockSubjectScore,
@@ -21,6 +24,7 @@ import type {
   TargetsConfig,
   TimerMetrics,
   TimerMode,
+  UserProfile,
   WellbeingEntry,
 } from '../types';
 
@@ -380,6 +384,15 @@ export function createBlankState(): PulseHabitState {
     del: [],
     delAt: {},
     savedAt: 0,
+    profile: {
+      nick: '',
+      emoji: '🩺',
+    },
+    groupHistory: {},
+    groupsConfig: {
+      consentAccepted: false,
+      joined: [],
+    },
     set: {
       theme: 'dark',
       ac: ACS[0],
@@ -709,6 +722,11 @@ export function norm(raw: unknown): PulseHabitState {
             ses.mode === 'fullMock'
               ? ses.mode
               : 'pomo',
+          ...(ses.source === 'manual' || ses.mode === 'manual'
+            ? { source: 'manual' as const }
+            : ses.source === 'timer'
+              ? { source: 'timer' as const }
+              : {}),
           rating: Number.isFinite(ses.rating) ? Math.min(5, Math.max(1, ses.rating)) : 5,
           note: typeof ses.note === 'string' ? ses.note : '',
           updatedAt: Number.isFinite(ses.updatedAt) ? ses.updatedAt : ses.endTs,
@@ -1138,7 +1156,126 @@ export function norm(raw: unknown): PulseHabitState {
 
   s.savedAt = Number.isFinite(src.savedAt) ? Number(src.savedAt) : 0;
 
+  // Profile (Milestone 1.2: nick 0..20 chars, emoji default from set.avatarEmoji || '🩺', optional examYear)
+  const defaultProfileEmoji = s.set.avatarEmoji || '🩺';
+  if (src.profile && typeof src.profile === 'object') {
+    const rawProf = src.profile as Record<string, unknown>;
+    const rawNick = typeof rawProf.nick === 'string' ? rawProf.nick.trim().slice(0, 20) : '';
+    const rawEmoji =
+      typeof rawProf.emoji === 'string' && rawProf.emoji.trim()
+        ? rawProf.emoji.trim().slice(0, 8)
+        : defaultProfileEmoji;
+    const rawExamYear = Number(rawProf.examYear);
+    const examYear =
+      Number.isFinite(rawExamYear) && rawExamYear >= 2020 && rawExamYear <= 2035
+        ? Math.floor(rawExamYear)
+        : undefined;
+    const prof: UserProfile = {
+      nick: rawNick,
+      emoji: rawEmoji,
+      ...(examYear !== undefined ? { examYear } : {}),
+      ...(Number.isFinite(rawProf.updatedAt) ? { updatedAt: Number(rawProf.updatedAt) } : {}),
+    };
+    s.profile = prof;
+  } else {
+    s.profile = {
+      nick: '',
+      emoji: defaultProfileEmoji,
+    };
+  }
+
+  // Group History (Milestone 2.6: Record<groupId, Record<weekKey, { rank, of, minutes, xp }>>, keep last 12 weeks)
+  if (src.groupHistory && typeof src.groupHistory === 'object') {
+    const cleanGh: GroupHistoryMap = {};
+    for (const [gid, rawWeeks] of Object.entries(src.groupHistory as Record<string, unknown>)) {
+      if (typeof gid !== 'string' || !gid.trim() || !rawWeeks || typeof rawWeeks !== 'object') {
+        continue;
+      }
+      const weekEntries: Array<[string, { rank: number; of: number; minutes: number; xp: number }]> = [];
+      for (const [wk, rawEntry] of Object.entries(rawWeeks as Record<string, unknown>)) {
+        if (!/^\d{4}-\d{2}-\d{2}$/.test(wk) || !rawEntry || typeof rawEntry !== 'object') {
+          continue;
+        }
+        const rec = rawEntry as Record<string, unknown>;
+        const rank = Math.max(1, Math.min(50, Math.floor(Number(rec.rank) || 1)));
+        const of = Math.max(rank, Math.min(50, Math.floor(Number(rec.of) || rank)));
+        const minutes = Math.max(0, Math.min(10080, Math.floor(Number(rec.minutes) || 0)));
+        const xpVal = Math.max(0, Math.min(50000, Math.floor(Number(rec.xp) || 0)));
+        weekEntries.push([wk, { rank, of, minutes, xp: xpVal }]);
+      }
+      weekEntries.sort((a, b) => a[0].localeCompare(b[0]));
+      const trimmed = weekEntries.slice(-12);
+      if (trimmed.length > 0) {
+        cleanGh[gid.trim()] = Object.fromEntries(trimmed);
+      }
+    }
+    s.groupHistory = cleanGh;
+  } else {
+    s.groupHistory = {};
+  }
+
+  // Groups Config (local & synced membership list up to 3 groups + sharing switches)
+  if (src.groupsConfig && typeof src.groupsConfig === 'object') {
+    const rawGc = src.groupsConfig as Record<string, unknown>;
+    const joined: JoinedGroupPreference[] = [];
+    const seenGids = new Set<string>();
+    if (Array.isArray(rawGc.joined)) {
+      for (const item of rawGc.joined) {
+        if (!item || typeof item !== 'object') continue;
+        const rec = item as Record<string, unknown>;
+        const groupId =
+          typeof rec.groupId === 'string'
+            ? rec.groupId.toUpperCase().replace(/[^A-Z0-9]/g, '')
+            : '';
+        if (groupId.length !== 10 || seenGids.has(groupId)) continue;
+        seenGids.add(groupId);
+        const rawSh =
+          rec.sh && typeof rec.sh === 'object' ? (rec.sh as Record<string, unknown>) : {};
+        joined.push({
+          groupId,
+          ...(typeof rec.name === 'string' && rec.name.trim()
+            ? { name: rec.name.trim().slice(0, 32) }
+            : {}),
+          ...(typeof rec.emoji === 'string' && rec.emoji.trim()
+            ? { emoji: rec.emoji.trim().slice(0, 8) }
+            : {}),
+          joinedAt: Number.isFinite(rec.joinedAt) ? Number(rec.joinedAt) : Date.now(),
+          sh: {
+            t: rawSh.t !== undefined ? Boolean(rawSh.t) : true,
+            x: rawSh.x !== undefined ? Boolean(rawSh.x) : true,
+            s: rawSh.s !== undefined ? Boolean(rawSh.s) : true,
+            m: rawSh.m !== undefined ? Boolean(rawSh.m) : false,
+            l: rawSh.l !== undefined ? Boolean(rawSh.l) : false,
+          },
+          ...(rec.paused ? { paused: true } : {}),
+        });
+        if (joined.length >= 3) break;
+      }
+    }
+    const activeGroupId =
+      typeof rawGc.activeGroupId === 'string' &&
+      joined.some((j) => j.groupId === rawGc.activeGroupId)
+        ? rawGc.activeGroupId
+        : joined[0]?.groupId;
+    const gc: GroupsUserConfig = {
+      consentAccepted: Boolean(rawGc.consentAccepted),
+      joined,
+      ...(activeGroupId ? { activeGroupId } : {}),
+      ...(Number.isFinite(rawGc.updatedAt) ? { updatedAt: Number(rawGc.updatedAt) } : {}),
+    };
+    s.groupsConfig = gc;
+  } else {
+    s.groupsConfig = {
+      consentAccepted: false,
+      joined: [],
+    };
+  }
+
   return s;
+}
+
+export function isManualStudySession(ses: StudySession): boolean {
+  return ses.source === 'manual' || ses.mode === 'manual';
 }
 
 export function shouldFireFiveMinWarning(

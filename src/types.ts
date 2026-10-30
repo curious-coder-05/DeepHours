@@ -8,7 +8,7 @@ export type PiPPreference = 'video' | 'doc';
 export type TimerAesthetic = 'neon' | 'minimal' | 'retro';
 export type AppTab = 'today' | 'prep' | 'focus' | 'stats' | 'more' | 'planner';
 export type PrepSubTab = 'syllabus' | 'mocks' | 'mistakes' | 'doubts';
-export type StatsSubTab = 'summary' | 'timeline' | 'review';
+export type StatsSubTab = 'summary' | 'timeline' | 'review' | 'groups';
 export type ChapterStatus = 'notStarted' | 'inProgress' | 'completed';
 export type MistakeReason = 'concept' | 'silly' | 'time' | 'guess' | 'forgot';
 export type SyncStatus =
@@ -81,6 +81,7 @@ export interface StudySession {
   overtimeMs: number;
   purity: number;
   mode: TimerMode;
+  source?: 'timer' | 'manual';
   rating: number;
   note: string;
   updatedAt: number;
@@ -266,6 +267,46 @@ export interface DailyTask {
   updatedAt?: number;
 }
 
+export interface UserProfile {
+  nick: string;
+  emoji: string;
+  examYear?: number;
+  updatedAt?: number;
+}
+
+export interface GroupWeekHistoryEntry {
+  rank: number;
+  of: number;
+  minutes: number;
+  xp: number;
+}
+
+export type GroupHistoryMap = Record<string, Record<string, GroupWeekHistoryEntry>>;
+
+export interface GroupSharingFlags {
+  t: boolean; // study time (default true)
+  x: boolean; // XP & level (default true)
+  s: boolean; // streak & consistency (default true)
+  m: boolean; // mock scores (default false)
+  l: boolean; // studying now live status (default false)
+}
+
+export interface JoinedGroupPreference {
+  groupId: string;
+  name?: string;
+  emoji?: string;
+  joinedAt: number;
+  sh: GroupSharingFlags;
+  paused?: boolean;
+}
+
+export interface GroupsUserConfig {
+  consentAccepted: boolean;
+  joined: JoinedGroupPreference[];
+  activeGroupId?: string;
+  updatedAt?: number;
+}
+
 export interface PulseHabitState {
   habits: Habit[];
   log: HabitLogMap;
@@ -292,6 +333,9 @@ export interface PulseHabitState {
   delAt?: Record<string, number>;
   savedAt?: number;
   burnoutDismissedUntil?: string;
+  profile: UserProfile;
+  groupHistory: GroupHistoryMap;
+  groupsConfig?: GroupsUserConfig;
   syncMeta?: {
     uid?: string;
     lastSyncedAt?: number;

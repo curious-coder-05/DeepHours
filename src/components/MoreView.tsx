@@ -1,8 +1,14 @@
 import React, { useRef, useState } from 'react';
 import type { AppSettings, PulseHabitState, SubjectTargets, SyncStatus } from '../types';
-import { ACS, pad } from '../utils/studyLogic';
+import { ACS, logicalKey, pad } from '../utils/studyLogic';
 import { usePWAInstall } from '../hooks/usePWAInstall';
 import { DAILY_WRITE_CAP } from '../utils/cloudSync';
+import {
+  XP_V2_PLAIN_RULES,
+  computeDayXpBreakdown,
+  computeLevelInfo,
+  computeTotalXp,
+} from '../utils/xp';
 
 interface MoreViewProps {
   state: PulseHabitState;
@@ -31,6 +37,8 @@ interface MoreViewProps {
   onSignOutGoogle?: () => void;
   onSyncNow?: () => void;
   onDeleteCloudData?: () => void;
+  todayKey?: string;
+  onOpenProfileModal?: () => void;
 }
 
 const AVATAR_EMOJIS = ['🧑‍⚕️', '🩺', '🧬', '⚡', '🦁', '🎯', '🚀', '🦉'];
@@ -60,7 +68,14 @@ export const MoreView: React.FC<MoreViewProps> = ({
   onSignOutGoogle,
   onSyncNow,
   onDeleteCloudData,
+  todayKey: todayKeyProp,
+  onOpenProfileModal,
 }) => {
+  const effectiveTodayKey =
+    todayKeyProp || logicalKey(new Date(), state.set?.dayResetHour ?? 4);
+  const todayBreakdown = computeDayXpBreakdown(state, effectiveTodayKey);
+  const totalXp = computeTotalXp(state, effectiveTodayKey);
+  const levelInfo = computeLevelInfo(totalXp);
   const cloudUser = cloudUserProp ?? authUser ?? null;
   const dailyWritesUsed = dailyWritesUsedProp ?? syncWritesToday ?? 0;
   const fileInputRef = useRef<HTMLInputElement | null>(null);
@@ -317,7 +332,39 @@ export const MoreView: React.FC<MoreViewProps> = ({
           </div>
         )}
 
-        {/* 2.6 Plain-language privacy note */}
+        {/* Anonymous Study Group Profile trigger */}
+        <div
+          className="row sp"
+          style={{
+            paddingTop: '8px',
+            borderTop: '1px solid var(--bd)',
+            flexWrap: 'wrap',
+            gap: '8px',
+          }}
+        >
+          <div>
+            <b style={{ fontSize: '13px', display: 'block' }}>
+              {state.profile?.emoji || currentAvatar} Anonymous Study Profile:{' '}
+              {state.profile?.nick || 'Not set'}
+              {state.profile?.examYear ? ` (NEET ${state.profile.examYear})` : ''}
+            </b>
+            <small>
+              Used in Study Groups · Never shares your Google name or email
+            </small>
+          </div>
+          {onOpenProfileModal && (
+            <button
+              type="button"
+              className="s"
+              onClick={onOpenProfileModal}
+              style={{ minHeight: '44px', padding: '0 14px', fontSize: '12.5px' }}
+            >
+              ✎ Edit Profile
+            </button>
+          )}
+        </div>
+
+        {/* 2.6 Plain-language privacy & automatic sync note */}
         <small
           style={{
             display: 'block',
@@ -328,11 +375,82 @@ export const MoreView: React.FC<MoreViewProps> = ({
             color: 'var(--mu)',
           }}
         >
-          🔒 <b>Privacy Note:</b> Your study data is stored locally on your device first (IndexedDB
-          &amp; localStorage). Signing in with Google is optional and only syncs your data to your
-          private cloud folder (<code>users/&#123;uid&#125;</code>) so you can back up or switch
-          devices. There are zero analytics, zero ads, and zero third-party trackers.
+          🔒 <b>Automatic Sync &amp; Privacy Note:</b> When signed in, Deep Hours automatically syncs
+          your study data in the background on startup, after changes, and when switching tabs. Your
+          data is stored locally on your device first (IndexedDB &amp; localStorage) and synced to
+          your private cloud folder (<code>users/&#123;uid&#125;</code>). Deleting your cloud data
+          also removes your entry from any joined study groups and closes any groups you own.
         </small>
+      </div>
+
+      {/* Milestone 1.1: XP Breakdown Card */}
+      <h2>XP Breakdown (NEET XP v2)</h2>
+      <div className="card" style={{ display: 'grid', gap: '10px' }}>
+        <div className="row sp" style={{ flexWrap: 'wrap', gap: '8px' }}>
+          <div>
+            <b style={{ fontSize: '15px' }}>
+              Level {levelInfo.level} · {totalXp.toLocaleString()} Total XP
+            </b>
+            <small style={{ display: 'block' }}>
+              {levelInfo.xpRemainingToNext.toLocaleString()} XP to Level {levelInfo.level + 1} (
+              {levelInfo.progressPct}%)
+            </small>
+          </div>
+          <span className="pill mono" style={{ fontSize: '12px', fontWeight: 700 }}>
+            Today: +{todayBreakdown.total} XP
+          </span>
+        </div>
+
+        <div
+          className="stat-mini"
+          style={{ gridTemplateColumns: 'repeat(3, 1fr)', gap: '6px' }}
+        >
+          {[
+            { label: 'Timer Study', val: todayBreakdown.study },
+            { label: 'Focus Bonus', val: todayBreakdown.focusBonus },
+            { label: 'Daily Min', val: todayBreakdown.minDayBonus },
+            { label: 'Streak Bonus', val: todayBreakdown.streakBonus },
+            { label: 'Revisions', val: todayBreakdown.revisions },
+            { label: 'Chapters', val: todayBreakdown.chapters },
+            { label: 'Mocks', val: todayBreakdown.mocks },
+            { label: 'Tasks', val: todayBreakdown.tasks },
+            { label: 'Habits', val: todayBreakdown.habits },
+          ].map((cat) => (
+            <div key={cat.label} className="stat-box" style={{ padding: '8px' }}>
+              <small style={{ fontSize: '10.5px' }}>{cat.label}</small>
+              <b
+                className="mono"
+                style={{
+                  fontSize: '13px',
+                  color: cat.val > 0 ? 'var(--ac)' : 'var(--mu)',
+                }}
+              >
+                +{cat.val} XP
+              </b>
+            </div>
+          ))}
+        </div>
+
+        <div style={{ paddingTop: '6px', borderTop: '1px solid var(--bd)' }}>
+          <b style={{ fontSize: '12.5px', display: 'block', marginBottom: '6px' }}>
+            How XP v2 Works (Plain Rules)
+          </b>
+          <ul
+            style={{
+              margin: 0,
+              paddingLeft: '16px',
+              fontSize: '11.5px',
+              lineHeight: 1.5,
+              color: 'var(--mu)',
+            }}
+          >
+            {XP_V2_PLAIN_RULES.map((item) => (
+              <li key={item.label} style={{ marginBottom: '3px' }}>
+                <b style={{ color: 'var(--tx)' }}>{item.label}:</b> {item.rule}
+              </li>
+            ))}
+          </ul>
+        </div>
       </div>
 
       {/* 1.8, 1.2, 1.14, 1.15 Targets & Coaching Configuration */}

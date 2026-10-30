@@ -58,6 +58,37 @@ import {
   partitionStateToCloudDocs,
   sanitizeForFirestore,
 } from './cloudSync.ts';
+import {
+  computeDayXpBreakdown,
+  computeLevelInfo,
+  computeTotalXp,
+  computeXpByDay,
+} from './xp.ts';
+import {
+  DEFAULT_SHARING_FLAGS,
+  type GroupDoc,
+  GroupPublishBudgetController,
+  buildMyMemberEntry,
+  computeCompletedWeekStandings,
+  computeMemberMedals,
+  computeWeeklyGroupGoalProgress,
+  formatGroupCode,
+  generateGroupId,
+  getActiveStudyingNowMembers,
+  hashMemberEntry,
+  isValidGroupCode,
+  makeCheerId,
+  normalizeGroupCode,
+  rankMocksBoard,
+  rankStreakBoard,
+  rankTodayBoard,
+  rankWeekBoard,
+  rankXpBoard,
+  recordWeekStandingInHistory,
+  sanitizeRemoteGroupDoc,
+  sanitizeRemoteMemberEntry,
+  validateNickname,
+} from './groups.ts';
 
 describe('Part C: Deep Hours NEET Study & Habit Logger Unit Tests', () => {
   it('1. logicalKey around midnight and the reset hour (04:00 AM)', () => {
@@ -1470,6 +1501,575 @@ describe('Part C: Deep Hours NEET Study & Habit Logger Unit Tests', () => {
     assert.ok(dirtyOnDelete.includes('meta/core'));
     assert.ok(dirtyOnDelete.includes('meta/tasks'));
     assert.ok(dirtyOnDelete.includes('months/2026-10'));
+  });
+
+  it('24. Milestone 4.1: XP v2 engine — manual vs timer sessions, session/daily caps, focus bonus, min-day & streak bonus, revisions, chapters, mocks, tasks, habits, and level formula', () => {
+    const state = createBlankState();
+    state.set.targets = {
+      dailyMinutes: {},
+      weeklyMinutes: {},
+      minDayMinutes: 240, // 4 hours
+      restPassesPerMonth: 4,
+    };
+
+    // Day 1 (2026-10-20):
+    // - 1 manual session of 300 mins -> 0 XP
+    // - 1 timer session of 400 mins (clamped to 360m) with purity 95% -> 360 study XP + 5 focus XP
+    // - 4 more timer sessions of 200m each (total counted study mins capped at 960m/day; focus bonus capped at 4 sessions = 20 XP/day)
+    // - Total raw timer mins = 1200 >= 240 -> minDayBonus = +30, streak = 1 day -> streakBonus = +2
+    state.sessions.push(
+      {
+        id: 'ses_manual',
+        subjectId: 'sub_phy',
+        heading: 'Manual Log',
+        dayKey: '2026-10-20',
+        startTs: 1000,
+        endTs: 1000 + 300 * 60000,
+        activeMs: 300 * 60000,
+        pausedMs: 0,
+        pauseCount: 0,
+        overtimeMs: 0,
+        purity: 100,
+        mode: 'manual',
+        source: 'manual',
+        rating: 5,
+        note: '',
+        updatedAt: 2000,
+      },
+      {
+        id: 'ses_long_timer',
+        subjectId: 'sub_phy',
+        heading: 'Marathon Timer',
+        dayKey: '2026-10-20',
+        startTs: 3000,
+        endTs: 3000 + 400 * 60000,
+        activeMs: 400 * 60000, // clamped to 360 per session
+        pausedMs: 0,
+        pauseCount: 0,
+        overtimeMs: 0,
+        purity: 95,
+        mode: 'pomo',
+        source: 'timer',
+        rating: 5,
+        note: '',
+        updatedAt: 4000,
+      }
+    );
+    for (let i = 0; i < 4; i++) {
+      state.sessions.push({
+        id: `ses_extra_${i}`,
+        subjectId: 'sub_che',
+        heading: 'Block',
+        dayKey: '2026-10-20',
+        startTs: 5000 + i * 1000,
+        endTs: 5000 + i * 1000 + 200 * 60000,
+        activeMs: 200 * 60000,
+        pausedMs: 0,
+        pauseCount: 0,
+        overtimeMs: 0,
+        purity: 92,
+        mode: 'pomo',
+        rating: 5,
+        note: '',
+        updatedAt: 6000 + i,
+      });
+    }
+
+    // Add 12 completed tasks on 2026-10-20 -> capped at 10 tasks * 2 = 20 XP
+    for (let i = 0; i < 12; i++) {
+      state.tasks.push({
+        id: `t_${i}`,
+        title: `Task ${i}`,
+        dayKey: '2026-10-20',
+        done: true,
+        createdAt: 1000,
+        updatedAt: 1000,
+      });
+    }
+
+    // Add 18 completed habits on 2026-10-20 -> capped at 15 habits * 3 = 45 XP
+    for (let i = 0; i < 18; i++) {
+      const hid = `h_cap_${i}`;
+      state.habits.push(mkHabit({ id: hid, name: `Habit ${i}`, tn: 1 }, '2026-10-01'));
+      state.log[hid] = { '2026-10-20': { v: 1, s: 0 } };
+    }
+
+    // Add 2 mocks on 2026-10-20 -> capped at 1 mock/day = 25 XP
+    state.mocks.push(
+      {
+        id: 'm1',
+        name: 'Mock 1',
+        dayKey: '2026-10-20',
+        marksPerCorrect: 4,
+        marksPerWrong: -1,
+        maxMarks: 720,
+        subjects: {},
+        note: '',
+        updatedAt: 1000,
+      },
+      {
+        id: 'm2',
+        name: 'Mock 2',
+        dayKey: '2026-10-20',
+        marksPerCorrect: 4,
+        marksPerWrong: -1,
+        maxMarks: 720,
+        subjects: {},
+        note: '',
+        updatedAt: 2000,
+      }
+    );
+
+    // Add 1 completed chapter on 2026-10-20 (+25 XP) with 1 on-time revision (+10 XP) and 1 late revision (+5 XP)
+    state.chapters.push({
+      id: 'ch_xp',
+      subjectId: 'sub_phy',
+      name: 'Electrostatics',
+      status: 'completed',
+      completedOn: '2026-10-20',
+      revisions: [
+        { id: 'r_ontime', date: '2026-10-20', done: true, doneOn: '2026-10-20' },
+        { id: 'r_late', date: '2026-10-18', done: true, doneOn: '2026-10-20' },
+      ],
+    });
+
+    const d1Breakdown = computeDayXpBreakdown(state, '2026-10-20');
+    assert.equal(d1Breakdown.study, 960); // daily cap 960
+    assert.equal(d1Breakdown.focusBonus, 20); // max 4 sessions * 5
+    assert.equal(d1Breakdown.minDayBonus, 30);
+    assert.equal(d1Breakdown.streakBonus, 2); // 1-day streak * 2
+    assert.equal(d1Breakdown.revisions, 15); // 10 on-time + 5 late
+    assert.equal(d1Breakdown.chapters, 25);
+    assert.equal(d1Breakdown.mocks, 25); // capped at 1 mock/day
+    assert.equal(d1Breakdown.tasks, 20); // capped at 10 tasks * 2
+    assert.equal(d1Breakdown.habits, 45); // capped at 15 habits * 3
+    assert.equal(
+      d1Breakdown.total,
+      960 + 20 + 30 + 2 + 15 + 25 + 25 + 20 + 45
+    );
+
+    // Verify streak bonus cap (+20 at 10+ days)
+    for (let d = 21; d <= 30; d++) {
+      const dk = `2026-10-${String(d).padStart(2, '0')}`;
+      state.sessions.push({
+        id: `ses_streak_${d}`,
+        subjectId: 'sub_phy',
+        heading: 'Daily Min',
+        dayKey: dk,
+        startTs: 1000,
+        endTs: 1000 + 240 * 60000,
+        activeMs: 240 * 60000,
+        pausedMs: 0,
+        pauseCount: 0,
+        overtimeMs: 0,
+        purity: 80,
+        mode: 'pomo',
+        rating: 5,
+        note: '',
+        updatedAt: 2000,
+      });
+    }
+    const byDay = computeXpByDay(state);
+    // 2026-10-30 is the 11th consecutive day meeting minDayMinutes -> streakBonus capped at 20
+    assert.equal(byDay['2026-10-30'].breakdown.streakBonus, 20);
+
+    // Level formula: floor(sqrt(totalXp / 150)) + 1
+    assert.equal(computeLevelInfo(0).level, 1);
+    assert.equal(computeLevelInfo(149).level, 1);
+    assert.equal(computeLevelInfo(150).level, 2);
+    assert.equal(computeLevelInfo(600).level, 3);
+    const totalXp = computeTotalXp(state, '2026-10-30');
+    assert.ok(totalXp > 3000);
+  });
+
+  it('25. Milestone 4.2: Group entry builder & defensive reader — 21-day pruning, omitting disabled flags, paused stripping, clamping, and ignoring malformed keys', () => {
+    const todayKey = '2026-10-30';
+    const state = createBlankState();
+    state.profile = { nick: 'DrWalter', emoji: '🩺', examYear: 2027 };
+
+    // Add a timer session inside 21-day window ('2026-10-25'), an old timer session outside 21-day window ('2026-09-15'),
+    // and a manual session today ('2026-10-30')
+    state.sessions = [
+      {
+        id: 's_recent',
+        subjectId: 'sub_phy',
+        heading: 'Recent Timer',
+        dayKey: '2026-10-25',
+        startTs: 1000,
+        endTs: 1000 + 120 * 60000,
+        activeMs: 120 * 60000,
+        pausedMs: 0,
+        pauseCount: 0,
+        overtimeMs: 0,
+        purity: 100,
+        mode: 'pomo',
+        source: 'timer',
+        rating: 5,
+        note: '',
+        updatedAt: 2000,
+      },
+      {
+        id: 's_old',
+        subjectId: 'sub_phy',
+        heading: 'Old Timer',
+        dayKey: '2026-09-15',
+        startTs: 1000,
+        endTs: 1000 + 180 * 60000,
+        activeMs: 180 * 60000,
+        pausedMs: 0,
+        pauseCount: 0,
+        overtimeMs: 0,
+        purity: 100,
+        mode: 'pomo',
+        source: 'timer',
+        rating: 5,
+        note: '',
+        updatedAt: 2000,
+      },
+      {
+        id: 's_manual',
+        subjectId: 'sub_phy',
+        heading: 'Manual Today',
+        dayKey: todayKey,
+        startTs: 1000,
+        endTs: 1000 + 90 * 60000,
+        activeMs: 90 * 60000,
+        pausedMs: 0,
+        pauseCount: 0,
+        overtimeMs: 0,
+        purity: 100,
+        mode: 'manual',
+        source: 'manual',
+        rating: 5,
+        note: '',
+        updatedAt: 2000,
+      },
+    ];
+
+    const fullEntry = buildMyMemberEntry(state, todayKey, {
+      joinedAt: 1000,
+      sh: { t: true, x: true, s: true, m: false, l: false },
+      now: 5000,
+    });
+    assert.equal(fullEntry.days?.['2026-10-25'], 120);
+    // Old day (>21d) and manual session are excluded from group days
+    assert.equal(fullEntry.days?.['2026-09-15'], undefined);
+    assert.equal(fullEntry.days?.[todayKey], undefined);
+    // Disabled flags (m: false, l: false) are omitted
+    assert.equal('mocks' in fullEntry, false);
+    assert.equal('live' in fullEntry, false);
+
+    // Paused entry strips all stat fields
+    const pausedEntry = buildMyMemberEntry(state, todayKey, {
+      joinedAt: 1000,
+      sh: DEFAULT_SHARING_FLAGS,
+      paused: true,
+      now: 6000,
+    });
+    assert.equal(pausedEntry.paused, true);
+    assert.equal('days' in pausedEntry, false);
+    assert.equal('xpDays' in pausedEntry, false);
+    assert.equal('xpTotal' in pausedEntry, false);
+    assert.equal('streak' in pausedEntry, false);
+
+    // Defensive remote reader: clamps out-of-range numbers, drops old/invalid dayKeys, truncates nick
+    const adversarialRaw = {
+      nick: '  SuperLongNicknameOverTwentyChars  ',
+      emoji: '🧬',
+      joinedAt: 1000,
+      updatedAt: 2000,
+      sh: { t: true, x: true, s: true, m: true, l: true },
+      days: {
+        '2026-10-30': 99999, // clamp to 1440
+        '2026-10-29': -50, // clamp to 0
+        '2026-01-01': 300, // older than 21 days -> ignored
+        'not-a-date': 100, // invalid dayKey -> ignored
+      },
+      xpDays: {
+        '2026-10-30': 8000, // clamp to 3000
+      },
+      xpTotal: 99_999_999, // clamp to 10,000,000
+      streak: 9999, // clamp to 3650
+      consistency: 250, // clamp to 100
+      mocks: [
+        { d: '2026-10-28', s: 1500, m: 5000 }, // clamp s to 1000, m to 2000
+        { d: '2026-10-29', s: -2000, m: 0 }, // clamp s to -1000, m to 1
+        { bad: 'object' }, // ignored
+      ],
+    };
+
+    const sanitized = sanitizeRemoteMemberEntry(adversarialRaw, todayKey)!;
+    assert.ok(sanitized);
+    assert.equal(sanitized.nick.length, 20);
+    assert.equal(sanitized.days?.['2026-10-30'], 1440);
+    assert.equal(sanitized.days?.['2026-10-29'], 0);
+    assert.equal(sanitized.days?.['2026-01-01'], undefined);
+    assert.equal(sanitized.days?.['not-a-date'], undefined);
+    assert.equal(sanitized.xpDays?.['2026-10-30'], 3000);
+    assert.equal(sanitized.xpTotal, 10_000_000);
+    assert.equal(sanitized.streak, 3650);
+    assert.equal(sanitized.consistency, 100);
+    assert.equal(sanitized.mocks?.length, 2);
+    assert.deepEqual(sanitized.mocks?.[0], { d: '2026-10-28', s: 1000, m: 2000 });
+    assert.deepEqual(sanitized.mocks?.[1], { d: '2026-10-29', s: -1000, m: 1 });
+  });
+
+  it('26. Milestone 4.3: Leaderboards, tie-breaking, hidden members last, weekly group goal, rank history, and medals', () => {
+    const todayKey = '2026-10-30'; // Friday (weekStart = 2026-10-26)
+    const groupDoc: GroupDoc = {
+      name: 'NEET Toppers',
+      emoji: '🩺',
+      ownerUid: 'u1',
+      createdAt: 1000,
+      updatedAt: 2000,
+      memberCap: 30,
+      mockBoard: true,
+      goal: { weeklyMinutes: 600, updatedAt: 1500 },
+      members: {
+        u1: {
+          nick: 'Zara',
+          emoji: '🧬',
+          joinedAt: 1000,
+          updatedAt: 2000,
+          sh: { t: true, x: true, s: true, m: true, l: false },
+          days: { '2026-10-30': 200, '2026-10-27': 160, '2026-10-20': 300 },
+          xpDays: { '2026-10-30': 250, '2026-10-27': 200, '2026-10-20': 350 },
+          xpTotal: 1200,
+          streak: 8,
+          consistency: 85,
+          mocks: [
+            { d: '2026-10-20', s: 610, m: 720 },
+            { d: '2026-10-28', s: 650, m: 720 },
+          ],
+          weeks: {
+            '2026-10-12': { rank: 1, of: 3, minutes: 1200, xp: 1400 },
+            '2026-10-19': { rank: 2, of: 3, minutes: 1100, xp: 1300 },
+          },
+        },
+        u2: {
+          nick: 'Aarav',
+          emoji: '⚡',
+          joinedAt: 1000,
+          updatedAt: 2000,
+          sh: { t: true, x: true, s: true, m: true, l: false },
+          // Same today minutes as u1 (200), same today XP (250), but nickname 'Aarav' < 'Zara' -> wins tie-breaker!
+          days: { '2026-10-30': 200, '2026-10-27': 100, '2026-10-20': 400 },
+          xpDays: { '2026-10-30': 250, '2026-10-27': 100, '2026-10-20': 450 },
+          xpTotal: 1500,
+          streak: 5,
+          consistency: 90,
+          mocks: [{ d: '2026-10-29', s: 640, m: 720 }],
+        },
+        u3_hidden: {
+          nick: 'HiddenUser',
+          emoji: '🦉',
+          joinedAt: 1000,
+          updatedAt: 2000,
+          sh: { t: false, x: false, s: false, m: false, l: false },
+        },
+      },
+    };
+
+    // Today board: u2 ('Aarav') and u1 ('Zara') tied on 200m and 250 XP -> Aarav ranks #1, Zara #2, u3_hidden last (rank null)
+    const todayRows = rankTodayBoard(groupDoc.members, todayKey);
+    assert.equal(todayRows[0].uid, 'u2');
+    assert.equal(todayRows[0].rank, 1);
+    assert.equal(todayRows[1].uid, 'u1');
+    assert.equal(todayRows[1].rank, 2);
+    assert.equal(todayRows[2].uid, 'u3_hidden');
+    assert.equal(todayRows[2].hidden, true);
+    assert.equal(todayRows[2].rank, null);
+
+    // Week board: u1 has 200+160=360m, u2 has 200+100=300m -> u1 #1, u2 #2
+    const weekRows = rankWeekBoard(groupDoc.members, todayKey);
+    assert.equal(weekRows[0].uid, 'u1');
+    assert.equal(weekRows[1].uid, 'u2');
+
+    // XP board (weekly vs allTime)
+    const xpWeekly = rankXpBoard(groupDoc.members, todayKey, 'weekly');
+    assert.equal(xpWeekly[0].uid, 'u1'); // 450 vs 350
+    const xpAllTime = rankXpBoard(groupDoc.members, todayKey, 'allTime');
+    assert.equal(xpAllTime[0].uid, 'u2'); // 1500 vs 1200
+
+    // Streak board: ranked by consistency (u2=90 vs u1=85)
+    const streakRows = rankStreakBoard(groupDoc.members, todayKey);
+    assert.equal(streakRows[0].uid, 'u2');
+    assert.ok(streakRows[1].subLabel?.includes('🔥')); // u1 has 8d streak >= 7
+
+    // Mocks board: u1 latest=650, u2 latest=640, u3_hidden='not shared'
+    const mockRows = rankMocksBoard(groupDoc.members, todayKey, 'latest');
+    assert.equal(mockRows[0].uid, 'u1');
+    assert.equal(mockRows[2].displayLabel, 'not shared');
+
+    // Weekly group goal progress: u1 (360m) + u2 (300m) = 660m >= 600m goal -> 100% & reached!
+    const goalProg = computeWeeklyGroupGoalProgress(groupDoc, todayKey);
+    assert.equal(goalProg.combinedMinutes, 660);
+    assert.equal(goalProg.pct, 100);
+    assert.equal(goalProg.reached, true);
+
+    // Completed week standings for previous week (2026-10-19..2026-10-25): u2 had 400m, u1 had 300m
+    const prevStandings = computeCompletedWeekStandings(groupDoc, todayKey)!;
+    assert.equal(prevStandings.weekKey, '2026-10-19');
+    assert.equal(prevStandings.standings.u2.rank, 1);
+    assert.equal(prevStandings.standings.u1.rank, 2);
+    assert.equal(prevStandings.standings.u1.of, 2);
+
+    // Medal tally for u1 (1 gold, 1 silver)
+    const u1Medals = computeMemberMedals(groupDoc.members.u1);
+    assert.deepEqual(u1Medals, { gold: 1, silver: 1, bronze: 0 });
+
+    // History map keeps at most 12 weeks per group
+    let hist = {};
+    for (let w = 1; w <= 15; w++) {
+      const wk = `2026-07-${String(w).padStart(2, '0')}`;
+      hist = recordWeekStandingInHistory(hist, 'G1', wk, {
+        rank: 1,
+        of: 4,
+        minutes: 1000,
+        xp: 1200,
+      });
+    }
+    assert.equal(Object.keys(hist['G1' as keyof typeof hist]).length, 12);
+  });
+
+  it('27. Milestone 4.4: GroupPublishBudgetController — 2m debounce, 5m interval, unchanged hash skip, 60/day write cap, and pause on quota error with fake timers', async (t) => {
+    t.mock.timers.enable({ apis: ['Date', 'setTimeout'] });
+    t.mock.timers.setTime(new Date('2026-10-30T12:00:00Z').getTime());
+
+    const flushedGroups: string[] = [];
+    const ctrl = new GroupPublishBudgetController(
+      async (gid) => {
+        flushedGroups.push(gid);
+        ctrl. recordWrite(1);
+      },
+      { initialOnline: true }
+    );
+
+    const state = createBlankState();
+    state.profile = { nick: 'MedCoder', emoji: '🩺' };
+    const e1 = buildMyMemberEntry(state, '2026-10-30', {
+      joinedAt: 1000,
+      sh: DEFAULT_SHARING_FLAGS,
+      now: Date.now(),
+    });
+
+    // Mark dirty -> waits 2 minutes (120_000 ms) before flushing
+    ctrl.markGroupDirty('GRP2345678', e1);
+    t.mock.timers.tick(60_000);
+    assert.equal(flushedGroups.length, 0);
+
+    t.mock.timers.tick(61_000);
+    await Promise.resolve();
+    assert.equal(flushedGroups.length, 1);
+    ctrl.commitEntryHash('GRP2345678', e1);
+
+    // Identical entry hash (only updatedAt differs) -> skipped!
+    const e1Same = { ...e1, updatedAt: Date.now() + 5000 };
+    assert.equal(hashMemberEntry(e1), hashMemberEntry(e1Same));
+    ctrl.markGroupDirty('GRP2345678', e1Same);
+    t.mock.timers.tick(300_000);
+    await Promise.resolve();
+    assert.equal(flushedGroups.length, 1);
+
+    // Changed entry within 5 minutes of last write -> waits until 5-min minimum interval
+    const e2 = { ...e1, xpTotal: 500, updatedAt: Date.now() };
+    ctrl.commitEntryHash('GRP2345678', e1); // reset lastWriteTs to current mock time
+    ctrl.markGroupDirty('GRP2345678', e2);
+    t.mock.timers.tick(130_000); // 2m10s elapsed (< 5m)
+    await Promise.resolve();
+    assert.equal(flushedGroups.length, 1);
+
+    t.mock.timers.tick(180_000); // now > 5m elapsed -> flushes!
+    await Promise.resolve();
+    assert.equal(flushedGroups.length, 2);
+
+    // 60/day write cap
+    ctrl.recordWrite(60);
+    assert.equal(ctrl.isPausedForToday(), true);
+    assert.equal(ctrl.canWrite(1), false);
+
+    // Next UTC day resets budget
+    t.mock.timers.tick(24 * 3600 * 1000);
+    assert.equal(ctrl.isPausedForToday(), false);
+    assert.equal(ctrl.getWritesToday(), 0);
+
+    // Quota error pauses immediately
+    ctrl.pauseForQuotaError();
+    assert.equal(ctrl.isPausedForToday(), true);
+    ctrl.dispose();
+  });
+
+  it('28. Milestone 4.5: Invite codes, nickname validation, cheer deterministic IDs, studying-now expiry, and norm() backward compatibility for profile & groupHistory', () => {
+    // 1. Invite code generation & normalization
+    const code = generateGroupId();
+    assert.equal(code.length, 10);
+    assert.equal(isValidGroupCode(code), true);
+    const formatted = formatGroupCode(code);
+    assert.equal(formatted.length, 11);
+    assert.equal(normalizeGroupCode(` ${formatted.toLowerCase()} `), code);
+
+    // 2. Nickname validation
+    assert.equal(validateNickname('Dr. Arjun').valid, true);
+    assert.equal(validateNickname('A').valid, false); // < 2 chars
+    assert.equal(validateNickname('A'.repeat(21)).valid, false); // > 20 chars
+    assert.equal(validateNickname('user@gmail.com').valid, false); // contains @
+    assert.equal(validateNickname('Arjun9876543').valid, false); // 7+ digits
+
+    // 3. Deterministic cheer ID
+    assert.equal(
+      makeCheerId('2026-10-30', 'uid_sender', 'uid_receiver'),
+      '2026-10-30_uid_sender_uid_receiver'
+    );
+
+    // 4. Studying-now active filter (live.until > now AND fetchedAt < 15m ago)
+    const now = 1762000000000;
+    const gDoc = sanitizeRemoteGroupDoc(
+      {
+        name: 'Live Squad',
+        emoji: '🔥',
+        ownerUid: 'u1',
+        createdAt: now - 10000,
+        updatedAt: now,
+        memberCap: 30,
+        mockBoard: false,
+        members: {
+          u1: {
+            nick: 'ActiveDoc',
+            emoji: '🩺',
+            joinedAt: now - 5000,
+            updatedAt: now,
+            sh: { t: true, x: true, s: true, m: false, l: true },
+            live: { since: now - 10 * 60000, until: now + 50 * 60000 },
+          },
+          u2: {
+            nick: 'ExpiredDoc',
+            emoji: '🧬',
+            joinedAt: now - 5000,
+            updatedAt: now,
+            sh: { t: true, x: true, s: true, m: false, l: true },
+            live: { since: now - 70 * 60000, until: now - 10 * 60000 },
+          },
+        },
+      },
+      '2026-10-30'
+    )!;
+    const activeFresh = getActiveStudyingNowMembers(gDoc, now - 5 * 60000, now);
+    assert.equal(activeFresh.length, 1);
+    assert.equal(activeFresh[0].uid, 'u1');
+    assert.equal(activeFresh[0].elapsedMins, 10);
+
+    // If snapshot was fetched > 15m ago, returns empty
+    const activeStale = getActiveStudyingNowMembers(gDoc, now - 16 * 60000, now);
+    assert.equal(activeStale.length, 0);
+
+    // 5. norm() backward compatibility for old state without profile or groupHistory
+    const oldState = norm({
+      set: { avatarEmoji: '🧬' },
+      sessions: [],
+    });
+    assert.deepEqual(oldState.profile, { nick: '', emoji: '🧬' });
+    assert.deepEqual(oldState.groupHistory, {});
+    assert.deepEqual(oldState.groupsConfig, { consentAccepted: false, joined: [] });
   });
 });
 

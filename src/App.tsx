@@ -12,6 +12,7 @@ import type {
   ChapterStatus,
   DDay,
   Doubt,
+  GroupsUserConfig,
   Habit,
   HabitCategory,
   MistakeEntry,
@@ -24,6 +25,7 @@ import type {
   StudySession,
   SubjectTargets,
   SyncStatus,
+  UserProfile,
   WellbeingEntry,
 } from './types';
 import {
@@ -89,12 +91,24 @@ import {
   updateSoundscape,
 } from './utils/audioEngine';
 import { useFloatingTimerPiP } from './hooks/useFloatingTimerPiP';
+import {
+  GROUP_LIVE_DURATION_MS,
+  GROUP_LIVE_PAUSE_CLEAR_MS,
+  GROUP_LIVE_REFRESH_MS,
+  type GroupLiveStatus,
+  GroupPublishBudgetController,
+  buildMyMemberEntry,
+  cleanupUserGroupsOnCloudDelete,
+  publishMyEntryToGroup,
+  recordWeekStandingInHistory,
+} from './utils/groups';
 import { TodayView } from './components/TodayView';
 import { PrepView } from './components/PrepView';
 import { FocusView } from './components/FocusView';
 import { StatsView } from './components/StatsView';
 import { MoreView } from './components/MoreView';
 import { Modals, type ModalState } from './components/Modals';
+import { ProfileModal } from './components/ProfileModal';
 
 function boomConfetti() {
   if (
@@ -187,6 +201,13 @@ export default function App() {
   const [syncWritesToday, setSyncWritesToday] = useState<number>(() =>
     getSyncTodayWrites()
   );
+  const [isOnline, setIsOnline] = useState<boolean>(() =>
+    typeof navigator !== 'undefined' && 'onLine' in navigator ? navigator.onLine : true
+  );
+  const [showProfileModal, setShowProfileModal] = useState(false);
+  const [profilePromptReason, setProfilePromptReason] = useState<string | undefined>(
+    undefined
+  );
 
   const readyRef = useRef(false);
   const stateRef = useRef<PulseHabitState>(state);
@@ -194,6 +215,27 @@ export default function App() {
   const authUserRef = useRef(authUser);
   authUserRef.current = authUser;
   const syncControllerRef = useRef<SyncBudgetController | null>(null);
+  const liveStatusRef = useRef<GroupLiveStatus | null>(null);
+  const groupBudgetRef = useRef<GroupPublishBudgetController | null>(null);
+  if (!groupBudgetRef.current) {
+    groupBudgetRef.current = new GroupPublishBudgetController(async (groupId) => {
+      if (!authUserRef.current || !readyRef.current || !groupBudgetRef.current) return;
+      const curState = stateRef.current;
+      const joined = curState.groupsConfig?.joined?.find((j) => j.groupId === groupId);
+      if (!joined) return;
+      const curToday = logicalKey(new Date(), curState.set.dayResetHour ?? 4);
+      await publishMyEntryToGroup({
+        groupId,
+        state: curState,
+        todayKey: curToday,
+        joinedAt: joined.joinedAt,
+        sh: joined.sh,
+        paused: joined.paused,
+        live: liveStatusRef.current,
+        budget: groupBudgetRef.current,
+      });
+    });
+  }
 
   const toastTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const perfectDayTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
@@ -243,6 +285,23 @@ export default function App() {
         addDirtyDocsToOutbox(dirtyKeys);
         if (authUserRef.current && syncControllerRef.current) {
           syncControllerRef.current.markDirty(dirtyKeys);
+        }
+      }
+      // Queue debounced group stats publish for joined groups when relevant state changes
+      if (authUserRef.current && groupBudgetRef.current) {
+        const joinedList = stamped.groupsConfig?.joined || [];
+        if (joinedList.length > 0) {
+          const curToday = logicalKey(new Date(), stamped.set.dayResetHour ?? 4);
+          for (const g of joinedList) {
+            const entry = buildMyMemberEntry(stamped, curToday, {
+              joinedAt: g.joinedAt,
+              sh: g.sh,
+              paused: g.paused,
+              live: liveStatusRef.current,
+              groupId: g.groupId,
+            });
+            groupBudgetRef.current.markGroupDirty(g.groupId, entry);
+          }
         }
       }
     }
@@ -596,29 +655,131 @@ export default function App() {
     const onVisHide = () => {
       if (document.visibilityState === 'hidden' && authUserRef.current) {
         controller.flushOnBackground();
+        void groupBudgetRef.current?.flushOnBackground();
       } else if (document.visibilityState === 'visible' && authUserRef.current) {
-        runCloudSync({ forcePull: false });
+        void runCloudSync({ forcePull: false });
+      }
+    };
+    const onPageHide = () => {
+      if (authUserRef.current) {
+        controller.flushOnBackground();
+        void groupBudgetRef.current?.flushOnBackground();
       }
     };
     const onOnline = () => {
-      if (authUserRef.current) runCloudSync({ forcePull: false });
+      setIsOnline(true);
+      groupBudgetRef.current?.setOnlineStatus(true);
+      if (authUserRef.current) void runCloudSync({ forcePull: false });
     };
     const onOffline = () => {
+      setIsOnline(false);
+      groupBudgetRef.current?.setOnlineStatus(false);
       if (authUserRef.current) setSyncStatus('offline');
     };
 
+    // Automatic periodic background cloud sync every 5 minutes while signed in and visible
+    const autoSyncInterval = setInterval(() => {
+      if (
+        authUserRef.current &&
+        typeof document !== 'undefined' &&
+        document.visibilityState === 'visible' &&
+        (typeof navigator === 'undefined' || navigator.onLine)
+      ) {
+        void runCloudSync({ forcePull: false });
+      }
+    }, 5 * 60_000);
+
     document.addEventListener('visibilitychange', onVisHide);
+    window.addEventListener('pagehide', onPageHide);
     window.addEventListener('online', onOnline);
     window.addEventListener('offline', onOffline);
 
     return () => {
       unsubAuth();
       controller.dispose();
+      clearInterval(autoSyncInterval);
       document.removeEventListener('visibilitychange', onVisHide);
+      window.removeEventListener('pagehide', onPageHide);
       window.removeEventListener('online', onOnline);
       window.removeEventListener('offline', onOffline);
     };
   }, [runCloudSync]);
+
+  // Milestone 2.1: Studying Now live status publishing (when sh.l is ON)
+  useEffect(() => {
+    if (!ready || !authUser) return;
+    const joinedLiveGroups = (state.groupsConfig?.joined || []).filter(
+      (g) => g.sh.l && !g.paused
+    );
+    if (joinedLiveGroups.length === 0) {
+      liveStatusRef.current = null;
+      return;
+    }
+
+    const pushLiveToGroups = () => {
+      if (!groupBudgetRef.current || !authUserRef.current) return;
+      const curState = stateRef.current;
+      const curToday = logicalKey(new Date(), curState.set.dayResetHour ?? 4);
+      for (const g of curState.groupsConfig?.joined || []) {
+        if (!g.sh.l || g.paused) continue;
+        void publishMyEntryToGroup({
+          groupId: g.groupId,
+          state: curState,
+          todayKey: curToday,
+          joinedAt: g.joinedAt,
+          sh: g.sh,
+          paused: g.paused,
+          live: liveStatusRef.current,
+          budget: groupBudgetRef.current,
+        }).catch(() => {});
+      }
+    };
+
+    const t = state.activeTimer;
+    if (t && t.status === 'running' && t.phase !== 'break') {
+      const now = Date.now();
+      liveStatusRef.current = {
+        since: t.startTs,
+        until: now + GROUP_LIVE_DURATION_MS,
+      };
+      pushLiveToGroups();
+
+      const refreshIv = setInterval(() => {
+        const curTimer = stateRef.current.activeTimer;
+        if (curTimer && curTimer.status === 'running' && curTimer.phase !== 'break') {
+          liveStatusRef.current = {
+            since: curTimer.startTs,
+            until: Date.now() + GROUP_LIVE_DURATION_MS,
+          };
+          pushLiveToGroups();
+        }
+      }, GROUP_LIVE_REFRESH_MS);
+
+      return () => clearInterval(refreshIv);
+    }
+
+    if (t && t.status === 'paused' && t.phase !== 'break') {
+      const pauseClearTimer = setTimeout(() => {
+        if (liveStatusRef.current) {
+          liveStatusRef.current = null;
+          pushLiveToGroups();
+        }
+      }, GROUP_LIVE_PAUSE_CLEAR_MS);
+      return () => clearTimeout(pauseClearTimer);
+    }
+
+    if (liveStatusRef.current) {
+      liveStatusRef.current = null;
+      pushLiveToGroups();
+    }
+  }, [
+    ready,
+    authUser,
+    state.activeTimer?.status,
+    state.activeTimer?.phase,
+    state.activeTimer?.startTs,
+    state.groupsConfig?.joined,
+  ]);
 
   // Timer actions (A4: side effects outside state updaters)
   const startTimer = useCallback(
@@ -862,6 +1023,7 @@ export default function App() {
       overtimeMs,
       purity,
       mode: t.mode,
+      source: 'timer',
       rating: reflection.rating || 5,
       note: reflection.note || '',
       updatedAt: now,
@@ -2190,17 +2352,58 @@ export default function App() {
             onEditSession={(sesId) => setModal({ type: 'manualSession', id: sesId })}
             onOpenManualSession={() => setModal({ type: 'manualSession' })}
             onToast={showToast}
+            myUid={authUser?.uid || null}
+            isOnline={isOnline}
+            groupBudget={groupBudgetRef.current}
+            onSignIn={async () => {
+              try {
+                await signInWithGoogleAccount();
+              } catch (err) {
+                showToast(
+                  err instanceof Error ? err.message : 'Google sign-in could not start'
+                );
+              }
+            }}
+            onOpenProfileModal={(reason) => {
+              setProfilePromptReason(reason);
+              setShowProfileModal(true);
+            }}
+            onUpdateGroupsConfig={(updater) => {
+              updateAndSave((prev) => ({
+                ...prev,
+                groupsConfig: updater(
+                  prev.groupsConfig || { consentAccepted: false, joined: [] }
+                ),
+              }));
+            }}
+            onRecordWeekHistory={(groupId, weekKey, standing) => {
+              updateAndSave((prev) => ({
+                ...prev,
+                groupHistory: recordWeekStandingInHistory(
+                  prev.groupHistory || {},
+                  groupId,
+                  weekKey,
+                  standing
+                ),
+              }));
+            }}
           />
         )}
 
         {tab === 'more' && (
           <MoreView
             state={state}
+            todayKey={todayKey}
+            isOnline={isOnline}
             authUser={authUser}
             syncStatus={syncStatus}
             syncErrorMsg={syncErrorMsg}
             lastSyncedAt={lastSyncedAt ?? state.syncMeta?.lastSyncedAt}
             syncWritesToday={syncWritesToday}
+            onOpenProfileModal={() => {
+              setProfilePromptReason(undefined);
+              setShowProfileModal(true);
+            }}
             onSignInGoogle={async () => {
               try {
                 await signInWithGoogleAccount();
@@ -2230,10 +2433,19 @@ export default function App() {
               if (!authUser) return;
               try {
                 setSyncStatus('syncing');
+                await cleanupUserGroupsOnCloudDelete(stateRef.current);
                 await deleteAllUserCloudData(authUser.uid);
+                updateAndSave((prev) => ({
+                  ...prev,
+                  groupsConfig: {
+                    consentAccepted: Boolean(prev.groupsConfig?.consentAccepted),
+                    joined: [],
+                    updatedAt: Date.now(),
+                  },
+                }));
                 setSyncWritesToday(getSyncTodayWrites());
                 setSyncStatus('synced');
-                showToast('Deleted all your cloud data from Firestore');
+                showToast('Deleted all your cloud data and study group entries');
               } catch (err) {
                 setSyncStatus('error');
                 showToast(
@@ -2248,6 +2460,11 @@ export default function App() {
               updateAndSave((prev) => ({
                 ...prev,
                 set: { ...prev.set, avatarEmoji: emoji, updatedAt: now },
+                profile: {
+                  ...(prev.profile || { nick: '', emoji }),
+                  emoji: prev.profile?.nick ? prev.profile.emoji : emoji,
+                  updatedAt: now,
+                },
               }));
             }}
             onUpdateTargets={handleUpdateTargets}
@@ -2816,6 +3033,31 @@ export default function App() {
           });
         }}
       />
+
+      {showProfileModal && (
+        <ProfileModal
+          profile={state.profile || { nick: '', emoji: state.set.avatarEmoji || '🩺' }}
+          promptReason={profilePromptReason}
+          onClose={() => {
+            setShowProfileModal(false);
+            setProfilePromptReason(undefined);
+          }}
+          onSave={(nextProfile: UserProfile) => {
+            updateAndSave((prev) => ({
+              ...prev,
+              profile: nextProfile,
+              set: {
+                ...prev.set,
+                avatarEmoji: nextProfile.emoji,
+                updatedAt: nextProfile.updatedAt || Date.now(),
+              },
+            }));
+            setShowProfileModal(false);
+            setProfilePromptReason(undefined);
+            showToast(`Saved profile: ${nextProfile.emoji} ${nextProfile.nick}`);
+          }}
+        />
+      )}
 
       {/* Lightweight SVG Perfect Day Celebration Overlay */}
       {perfectDayBanner && (

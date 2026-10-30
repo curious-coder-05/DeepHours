@@ -1,5 +1,5 @@
 import React, { useMemo, useState } from 'react';
-import type { PulseHabitState, StatsSubTab } from '../types';
+import type { GroupsUserConfig, PulseHabitState, StatsSubTab } from '../types';
 import {
   addD,
   badges,
@@ -14,15 +14,16 @@ import {
   getSubject,
   getTodaySubjectMs,
   live,
-  lvl,
   pad,
   rate,
   streak,
   total,
   wkS,
-  xp,
 } from '../utils/studyLogic';
 import { computeConsistencyScore } from '../utils/insights';
+import type { GroupPublishBudgetController } from '../utils/groups';
+import { computeLevelInfo, computeTotalXp } from '../utils/xp';
+import { GroupsView } from './GroupsView';
 import { PlannerView } from './PlannerView';
 import { ReviewView } from './ReviewView';
 
@@ -35,6 +36,17 @@ interface StatsViewProps {
   onOpenManualSession: (defaultSubjectId?: string) => void;
   onEditSession?: (sessionId: string) => void;
   onToast?: (msg: string) => void;
+  myUid?: string | null;
+  isOnline?: boolean;
+  groupBudget?: GroupPublishBudgetController;
+  onSignIn?: () => void;
+  onOpenProfileModal?: (reason?: string) => void;
+  onUpdateGroupsConfig?: (updater: (prev: GroupsUserConfig) => GroupsUserConfig) => void;
+  onRecordWeekHistory?: (
+    groupId: string,
+    weekKey: string,
+    standing: { rank: number; of: number; minutes: number; xp: number }
+  ) => void;
 }
 
 export const StatsView: React.FC<StatsViewProps> = ({
@@ -46,6 +58,13 @@ export const StatsView: React.FC<StatsViewProps> = ({
   onOpenManualSession,
   onEditSession,
   onToast,
+  myUid = null,
+  isOnline = true,
+  groupBudget,
+  onSignIn,
+  onOpenProfileModal,
+  onUpdateGroupsConfig,
+  onRecordWeekHistory,
 }) => {
   const summary = computeStudySummary(state, todayKey);
   const consistencyCal = computeConsistencyCalendar(state, todayKey, 90);
@@ -93,10 +112,11 @@ export const StatsView: React.FC<StatsViewProps> = ({
   const avg30dHours = Number((summary.monthAvgMsPerDay / 3600000).toFixed(2));
   const consistencyPct = Math.round((summary.monthActiveDays / 30) * 100);
 
-  const totalXp = xp(state, todayKey);
-  const level = lvl(totalXp);
-  const nx = Math.pow(level, 2) * 60;
-  const pv = Math.pow(level - 1, 2) * 60;
+  const totalXp = computeTotalXp(state, todayKey);
+  const levelInfo = computeLevelInfo(totalXp);
+  const level = levelInfo.level;
+  const nx = levelInfo.nextLevelXp;
+  const pv = levelInfo.currentLevelFloorXp;
   const liveHabits = live(state);
 
   return (
@@ -161,6 +181,20 @@ export const StatsView: React.FC<StatsViewProps> = ({
           >
             📋 Weekly Review
           </button>
+          <button
+            type="button"
+            className={subTab === 'groups' ? 'on' : ''}
+            style={{
+              padding: '6px 12px',
+              fontSize: '12.5px',
+              borderRadius: '10px',
+              whiteSpace: 'nowrap',
+              flex: '1 0 auto',
+            }}
+            onClick={() => onChangeSubTab('groups')}
+          >
+            🏆 Groups
+          </button>
         </div>
       </div>
 
@@ -177,6 +211,19 @@ export const StatsView: React.FC<StatsViewProps> = ({
           state={state}
           todayKey={todayKey}
           onToast={(msg) => onToast?.(msg)}
+        />
+      ) : subTab === 'groups' && groupBudget ? (
+        <GroupsView
+          state={state}
+          todayKey={todayKey}
+          myUid={myUid}
+          isOnline={isOnline}
+          groupBudget={groupBudget}
+          onSignIn={() => onSignIn?.()}
+          onOpenProfileModal={(reason) => onOpenProfileModal?.(reason)}
+          onUpdateGroupsConfig={(updater) => onUpdateGroupsConfig?.(updater)}
+          onRecordWeekHistory={(gid, wk, st) => onRecordWeekHistory?.(gid, wk, st)}
+          showToast={(msg) => onToast?.(msg)}
         />
       ) : (
         <div>
