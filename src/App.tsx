@@ -105,6 +105,7 @@ import {
 import { TodayView } from './components/TodayView';
 import { PrepView } from './components/PrepView';
 import { FocusView } from './components/FocusView';
+import { GroupsView } from './components/GroupsView';
 import { StatsView } from './components/StatsView';
 import { MoreView } from './components/MoreView';
 import { Modals, type ModalState } from './components/Modals';
@@ -2342,16 +2343,10 @@ export default function App() {
           />
         )}
 
-        {tab === 'stats' && (
-          <StatsView
+        {tab === 'groups' && groupBudgetRef.current && (
+          <GroupsView
             state={state}
-            sel={sel}
             todayKey={todayKey}
-            subTab={statsSubTab}
-            onChangeSubTab={setStatsSubTab}
-            onEditSession={(sesId) => setModal({ type: 'manualSession', id: sesId })}
-            onOpenManualSession={() => setModal({ type: 'manualSession' })}
-            onToast={showToast}
             myUid={authUser?.uid || null}
             isOnline={isOnline}
             groupBudget={groupBudgetRef.current}
@@ -2387,6 +2382,24 @@ export default function App() {
                 ),
               }));
             }}
+            onGoToFocus={() => {
+              setTab('focus');
+              window.scrollTo(0, 0);
+            }}
+            showToast={showToast}
+          />
+        )}
+
+        {tab === 'stats' && (
+          <StatsView
+            state={state}
+            sel={sel}
+            todayKey={todayKey}
+            subTab={statsSubTab}
+            onChangeSubTab={setStatsSubTab}
+            onEditSession={(sesId) => setModal({ type: 'manualSession', id: sesId })}
+            onOpenManualSession={() => setModal({ type: 'manualSession' })}
+            onToast={showToast}
           />
         )}
 
@@ -2750,6 +2763,16 @@ export default function App() {
           }}
         >
           <b>⏱️</b>Focus PiP
+        </button>
+        <button
+          type="button"
+          className={tab === 'groups' ? 'on' : ''}
+          onClick={() => {
+            setTab('groups');
+            window.scrollTo(0, 0);
+          }}
+        >
+          <b>🏆</b>Groups
         </button>
         <button
           type="button"

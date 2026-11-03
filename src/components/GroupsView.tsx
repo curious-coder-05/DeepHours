@@ -4,7 +4,6 @@ import type {
   GroupsUserConfig,
   JoinedGroupPreference,
   PulseHabitState,
-  UserProfile,
 } from '../types';
 import {
   ALLOWED_CHEER_EMOJIS,
@@ -16,7 +15,9 @@ import {
   GROUP_MANUAL_REFRESH_COOLDOWN_MS,
   type GroupPublishBudgetController,
   MAX_JOINED_GROUPS,
+  type MemberEntry,
   type MockSortMode,
+  type RankedMemberRow,
   type XpSortMode,
   cleanupOldOwnCheers,
   computeCompletedWeekStandings,
@@ -38,14 +39,52 @@ import {
   rankTodayBoard,
   rankWeekBoard,
   rankXpBoard,
-  recordWeekStandingInHistory,
   sendCheerInCloud,
   validateNickname,
 } from '../utils/groups';
+import { addD, isManualStudySession } from '../utils/studyLogic';
+import {
+  XP_V2_PLAIN_RULES,
+  computeDayXpBreakdown,
+  computeLevelInfo,
+  computeTotalXp,
+  computeXpByDay,
+} from '../utils/xp';
 
 type BoardTab = 'today' | 'week' | 'xp' | 'streak' | 'mocks' | 'history';
+type MemberFilterMode = 'all' | 'activeToday' | 'studyingNow' | 'top3';
 
 const GROUP_EMOJIS = ['🩺', '🧬', '🔬', '⚕️', '🔥', '🎯', '📚', '⚡', '🧠', '🏆'];
+const PACE_TARGET_STORAGE_KEY = 'dh_group_pace_targets_v1';
+
+function loadPaceTargets(): Record<string, string> {
+  try {
+    if (typeof localStorage === 'undefined') return {};
+    const raw = localStorage.getItem(PACE_TARGET_STORAGE_KEY);
+    if (!raw) return {};
+    const parsed = JSON.parse(raw);
+    if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) return {};
+    const out: Record<string, string> = {};
+    for (const [gid, uid] of Object.entries(parsed)) {
+      if (typeof gid === 'string' && typeof uid === 'string' && uid) {
+        out[gid] = uid;
+      }
+    }
+    return out;
+  } catch {
+    return {};
+  }
+}
+
+function savePaceTargets(map: Record<string, string>): void {
+  try {
+    if (typeof localStorage !== 'undefined') {
+      localStorage.setItem(PACE_TARGET_STORAGE_KEY, JSON.stringify(map));
+    }
+  } catch {
+    // ignore storage errors
+  }
+}
 
 function formatRelativeAgo(ts: number, now: number): string {
   if (!ts || ts <= 0) return 'never';
@@ -57,6 +96,32 @@ function formatRelativeAgo(ts: number, now: number): string {
   if (hrs < 24) return `${hrs}h ago`;
   const days = Math.floor(hrs / 24);
   return `${days}d ago`;
+}
+
+function getWeekDayKeysUpToToday(todayKey: string): string[] {
+  const [y, m, d] = todayKey.split('-').map(Number);
+  const dt = new Date(Date.UTC(y, (m || 1) - 1, d || 1));
+  const dow = dt.getUTCDay(); // 0 = Sun, 1 = Mon .. 6 = Sat
+  const diffToMon = dow === 0 ? -6 : 1 - dow;
+  const keys: string[] = [];
+  for (let offset = diffToMon; offset <= 0; offset++) {
+    keys.push(addD(todayKey, offset));
+  }
+  return keys;
+}
+
+function sumMemberRange(
+  entry: MemberEntry | undefined,
+  dayKeys: string[],
+  field: 'm' | 'xp'
+): number {
+  const map = field === 'm' ? entry?.days : entry?.xpDays;
+  if (!map) return 0;
+  let sum = 0;
+  for (const dk of dayKeys) {
+    sum += Number(map[dk]) || 0;
+  }
+  return sum;
 }
 
 interface GroupsViewProps {
@@ -75,6 +140,7 @@ interface GroupsViewProps {
     weekKey: string,
     standing: { rank: number; of: number; minutes: number; xp: number }
   ) => void;
+  onGoToFocus?: () => void;
   showToast: (msg: string) => void;
 }
 
@@ -88,6 +154,7 @@ export const GroupsView: React.FC<GroupsViewProps> = ({
   onOpenProfileModal,
   onUpdateGroupsConfig,
   onRecordWeekHistory,
+  onGoToFocus,
   showToast,
 }) => {
   const groupsConfig: GroupsUserConfig = state.groupsConfig || {
@@ -111,7 +178,17 @@ export const GroupsView: React.FC<GroupsViewProps> = ({
   const [boardTab, setBoardTab] = useState<BoardTab>('today');
   const [xpSortMode, setXpSortMode] = useState<XpSortMode>('weekly');
   const [mockSortMode, setMockSortMode] = useState<MockSortMode>('latest');
+  const [memberFilter, setMemberFilter] = useState<MemberFilterMode>('all');
+  const [memberSearch, setMemberSearch] = useState('');
+  const [expandedMemberUid, setExpandedMemberUid] = useState<string | null>(null);
+  const [showMyXpDrawer, setShowMyXpDrawer] = useState(false);
+  const [showGoalBreakdown, setShowGoalBreakdown] = useState(false);
+  const [paceTargets, setPaceTargets] = useState<Record<string, string>>(() =>
+    loadPaceTargets()
+  );
+
   const [isRefreshing, setIsRefreshing] = useState(false);
+  const [isPublishingMine, setIsPublishingMine] = useState(false);
   const [lastManualRefreshTs, setLastManualRefreshTs] = useState(0);
   const [nowTick, setNowTick] = useState(() => Date.now());
 
@@ -124,6 +201,7 @@ export const GroupsView: React.FC<GroupsViewProps> = ({
   const [actionError, setActionError] = useState<string | null>(null);
 
   // Owner tools state
+  const [showOwnerDrawer, setShowOwnerDrawer] = useState(false);
   const [ownerEditName, setOwnerEditName] = useState('');
   const [ownerEditEmoji, setOwnerEditEmoji] = useState('🩺');
   const [ownerGoalHoursInput, setOwnerGoalHoursInput] = useState('');
@@ -139,6 +217,59 @@ export const GroupsView: React.FC<GroupsViewProps> = ({
     const iv = setInterval(() => setNowTick(Date.now()), 30_000);
     return () => clearInterval(iv);
   }, []);
+
+  // Personal XP v2 & Timer-verified study calculations from utils/xp.ts
+  const myPersonalStats = useMemo(() => {
+    const xpByDay = computeXpByDay(state);
+    const totalXp = computeTotalXp(state, todayKey);
+    const levelInfo = computeLevelInfo(totalXp);
+    const todayBreakdown = computeDayXpBreakdown(state, todayKey);
+
+    const weekKeys = getWeekDayKeysUpToToday(todayKey);
+    const last7Keys: string[] = [];
+    for (let i = 6; i >= 0; i--) {
+      last7Keys.push(addD(todayKey, -i));
+    }
+
+    const timerMinsByDay: Record<string, number> = {};
+    for (const ses of state.sessions || []) {
+      if (!ses || isManualStudySession(ses)) continue;
+      const mins = Math.min(
+        360,
+        Math.max(0, Math.floor((Number(ses.activeMs) || 0) / 60000))
+      );
+      if (mins <= 0) continue;
+      timerMinsByDay[ses.dayKey] = Math.min(
+        1440,
+        (timerMinsByDay[ses.dayKey] || 0) + mins
+      );
+    }
+
+    const todayTimerMins = timerMinsByDay[todayKey] || 0;
+    const todayXp = xpByDay[todayKey]?.total || 0;
+    const weekTimerMins = weekKeys.reduce(
+      (acc: number, dk: string) => acc + (timerMinsByDay[dk] || 0),
+      0
+    );
+    const weekXp = weekKeys.reduce(
+      (acc: number, dk: string) => acc + (xpByDay[dk]?.total || 0),
+      0
+    );
+
+    return {
+      totalXp,
+      levelInfo,
+      todayBreakdown,
+      todayTimerMins,
+      todayXp,
+      weekTimerMins,
+      weekXp,
+      timerMinsByDay,
+      xpByDay,
+      weekKeys,
+      last7Keys,
+    };
+  }, [state, todayKey]);
 
   const activeSnapshot = activeGroupId ? snapshots[activeGroupId] : undefined;
   const activeGroupDoc = activeSnapshot?.doc;
@@ -157,7 +288,14 @@ export const GroupsView: React.FC<GroupsViewProps> = ({
         setBoardTab('today');
       }
     }
-  }, [activeGroupId, activeGroupDoc?.name, activeGroupDoc?.emoji, activeGroupDoc?.goal?.weeklyMinutes, activeGroupDoc?.mockBoard, boardTab]);
+  }, [
+    activeGroupId,
+    activeGroupDoc?.name,
+    activeGroupDoc?.emoji,
+    activeGroupDoc?.goal?.weeklyMinutes,
+    activeGroupDoc?.mockBoard,
+    boardTab,
+  ]);
 
   // Refresh a group snapshot from Firestore
   const refreshGroup = useCallback(
@@ -166,7 +304,9 @@ export const GroupsView: React.FC<GroupsViewProps> = ({
       if (manual) {
         const elapsed = Date.now() - lastManualRefreshTs;
         if (elapsed < GROUP_MANUAL_REFRESH_COOLDOWN_MS) {
-          const waitSec = Math.ceil((GROUP_MANUAL_REFRESH_COOLDOWN_MS - elapsed) / 1000);
+          const waitSec = Math.ceil(
+            (GROUP_MANUAL_REFRESH_COOLDOWN_MS - elapsed) / 1000
+          );
           showToast(`Please wait ${waitSec}s before refreshing again.`);
           return;
         }
@@ -181,12 +321,12 @@ export const GroupsView: React.FC<GroupsViewProps> = ({
         });
         if (snap) {
           setSnapshots((prev) => ({ ...prev, [groupId]: snap }));
-          // Update local group name/emoji in joined preferences if changed
           onUpdateGroupsConfig((prev) => {
             const existing = prev.joined.find((j) => j.groupId === groupId);
             if (
               !existing ||
-              (existing.name === snap.doc.name && existing.emoji === snap.doc.emoji)
+              (existing.name === snap.doc.name &&
+                existing.emoji === snap.doc.emoji)
             ) {
               return prev;
             }
@@ -200,18 +340,29 @@ export const GroupsView: React.FC<GroupsViewProps> = ({
             };
           });
 
-          // Milestone 2.6: Check and record last week's completed standings
-          const completedStanding = computeCompletedWeekStandings(snap.doc, todayKey);
-          if (completedStanding && myUid && completedStanding.standings[myUid]) {
+          // Record last week's completed standings if available
+          const completedStanding = computeCompletedWeekStandings(
+            snap.doc,
+            todayKey
+          );
+          if (
+            completedStanding &&
+            myUid &&
+            completedStanding.standings[myUid]
+          ) {
             const myStanding = completedStanding.standings[myUid];
             const existingHist =
               state.groupHistory?.[groupId]?.[completedStanding.weekKey];
             if (!existingHist) {
-              onRecordWeekHistory(groupId, completedStanding.weekKey, myStanding);
+              onRecordWeekHistory(
+                groupId,
+                completedStanding.weekKey,
+                myStanding
+              );
             }
           }
 
-          // Milestone 2.3: Occasional cleanup of own cheers older than 14 days
+          // Occasional cleanup of own cheers older than 14 days
           if (!cleanupRanForGroupRef.current.has(groupId)) {
             cleanupRanForGroupRef.current.add(groupId);
             void cleanupOldOwnCheers({
@@ -220,8 +371,10 @@ export const GroupsView: React.FC<GroupsViewProps> = ({
               budget: groupBudget,
             });
           }
+          if (manual) {
+            showToast(`Refreshed "${snap.doc.name}" leaderboard`);
+          }
         } else {
-          // Group was closed/deleted by owner or user was removed
           setSnapshots((prev) => {
             const next = { ...prev };
             delete next[groupId];
@@ -231,7 +384,9 @@ export const GroupsView: React.FC<GroupsViewProps> = ({
       } catch (err) {
         if (manual) {
           showToast(
-            err instanceof Error ? err.message : 'Could not refresh group right now.'
+            err instanceof Error
+              ? err.message
+              : 'Could not refresh group right now.'
           );
         }
       } finally {
@@ -252,7 +407,9 @@ export const GroupsView: React.FC<GroupsViewProps> = ({
     ]
   );
 
-  // Auto-refresh on open if cache > 5m old, and every 3m while visible
+  // 5-Minute Cache & Auto-Refresh Logic:
+  // On opening GroupsView or switching activeGroupId, if cached snapshot is missing or > 5 minutes old
+  // (GROUP_CACHE_STALE_MS), automatically fetch fresh snapshot from Firestore.
   useEffect(() => {
     if (!myUid || !activeGroupId || !isOnline) return;
     const cached = loadCachedGroupSnapshots()[activeGroupId];
@@ -261,7 +418,10 @@ export const GroupsView: React.FC<GroupsViewProps> = ({
       void refreshGroup(activeGroupId, false);
     }
     const interval = setInterval(() => {
-      if (typeof document !== 'undefined' && document.visibilityState !== 'visible') {
+      if (
+        typeof document !== 'undefined' &&
+        document.visibilityState !== 'visible'
+      ) {
         return;
       }
       void refreshGroup(activeGroupId, false);
@@ -289,6 +449,55 @@ export const GroupsView: React.FC<GroupsViewProps> = ({
     const check = validateNickname(state.profile?.nick || '');
     if (!check.valid) {
       onOpenProfileModal('Choose your anonymous nickname for Study Groups.');
+    }
+  };
+
+  const handlePushMyStatsNow = async () => {
+    if (!activeGroupId || !activeGroupPref || !myUid) return;
+    if (!isOnline) {
+      showToast('You are offline — stats will publish when back online.');
+      return;
+    }
+    setIsPublishingMine(true);
+    try {
+      const updatedEntry = await publishMyEntryToGroup({
+        groupId: activeGroupId,
+        state,
+        todayKey,
+        joinedAt: activeGroupPref.joinedAt,
+        sh: activeGroupPref.sh,
+        paused: activeGroupPref.paused,
+        budget: groupBudget,
+        force: true,
+      });
+      if (updatedEntry && activeGroupDoc) {
+        setSnapshots((prev) => {
+          const cur = prev[activeGroupId];
+          if (!cur) return prev;
+          return {
+            ...prev,
+            [activeGroupId]: {
+              ...cur,
+              doc: {
+                ...cur.doc,
+                members: {
+                  ...cur.doc.members,
+                  [myUid]: updatedEntry,
+                },
+              },
+            },
+          };
+        });
+        showToast('Published your latest study time & XP to group!');
+      } else {
+        showToast('Your group stats are already up to date.');
+      }
+    } catch (err) {
+      showToast(
+        err instanceof Error ? err.message : 'Could not publish group stats.'
+      );
+    } finally {
+      setIsPublishingMine(false);
     }
   };
 
@@ -340,7 +549,9 @@ export const GroupsView: React.FC<GroupsViewProps> = ({
       setDialogMode('none');
       showToast(`Created group "${groupDoc.name}"!`);
     } catch (err) {
-      setActionError(err instanceof Error ? err.message : 'Failed to create group.');
+      setActionError(
+        err instanceof Error ? err.message : 'Failed to create group.'
+      );
     } finally {
       setActionBusy(false);
     }
@@ -393,7 +604,9 @@ export const GroupsView: React.FC<GroupsViewProps> = ({
       setDialogMode('none');
       showToast(`Joined "${groupDoc.name}"!`);
     } catch (err) {
-      setActionError(err instanceof Error ? err.message : 'Failed to join group.');
+      setActionError(
+        err instanceof Error ? err.message : 'Failed to join group.'
+      );
     } finally {
       setActionBusy(false);
     }
@@ -409,7 +622,9 @@ export const GroupsView: React.FC<GroupsViewProps> = ({
           ...prev,
           joined: remaining,
           activeGroupId:
-            prev.activeGroupId === groupId ? remaining[0]?.groupId : prev.activeGroupId,
+            prev.activeGroupId === groupId
+              ? remaining[0]?.groupId
+              : prev.activeGroupId,
           updatedAt: Date.now(),
         };
       });
@@ -436,7 +651,8 @@ export const GroupsView: React.FC<GroupsViewProps> = ({
       flagKey === 'paused'
         ? { ...activeGroupPref.sh }
         : { ...activeGroupPref.sh, [flagKey]: nextVal };
-    const nextPaused = flagKey === 'paused' ? nextVal : Boolean(activeGroupPref.paused);
+    const nextPaused =
+      flagKey === 'paused' ? nextVal : Boolean(activeGroupPref.paused);
 
     onUpdateGroupsConfig((prev) => ({
       ...prev,
@@ -452,7 +668,6 @@ export const GroupsView: React.FC<GroupsViewProps> = ({
       ),
     }));
 
-    // Queue debounced publish and immediately update local snapshot preview
     try {
       const updatedEntry = await publishMyEntryToGroup({
         groupId: activeGroupId,
@@ -488,6 +703,23 @@ export const GroupsView: React.FC<GroupsViewProps> = ({
     }
   };
 
+  const handleTogglePaceTarget = (targetUid: string, targetNick: string) => {
+    if (!activeGroupId) return;
+    setPaceTargets((prev) => {
+      const next = { ...prev };
+      if (next[activeGroupId] === targetUid) {
+        delete next[activeGroupId];
+        savePaceTargets(next);
+        showToast(`Cleared pace target (${targetNick})`);
+      } else {
+        next[activeGroupId] = targetUid;
+        savePaceTargets(next);
+        showToast(`🎯 Set ${targetNick} as your friendly Pace Target!`);
+      }
+      return next;
+    });
+  };
+
   const handleCopyInvite = async (code: string) => {
     const formatted = formatGroupCode(code);
     try {
@@ -502,7 +734,10 @@ export const GroupsView: React.FC<GroupsViewProps> = ({
 
   const handleShareInvite = async (code: string, name: string) => {
     const formatted = formatGroupCode(code);
-    if (typeof navigator !== 'undefined' && typeof navigator.share === 'function') {
+    if (
+      typeof navigator !== 'undefined' &&
+      typeof navigator.share === 'function'
+    ) {
       try {
         await navigator.share({
           title: `Join "${name}" on Deep Hours`,
@@ -510,13 +745,17 @@ export const GroupsView: React.FC<GroupsViewProps> = ({
         });
         return;
       } catch {
-        // Fallback to copy if share sheet dismissed
+        // Fallback to copy
       }
     }
     await handleCopyInvite(code);
   };
 
-  const handleSendCheer = async (toUid: string, toNick: string, emoji: CheerEmoji) => {
+  const handleSendCheer = async (
+    toUid: string,
+    toNick: string,
+    emoji: CheerEmoji
+  ) => {
     if (!activeGroupId || !myUid) return;
     if (!groupBudget.canSendCheer()) {
       showToast('Daily cheer limit (10/day) reached.');
@@ -555,7 +794,9 @@ export const GroupsView: React.FC<GroupsViewProps> = ({
         name: ownerEditName,
         emoji: ownerEditEmoji,
         weeklyGoalHours:
-          parsedGoalHours !== null && Number.isFinite(parsedGoalHours) && parsedGoalHours >= 1
+          parsedGoalHours !== null &&
+          Number.isFinite(parsedGoalHours) &&
+          parsedGoalHours >= 1
             ? parsedGoalHours
             : null,
         budget: groupBudget,
@@ -579,15 +820,22 @@ export const GroupsView: React.FC<GroupsViewProps> = ({
         budget: groupBudget,
       });
       await refreshGroup(activeGroupId, false);
-      showToast(enabled ? 'Mock leaderboard enabled.' : 'Mock leaderboard hidden.');
+      showToast(
+        enabled ? 'Mock leaderboard enabled.' : 'Mock leaderboard hidden.'
+      );
     } catch (err) {
-      showToast(err instanceof Error ? err.message : 'Failed to toggle mock board.');
+      showToast(
+        err instanceof Error ? err.message : 'Failed to toggle mock board.'
+      );
     } finally {
       setActionBusy(false);
     }
   };
 
-  const handleOwnerRemoveMember = async (targetUid: string, targetNick: string) => {
+  const handleOwnerRemoveMember = async (
+    targetUid: string,
+    targetNick: string
+  ) => {
     if (!activeGroupId) return;
     setActionBusy(true);
     try {
@@ -616,7 +864,9 @@ export const GroupsView: React.FC<GroupsViewProps> = ({
           ...prev,
           joined: remaining,
           activeGroupId:
-            prev.activeGroupId === groupId ? remaining[0]?.groupId : prev.activeGroupId,
+            prev.activeGroupId === groupId
+              ? remaining[0]?.groupId
+              : prev.activeGroupId,
           updatedAt: Date.now(),
         };
       });
@@ -656,1115 +906,2228 @@ export const GroupsView: React.FC<GroupsViewProps> = ({
 
   const studyingNowList = useMemo(() => {
     if (!activeGroupDoc || !activeSnapshot) return [];
-    return getActiveStudyingNowMembers(activeGroupDoc, activeSnapshot.fetchedAt, nowTick);
+    return getActiveStudyingNowMembers(
+      activeGroupDoc,
+      activeSnapshot.fetchedAt,
+      nowTick
+    );
   }, [activeGroupDoc, activeSnapshot, nowTick]);
+
+  const studyingNowUidSet = useMemo(
+    () => new Set(studyingNowList.map((m) => m.uid)),
+    [studyingNowList]
+  );
+
+  // Filtered rows for interactive search & filter chips
+  const filteredRows = useMemo(() => {
+    const q = memberSearch.trim().toLowerCase();
+    return rankedRows.filter((r) => {
+      if (q && !r.entry.nick.toLowerCase().includes(q)) return false;
+      if (memberFilter === 'activeToday') {
+        const minsToday = r.entry.days?.[todayKey] || 0;
+        const xpToday = r.entry.xpDays?.[todayKey] || 0;
+        return minsToday > 0 || xpToday > 0;
+      }
+      if (memberFilter === 'studyingNow') {
+        return studyingNowUidSet.has(r.uid);
+      }
+      if (memberFilter === 'top3') {
+        return r.rank !== null && r.rank <= 3;
+      }
+      return true;
+    });
+  }, [rankedRows, memberSearch, memberFilter, todayKey, studyingNowUidSet]);
+
+  // Top 3 podium entries (only visible ranked members with rank 1..3)
+  const podiumRows = useMemo(() => {
+    return rankedRows.filter(
+      (r): r is RankedMemberRow & { rank: 1 | 2 | 3 } =>
+        !r.hidden && (r.rank === 1 || r.rank === 2 || r.rank === 3)
+    );
+  }, [rankedRows]);
 
   const weeklyGoalProg = useMemo(() => {
     if (!activeGroupDoc) return null;
     return computeWeeklyGroupGoalProgress(activeGroupDoc, todayKey);
   }, [activeGroupDoc, todayKey]);
 
+  // Member contribution breakdown for Weekly Group Goal
+  const weeklyMemberContributions = useMemo(() => {
+    if (!activeGroupDoc || !weeklyGoalProg || !weeklyGoalProg.hasGoal) return [];
+    const weekKeys = getWeekDayKeysUpToToday(todayKey);
+    const items: Array<{
+      uid: string;
+      nick: string;
+      emoji: string;
+      minutes: number;
+      sharePct: number;
+    }> = [];
+    for (const [uid, entry] of Object.entries(activeGroupDoc.members || {})) {
+      if (entry.paused || !entry.sh.t || !entry.days) continue;
+      const mins = sumMemberRange(entry, weekKeys, 'm');
+      if (mins <= 0) continue;
+      const sharePct =
+        weeklyGoalProg.targetMinutes > 0
+          ? Math.min(
+              100,
+              Math.round((mins / weeklyGoalProg.targetMinutes) * 100)
+            )
+          : 0;
+      items.push({
+        uid,
+        nick: entry.nick,
+        emoji: entry.emoji,
+        minutes: mins,
+        sharePct,
+      });
+    }
+    return items.sort((a, b) => b.minutes - a.minutes);
+  }, [activeGroupDoc, weeklyGoalProg, todayKey]);
+
   const todayCheersReceived = useMemo(() => {
     if (!activeSnapshot?.receivedCheers) return [];
     return activeSnapshot.receivedCheers.filter((c) => c.dayKey === todayKey);
   }, [activeSnapshot, todayKey]);
 
-  // 1. Signed-out state
-  if (!myUid) {
-    return (
-      <div className="card" style={{ textAlign: 'center', padding: 24 }}>
-        <div style={{ fontSize: 38, marginBottom: 8 }} aria-hidden="true">
-          🏆
-        </div>
-        <b style={{ fontSize: 16, display: 'block', marginBottom: 6 }}>
-          NEET Study Groups & Leaderboards
-        </b>
-        <p className="mut" style={{ fontSize: 13, maxWidth: 360, margin: '0 auto 16px' }}>
-          Study with up to 3 private groups using invite codes. Compare timer-tracked hours, XP v2,
-          and consistency streaks while keeping your identity 100% anonymous.
-        </p>
-        <button
-          type="button"
-          className="btn pri"
-          onClick={onSignIn}
-          style={{ minHeight: 44, padding: '0 20px' }}
-        >
-          Sign in with Google to use Groups
-        </button>
-      </div>
-    );
-  }
+  // Active Pace Target (Friendly Rival)
+  const activePaceTargetUid = activeGroupId ? paceTargets[activeGroupId] : undefined;
+  const activePaceTargetEntry =
+    activePaceTargetUid && activeGroupDoc?.members?.[activePaceTargetUid]
+      ? activeGroupDoc.members[activePaceTargetUid]
+      : undefined;
 
-  // 2. First-time privacy consent screen
-  if (!groupsConfig.consentAccepted) {
-    return (
-      <div className="card" style={{ padding: 20 }}>
-        <div className="row" style={{ gap: 10, marginBottom: 12 }}>
-          <span style={{ fontSize: 28 }} aria-hidden="true">
-            🛡️
-          </span>
-          <div>
-            <b style={{ fontSize: 16 }}>Privacy-First Study Groups</b>
-            <div className="mut" style={{ fontSize: 12 }}>
-              How group sharing works in Deep Hours
-            </div>
-          </div>
-        </div>
-        <ul
-          style={{
-            margin: '0 0 16px',
-            paddingLeft: 18,
-            fontSize: 13,
-            lineHeight: 1.55,
-            color: 'var(--tx)',
-          }}
-        >
-          <li style={{ marginBottom: 6 }}>
-            <b>Anonymous by design:</b> Your Google email, real name, and account ID are never
-            visible to other members. You pick an anonymous nickname & emoji.
-          </li>
-          <li style={{ marginBottom: 6 }}>
-            <b>Timer-verified fairness:</b> Only timer-tracked sessions count toward group study
-            time and XP. Manual sessions stay in your personal log only.
-          </li>
-          <li style={{ marginBottom: 6 }}>
-            <b>Granular controls:</b> You can toggle Study Time, XP, Streak, Mock Scores (OFF by
-            default), and Studying-Now status per group, or pause sharing anytime.
-          </li>
-        </ul>
-        <button
-          type="button"
-          className="btn pri"
-          onClick={handleAcceptConsent}
-          style={{ minHeight: 44, width: '100%' }}
-        >
-          I Understand — Continue to Groups
-        </button>
-      </div>
+  const paceComparison = useMemo(() => {
+    if (!activePaceTargetEntry || !activePaceTargetUid) return null;
+    const targetTodayMins = activePaceTargetEntry.days?.[todayKey] || 0;
+    const targetWeekMins = sumMemberRange(
+      activePaceTargetEntry,
+      myPersonalStats.weekKeys,
+      'm'
     );
-  }
+    const targetWeekXp = sumMemberRange(
+      activePaceTargetEntry,
+      myPersonalStats.weekKeys,
+      'xp'
+    );
+    const diffTodayMins = myPersonalStats.todayTimerMins - targetTodayMins;
+    const diffWeekMins = myPersonalStats.weekTimerMins - targetWeekMins;
+    const diffWeekXp = myPersonalStats.weekXp - targetWeekXp;
+    return {
+      uid: activePaceTargetUid,
+      entry: activePaceTargetEntry,
+      targetTodayMins,
+      targetWeekMins,
+      targetWeekXp,
+      diffTodayMins,
+      diffWeekMins,
+      diffWeekXp,
+    };
+  }, [activePaceTargetEntry, activePaceTargetUid, todayKey, myPersonalStats]);
 
-  const memberCount = activeGroupDoc ? Object.keys(activeGroupDoc.members || {}).length : 0;
-  const isOwner = Boolean(activeGroupDoc && myUid && activeGroupDoc.ownerUid === myUid);
+  const memberCount = activeGroupDoc
+    ? Object.keys(activeGroupDoc.members || {}).length
+    : 0;
+  const isOwner = Boolean(
+    activeGroupDoc && myUid && activeGroupDoc.ownerUid === myUid
+  );
   const refreshCooldownLeftSec = Math.max(
     0,
-    Math.ceil((GROUP_MANUAL_REFRESH_COOLDOWN_MS - (nowTick - lastManualRefreshTs)) / 1000)
+    Math.ceil(
+      (GROUP_MANUAL_REFRESH_COOLDOWN_MS - (nowTick - lastManualRefreshTs)) / 1000
+    )
   );
+  const myRankOnCurrentBoard = useMemo(() => {
+    if (!myUid) return null;
+    return rankedRows.find((r) => r.uid === myUid)?.rank ?? null;
+  }, [rankedRows, myUid]);
 
   return (
     <div>
-      {/* Top Bar: Profile Badge + Group Chips + Create / Join */}
-      <div className="card" style={{ padding: 14, marginBottom: 12 }}>
-        <div className="row sp" style={{ flexWrap: 'wrap', gap: 8, marginBottom: 10 }}>
-          <div className="row" style={{ gap: 8 }}>
-            <button
-              type="button"
-              className="btn s"
-              onClick={() => onOpenProfileModal()}
-              aria-label="Edit anonymous group profile"
-              style={{ minHeight: 44, padding: '0 12px', fontSize: 13 }}
-            >
-              <span>{state.profile?.emoji || '🩺'}</span>{' '}
-              <b>{state.profile?.nick || 'Set Nickname'}</b>
-              {state.profile?.examYear ? (
-                <span className="mut" style={{ fontSize: 11, marginLeft: 4 }}>
-                  '{String(state.profile.examYear).slice(-2)}
-                </span>
-              ) : null}{' '}
-              <span className="mut" style={{ fontSize: 11, marginLeft: 4 }}>
-                ✎
-              </span>
-            </button>
-          </div>
-
-          <div className="row" style={{ gap: 6 }}>
-            {joinedGroups.length < MAX_JOINED_GROUPS ? (
-              <>
-                <button
-                  type="button"
-                  className="btn pri"
-                  onClick={() => {
-                    if (!ensureValidProfileBeforeGroupAction('create a group')) return;
-                    setActionError(null);
-                    setDialogMode(dialogMode === 'create' ? 'none' : 'create');
-                  }}
-                  style={{ minHeight: 44, padding: '0 12px', fontSize: 12 }}
-                >
-                  + Create
-                </button>
-                <button
-                  type="button"
-                  className="btn s"
-                  onClick={() => {
-                    if (!ensureValidProfileBeforeGroupAction('join a group')) return;
-                    setActionError(null);
-                    setDialogMode(dialogMode === 'join' ? 'none' : 'join');
-                  }}
-                  style={{ minHeight: 44, padding: '0 12px', fontSize: 12 }}
-                >
-                  🔑 Join Code
-                </button>
-              </>
-            ) : (
-              <span className="pill" style={{ fontSize: 11 }}>
-                {joinedGroups.length}/{MAX_JOINED_GROUPS} groups joined
-              </span>
-            )}
-          </div>
+      {/* Page Title & Live Squad Overview */}
+      <div className="top" style={{ marginBottom: 10 }}>
+        <div>
+          <h2 style={{ margin: 0, fontSize: 20 }}>🏆 Study Groups &amp; Arena</h2>
+          <small>
+            Anonymous NEET study squads · Timer-verified hours &amp; XP v2 leaderboards
+          </small>
         </div>
-
-        {/* Group Selector Chips */}
-        {joinedGroups.length > 0 && (
-          <div
-            className="chips"
-            style={{ overflowX: 'auto', paddingBottom: 2, gap: 6, flexWrap: 'nowrap' }}
+        {onGoToFocus && (
+          <button
+            type="button"
+            className="em-btn"
+            onClick={onGoToFocus}
+            style={{ minHeight: 44, padding: '0 14px', fontSize: 12.5, whiteSpace: 'nowrap' }}
           >
-            {joinedGroups.map((g) => {
-              const snapDoc = snapshots[g.groupId]?.doc;
-              const label = snapDoc?.name || g.name || formatGroupCode(g.groupId);
-              const em = snapDoc?.emoji || g.emoji || '🩺';
-              const isSelected = g.groupId === activeGroupId;
-              return (
-                <button
-                  key={g.groupId}
-                  type="button"
-                  className={`chip ${isSelected ? 'on' : ''}`}
-                  onClick={() =>
-                    onUpdateGroupsConfig((prev) => ({
-                      ...prev,
-                      activeGroupId: g.groupId,
-                    }))
-                  }
-                  style={{ minHeight: 44, whiteSpace: 'nowrap' }}
-                >
-                  {em} {label}
-                </button>
-              );
-            })}
-          </div>
-        )}
-
-        {/* Inline Create Group Form */}
-        {dialogMode === 'create' && (
-          <form
-            onSubmit={handleCreateGroup}
-            style={{
-              marginTop: 12,
-              paddingTop: 12,
-              borderTop: '1px solid var(--bd)',
-            }}
-          >
-            <div style={{ fontWeight: 700, fontSize: 13, marginBottom: 8 }}>
-              Create a New Study Group
-            </div>
-            <div style={{ marginBottom: 10 }}>
-              <input
-                type="text"
-                placeholder="Group Name (e.g. AIIMS Delhi 2026 Squad)"
-                maxLength={32}
-                value={newGroupName}
-                onChange={(e) => setNewGroupName(e.target.value)}
-                aria-label="New study group name"
-                style={{ minHeight: 44, width: '100%' }}
-                required
-              />
-            </div>
-            <div className="chips" style={{ marginBottom: 10, gap: 6, flexWrap: 'wrap' }}>
-              {GROUP_EMOJIS.map((em) => (
-                <button
-                  key={em}
-                  type="button"
-                  className={`chip ${newGroupEmoji === em ? 'on' : ''}`}
-                  onClick={() => setNewGroupEmoji(em)}
-                  style={{ minHeight: 40 }}
-                >
-                  {em}
-                </button>
-              ))}
-            </div>
-            {actionError && (
-              <div style={{ color: '#f43f5e', fontSize: 12, marginBottom: 8 }}>
-                {actionError}
-              </div>
-            )}
-            <div className="row" style={{ gap: 8, justifyContent: 'flex-end' }}>
-              <button
-                type="button"
-                className="btn s"
-                onClick={() => setDialogMode('none')}
-                style={{ minHeight: 44 }}
-              >
-                Cancel
-              </button>
-              <button
-                type="submit"
-                className="btn pri"
-                disabled={actionBusy}
-                style={{ minHeight: 44 }}
-              >
-                {actionBusy ? 'Creating…' : 'Create Group'}
-              </button>
-            </div>
-          </form>
-        )}
-
-        {/* Inline Join Group Form */}
-        {dialogMode === 'join' && (
-          <form
-            onSubmit={handleJoinGroup}
-            style={{
-              marginTop: 12,
-              paddingTop: 12,
-              borderTop: '1px solid var(--bd)',
-            }}
-          >
-            <div style={{ fontWeight: 700, fontSize: 13, marginBottom: 8 }}>
-              Join with 10-Character Invite Code
-            </div>
-            <div className="row" style={{ gap: 8, marginBottom: 8 }}>
-              <input
-                type="text"
-                placeholder="ABCDE-23456"
-                maxLength={15}
-                value={joinCodeInput}
-                onChange={(e) => setJoinCodeInput(e.target.value.toUpperCase())}
-                aria-label="Group invite code"
-                className="mono"
-                style={{ minHeight: 44, flex: 1, letterSpacing: 1 }}
-                required
-              />
-              <button
-                type="submit"
-                className="btn pri"
-                disabled={actionBusy}
-                style={{ minHeight: 44, padding: '0 16px' }}
-              >
-                {actionBusy ? 'Joining…' : 'Join'}
-              </button>
-              <button
-                type="button"
-                className="btn s"
-                onClick={() => setDialogMode('none')}
-                style={{ minHeight: 44 }}
-              >
-                Cancel
-              </button>
-            </div>
-            {actionError && (
-              <div style={{ color: '#f43f5e', fontSize: 12, marginTop: 4 }}>
-                {actionError}
-              </div>
-            )}
-          </form>
+            ⏱️ Focus Timer
+          </button>
         )}
       </div>
 
-      {/* Empty state when user hasn't joined any group yet */}
-      {joinedGroups.length === 0 && (
-        <div className="card" style={{ textAlign: 'center', padding: 24 }}>
-          <div style={{ fontSize: 34, marginBottom: 8 }} aria-hidden="true">
-            🤝
-          </div>
-          <b style={{ fontSize: 15, display: 'block', marginBottom: 6 }}>
-            No Study Groups Yet
-          </b>
-          <p className="mut" style={{ fontSize: 13, maxWidth: 340, margin: '0 auto 14px' }}>
-            Tap <b>+ Create</b> to start a private group for your batchmates or <b>🔑 Join Code</b>{' '}
-            to enter a 10-character invite code.
-          </p>
-          {!validateNickname(state.profile?.nick || '').valid && (
+      {/* Personal Live XP v2 & Timer Standing Card (powered by utils/xp.ts) */}
+      <div
+        className="card"
+        style={{
+          padding: 15,
+          marginBottom: 12,
+          background:
+            'linear-gradient(145deg, color-mix(in srgb, var(--ac) 12%, var(--card)), var(--card) 72%)',
+          borderColor: 'color-mix(in srgb, var(--ac) 34%, var(--bd))',
+        }}
+      >
+        <div className="row sp" style={{ flexWrap: 'wrap', gap: 10 }}>
+          <div className="row" style={{ gap: 10 }}>
             <button
               type="button"
-              className="btn s"
-              onClick={() =>
-                onOpenProfileModal(
-                  'Configure your anonymous nickname (2–20 chars) and emoji avatar before joining a group.'
-                )
-              }
-              style={{ minHeight: 44, padding: '0 16px' }}
+              onClick={() => onOpenProfileModal()}
+              aria-label="Edit anonymous group profile"
+              title="Tap to edit your anonymous nickname & avatar"
+              style={{
+                width: 48,
+                height: 48,
+                borderRadius: 15,
+                fontSize: 24,
+                padding: 0,
+                display: 'grid',
+                placeItems: 'center',
+                background: 'color-mix(in srgb, var(--ac) 18%, var(--c2))',
+                border: '1px solid color-mix(in srgb, var(--ac) 40%, var(--bd))',
+              }}
             >
-              {state.profile?.emoji || '🩺'} Configure Study Profile First
+              {state.profile?.emoji || '🩺'}
             </button>
-          )}
-        </div>
-      )}
-
-      {/* Loading / Uncached state when a group is selected but snapshot hasn't loaded yet */}
-      {activeGroupId && !activeGroupDoc && (
-        <div className="card" style={{ textAlign: 'center', padding: 24, marginBottom: 12 }}>
-          <div style={{ fontSize: 30, marginBottom: 8 }} aria-hidden="true">
-            {isRefreshing ? '⏳' : '📡'}
+            <div>
+              <div className="row" style={{ gap: 6, flexWrap: 'wrap' }}>
+                <b style={{ fontSize: 15 }}>
+                  {state.profile?.nick || 'Anonymous Aspirant'}
+                </b>
+                {state.profile?.examYear ? (
+                  <small className="mono">
+                    · NEET {state.profile.examYear}
+                  </small>
+                ) : null}
+                <button
+                  type="button"
+                  className="s"
+                  onClick={() => onOpenProfileModal()}
+                  style={{
+                    minHeight: 28,
+                    padding: '2px 8px',
+                    fontSize: 11,
+                    borderRadius: 8,
+                  }}
+                >
+                  ✎ Edit Profile
+                </button>
+              </div>
+              <div className="mut" style={{ fontSize: 12, marginTop: 2 }}>
+                Level <b>{myPersonalStats.levelInfo.level}</b> ·{' '}
+                <b className="mono">{myPersonalStats.totalXp.toLocaleString()} XP</b>
+                {myRankOnCurrentBoard ? (
+                  <span>
+                    {' '}
+                    · Group Rank <b>#{myRankOnCurrentBoard}</b>
+                  </span>
+                ) : null}
+              </div>
+            </div>
           </div>
-          <b style={{ fontSize: 15, display: 'block', marginBottom: 6 }}>
-            {isRefreshing ? 'Loading Group Leaderboard…' : 'Group Snapshot Unavailable Offline'}
+
+          <div className="row" style={{ gap: 6, flexWrap: 'wrap' }}>
+            <button
+              type="button"
+              className="s"
+              onClick={() => setShowMyXpDrawer((v) => !v)}
+              aria-expanded={showMyXpDrawer}
+              style={{ minHeight: 40, fontSize: 12 }}
+            >
+              ⚡ Today: +{myPersonalStats.todayXp} XP {showMyXpDrawer ? '▴' : '▾'}
+            </button>
+            {myUid && activeGroupId && activeGroupPref && (
+              <button
+                type="button"
+                className="pri"
+                disabled={isPublishingMine || !isOnline}
+                onClick={handlePushMyStatsNow}
+                title="Push your latest timer study hours & XP to this group"
+                style={{ minHeight: 40, padding: '0 12px', fontSize: 12 }}
+              >
+                {isPublishingMine ? 'Syncing…' : '📤 Sync My Stats'}
+              </button>
+            )}
+          </div>
+        </div>
+
+        {/* Level Progress Bar + Quick Metric Strip */}
+        <div style={{ marginTop: 10 }}>
+          <div className="row sp" style={{ fontSize: 11, marginBottom: 4 }}>
+            <span className="mut">
+              Lv. {myPersonalStats.levelInfo.level} → Lv.{' '}
+              {myPersonalStats.levelInfo.level + 1} (
+              {myPersonalStats.levelInfo.progressPct}%)
+            </span>
+            <span className="mono mut">
+              {myPersonalStats.levelInfo.xpIntoLevel} /{' '}
+              {myPersonalStats.levelInfo.xpNeededForNext} XP
+            </span>
+          </div>
+          <div className="pbar" style={{ height: 7 }}>
+            <div
+              className="pfill"
+              style={{ width: `${myPersonalStats.levelInfo.progressPct}%` }}
+            />
+          </div>
+        </div>
+
+        <div
+          className="stat-mini"
+          style={{
+            gridTemplateColumns: 'repeat(3, 1fr)',
+            gap: 8,
+            marginTop: 10,
+          }}
+        >
+          <div className="stat-box" style={{ padding: '8px 10px' }}>
+            <small style={{ fontSize: 11 }}>Today Timer</small>
+            <b className="mono" style={{ fontSize: 14 }}>
+              {formatMinutesAsHoursMins(myPersonalStats.todayTimerMins)}
+            </b>
+          </div>
+          <div className="stat-box" style={{ padding: '8px 10px' }}>
+            <small style={{ fontSize: 11 }}>Week Timer</small>
+            <b className="mono" style={{ fontSize: 14 }}>
+              {formatMinutesAsHoursMins(myPersonalStats.weekTimerMins)}
+            </b>
+          </div>
+          <div className="stat-box" style={{ padding: '8px 10px' }}>
+            <small style={{ fontSize: 11 }}>Week XP v2</small>
+            <b className="mono" style={{ fontSize: 14, color: 'var(--em)' }}>
+              +{myPersonalStats.weekXp} XP
+            </b>
+          </div>
+        </div>
+
+        {/* Expandable Interactive Today XP v2 Breakdown Drawer */}
+        {showMyXpDrawer && (
+          <div
+            style={{
+              marginTop: 12,
+              paddingTop: 12,
+              borderTop: '1px solid var(--bd)',
+              fontSize: 12,
+            }}
+          >
+            <div className="row sp" style={{ marginBottom: 8 }}>
+              <b>⚡ Today's XP v2 Breakdown ({todayKey})</b>
+              <span className="mono" style={{ color: 'var(--em)', fontWeight: 700 }}>
+                Total: +{myPersonalStats.todayBreakdown.total} XP
+              </span>
+            </div>
+            <div
+              style={{
+                display: 'grid',
+                gridTemplateColumns: 'repeat(auto-fit, minmax(145px, 1fr))',
+                gap: 6,
+                marginBottom: 10,
+              }}
+            >
+              {[
+                {
+                  label: 'Timer Study',
+                  val: myPersonalStats.todayBreakdown.study,
+                  cap: 'max 960/d',
+                },
+                {
+                  label: 'Focus Purity ≥90%',
+                  val: myPersonalStats.todayBreakdown.focusBonus,
+                  cap: 'max 20/d',
+                },
+                {
+                  label: 'Min-Day Goal Met',
+                  val: myPersonalStats.todayBreakdown.minDayBonus,
+                  cap: '+30/d',
+                },
+                {
+                  label: 'Streak Bonus',
+                  val: myPersonalStats.todayBreakdown.streakBonus,
+                  cap: 'max 20/d',
+                },
+                {
+                  label: 'Revisions Done',
+                  val: myPersonalStats.todayBreakdown.revisions,
+                  cap: '+10 on-time',
+                },
+                {
+                  label: 'Chapters Completed',
+                  val: myPersonalStats.todayBreakdown.chapters,
+                  cap: '+25 each',
+                },
+                {
+                  label: 'Mock Logged',
+                  val: myPersonalStats.todayBreakdown.mocks,
+                  cap: 'max 25/d',
+                },
+                {
+                  label: 'Tasks & Habits',
+                  val:
+                    myPersonalStats.todayBreakdown.tasks +
+                    myPersonalStats.todayBreakdown.habits,
+                  cap: 'max 65/d',
+                },
+              ].map((item) => (
+                <div
+                  key={item.label}
+                  className="row sp"
+                  style={{
+                    padding: '6px 9px',
+                    borderRadius: 10,
+                    background: 'var(--c2)',
+                    border: '1px solid var(--bd)',
+                  }}
+                >
+                  <div>
+                    <div style={{ fontWeight: 600 }}>{item.label}</div>
+                    <small style={{ fontSize: 10 }}>{item.cap}</small>
+                  </div>
+                  <b
+                    className="mono"
+                    style={{
+                      color: item.val > 0 ? 'var(--em)' : 'var(--mu)',
+                    }}
+                  >
+                    +{item.val}
+                  </b>
+                </div>
+              ))}
+            </div>
+            <details style={{ fontSize: 11.5, color: 'var(--mu)' }}>
+              <summary style={{ cursor: 'pointer', fontWeight: 600 }}>
+                How XP v2 &amp; Fair Group Scoring Work
+              </summary>
+              <ul style={{ margin: '6px 0 0', paddingLeft: 18, lineHeight: 1.5 }}>
+                {XP_V2_PLAIN_RULES.map((r) => (
+                  <li key={r.label}>
+                    <b>{r.label}:</b> {r.rule}
+                  </li>
+                ))}
+              </ul>
+            </details>
+          </div>
+        )}
+      </div>
+
+      {/* 1. Signed-out state */}
+      {!myUid ? (
+        <div className="card" style={{ textAlign: 'center', padding: 24 }}>
+          <div style={{ fontSize: 38, marginBottom: 8 }} aria-hidden="true">
+            🏆
+          </div>
+          <b style={{ fontSize: 16, display: 'block', marginBottom: 6 }}>
+            Sign In to Join NEET Study Groups
           </b>
-          <p className="mut" style={{ fontSize: 13, maxWidth: 340, margin: '0 auto 14px' }}>
-            {isRefreshing
-              ? 'Fetching latest study hours and XP standings from Cloud Firestore…'
-              : 'Connect to the internet and tap Refresh to load this study group.'}
+          <p
+            className="mut"
+            style={{ fontSize: 13, maxWidth: 380, margin: '0 auto 16px' }}
+          >
+            Study with up to 3 private squads using 10-character invite codes. Compare
+            timer-verified study hours, XP v2, consistency streaks, and head-to-head
+            7-day pace while keeping your Google identity 100% private.
           </p>
           <button
             type="button"
-            className="btn pri"
-            disabled={isRefreshing || !isOnline}
-            onClick={() => refreshGroup(activeGroupId, true)}
-            style={{ minHeight: 44, padding: '0 18px' }}
+            className="pri"
+            onClick={onSignIn}
+            style={{ minHeight: 44, padding: '0 22px' }}
           >
-            🔄 {isRefreshing ? 'Refreshing…' : 'Refresh Group'}
+            Sign in with Google to Use Groups
           </button>
         </div>
-      )}
-
-      {/* Active Group Dashboard */}
-      {activeGroupId && activeGroupDoc && (
-        <>
-          {/* Group Header Card */}
-          <div className="card" style={{ padding: 14, marginBottom: 12 }}>
-            <div className="row sp" style={{ flexWrap: 'wrap', gap: 8 }}>
-              <div className="row" style={{ gap: 10 }}>
-                <span style={{ fontSize: 28 }} aria-hidden="true">
-                  {activeGroupDoc.emoji}
-                </span>
-                <div>
-                  <div className="row" style={{ gap: 6, flexWrap: 'wrap' }}>
-                    <b style={{ fontSize: 16 }}>{activeGroupDoc.name}</b>
-                    <span className="pill mono" style={{ fontSize: 11 }}>
-                      {memberCount} / {activeGroupDoc.memberCap || 50}
-                    </span>
-                  </div>
-                  <div className="mut" style={{ fontSize: 11, marginTop: 2 }}>
-                    Code:{' '}
-                    <b className="mono" style={{ color: 'var(--tx)' }}>
-                      {formatGroupCode(activeGroupId)}
-                    </b>{' '}
-                    · Fetched{' '}
-                    {formatRelativeAgo(activeSnapshot?.fetchedAt || 0, nowTick)}
-                  </div>
-                </div>
-              </div>
-
-              <div className="row" style={{ gap: 6, flexWrap: 'wrap' }}>
-                <button
-                  type="button"
-                  className="btn s"
-                  onClick={() => handleCopyInvite(activeGroupId)}
-                  aria-label="Copy group invite code"
-                  style={{ minHeight: 44, padding: '0 10px', fontSize: 12 }}
-                >
-                  📋 Copy
-                </button>
-                <button
-                  type="button"
-                  className="btn s"
-                  onClick={() => handleShareInvite(activeGroupId, activeGroupDoc.name)}
-                  aria-label="Share group invite code"
-                  style={{ minHeight: 44, padding: '0 10px', fontSize: 12 }}
-                >
-                  📤 Share
-                </button>
-                <button
-                  type="button"
-                  className="btn s"
-                  disabled={isRefreshing || refreshCooldownLeftSec > 0 || !isOnline}
-                  onClick={() => refreshGroup(activeGroupId, true)}
-                  aria-label="Refresh group leaderboard"
-                  style={{ minHeight: 44, padding: '0 10px', fontSize: 12 }}
-                >
-                  🔄{' '}
-                  {isRefreshing
-                    ? '…'
-                    : refreshCooldownLeftSec > 0
-                      ? `${refreshCooldownLeftSec}s`
-                      : 'Refresh'}
-                </button>
+      ) : !groupsConfig.consentAccepted ? (
+        /* 2. First-time privacy consent screen */
+        <div className="card" style={{ padding: 20 }}>
+          <div className="row" style={{ gap: 10, marginBottom: 12 }}>
+            <span style={{ fontSize: 28 }} aria-hidden="true">
+              🛡️
+            </span>
+            <div>
+              <b style={{ fontSize: 16 }}>Privacy-First Study Groups</b>
+              <div className="mut" style={{ fontSize: 12 }}>
+                How group sharing works in Deep Hours
               </div>
             </div>
-
-            {/* Studying Now Live Strip (Milestone 2.1) */}
-            {studyingNowList.length > 0 && (
-              <div
-                style={{
-                  marginTop: 12,
-                  padding: '8px 12px',
-                  borderRadius: 10,
-                  background: 'rgba(16, 185, 129, 0.12)',
-                  border: '1px solid rgba(16, 185, 129, 0.3)',
-                  fontSize: 12,
-                }}
-              >
-                <b style={{ color: '#10b981' }}>
-                  🟢 Studying now ({studyingNowList.length}):
-                </b>{' '}
-                {studyingNowList.map((m, idx) => (
-                  <span key={m.uid}>
-                    {idx > 0 ? ' · ' : ''}
-                    {m.emoji} <b>{m.nick}</b> ({m.elapsedMins}m)
-                  </span>
-                ))}
-              </div>
-            )}
-
-            {/* Received Cheers Chip (Milestone 2.3) */}
-            {todayCheersReceived.length > 0 && (
-              <div
-                style={{
-                  marginTop: 10,
-                  padding: '8px 12px',
-                  borderRadius: 10,
-                  background: 'rgba(245, 158, 11, 0.12)',
-                  border: '1px solid rgba(245, 158, 11, 0.32)',
-                  fontSize: 12,
-                }}
-              >
-                <b>
-                  🎉 You got {todayCheersReceived.length} cheer
-                  {todayCheersReceived.length === 1 ? '' : 's'} today:
-                </b>{' '}
-                {todayCheersReceived.map((c, idx) => (
-                  <span key={c.id}>
-                    {idx > 0 ? ', ' : ''}
-                    {c.e} {c.fromNick}
-                  </span>
-                ))}
-              </div>
-            )}
-
-            {/* Weekly Group Hours Goal (Milestone 2.2) */}
-            {weeklyGoalProg && weeklyGoalProg.hasGoal && (
-              <div style={{ marginTop: 12 }}>
-                <div className="row sp" style={{ fontSize: 12, marginBottom: 4 }}>
-                  <span className="mut">
-                    🎯 Weekly Group Goal:{' '}
-                    <b style={{ color: 'var(--tx)' }}>
-                      {formatMinutesAsHoursMins(weeklyGoalProg.combinedMinutes)}
-                    </b>{' '}
-                    / {formatMinutesAsHoursMins(weeklyGoalProg.targetMinutes)}
-                  </span>
-                  <b className="mono">{weeklyGoalProg.pct}%</b>
-                </div>
-                <div className="pbar" style={{ height: 8 }}>
-                  <div
-                    className="pfill"
-                    style={{
-                      width: `${weeklyGoalProg.pct}%`,
-                      background: weeklyGoalProg.reached ? '#10b981' : 'var(--ac)',
-                    }}
-                  />
-                </div>
-                {weeklyGoalProg.reached && (
-                  <div
-                    style={{
-                      marginTop: 6,
-                      fontSize: 12,
-                      color: '#10b981',
-                      fontWeight: 700,
-                    }}
-                  >
-                    🏆 Goal reached! Awesome collective effort this week!
-                  </div>
-                )}
-              </div>
-            )}
           </div>
-
-          {/* Horizontally Scrollable Board Tabs */}
-          <div
-            className="chips"
-            role="tablist"
-            aria-label="Group leaderboard tabs"
+          <ul
             style={{
-              overflowX: 'auto',
-              flexWrap: 'nowrap',
-              gap: 6,
-              marginBottom: 12,
-              paddingBottom: 2,
+              margin: '0 0 16px',
+              paddingLeft: 18,
+              fontSize: 13,
+              lineHeight: 1.55,
+              color: 'var(--tx)',
             }}
           >
-            <button
-              type="button"
-              role="tab"
-              aria-selected={boardTab === 'today'}
-              className={`chip ${boardTab === 'today' ? 'on' : ''}`}
-              onClick={() => setBoardTab('today')}
-              style={{ minHeight: 44, whiteSpace: 'nowrap' }}
+            <li style={{ marginBottom: 6 }}>
+              <b>Anonymous by design:</b> Your Google email, real name, and account ID
+              are never visible to other members. You pick an anonymous nickname &amp;
+              emoji.
+            </li>
+            <li style={{ marginBottom: 6 }}>
+              <b>Timer-verified fairness:</b> Only timer-tracked sessions count toward
+              group study time and XP. Manual sessions stay in your personal log only.
+            </li>
+            <li style={{ marginBottom: 6 }}>
+              <b>Granular controls:</b> You can toggle Study Time, XP, Streak, Mock
+              Scores (OFF by default), and Studying-Now status per group, or pause
+              sharing anytime.
+            </li>
+          </ul>
+          <button
+            type="button"
+            className="pri"
+            onClick={handleAcceptConsent}
+            style={{ minHeight: 44, width: '100%' }}
+          >
+            I Understand — Continue to Groups
+          </button>
+        </div>
+      ) : (
+        <>
+          {/* Group Switcher & Create/Join Bar */}
+          <div className="card" style={{ padding: 14, marginBottom: 12 }}>
+            <div
+              className="row sp"
+              style={{ flexWrap: 'wrap', gap: 8, marginBottom: joinedGroups.length > 0 ? 10 : 0 }}
             >
-              ☀️ Today
-            </button>
-            <button
-              type="button"
-              role="tab"
-              aria-selected={boardTab === 'week'}
-              className={`chip ${boardTab === 'week' ? 'on' : ''}`}
-              onClick={() => setBoardTab('week')}
-              style={{ minHeight: 44, whiteSpace: 'nowrap' }}
-            >
-              📅 Week
-            </button>
-            <button
-              type="button"
-              role="tab"
-              aria-selected={boardTab === 'xp'}
-              className={`chip ${boardTab === 'xp' ? 'on' : ''}`}
-              onClick={() => setBoardTab('xp')}
-              style={{ minHeight: 44, whiteSpace: 'nowrap' }}
-            >
-              ⚡ XP
-            </button>
-            <button
-              type="button"
-              role="tab"
-              aria-selected={boardTab === 'streak'}
-              className={`chip ${boardTab === 'streak' ? 'on' : ''}`}
-              onClick={() => setBoardTab('streak')}
-              style={{ minHeight: 44, whiteSpace: 'nowrap' }}
-            >
-              🔥 Streak
-            </button>
-            {activeGroupDoc.mockBoard && (
-              <button
-                type="button"
-                role="tab"
-                aria-selected={boardTab === 'mocks'}
-                className={`chip ${boardTab === 'mocks' ? 'on' : ''}`}
-                onClick={() => setBoardTab('mocks')}
-                style={{ minHeight: 44, whiteSpace: 'nowrap' }}
-              >
-                📝 Mocks
-              </button>
-            )}
-            <button
-              type="button"
-              role="tab"
-              aria-selected={boardTab === 'history'}
-              className={`chip ${boardTab === 'history' ? 'on' : ''}`}
-              onClick={() => setBoardTab('history')}
-              style={{ minHeight: 44, whiteSpace: 'nowrap' }}
-            >
-              🏅 History
-            </button>
-          </div>
-
-          {/* Sub-controls for XP or Mocks */}
-          {boardTab === 'xp' && (
-            <div className="row" style={{ gap: 6, marginBottom: 10 }}>
-              <button
-                type="button"
-                className={`chip ${xpSortMode === 'weekly' ? 'on' : ''}`}
-                onClick={() => setXpSortMode('weekly')}
-                style={{ minHeight: 40 }}
-              >
-                This Week XP
-              </button>
-              <button
-                type="button"
-                className={`chip ${xpSortMode === 'allTime' ? 'on' : ''}`}
-                onClick={() => setXpSortMode('allTime')}
-                style={{ minHeight: 40 }}
-              >
-                All-Time XP & Level
-              </button>
-            </div>
-          )}
-
-          {boardTab === 'mocks' && activeGroupDoc.mockBoard && (
-            <div style={{ marginBottom: 10 }}>
-              <div
-                style={{
-                  padding: '8px 12px',
-                  borderRadius: 10,
-                  background: 'var(--sf2)',
-                  fontSize: 12,
-                  marginBottom: 8,
-                  color: 'var(--mut)',
-                }}
-              >
-                💡 <i>Scores are shared only by choice. Rank is not your worth.</i>
-              </div>
-              <div className="row" style={{ gap: 6 }}>
-                <button
-                  type="button"
-                  className={`chip ${mockSortMode === 'latest' ? 'on' : ''}`}
-                  onClick={() => setMockSortMode('latest')}
-                  style={{ minHeight: 40 }}
-                >
-                  Latest Score
-                </button>
-                <button
-                  type="button"
-                  className={`chip ${mockSortMode === 'best' ? 'on' : ''}`}
-                  onClick={() => setMockSortMode('best')}
-                  style={{ minHeight: 40 }}
-                >
-                  Best Score
-                </button>
-                <button
-                  type="button"
-                  className={`chip ${mockSortMode === 'avg5' ? 'on' : ''}`}
-                  onClick={() => setMockSortMode('avg5')}
-                  style={{ minHeight: 40 }}
-                >
-                  Avg of Last 5
-                </button>
-              </div>
-            </div>
-          )}
-
-          {/* Leaderboard Rows (Today / Week / XP / Streak / Mocks) */}
-          {boardTab !== 'history' && (
-            <div className="card" style={{ padding: 12, marginBottom: 12 }}>
-              {rankedRows.length === 0 ? (
-                <div className="mut" style={{ textAlign: 'center', padding: 18, fontSize: 13 }}>
-                  No members on this leaderboard yet.
+              <div>
+                <b style={{ fontSize: 14 }}>
+                  My Study Squads ({joinedGroups.length}/{MAX_JOINED_GROUPS})
+                </b>
+                <div className="mut" style={{ fontSize: 11.5 }}>
+                  Switch groups or create/join with a 10-character code
                 </div>
-              ) : (
-                rankedRows.map((row) => {
-                  const isMe = row.uid === myUid;
-                  const rankBadge =
-                    row.rank === 1
-                      ? '🥇'
-                      : row.rank === 2
-                        ? '🥈'
-                        : row.rank === 3
-                          ? '🥉'
-                          : row.rank !== null
-                            ? `#${row.rank}`
-                            : '—';
-                const sentCheer =
-                  sentCheersLocal[`${activeGroupId}_${row.uid}_${todayKey}`];
-
-                return (
-                  <div
-                    key={row.uid}
-                    className="row sp"
-                    style={{
-                      padding: '10px 8px',
-                      borderBottom: '1px solid var(--bd)',
-                      opacity: row.hidden ? 0.62 : 1,
-                      background: isMe ? 'rgba(56, 189, 248, 0.07)' : 'transparent',
-                      borderRadius: isMe ? 8 : 0,
-                      gap: 8,
-                      flexWrap: 'wrap',
-                    }}
-                  >
-                    <div className="row" style={{ gap: 10, minWidth: 0, flex: 1 }}>
-                      <span
-                        className="mono"
-                        style={{
-                          minWidth: 28,
-                          textAlign: 'center',
-                          fontWeight: 700,
-                          fontSize: row.rank && row.rank <= 3 ? 18 : 13,
-                        }}
-                      >
-                        {rankBadge}
-                      </span>
-                      <span style={{ fontSize: 22 }} aria-hidden="true">
-                        {row.entry.emoji}
-                      </span>
-                      <div style={{ minWidth: 0 }}>
-                        <div className="row" style={{ gap: 6, flexWrap: 'wrap' }}>
-                          <b style={{ fontSize: 14 }}>
-                            {row.entry.nick}
-                            {isMe ? ' (You)' : ''}
-                          </b>
-                          {row.entry.examYear && (
-                            <span className="mut" style={{ fontSize: 11 }}>
-                              '{String(row.entry.examYear).slice(-2)}
-                            </span>
-                          )}
-                          {(row.medals.gold > 0 ||
-                            row.medals.silver > 0 ||
-                            row.medals.bronze > 0) && (
-                            <span
-                              style={{ fontSize: 11 }}
-                              title="Weekly podium trophies"
-                            >
-                              {row.medals.gold > 0 ? `🥇${row.medals.gold} ` : ''}
-                              {row.medals.silver > 0 ? `🥈${row.medals.silver} ` : ''}
-                              {row.medals.bronze > 0 ? `🥉${row.medals.bronze}` : ''}
-                            </span>
-                          )}
-                        </div>
-                        <div className="mut" style={{ fontSize: 11 }}>
-                          updated {formatRelativeAgo(row.entry.updatedAt, nowTick)}
-                          {row.subLabel ? ` · ${row.subLabel}` : ''}
-                        </div>
-                      </div>
-                    </div>
-
-                    <div className="row" style={{ gap: 8 }}>
-                      <div style={{ textAlign: 'right' }}>
-                        <b
-                          className="mono"
-                          style={{
-                            fontSize: 14,
-                            color: row.hidden ? 'var(--mut)' : 'var(--tx)',
-                          }}
-                        >
-                          {row.displayLabel}
-                        </b>
-                      </div>
-
-                      {/* Cheer buttons for other members */}
-                      {!isMe && (
-                        <div className="row" style={{ gap: 2 }}>
-                          {ALLOWED_CHEER_EMOJIS.map((ce) => (
-                            <button
-                              key={ce}
-                              type="button"
-                              className="ib"
-                              onClick={() => handleSendCheer(row.uid, row.entry.nick, ce)}
-                              aria-label={`Send ${ce} cheer to ${row.entry.nick}`}
-                              title={`Cheer ${row.entry.nick} with ${ce}`}
-                              style={{
-                                minWidth: 36,
-                                minHeight: 40,
-                                fontSize: 14,
-                                background:
-                                  sentCheer === ce
-                                    ? 'rgba(16, 185, 129, 0.2)'
-                                    : 'transparent',
-                              }}
-                            >
-                              {ce}
-                            </button>
-                          ))}
-                        </div>
-                      )}
-                    </div>
-                  </div>
-                );
-              })
-              )}
-            </div>
-          )}
-
-          {/* History & Trophies Tab (Milestone 2.6) */}
-          {boardTab === 'history' && (
-            <div className="card" style={{ padding: 14, marginBottom: 12 }}>
-              <b style={{ fontSize: 14, display: 'block', marginBottom: 8 }}>
-                🏅 Weekly Standings & Trophy Cabinet (Last 12 Weeks)
-              </b>
-              {(() => {
-                const myEntry = myUid ? activeGroupDoc.members[myUid] : undefined;
-                const combinedWeeks = {
-                  ...(myEntry?.weeks || {}),
-                  ...(state.groupHistory?.[activeGroupId] || {}),
-                };
-                const weekKeys = Object.keys(combinedWeeks).sort().reverse().slice(0, 12);
-                const myMedals = myEntry
-                  ? computeMemberMedals({ ...myEntry, weeks: combinedWeeks })
-                  : { gold: 0, silver: 0, bronze: 0 };
-
-                return (
-                  <>
-                    <div
-                      className="row"
-                      style={{
-                        gap: 12,
-                        marginBottom: 12,
-                        padding: '10px 12px',
-                        borderRadius: 10,
-                        background: 'var(--sf2)',
-                      }}
-                    >
-                      <span>🥇 Gold: <b>{myMedals.gold}</b></span>
-                      <span>🥈 Silver: <b>{myMedals.silver}</b></span>
-                      <span>🥉 Bronze: <b>{myMedals.bronze}</b></span>
-                    </div>
-
-                    {weekKeys.length === 0 ? (
-                      <div className="mut" style={{ fontSize: 13 }}>
-                        Completed weekly standings appear here automatically each Monday when at
-                        least 2 members share study time.
-                      </div>
-                    ) : (
-                      weekKeys.map((wk) => {
-                        const w = combinedWeeks[wk];
-                        if (!w) return null;
-                        const medal =
-                          w.rank === 1 ? '🥇' : w.rank === 2 ? '🥈' : w.rank === 3 ? '🥉' : '🏅';
-                        return (
-                          <div
-                            key={wk}
-                            className="row sp"
-                            style={{
-                              padding: '8px 4px',
-                              borderBottom: '1px solid var(--bd)',
-                              fontSize: 13,
-                            }}
-                          >
-                            <span>
-                              {medal} Week of <b className="mono">{wk}</b>
-                            </span>
-                            <span className="mono">
-                              Rank <b>#{w.rank}</b> of {w.of} ·{' '}
-                              {formatMinutesAsHoursMins(w.minutes)} · {w.xp} XP
-                            </span>
-                          </div>
-                        );
-                      })
-                    )}
-                  </>
-                );
-              })()}
-            </div>
-          )}
-
-          {/* Per-Group Privacy & Sharing Switches */}
-          {activeGroupPref && (
-            <div className="card" style={{ padding: 14, marginBottom: 12 }}>
-              <b style={{ fontSize: 14, display: 'block', marginBottom: 4 }}>
-                🔒 My Sharing Preferences in "{activeGroupDoc.name}"
-              </b>
-              <div className="mut" style={{ fontSize: 12, marginBottom: 10 }}>
-                Unchecked items are omitted from your group entry and shown as "hidden".
               </div>
 
-              {(
-                [
-                  {
-                    key: 't' as const,
-                    label: 'Share timer-tracked study hours (Today & Week)',
-                    checked: activeGroupPref.sh.t,
-                  },
-                  {
-                    key: 'x' as const,
-                    label: 'Share XP v2 & level',
-                    checked: activeGroupPref.sh.x,
-                  },
-                  {
-                    key: 's' as const,
-                    label: 'Share consistency score & minimum-day streak',
-                    checked: activeGroupPref.sh.s,
-                  },
-                  {
-                    key: 'm' as const,
-                    label: 'Share last 10 mock test scores (opt-in)',
-                    checked: activeGroupPref.sh.m,
-                  },
-                  {
-                    key: 'l' as const,
-                    label: 'Show "Studying now" live indicator when timer runs',
-                    checked: activeGroupPref.sh.l,
-                  },
-                  {
-                    key: 'paused' as const,
-                    label: 'Pause all sharing in this group (hide all stats)',
-                    checked: Boolean(activeGroupPref.paused),
-                  },
-                ] as const
-              ).map((item) => (
-                <label
-                  key={item.key}
-                  className="row sp"
-                  style={{
-                    minHeight: 44,
-                    padding: '4px 0',
-                    borderBottom: '1px solid var(--bd)',
-                    cursor: 'pointer',
-                    fontSize: 13,
-                  }}
-                >
-                  <span>{item.label}</span>
-                  <input
-                    type="checkbox"
-                    checked={item.checked}
-                    onChange={(e) => handleToggleSharingFlag(item.key, e.target.checked)}
-                    style={{ width: 20, height: 20 }}
-                  />
-                </label>
-              ))}
-
-              <div className="row sp" style={{ marginTop: 12 }}>
-                <span className="mut" style={{ fontSize: 11 }}>
-                  Group writes today: {groupBudget.getWritesToday()}/60 · Reads:{' '}
-                  {groupBudget.getReadsToday()}/150
-                </span>
-                {confirmLeaveGroupId === activeGroupId ? (
-                  <div className="row" style={{ gap: 6 }}>
+              <div className="row" style={{ gap: 6 }}>
+                {joinedGroups.length < MAX_JOINED_GROUPS ? (
+                  <>
                     <button
                       type="button"
-                      className="btn dg"
-                      disabled={actionBusy}
-                      onClick={() => handleLeaveGroup(activeGroupId)}
-                      style={{ minHeight: 40, fontSize: 12 }}
+                      className="pri"
+                      onClick={() => {
+                        if (!ensureValidProfileBeforeGroupAction('create a group'))
+                          return;
+                        setActionError(null);
+                        setDialogMode(dialogMode === 'create' ? 'none' : 'create');
+                      }}
+                      style={{ minHeight: 44, padding: '0 13px', fontSize: 12.5 }}
                     >
-                      Confirm Leave
+                      + Create Group
                     </button>
                     <button
                       type="button"
-                      className="btn s"
-                      onClick={() => setConfirmLeaveGroupId(null)}
-                      style={{ minHeight: 40, fontSize: 12 }}
+                      className="s"
+                      onClick={() => {
+                        if (!ensureValidProfileBeforeGroupAction('join a group'))
+                          return;
+                        setActionError(null);
+                        setDialogMode(dialogMode === 'join' ? 'none' : 'join');
+                      }}
+                      style={{ minHeight: 44, padding: '0 13px', fontSize: 12.5 }}
                     >
-                      Cancel
+                      🔑 Join Code
                     </button>
-                  </div>
+                  </>
                 ) : (
-                  <button
-                    type="button"
-                    className="btn s"
-                    onClick={() => setConfirmLeaveGroupId(activeGroupId)}
-                    style={{ minHeight: 40, fontSize: 12, color: '#f43f5e' }}
-                  >
-                    Leave Group
-                  </button>
+                  <small className="mono">
+                    Max {MAX_JOINED_GROUPS} groups joined
+                  </small>
                 )}
               </div>
             </div>
-          )}
 
-          {/* Owner Tools Card (Milestone 2.7) */}
-          {isOwner && (
-            <div className="card" style={{ padding: 14, marginBottom: 12 }}>
-              <b style={{ fontSize: 14, display: 'block', marginBottom: 10 }}>
-                👑 Group Owner Tools
-              </b>
-              <form onSubmit={handleOwnerSaveSettings} style={{ marginBottom: 12 }}>
-                <div className="row" style={{ gap: 8, marginBottom: 8, flexWrap: 'wrap' }}>
+            {/* Group Selector Chips */}
+            {joinedGroups.length > 0 && (
+              <div
+                className="chips"
+                style={{
+                  overflowX: 'auto',
+                  paddingBottom: 2,
+                  gap: 6,
+                  flexWrap: 'nowrap',
+                }}
+              >
+                {joinedGroups.map((g) => {
+                  const snapDoc = snapshots[g.groupId]?.doc;
+                  const label =
+                    snapDoc?.name || g.name || formatGroupCode(g.groupId);
+                  const em = snapDoc?.emoji || g.emoji || '🩺';
+                  const mCount = snapDoc
+                    ? Object.keys(snapDoc.members || {}).length
+                    : undefined;
+                  const isSelected = g.groupId === activeGroupId;
+                  return (
+                    <button
+                      key={g.groupId}
+                      type="button"
+                      className={isSelected ? 'on' : ''}
+                      onClick={() => {
+                        setExpandedMemberUid(null);
+                        onUpdateGroupsConfig((prev) => ({
+                          ...prev,
+                          activeGroupId: g.groupId,
+                        }));
+                      }}
+                      style={{ minHeight: 44, whiteSpace: 'nowrap' }}
+                    >
+                      {em} {label}
+                      {mCount !== undefined ? ` (${mCount})` : ''}
+                    </button>
+                  );
+                })}
+              </div>
+            )}
+
+            {/* Inline Create Group Form */}
+            {dialogMode === 'create' && (
+              <form
+                onSubmit={handleCreateGroup}
+                style={{
+                  marginTop: 12,
+                  paddingTop: 12,
+                  borderTop: '1px solid var(--bd)',
+                }}
+              >
+                <div style={{ fontWeight: 700, fontSize: 13, marginBottom: 8 }}>
+                  Create a New Study Group
+                </div>
+                <div style={{ marginBottom: 10 }}>
                   <input
                     type="text"
-                    value={ownerEditName}
+                    placeholder="Group Name (e.g. AIIMS Delhi 2026 Squad)"
                     maxLength={32}
-                    onChange={(e) => setOwnerEditName(e.target.value)}
-                    placeholder="Group Name"
-                    aria-label="Edit group name"
-                    style={{ minHeight: 44, flex: 1 }}
+                    value={newGroupName}
+                    onChange={(e) => setNewGroupName(e.target.value)}
+                    aria-label="New study group name"
+                    style={{ minHeight: 44, width: '100%' }}
+                    required
                   />
-                  <input
-                    type="number"
-                    min={0}
-                    max={5000}
-                    step="1"
-                    value={ownerGoalHoursInput}
-                    onChange={(e) => setOwnerGoalHoursInput(e.target.value)}
-                    placeholder="Weekly Goal (hrs, blank=none)"
-                    aria-label="Weekly group goal in hours"
-                    style={{ minHeight: 44, width: 170 }}
-                  />
+                </div>
+                <div
+                  className="chips"
+                  style={{ marginBottom: 10, gap: 6, flexWrap: 'wrap' }}
+                >
+                  {GROUP_EMOJIS.map((em) => (
+                    <button
+                      key={em}
+                      type="button"
+                      className={newGroupEmoji === em ? 'on' : ''}
+                      onClick={() => setNewGroupEmoji(em)}
+                      style={{ minHeight: 40 }}
+                    >
+                      {em}
+                    </button>
+                  ))}
+                </div>
+                {actionError && (
+                  <div style={{ color: '#f43f5e', fontSize: 12, marginBottom: 8 }}>
+                    {actionError}
+                  </div>
+                )}
+                <div className="row" style={{ gap: 8, justifyContent: 'flex-end' }}>
+                  <button
+                    type="button"
+                    className="s"
+                    onClick={() => setDialogMode('none')}
+                    style={{ minHeight: 44 }}
+                  >
+                    Cancel
+                  </button>
                   <button
                     type="submit"
-                    className="btn pri"
+                    className="pri"
                     disabled={actionBusy}
                     style={{ minHeight: 44 }}
                   >
-                    Save
+                    {actionBusy ? 'Creating…' : 'Create Group'}
                   </button>
                 </div>
               </form>
+            )}
 
-              <label
-                className="row sp"
+            {/* Inline Join Group Form */}
+            {dialogMode === 'join' && (
+              <form
+                onSubmit={handleJoinGroup}
                 style={{
-                  minHeight: 44,
-                  padding: '6px 0',
+                  marginTop: 12,
+                  paddingTop: 12,
                   borderTop: '1px solid var(--bd)',
-                  borderBottom: '1px solid var(--bd)',
-                  cursor: 'pointer',
-                  fontSize: 13,
                 }}
               >
-                <span>Enable Mock Score Leaderboard tab for this group</span>
-                <input
-                  type="checkbox"
-                  checked={Boolean(activeGroupDoc.mockBoard)}
-                  onChange={(e) => handleOwnerToggleMockBoard(e.target.checked)}
-                  style={{ width: 20, height: 20 }}
-                />
-              </label>
-
-              {/* Member Removal List */}
-              {Object.keys(activeGroupDoc.members).length > 1 && (
-                <div style={{ marginTop: 10 }}>
-                  <div className="mut" style={{ fontSize: 12, marginBottom: 6 }}>
-                    Manage Members
+                <div style={{ fontWeight: 700, fontSize: 13, marginBottom: 8 }}>
+                  Join with 10-Character Invite Code
+                </div>
+                <div className="row" style={{ gap: 8, marginBottom: 8, flexWrap: 'wrap' }}>
+                  <input
+                    type="text"
+                    placeholder="ABCDE-23456"
+                    maxLength={15}
+                    value={joinCodeInput}
+                    onChange={(e) => setJoinCodeInput(e.target.value.toUpperCase())}
+                    aria-label="Group invite code"
+                    className="mono"
+                    style={{ minHeight: 44, flex: 1, minWidth: 160, letterSpacing: 1 }}
+                    required
+                  />
+                  <button
+                    type="submit"
+                    className="pri"
+                    disabled={actionBusy}
+                    style={{ minHeight: 44, padding: '0 16px' }}
+                  >
+                    {actionBusy ? 'Joining…' : 'Join Squad'}
+                  </button>
+                  <button
+                    type="button"
+                    className="s"
+                    onClick={() => setDialogMode('none')}
+                    style={{ minHeight: 44 }}
+                  >
+                    Cancel
+                  </button>
+                </div>
+                {actionError && (
+                  <div style={{ color: '#f43f5e', fontSize: 12, marginTop: 4 }}>
+                    {actionError}
                   </div>
-                  {Object.entries(activeGroupDoc.members)
-                    .filter(([uid]) => uid !== myUid)
-                    .map(([uid, m]) => (
+                )}
+              </form>
+            )}
+          </div>
+
+          {/* Empty state when user hasn't joined any group yet */}
+          {joinedGroups.length === 0 && (
+            <div className="card" style={{ textAlign: 'center', padding: 26 }}>
+              <div style={{ fontSize: 38, marginBottom: 8 }} aria-hidden="true">
+                🤝
+              </div>
+              <b style={{ fontSize: 16, display: 'block', marginBottom: 6 }}>
+                No Study Groups Joined Yet
+              </b>
+              <p
+                className="mut"
+                style={{ fontSize: 13, maxWidth: 380, margin: '0 auto 16px' }}
+              >
+                Create a private study group for your NEET batchmates or enter a
+                10-character invite code to compare daily timer hours, weekly XP v2,
+                consistency streaks, and 7-day head-to-head graphs.
+              </p>
+              <div
+                className="row"
+                style={{ justifyContent: 'center', gap: 8, flexWrap: 'wrap' }}
+              >
+                <button
+                  type="button"
+                  className="pri"
+                  onClick={() => {
+                    if (!ensureValidProfileBeforeGroupAction('create a group'))
+                      return;
+                    setDialogMode('create');
+                  }}
+                  style={{ minHeight: 44, padding: '0 18px' }}
+                >
+                  + Create Study Group
+                </button>
+                <button
+                  type="button"
+                  className="s"
+                  onClick={() => {
+                    if (!ensureValidProfileBeforeGroupAction('join a group'))
+                      return;
+                    setDialogMode('join');
+                  }}
+                  style={{ minHeight: 44, padding: '0 18px' }}
+                >
+                  🔑 Enter Invite Code
+                </button>
+                {!validateNickname(state.profile?.nick || '').valid && (
+                  <button
+                    type="button"
+                    className="s"
+                    onClick={() =>
+                      onOpenProfileModal(
+                        'Configure your anonymous nickname (2–20 chars) and emoji avatar before joining a group.'
+                      )
+                    }
+                    style={{ minHeight: 44, padding: '0 16px' }}
+                  >
+                    {state.profile?.emoji || '🩺'} Set Up Profile First
+                  </button>
+                )}
+              </div>
+            </div>
+          )}
+
+          {/* Loading / Uncached state when a group is selected but snapshot hasn't loaded yet */}
+          {activeGroupId && !activeGroupDoc && (
+            <div
+              className="card"
+              style={{ textAlign: 'center', padding: 24, marginBottom: 12 }}
+            >
+              <div style={{ fontSize: 30, marginBottom: 8 }} aria-hidden="true">
+                {isRefreshing ? '⏳' : '📡'}
+              </div>
+              <b style={{ fontSize: 15, display: 'block', marginBottom: 6 }}>
+                {isRefreshing
+                  ? 'Loading Group Leaderboard…'
+                  : 'Group Snapshot Unavailable Offline'}
+              </b>
+              <p
+                className="mut"
+                style={{ fontSize: 13, maxWidth: 340, margin: '0 auto 14px' }}
+              >
+                {isRefreshing
+                  ? 'Fetching latest study hours and XP standings from Cloud Firestore…'
+                  : 'Connect to the internet and tap Refresh to load this study group.'}
+              </p>
+              <button
+                type="button"
+                className="pri"
+                disabled={isRefreshing || !isOnline}
+                onClick={() => refreshGroup(activeGroupId, true)}
+                style={{ minHeight: 44, padding: '0 18px' }}
+              >
+                🔄 {isRefreshing ? 'Refreshing…' : 'Refresh Group'}
+              </button>
+            </div>
+          )}
+
+          {/* Active Group Dashboard */}
+          {activeGroupId && activeGroupDoc && (
+            <>
+              {/* Group Header & Live Activity Card */}
+              <div className="card" style={{ padding: 15, marginBottom: 12 }}>
+                <div className="row sp" style={{ flexWrap: 'wrap', gap: 8 }}>
+                  <div className="row" style={{ gap: 10 }}>
+                    <span style={{ fontSize: 30 }} aria-hidden="true">
+                      {activeGroupDoc.emoji}
+                    </span>
+                    <div>
+                      <div className="row" style={{ gap: 6, flexWrap: 'wrap' }}>
+                        <b style={{ fontSize: 16.5 }}>{activeGroupDoc.name}</b>
+                        <small className="mono">
+                          · {memberCount}/{activeGroupDoc.memberCap || 50} members
+                        </small>
+                      </div>
+                      <div className="mut" style={{ fontSize: 11.5, marginTop: 2 }}>
+                        Invite Code:{' '}
+                        <b className="mono" style={{ color: 'var(--tx)' }}>
+                          {formatGroupCode(activeGroupId)}
+                        </b>{' '}
+                        · Updated{' '}
+                        {formatRelativeAgo(activeSnapshot?.fetchedAt || 0, nowTick)}{' '}
+                        <small>(5m auto-cache)</small>
+                      </div>
+                    </div>
+                  </div>
+
+                  <div className="row" style={{ gap: 6, flexWrap: 'wrap' }}>
+                    <button
+                      type="button"
+                      className="s"
+                      onClick={() => handleCopyInvite(activeGroupId)}
+                      aria-label="Copy group invite code"
+                      style={{ minHeight: 44, padding: '0 11px', fontSize: 12 }}
+                    >
+                      📋 Copy Code
+                    </button>
+                    <button
+                      type="button"
+                      className="s"
+                      onClick={() =>
+                        handleShareInvite(activeGroupId, activeGroupDoc.name)
+                      }
+                      aria-label="Share group invite code"
+                      style={{ minHeight: 44, padding: '0 11px', fontSize: 12 }}
+                    >
+                      📤 Invite
+                    </button>
+                    <button
+                      type="button"
+                      className="s"
+                      disabled={
+                        isRefreshing || refreshCooldownLeftSec > 0 || !isOnline
+                      }
+                      onClick={() => refreshGroup(activeGroupId, true)}
+                      aria-label="Refresh group leaderboard"
+                      style={{ minHeight: 44, padding: '0 11px', fontSize: 12 }}
+                    >
+                      🔄{' '}
+                      {isRefreshing
+                        ? '…'
+                        : refreshCooldownLeftSec > 0
+                          ? `${refreshCooldownLeftSec}s`
+                          : 'Refresh'}
+                    </button>
+                  </div>
+                </div>
+
+                {/* Studying Now Live Strip */}
+                {studyingNowList.length > 0 && (
+                  <div
+                    style={{
+                      marginTop: 12,
+                      padding: '9px 12px',
+                      borderRadius: 12,
+                      background: 'rgba(16, 185, 129, 0.12)',
+                      border: '1px solid rgba(16, 185, 129, 0.32)',
+                      fontSize: 12.5,
+                    }}
+                  >
+                    <b style={{ color: '#10b981' }}>
+                      🟢 Studying right now ({studyingNowList.length}):
+                    </b>{' '}
+                    {studyingNowList.map((m, idx) => (
+                      <span key={m.uid}>
+                        {idx > 0 ? ' · ' : ''}
+                        {m.emoji} <b>{m.nick}</b> ({m.elapsedMins}m)
+                      </span>
+                    ))}
+                  </div>
+                )}
+
+                {/* Received Cheers Chip */}
+                {todayCheersReceived.length > 0 && (
+                  <div
+                    style={{
+                      marginTop: 10,
+                      padding: '9px 12px',
+                      borderRadius: 12,
+                      background: 'rgba(245, 158, 11, 0.12)',
+                      border: '1px solid rgba(245, 158, 11, 0.32)',
+                      fontSize: 12.5,
+                    }}
+                  >
+                    <b>
+                      🎉 You received {todayCheersReceived.length} cheer
+                      {todayCheersReceived.length === 1 ? '' : 's'} today:
+                    </b>{' '}
+                    {todayCheersReceived.map((c, idx) => (
+                      <span key={c.id}>
+                        {idx > 0 ? ', ' : ''}
+                        {c.e} {c.fromNick}
+                      </span>
+                    ))}
+                  </div>
+                )}
+
+                {/* Interactive Pace Target (Friendly Rival) Card */}
+                {paceComparison && (
+                  <div
+                    style={{
+                      marginTop: 12,
+                      padding: '10px 12px',
+                      borderRadius: 13,
+                      background: 'color-mix(in srgb, var(--ac) 11%, var(--c2))',
+                      border: '1px solid color-mix(in srgb, var(--ac) 32%, var(--bd))',
+                      fontSize: 12.5,
+                    }}
+                  >
+                    <div className="row sp" style={{ flexWrap: 'wrap', gap: 6 }}>
+                      <div>
+                        <b>
+                          🎯 Pace Target: {paceComparison.entry.emoji}{' '}
+                          {paceComparison.entry.nick}
+                        </b>
+                        <div className="mut" style={{ fontSize: 11.5, marginTop: 2 }}>
+                          Today:{' '}
+                          <b
+                            className="mono"
+                            style={{
+                              color:
+                                paceComparison.diffTodayMins >= 0
+                                  ? '#10b981'
+                                  : '#f59e0b',
+                            }}
+                          >
+                            {paceComparison.diffTodayMins >= 0
+                              ? `You lead by +${formatMinutesAsHoursMins(paceComparison.diffTodayMins)}`
+                              : `${formatMinutesAsHoursMins(Math.abs(paceComparison.diffTodayMins))} to catch up`}
+                          </b>{' '}
+                          · Week:{' '}
+                          <b
+                            className="mono"
+                            style={{
+                              color:
+                                paceComparison.diffWeekMins >= 0
+                                  ? '#10b981'
+                                  : '#f59e0b',
+                            }}
+                          >
+                            {paceComparison.diffWeekMins >= 0
+                              ? `+${formatMinutesAsHoursMins(paceComparison.diffWeekMins)} ahead`
+                              : `${formatMinutesAsHoursMins(Math.abs(paceComparison.diffWeekMins))} behind`}
+                          </b>{' '}
+                          ({paceComparison.diffWeekXp >= 0 ? '+' : ''}
+                          {paceComparison.diffWeekXp} XP)
+                        </div>
+                      </div>
+                      <button
+                        type="button"
+                        className="s"
+                        onClick={() =>
+                          handleTogglePaceTarget(
+                            paceComparison.uid,
+                            paceComparison.entry.nick
+                          )
+                        }
+                        style={{ minHeight: 34, padding: '4px 10px', fontSize: 11 }}
+                      >
+                        Clear Target
+                      </button>
+                    </div>
+                  </div>
+                )}
+
+                {/* Weekly Group Hours Goal + Interactive Member Contribution Breakdown */}
+                {weeklyGoalProg && weeklyGoalProg.hasGoal && (
+                  <div style={{ marginTop: 12 }}>
+                    <div className="row sp" style={{ fontSize: 12, marginBottom: 4 }}>
+                      <span className="mut">
+                        🎯 Weekly Squad Goal:{' '}
+                        <b style={{ color: 'var(--tx)' }}>
+                          {formatMinutesAsHoursMins(weeklyGoalProg.combinedMinutes)}
+                        </b>{' '}
+                        / {formatMinutesAsHoursMins(weeklyGoalProg.targetMinutes)}
+                      </span>
+                      <div className="row" style={{ gap: 8 }}>
+                        <b className="mono">{weeklyGoalProg.pct}%</b>
+                        {weeklyMemberContributions.length > 0 && (
+                          <button
+                            type="button"
+                            className="s"
+                            onClick={() => setShowGoalBreakdown((v) => !v)}
+                            style={{
+                              minHeight: 28,
+                              padding: '2px 8px',
+                              fontSize: 11,
+                              borderRadius: 8,
+                            }}
+                          >
+                            {showGoalBreakdown ? 'Hide Split ▴' : 'Contributions ▾'}
+                          </button>
+                        )}
+                      </div>
+                    </div>
+                    <div className="pbar" style={{ height: 9 }}>
                       <div
-                        key={uid}
+                        className="pfill"
+                        style={{
+                          width: `${weeklyGoalProg.pct}%`,
+                          background: weeklyGoalProg.reached
+                            ? '#10b981'
+                            : 'linear-gradient(90deg, var(--ac), var(--em))',
+                        }}
+                      />
+                    </div>
+                    {weeklyGoalProg.reached && (
+                      <div
+                        style={{
+                          marginTop: 6,
+                          fontSize: 12,
+                          color: '#10b981',
+                          fontWeight: 700,
+                        }}
+                      >
+                        🏆 Squad goal achieved! Outstanding teamwork this week!
+                      </div>
+                    )}
+                    {showGoalBreakdown && weeklyMemberContributions.length > 0 && (
+                      <div
+                        style={{
+                          marginTop: 10,
+                          padding: '10px 12px',
+                          borderRadius: 12,
+                          background: 'var(--c2)',
+                          fontSize: 12,
+                        }}
+                      >
+                        <div
+                          className="mut"
+                          style={{ fontSize: 11, marginBottom: 6, fontWeight: 600 }}
+                        >
+                          Member Contributions to Weekly Goal
+                        </div>
+                        {weeklyMemberContributions.map((c) => (
+                          <div
+                            key={c.uid}
+                            className="row sp"
+                            style={{ padding: '4px 0', fontSize: 12 }}
+                          >
+                            <span>
+                              {c.emoji} <b>{c.nick}</b>
+                              {c.uid === myUid ? ' (You)' : ''}
+                            </span>
+                            <span className="mono">
+                              <b>{formatMinutesAsHoursMins(c.minutes)}</b> ({c.sharePct}
+                              %)
+                            </span>
+                          </div>
+                        ))}
+                      </div>
+                    )}
+                  </div>
+                )}
+              </div>
+
+              {/* Horizontally Scrollable Board Tabs */}
+              <div
+                className="chips"
+                role="tablist"
+                aria-label="Group leaderboard tabs"
+                style={{
+                  overflowX: 'auto',
+                  flexWrap: 'nowrap',
+                  gap: 6,
+                  marginBottom: 10,
+                  paddingBottom: 2,
+                }}
+              >
+                <button
+                  type="button"
+                  role="tab"
+                  aria-selected={boardTab === 'today'}
+                  className={boardTab === 'today' ? 'on' : ''}
+                  onClick={() => setBoardTab('today')}
+                  style={{ minHeight: 44, whiteSpace: 'nowrap' }}
+                >
+                  ☀️ Today
+                </button>
+                <button
+                  type="button"
+                  role="tab"
+                  aria-selected={boardTab === 'week'}
+                  className={boardTab === 'week' ? 'on' : ''}
+                  onClick={() => setBoardTab('week')}
+                  style={{ minHeight: 44, whiteSpace: 'nowrap' }}
+                >
+                  📅 Week
+                </button>
+                <button
+                  type="button"
+                  role="tab"
+                  aria-selected={boardTab === 'xp'}
+                  className={boardTab === 'xp' ? 'on' : ''}
+                  onClick={() => setBoardTab('xp')}
+                  style={{ minHeight: 44, whiteSpace: 'nowrap' }}
+                >
+                  ⚡ XP
+                </button>
+                <button
+                  type="button"
+                  role="tab"
+                  aria-selected={boardTab === 'streak'}
+                  className={boardTab === 'streak' ? 'on' : ''}
+                  onClick={() => setBoardTab('streak')}
+                  style={{ minHeight: 44, whiteSpace: 'nowrap' }}
+                >
+                  🔥 Streak
+                </button>
+                {activeGroupDoc.mockBoard && (
+                  <button
+                    type="button"
+                    role="tab"
+                    aria-selected={boardTab === 'mocks'}
+                    className={boardTab === 'mocks' ? 'on' : ''}
+                    onClick={() => setBoardTab('mocks')}
+                    style={{ minHeight: 44, whiteSpace: 'nowrap' }}
+                  >
+                    📝 Mocks
+                  </button>
+                )}
+                <button
+                  type="button"
+                  role="tab"
+                  aria-selected={boardTab === 'history'}
+                  className={boardTab === 'history' ? 'on' : ''}
+                  onClick={() => setBoardTab('history')}
+                  style={{ minHeight: 44, whiteSpace: 'nowrap' }}
+                >
+                  🏅 History
+                </button>
+              </div>
+
+              {/* Sub-controls for XP or Mocks + Interactive Member Filter & Search */}
+              {boardTab !== 'history' && (
+                <div
+                  className="row sp"
+                  style={{
+                    flexWrap: 'wrap',
+                    gap: 8,
+                    marginBottom: 10,
+                  }}
+                >
+                  <div className="chips" style={{ paddingBottom: 0, gap: 5 }}>
+                    {boardTab === 'xp' && (
+                      <>
+                        <button
+                          type="button"
+                          className={xpSortMode === 'weekly' ? 'on' : ''}
+                          onClick={() => setXpSortMode('weekly')}
+                          style={{ minHeight: 38, padding: '4px 12px', fontSize: 12 }}
+                        >
+                          This Week XP
+                        </button>
+                        <button
+                          type="button"
+                          className={xpSortMode === 'allTime' ? 'on' : ''}
+                          onClick={() => setXpSortMode('allTime')}
+                          style={{ minHeight: 38, padding: '4px 12px', fontSize: 12 }}
+                        >
+                          All-Time XP &amp; Level
+                        </button>
+                      </>
+                    )}
+                    {boardTab === 'mocks' && activeGroupDoc.mockBoard && (
+                      <>
+                        <button
+                          type="button"
+                          className={mockSortMode === 'latest' ? 'on' : ''}
+                          onClick={() => setMockSortMode('latest')}
+                          style={{ minHeight: 38, padding: '4px 12px', fontSize: 12 }}
+                        >
+                          Latest Score
+                        </button>
+                        <button
+                          type="button"
+                          className={mockSortMode === 'best' ? 'on' : ''}
+                          onClick={() => setMockSortMode('best')}
+                          style={{ minHeight: 38, padding: '4px 12px', fontSize: 12 }}
+                        >
+                          Best Score
+                        </button>
+                        <button
+                          type="button"
+                          className={mockSortMode === 'avg5' ? 'on' : ''}
+                          onClick={() => setMockSortMode('avg5')}
+                          style={{ minHeight: 38, padding: '4px 12px', fontSize: 12 }}
+                        >
+                          Avg of Last 5
+                        </button>
+                      </>
+                    )}
+                    {(
+                      [
+                        { id: 'all' as const, label: 'All' },
+                        { id: 'activeToday' as const, label: 'Active Today' },
+                        { id: 'top3' as const, label: 'Top 3' },
+                        ...(studyingNowList.length > 0
+                          ? [{ id: 'studyingNow' as const, label: '🟢 Live' }]
+                          : []),
+                      ] as const
+                    ).map((f) => (
+                      <button
+                        key={f.id}
+                        type="button"
+                        className={memberFilter === f.id ? 'on' : ''}
+                        onClick={() => setMemberFilter(f.id)}
+                        style={{ minHeight: 38, padding: '4px 11px', fontSize: 12 }}
+                      >
+                        {f.label}
+                      </button>
+                    ))}
+                  </div>
+
+                  {rankedRows.length >= 4 && (
+                    <input
+                      type="search"
+                      value={memberSearch}
+                      onChange={(e) => setMemberSearch(e.target.value)}
+                      placeholder="Filter member…"
+                      aria-label="Filter group members by nickname"
+                      style={{
+                        minHeight: 38,
+                        width: 155,
+                        padding: '5px 10px',
+                        fontSize: 12,
+                      }}
+                    />
+                  )}
+                </div>
+              )}
+
+              {boardTab === 'mocks' && activeGroupDoc.mockBoard && (
+                <div
+                  style={{
+                    padding: '8px 12px',
+                    borderRadius: 10,
+                    background: 'var(--c2)',
+                    fontSize: 12,
+                    marginBottom: 10,
+                    color: 'var(--mu)',
+                  }}
+                >
+                  💡 <i>Scores are shared only by choice. Rank is not your worth.</i>
+                </div>
+              )}
+
+              {/* Visual Top-3 Podium Card */}
+              {boardTab !== 'history' &&
+                memberFilter === 'all' &&
+                !memberSearch.trim() &&
+                podiumRows.length > 0 && (
+                  <div
+                    className="card"
+                    style={{
+                      padding: '14px 12px',
+                      marginBottom: 12,
+                      background:
+                        'linear-gradient(180deg, color-mix(in srgb, var(--am) 9%, var(--card)), var(--card) 85%)',
+                    }}
+                  >
+                    <div
+                      className="row sp"
+                      style={{ marginBottom: 10, fontSize: 12 }}
+                    >
+                      <b>
+                        🏅 Top Podium ·{' '}
+                        {boardTab === 'today'
+                          ? "Today's Study Time"
+                          : boardTab === 'week'
+                            ? 'This Week Study Time'
+                            : boardTab === 'xp'
+                              ? xpSortMode === 'weekly'
+                                ? 'Weekly XP v2'
+                                : 'All-Time XP & Level'
+                              : boardTab === 'streak'
+                                ? 'Consistency & Streak'
+                                : 'Mock Test Standings'}
+                      </b>
+                      <small>Tap any member to compare 7-day pace</small>
+                    </div>
+                    <div
+                      style={{
+                        display: 'grid',
+                        gridTemplateColumns: 'repeat(3, 1fr)',
+                        gap: 8,
+                        alignItems: 'end',
+                      }}
+                    >
+                      {[2, 1, 3].map((targetRank) => {
+                        const pRow = podiumRows.find((r) => r.rank === targetRank);
+                        if (!pRow) {
+                          return (
+                            <div
+                              key={targetRank}
+                              style={{
+                                textAlign: 'center',
+                                padding: '10px 6px',
+                                borderRadius: 14,
+                                border: '1px dashed var(--bd)',
+                                opacity: 0.45,
+                                minHeight: targetRank === 1 ? 116 : 98,
+                                display: 'grid',
+                                placeItems: 'center',
+                                fontSize: 11,
+                              }}
+                            >
+                              #{targetRank} Open
+                            </div>
+                          );
+                        }
+                        const medal =
+                          targetRank === 1
+                            ? '🥇'
+                            : targetRank === 2
+                              ? '🥈'
+                              : '🥉';
+                        const isMe = pRow.uid === myUid;
+                        return (
+                          <button
+                            key={pRow.uid}
+                            type="button"
+                            onClick={() =>
+                              setExpandedMemberUid((cur) =>
+                                cur === pRow.uid ? null : pRow.uid
+                              )
+                            }
+                            style={{
+                              textAlign: 'center',
+                              padding: targetRank === 1 ? '12px 8px' : '10px 6px',
+                              borderRadius: 16,
+                              background:
+                                targetRank === 1
+                                  ? 'linear-gradient(160deg, rgba(245, 158, 11, 0.2), color-mix(in srgb, var(--c2) 85%, transparent))'
+                                  : 'var(--c2)',
+                              border:
+                                targetRank === 1
+                                  ? '1.5px solid rgba(245, 158, 11, 0.5)'
+                                  : isMe
+                                    ? '1.5px solid var(--ac)'
+                                    : '1px solid var(--bd)',
+                              minHeight: targetRank === 1 ? 124 : 104,
+                              display: 'flex',
+                              flexDirection: 'column',
+                              alignItems: 'center',
+                              justifyContent: 'center',
+                              gap: 3,
+                            }}
+                          >
+                            <span style={{ fontSize: targetRank === 1 ? 24 : 20 }}>
+                              {medal} {pRow.entry.emoji}
+                            </span>
+                            <b
+                              style={{
+                                fontSize: 12.5,
+                                maxWidth: '100%',
+                                overflow: 'hidden',
+                                textOverflow: 'ellipsis',
+                                whiteSpace: 'nowrap',
+                              }}
+                            >
+                              {pRow.entry.nick}
+                              {isMe ? ' (You)' : ''}
+                            </b>
+                            <span
+                              className="mono"
+                              style={{
+                                fontSize: 12,
+                                fontWeight: 800,
+                                color:
+                                  targetRank === 1 ? '#fbbf24' : 'var(--ac)',
+                              }}
+                            >
+                              {pRow.displayLabel}
+                            </span>
+                          </button>
+                        );
+                      })}
+                    </div>
+                  </div>
+                )}
+
+              {/* Leaderboard Member List + Expandable Head-to-Head Compare Drawer */}
+              {boardTab !== 'history' && (
+                <div className="card" style={{ padding: 12, marginBottom: 12 }}>
+                  {filteredRows.length === 0 ? (
+                    <div
+                      className="mut"
+                      style={{ textAlign: 'center', padding: 20, fontSize: 13 }}
+                    >
+                      No members match the current filter on this leaderboard.
+                    </div>
+                  ) : (
+                    filteredRows.map((row) => {
+                      const isMe = row.uid === myUid;
+                      const isExpanded = expandedMemberUid === row.uid;
+                      const isPaceTarget = activePaceTargetUid === row.uid;
+                      const isLiveNow = studyingNowUidSet.has(row.uid);
+                      const rankBadge =
+                        row.rank === 1
+                          ? '🥇'
+                          : row.rank === 2
+                            ? '🥈'
+                            : row.rank === 3
+                              ? '🥉'
+                              : row.rank !== null
+                                ? `#${row.rank}`
+                                : '—';
+                      const sentCheer =
+                        sentCheersLocal[
+                          `${activeGroupId}_${row.uid}_${todayKey}`
+                        ];
+
+                      const memberTodayMins = row.entry.days?.[todayKey] || 0;
+                      const memberWeekMins = sumMemberRange(
+                        row.entry,
+                        myPersonalStats.weekKeys,
+                        'm'
+                      );
+                      const memberWeekXp = sumMemberRange(
+                        row.entry,
+                        myPersonalStats.weekKeys,
+                        'xp'
+                      );
+
+                      return (
+                        <div
+                          key={row.uid}
+                          style={{
+                            borderBottom: '1px solid var(--bd)',
+                            padding: '10px 8px',
+                            background: isMe
+                              ? 'rgba(56, 189, 248, 0.09)'
+                              : isExpanded
+                                ? 'color-mix(in srgb, var(--c2) 60%, transparent)'
+                                : 'transparent',
+                            border: isMe
+                              ? '1px solid rgba(56, 189, 248, 0.32)'
+                              : undefined,
+                            borderRadius: isMe || isExpanded ? 12 : 0,
+                            marginBottom: isMe || isExpanded ? 4 : 0,
+                            opacity: row.hidden ? 0.65 : 1,
+                          }}
+                        >
+                          <div
+                            className="row sp"
+                            onClick={() =>
+                              setExpandedMemberUid((cur) =>
+                                cur === row.uid ? null : row.uid
+                              )
+                            }
+                            role="button"
+                            tabIndex={0}
+                            onKeyDown={(e) => {
+                              if (e.key === 'Enter' || e.key === ' ') {
+                                e.preventDefault();
+                                setExpandedMemberUid((cur) =>
+                                  cur === row.uid ? null : row.uid
+                                );
+                              }
+                            }}
+                            aria-expanded={isExpanded}
+                            style={{
+                              cursor: 'pointer',
+                              gap: 8,
+                              flexWrap: 'wrap',
+                            }}
+                          >
+                            <div
+                              className="row"
+                              style={{ gap: 10, minWidth: 0, flex: 1 }}
+                            >
+                              <span
+                                className="mono"
+                                style={{
+                                  minWidth: 30,
+                                  textAlign: 'center',
+                                  fontWeight: 800,
+                                  fontSize:
+                                    row.rank && row.rank <= 3 ? 19 : 13,
+                                }}
+                              >
+                                {rankBadge}
+                              </span>
+                              <span
+                                style={{ fontSize: 22 }}
+                                aria-hidden="true"
+                              >
+                                {row.entry.emoji}
+                              </span>
+                              <div style={{ minWidth: 0 }}>
+                                <div
+                                  className="row"
+                                  style={{ gap: 6, flexWrap: 'wrap' }}
+                                >
+                                  <b style={{ fontSize: 14 }}>
+                                    {row.entry.nick}
+                                    {isMe ? ' (You)' : ''}
+                                  </b>
+                                  {isLiveNow && (
+                                    <small
+                                      style={{
+                                        color: '#10b981',
+                                        fontWeight: 700,
+                                        fontSize: 11,
+                                      }}
+                                    >
+                                      · 🟢 Live
+                                    </small>
+                                  )}
+                                  {isPaceTarget && (
+                                    <small
+                                      style={{
+                                        color: 'var(--ac)',
+                                        fontWeight: 700,
+                                        fontSize: 11,
+                                      }}
+                                    >
+                                      · 🎯 Target
+                                    </small>
+                                  )}
+                                  {row.entry.examYear && (
+                                    <span
+                                      className="mut"
+                                      style={{ fontSize: 11 }}
+                                    >
+                                      '{String(row.entry.examYear).slice(-2)}
+                                    </span>
+                                  )}
+                                  {(row.medals.gold > 0 ||
+                                    row.medals.silver > 0 ||
+                                    row.medals.bronze > 0) && (
+                                    <span
+                                      style={{ fontSize: 11 }}
+                                      title="Weekly podium trophies"
+                                    >
+                                      {row.medals.gold > 0
+                                        ? `🥇${row.medals.gold} `
+                                        : ''}
+                                      {row.medals.silver > 0
+                                        ? `🥈${row.medals.silver} `
+                                        : ''}
+                                      {row.medals.bronze > 0
+                                        ? `🥉${row.medals.bronze}`
+                                        : ''}
+                                    </span>
+                                  )}
+                                </div>
+                                <div className="mut" style={{ fontSize: 11 }}>
+                                  updated{' '}
+                                  {formatRelativeAgo(
+                                    row.entry.updatedAt,
+                                    nowTick
+                                  )}
+                                  {row.subLabel ? ` · ${row.subLabel}` : ''} ·{' '}
+                                  <span style={{ color: 'var(--ac)' }}>
+                                    {isExpanded ? 'Hide ▴' : 'Compare ▾'}
+                                  </span>
+                                </div>
+                              </div>
+                            </div>
+
+                            <div
+                              className="row"
+                              style={{ gap: 8 }}
+                              onClick={(e) => e.stopPropagation()}
+                            >
+                              <div style={{ textAlign: 'right' }}>
+                                <b
+                                  className="mono"
+                                  style={{
+                                    fontSize: 14.5,
+                                    color: row.hidden
+                                      ? 'var(--mu)'
+                                      : 'var(--tx)',
+                                  }}
+                                >
+                                  {row.displayLabel}
+                                </b>
+                              </div>
+
+                              {/* One-Tap Cheer Buttons for Other Members */}
+                              {!isMe && (
+                                <div className="row" style={{ gap: 2 }}>
+                                  {ALLOWED_CHEER_EMOJIS.map((ce) => (
+                                    <button
+                                      key={ce}
+                                      type="button"
+                                      onClick={() =>
+                                        handleSendCheer(
+                                          row.uid,
+                                          row.entry.nick,
+                                          ce
+                                        )
+                                      }
+                                      aria-label={`Send ${ce} cheer to ${row.entry.nick}`}
+                                      title={`Cheer ${row.entry.nick} with ${ce}`}
+                                      style={{
+                                        minWidth: 34,
+                                        minHeight: 40,
+                                        padding: 0,
+                                        borderRadius: 10,
+                                        fontSize: 14,
+                                        background:
+                                          sentCheer === ce
+                                            ? 'rgba(16, 185, 129, 0.22)'
+                                            : 'transparent',
+                                        borderColor:
+                                          sentCheer === ce
+                                            ? 'rgba(16, 185, 129, 0.45)'
+                                            : 'transparent',
+                                      }}
+                                    >
+                                      {ce}
+                                    </button>
+                                  ))}
+                                </div>
+                              )}
+                            </div>
+                          </div>
+
+                          {/* Expandable Head-to-Head Compare & 7-Day Sparkline Drawer */}
+                          {isExpanded && (
+                            <div
+                              style={{
+                                marginTop: 10,
+                                paddingTop: 10,
+                                borderTop: '1px dashed var(--bd)',
+                                fontSize: 12,
+                              }}
+                            >
+                              <div
+                                className="row sp"
+                                style={{
+                                  flexWrap: 'wrap',
+                                  gap: 8,
+                                  marginBottom: 8,
+                                }}
+                              >
+                                <b>
+                                  ⚡ 7-Day Study Comparison:{' '}
+                                  {isMe
+                                    ? 'Your Last 7 Days'
+                                    : `You vs ${row.entry.nick}`}
+                                </b>
+                                {!isMe && (
+                                  <button
+                                    type="button"
+                                    className={isPaceTarget ? 'on' : 's'}
+                                    onClick={() =>
+                                      handleTogglePaceTarget(
+                                        row.uid,
+                                        row.entry.nick
+                                      )
+                                    }
+                                    style={{
+                                      minHeight: 34,
+                                      padding: '4px 10px',
+                                      fontSize: 11.5,
+                                    }}
+                                  >
+                                    {isPaceTarget
+                                      ? '🎯 Active Pace Target'
+                                      : '🎯 Set as Pace Target'}
+                                  </button>
+                                )}
+                              </div>
+
+                              {/* 7-Day Sparkline Bars */}
+                              <div
+                                style={{
+                                  display: 'grid',
+                                  gridTemplateColumns: 'repeat(7, 1fr)',
+                                  gap: 6,
+                                  marginBottom: 10,
+                                  padding: '10px 8px',
+                                  borderRadius: 12,
+                                  background: 'var(--c2)',
+                                }}
+                              >
+                                {myPersonalStats.last7Keys.map((dk) => {
+                                  const myM =
+                                    myPersonalStats.timerMinsByDay[dk] || 0;
+                                  const theirM = row.entry.days?.[dk] || 0;
+                                  const maxM = Math.max(
+                                    240,
+                                    myM,
+                                    theirM
+                                  );
+                                  const myH = Math.round((myM / maxM) * 44);
+                                  const theirH = Math.round(
+                                    (theirM / maxM) * 44
+                                  );
+                                  return (
+                                    <div
+                                      key={dk}
+                                      style={{
+                                        display: 'flex',
+                                        flexDirection: 'column',
+                                        alignItems: 'center',
+                                        gap: 4,
+                                      }}
+                                    >
+                                      <div
+                                        style={{
+                                          height: 46,
+                                          display: 'flex',
+                                          alignItems: 'flex-end',
+                                          gap: 3,
+                                        }}
+                                      >
+                                        <div
+                                          title={`You (${dk}): ${formatMinutesAsHoursMins(myM)}`}
+                                          style={{
+                                            width: isMe ? 14 : 9,
+                                            height: Math.max(3, myH),
+                                            borderRadius: 4,
+                                            background: 'var(--ac)',
+                                          }}
+                                        />
+                                        {!isMe && (
+                                          <div
+                                            title={`${row.entry.nick} (${dk}): ${formatMinutesAsHoursMins(theirM)}`}
+                                            style={{
+                                              width: 9,
+                                              height: Math.max(3, theirH),
+                                              borderRadius: 4,
+                                              background: 'var(--em)',
+                                            }}
+                                          />
+                                        )}
+                                      </div>
+                                      <span
+                                        className="mono mut"
+                                        style={{ fontSize: 10 }}
+                                      >
+                                        {dk.slice(8)}
+                                      </span>
+                                    </div>
+                                  );
+                                })}
+                              </div>
+
+                              {/* Head-to-Head Summary Metrics */}
+                              <div
+                                style={{
+                                  display: 'grid',
+                                  gridTemplateColumns:
+                                    'repeat(auto-fit, minmax(125px, 1fr))',
+                                  gap: 6,
+                                }}
+                              >
+                                <div
+                                  className="stat-box"
+                                  style={{ padding: '7px 9px' }}
+                                >
+                                  <small style={{ fontSize: 10.5 }}>
+                                    Today Study
+                                  </small>
+                                  <b className="mono" style={{ fontSize: 13 }}>
+                                    {row.entry.sh.t
+                                      ? formatMinutesAsHoursMins(memberTodayMins)
+                                      : 'Hidden'}
+                                  </b>
+                                </div>
+                                <div
+                                  className="stat-box"
+                                  style={{ padding: '7px 9px' }}
+                                >
+                                  <small style={{ fontSize: 10.5 }}>
+                                    This Week Study
+                                  </small>
+                                  <b className="mono" style={{ fontSize: 13 }}>
+                                    {row.entry.sh.t
+                                      ? formatMinutesAsHoursMins(memberWeekMins)
+                                      : 'Hidden'}
+                                  </b>
+                                </div>
+                                <div
+                                  className="stat-box"
+                                  style={{ padding: '7px 9px' }}
+                                >
+                                  <small style={{ fontSize: 10.5 }}>
+                                    Week / Total XP
+                                  </small>
+                                  <b className="mono" style={{ fontSize: 13 }}>
+                                    {row.entry.sh.x
+                                      ? `${memberWeekXp} / ${(row.entry.xpTotal || 0).toLocaleString()}`
+                                      : 'Hidden'}
+                                  </b>
+                                </div>
+                                <div
+                                  className="stat-box"
+                                  style={{ padding: '7px 9px' }}
+                                >
+                                  <small style={{ fontSize: 10.5 }}>
+                                    Streak &amp; Consistency
+                                  </small>
+                                  <b className="mono" style={{ fontSize: 13 }}>
+                                    {row.entry.sh.s
+                                      ? `${row.entry.streak ?? 0}d · ${row.entry.consistency ?? 0}%`
+                                      : 'Hidden'}
+                                  </b>
+                                </div>
+                              </div>
+                            </div>
+                          )}
+                        </div>
+                      );
+                    })
+                  )}
+                </div>
+              )}
+
+              {/* History & Trophies Tab */}
+              {boardTab === 'history' && (
+                <div className="card" style={{ padding: 14, marginBottom: 12 }}>
+                  <b style={{ fontSize: 14, display: 'block', marginBottom: 8 }}>
+                    🏅 Weekly Standings &amp; Trophy Cabinet (Last 12 Weeks)
+                  </b>
+                  {(() => {
+                    const myEntry = myUid
+                      ? activeGroupDoc.members[myUid]
+                      : undefined;
+                    const combinedWeeks = {
+                      ...(myEntry?.weeks || {}),
+                      ...(state.groupHistory?.[activeGroupId] || {}),
+                    };
+                    const weekKeys = Object.keys(combinedWeeks)
+                      .sort()
+                      .reverse()
+                      .slice(0, 12);
+                    const myMedals = myEntry
+                      ? computeMemberMedals({
+                          ...myEntry,
+                          weeks: combinedWeeks,
+                        })
+                      : { gold: 0, silver: 0, bronze: 0 };
+
+                    return (
+                      <>
+                        <div
+                          className="row"
+                          style={{
+                            gap: 12,
+                            marginBottom: 12,
+                            padding: '10px 12px',
+                            borderRadius: 10,
+                            background: 'var(--c2)',
+                          }}
+                        >
+                          <span>
+                            🥇 Gold: <b>{myMedals.gold}</b>
+                          </span>
+                          <span>
+                            🥈 Silver: <b>{myMedals.silver}</b>
+                          </span>
+                          <span>
+                            🥉 Bronze: <b>{myMedals.bronze}</b>
+                          </span>
+                        </div>
+
+                        {weekKeys.length === 0 ? (
+                          <div className="mut" style={{ fontSize: 13 }}>
+                            Completed weekly standings appear here automatically each
+                            Monday when at least 2 members share study time.
+                          </div>
+                        ) : (
+                          weekKeys.map((wk) => {
+                            const w = combinedWeeks[wk];
+                            if (!w) return null;
+                            const medal =
+                              w.rank === 1
+                                ? '🥇'
+                                : w.rank === 2
+                                  ? '🥈'
+                                  : w.rank === 3
+                                    ? '🥉'
+                                    : '🏅';
+                            return (
+                              <div
+                                key={wk}
+                                className="row sp"
+                                style={{
+                                  padding: '8px 4px',
+                                  borderBottom: '1px solid var(--bd)',
+                                  fontSize: 13,
+                                }}
+                              >
+                                <span>
+                                  {medal} Week of <b className="mono">{wk}</b>
+                                </span>
+                                <span className="mono">
+                                  Rank <b>#{w.rank}</b> of {w.of} ·{' '}
+                                  {formatMinutesAsHoursMins(w.minutes)} · {w.xp}{' '}
+                                  XP
+                                </span>
+                              </div>
+                            );
+                          })
+                        )}
+                      </>
+                    );
+                  })()}
+                </div>
+              )}
+
+              {/* Per-Group Privacy & Sharing Switches */}
+              {activeGroupPref && (
+                <div className="card" style={{ padding: 14, marginBottom: 12 }}>
+                  <b style={{ fontSize: 14, display: 'block', marginBottom: 4 }}>
+                    🔒 My Sharing Preferences in "{activeGroupDoc.name}"
+                  </b>
+                  <div className="mut" style={{ fontSize: 12, marginBottom: 10 }}>
+                    Unchecked items are omitted from your group entry and shown as
+                    "hidden".
+                  </div>
+
+                  {(
+                    [
+                      {
+                        key: 't' as const,
+                        label: 'Share timer-tracked study hours (Today & Week)',
+                        checked: activeGroupPref.sh.t,
+                      },
+                      {
+                        key: 'x' as const,
+                        label: 'Share XP v2 & level',
+                        checked: activeGroupPref.sh.x,
+                      },
+                      {
+                        key: 's' as const,
+                        label: 'Share consistency score & minimum-day streak',
+                        checked: activeGroupPref.sh.s,
+                      },
+                      {
+                        key: 'm' as const,
+                        label: 'Share last 10 mock test scores (opt-in)',
+                        checked: activeGroupPref.sh.m,
+                      },
+                      {
+                        key: 'l' as const,
+                        label: 'Show "Studying now" live indicator when timer runs',
+                        checked: activeGroupPref.sh.l,
+                      },
+                      {
+                        key: 'paused' as const,
+                        label: 'Pause all sharing in this group (hide all stats)',
+                        checked: Boolean(activeGroupPref.paused),
+                      },
+                    ] as const
+                  ).map((item) => (
+                    <label
+                      key={item.key}
+                      className="row sp"
+                      style={{
+                        minHeight: 44,
+                        padding: '4px 0',
+                        borderBottom: '1px solid var(--bd)',
+                        cursor: 'pointer',
+                        fontSize: 13,
+                      }}
+                    >
+                      <span>{item.label}</span>
+                      <input
+                        type="checkbox"
+                        checked={item.checked}
+                        onChange={(e) =>
+                          handleToggleSharingFlag(item.key, e.target.checked)
+                        }
+                        style={{ width: 20, height: 20 }}
+                      />
+                    </label>
+                  ))}
+
+                  <div className="row sp" style={{ marginTop: 12, flexWrap: 'wrap', gap: 8 }}>
+                    <span className="mut" style={{ fontSize: 11 }}>
+                      Group writes today: {groupBudget.getWritesToday()}/60 · Reads:{' '}
+                      {groupBudget.getReadsToday()}/150
+                    </span>
+                    {confirmLeaveGroupId === activeGroupId ? (
+                      <div className="row" style={{ gap: 6 }}>
+                        <button
+                          type="button"
+                          className="dg-btn"
+                          disabled={actionBusy}
+                          onClick={() => handleLeaveGroup(activeGroupId)}
+                          style={{ minHeight: 40, fontSize: 12 }}
+                        >
+                          Confirm Leave
+                        </button>
+                        <button
+                          type="button"
+                          className="s"
+                          onClick={() => setConfirmLeaveGroupId(null)}
+                          style={{ minHeight: 40, fontSize: 12 }}
+                        >
+                          Cancel
+                        </button>
+                      </div>
+                    ) : (
+                      <button
+                        type="button"
+                        className="s"
+                        onClick={() => setConfirmLeaveGroupId(activeGroupId)}
+                        style={{
+                          minHeight: 40,
+                          fontSize: 12,
+                          color: '#f43f5e',
+                        }}
+                      >
+                        Leave Group
+                      </button>
+                    )}
+                  </div>
+                </div>
+              )}
+
+              {/* Owner Tools Card */}
+              {isOwner && (
+                <div className="card" style={{ padding: 14, marginBottom: 12 }}>
+                  <div className="row sp">
+                    <b style={{ fontSize: 14 }}>👑 Group Owner Tools</b>
+                    <button
+                      type="button"
+                      className="s"
+                      onClick={() => setShowOwnerDrawer((v) => !v)}
+                      style={{ minHeight: 36, fontSize: 12 }}
+                    >
+                      {showOwnerDrawer ? 'Hide ▴' : 'Manage Squad ▾'}
+                    </button>
+                  </div>
+
+                  {showOwnerDrawer && (
+                    <div style={{ marginTop: 12 }}>
+                      <form
+                        onSubmit={handleOwnerSaveSettings}
+                        style={{ marginBottom: 12 }}
+                      >
+                        <div
+                          className="row"
+                          style={{ gap: 8, marginBottom: 8, flexWrap: 'wrap' }}
+                        >
+                          <input
+                            type="text"
+                            value={ownerEditName}
+                            maxLength={32}
+                            onChange={(e) => setOwnerEditName(e.target.value)}
+                            placeholder="Group Name"
+                            aria-label="Edit group name"
+                            style={{ minHeight: 44, flex: 1, minWidth: 160 }}
+                          />
+                          <input
+                            type="number"
+                            min={0}
+                            max={5000}
+                            step="1"
+                            value={ownerGoalHoursInput}
+                            onChange={(e) => setOwnerGoalHoursInput(e.target.value)}
+                            placeholder="Weekly Goal (hrs, blank=none)"
+                            aria-label="Weekly group goal in hours"
+                            style={{ minHeight: 44, width: 170 }}
+                          />
+                          <button
+                            type="submit"
+                            className="pri"
+                            disabled={actionBusy}
+                            style={{ minHeight: 44 }}
+                          >
+                            Save
+                          </button>
+                        </div>
+                      </form>
+
+                      <label
                         className="row sp"
-                        style={{ padding: '4px 0', fontSize: 13 }}
+                        style={{
+                          minHeight: 44,
+                          padding: '6px 0',
+                          borderTop: '1px solid var(--bd)',
+                          borderBottom: '1px solid var(--bd)',
+                          cursor: 'pointer',
+                          fontSize: 13,
+                        }}
                       >
                         <span>
-                          {m.emoji} {m.nick}
+                          Enable Mock Score Leaderboard tab for this group
                         </span>
-                        {confirmKickUid === uid ? (
-                          <div className="row" style={{ gap: 6 }}>
-                            <button
-                              type="button"
-                              className="btn dg"
-                              disabled={actionBusy}
-                              onClick={() => handleOwnerRemoveMember(uid, m.nick)}
-                              style={{ minHeight: 38, fontSize: 12 }}
-                            >
-                              Confirm Remove
-                            </button>
-                            <button
-                              type="button"
-                              className="btn s"
-                              onClick={() => setConfirmKickUid(null)}
-                              style={{ minHeight: 38, fontSize: 12 }}
-                            >
-                              Cancel
-                            </button>
+                        <input
+                          type="checkbox"
+                          checked={Boolean(activeGroupDoc.mockBoard)}
+                          onChange={(e) =>
+                            handleOwnerToggleMockBoard(e.target.checked)
+                          }
+                          style={{ width: 20, height: 20 }}
+                        />
+                      </label>
+
+                      {/* Member Removal List */}
+                      {Object.keys(activeGroupDoc.members).length > 1 && (
+                        <div style={{ marginTop: 10 }}>
+                          <div
+                            className="mut"
+                            style={{ fontSize: 12, marginBottom: 6 }}
+                          >
+                            Manage Members
+                          </div>
+                          {Object.entries(activeGroupDoc.members)
+                            .filter(([uid]) => uid !== myUid)
+                            .map(([uid, m]) => (
+                              <div
+                                key={uid}
+                                className="row sp"
+                                style={{ padding: '4px 0', fontSize: 13 }}
+                              >
+                                <span>
+                                  {m.emoji} {m.nick}
+                                </span>
+                                {confirmKickUid === uid ? (
+                                  <div className="row" style={{ gap: 6 }}>
+                                    <button
+                                      type="button"
+                                      className="dg-btn"
+                                      disabled={actionBusy}
+                                      onClick={() =>
+                                        handleOwnerRemoveMember(uid, m.nick)
+                                      }
+                                      style={{ minHeight: 38, fontSize: 12 }}
+                                    >
+                                      Confirm Remove
+                                    </button>
+                                    <button
+                                      type="button"
+                                      className="s"
+                                      onClick={() => setConfirmKickUid(null)}
+                                      style={{ minHeight: 38, fontSize: 12 }}
+                                    >
+                                      Cancel
+                                    </button>
+                                  </div>
+                                ) : (
+                                  <button
+                                    type="button"
+                                    className="s"
+                                    onClick={() => setConfirmKickUid(uid)}
+                                    style={{ minHeight: 38, fontSize: 12 }}
+                                  >
+                                    Remove
+                                  </button>
+                                )}
+                              </div>
+                            ))}
+                        </div>
+                      )}
+
+                      {/* Close Group */}
+                      <div
+                        style={{
+                          marginTop: 12,
+                          paddingTop: 10,
+                          borderTop: '1px solid var(--bd)',
+                        }}
+                      >
+                        {confirmCloseGroupId === activeGroupId ? (
+                          <div className="row sp" style={{ flexWrap: 'wrap', gap: 8 }}>
+                            <span style={{ fontSize: 12, color: '#f43f5e' }}>
+                              Permanently delete this group for all members?
+                            </span>
+                            <div className="row" style={{ gap: 6 }}>
+                              <button
+                                type="button"
+                                className="dg-btn"
+                                disabled={actionBusy}
+                                onClick={() =>
+                                  handleOwnerCloseGroup(activeGroupId)
+                                }
+                                style={{ minHeight: 40, fontSize: 12 }}
+                              >
+                                Yes, Close Group
+                              </button>
+                              <button
+                                type="button"
+                                className="s"
+                                onClick={() => setConfirmCloseGroupId(null)}
+                                style={{ minHeight: 40, fontSize: 12 }}
+                              >
+                                Cancel
+                              </button>
+                            </div>
                           </div>
                         ) : (
                           <button
                             type="button"
-                            className="btn s"
-                            onClick={() => setConfirmKickUid(uid)}
-                            style={{ minHeight: 38, fontSize: 12 }}
+                            className="dg-btn"
+                            onClick={() => setConfirmCloseGroupId(activeGroupId)}
+                            style={{ minHeight: 40, fontSize: 12 }}
                           >
-                            Remove
+                            Close &amp; Delete Group
                           </button>
                         )}
                       </div>
-                    ))}
+                    </div>
+                  )}
                 </div>
               )}
-
-              {/* Close Group */}
-              <div style={{ marginTop: 12, paddingTop: 10, borderTop: '1px solid var(--bd)' }}>
-                {confirmCloseGroupId === activeGroupId ? (
-                  <div className="row sp">
-                    <span style={{ fontSize: 12, color: '#f43f5e' }}>
-                      Permanently delete this group for all members?
-                    </span>
-                    <div className="row" style={{ gap: 6 }}>
-                      <button
-                        type="button"
-                        className="btn dg"
-                        disabled={actionBusy}
-                        onClick={() => handleOwnerCloseGroup(activeGroupId)}
-                        style={{ minHeight: 40, fontSize: 12 }}
-                      >
-                        Yes, Close Group
-                      </button>
-                      <button
-                        type="button"
-                        className="btn s"
-                        onClick={() => setConfirmCloseGroupId(null)}
-                        style={{ minHeight: 40, fontSize: 12 }}
-                      >
-                        Cancel
-                      </button>
-                    </div>
-                  </div>
-                ) : (
-                  <button
-                    type="button"
-                    className="btn dg"
-                    onClick={() => setConfirmCloseGroupId(activeGroupId)}
-                    style={{ minHeight: 40, fontSize: 12 }}
-                  >
-                    Close & Delete Group
-                  </button>
-                )}
-              </div>
-            </div>
+            </>
           )}
         </>
       )}
