@@ -11,6 +11,13 @@ interface ErrorBoundaryState {
   downloadNotice: string | null;
 }
 
+export function getLocalDownloadDate(d = new Date()): string {
+  const y = d.getFullYear();
+  const m = String(d.getMonth() + 1).padStart(2, '0');
+  const day = String(d.getDate()).padStart(2, '0');
+  return `${y}-${m}-${day}`;
+}
+
 export class ErrorBoundary extends React.Component<
   ErrorBoundaryProps,
   ErrorBoundaryState
@@ -45,7 +52,7 @@ export class ErrorBoundary extends React.Component<
       const url = URL.createObjectURL(blob);
       const a = document.createElement('a');
       a.href = url;
-      a.download = `deep-hours-raw-saved-data-${new Date().toISOString().slice(0, 10)}.json`;
+      a.download = `deep-hours-raw-saved-data-${getLocalDownloadDate()}.json`;
       a.click();
       setTimeout(() => URL.revokeObjectURL(url), 1000);
     } catch {

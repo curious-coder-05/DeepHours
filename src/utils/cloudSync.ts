@@ -13,9 +13,11 @@ import {
   initializeFirestore,
   getFirestore,
   setLogLevel,
+  collection,
   doc,
   getDoc,
   getDocFromServer,
+  getDocs,
   writeBatch,
 } from 'firebase/firestore';
 import firebaseConfig from '../../firebase-applet-config.json' with { type: 'json' };
@@ -1092,9 +1094,18 @@ const DEFAULT_OUTBOX_META: SyncOutboxMeta = {
   firstSignInMergedUids: [],
 };
 
+let memoryOutboxMeta: SyncOutboxMeta = { ...DEFAULT_OUTBOX_META };
+
 export function loadSyncOutboxMeta(): SyncOutboxMeta {
   try {
-    if (typeof localStorage === 'undefined') return { ...DEFAULT_OUTBOX_META };
+    if (typeof localStorage === 'undefined') {
+      return {
+        ...memoryOutboxMeta,
+        dirtyDocs: [...memoryOutboxMeta.dirtyDocs],
+        knownRemoteDocTs: { ...memoryOutboxMeta.knownRemoteDocTs },
+        firstSignInMergedUids: [...memoryOutboxMeta.firstSignInMergedUids],
+      };
+    }
     const raw = localStorage.getItem('dh_sync_meta');
     if (!raw) return { ...DEFAULT_OUTBOX_META };
     const parsed = JSON.parse(raw) as Partial<SyncOutboxMeta>;
@@ -1123,6 +1134,12 @@ export function loadSyncOutboxMeta(): SyncOutboxMeta {
 }
 
 export function saveSyncOutboxMeta(meta: SyncOutboxMeta): void {
+  memoryOutboxMeta = {
+    ...meta,
+    dirtyDocs: [...(meta.dirtyDocs || [])],
+    knownRemoteDocTs: { ...(meta.knownRemoteDocTs || {}) },
+    firstSignInMergedUids: [...(meta.firstSignInMergedUids || [])],
+  };
   try {
     if (typeof localStorage !== 'undefined') {
       localStorage.setItem('dh_sync_meta', JSON.stringify(meta));
@@ -1140,9 +1157,17 @@ export function isQuotaOrResourceExhaustedError(err: unknown): boolean {
   return /resource-exhausted|quota|exceeded/i.test(msg);
 }
 
+export function getLocalCalendarDateKey(now = Date.now()): string {
+  const d = new Date(now);
+  const y = d.getFullYear();
+  const m = String(d.getMonth() + 1).padStart(2, '0');
+  const day = String(d.getDate()).padStart(2, '0');
+  return `${y}-${m}-${day}`;
+}
+
 export function getSyncTodayWrites(now = Date.now()): number {
   const meta = loadSyncOutboxMeta();
-  const todayKey = new Date(now).toISOString().slice(0, 10);
+  const todayKey = getLocalCalendarDateKey(now);
   if (meta.dailyWritesDayKey !== todayKey) return 0;
   return meta.dailyWritesCount || 0;
 }
@@ -1191,7 +1216,7 @@ export class SyncBudgetController {
   ) {
     if (typeof optionsOrCallback === 'function') {
       this.getNow = () => Date.now();
-      this.getDayKey = (now: number) => new Date(now).toISOString().slice(0, 10);
+      this.getDayKey = (now: number) => getLocalCalendarDateKey(now);
       this.onFlushDocs = (dirtyDocKeys: string[]) =>
         Promise.resolve(optionsOrCallback(dirtyDocKeys)).then(() => ({
           writesUsed: 0,
@@ -1204,7 +1229,7 @@ export class SyncBudgetController {
       this.getNow = optionsOrCallback.getNow || (() => Date.now());
       this.getDayKey =
         optionsOrCallback.getDayKey ||
-        ((now: number) => new Date(now).toISOString().slice(0, 10));
+        ((now: number) => getLocalCalendarDateKey(now));
       this.onFlushDocs = optionsOrCallback.onFlushDocs;
       this.onMetaChanged = optionsOrCallback.onMetaChanged;
       this.meta = {
@@ -1262,9 +1287,7 @@ export class SyncBudgetController {
       this.meta.dailyWritesCount + safeCount
     );
     if (this.meta.dailyWritesCount >= DAILY_WRITE_CAP) {
-      const tomorrow = new Date(this.getNow() + 86400000)
-        .toISOString()
-        .slice(0, 10);
+      const tomorrow = this.getDayKey(this.getNow() + 86400000);
       this.meta.quotaPausedUntilDayKey = tomorrow;
     }
     this.notifyMeta();
@@ -1272,9 +1295,7 @@ export class SyncBudgetController {
 
   pauseForQuotaError(): void {
     this.rolloverDayIfNeeded();
-    const tomorrow = new Date(this.getNow() + 86400000)
-      .toISOString()
-      .slice(0, 10);
+    const tomorrow = this.getDayKey(this.getNow() + 86400000);
     this.meta.quotaPausedUntilDayKey = tomorrow;
     this.notifyMeta();
   }
@@ -1363,9 +1384,7 @@ export class SyncBudgetController {
 
     const remaining = this.getRemainingDailyWrites();
     if (remaining <= 0) {
-      const tomorrow = new Date(this.getNow() + 86400000)
-        .toISOString()
-        .slice(0, 10);
+      const tomorrow = this.getDayKey(this.getNow() + 86400000);
       this.meta.quotaPausedUntilDayKey = tomorrow;
       this.notifyMeta();
       return {
@@ -1393,9 +1412,7 @@ export class SyncBudgetController {
         this.meta.dailyWritesCount + writesUsed
       );
       if (this.meta.dailyWritesCount >= DAILY_WRITE_CAP) {
-        const tomorrow = new Date(this.getNow() + 86400000)
-          .toISOString()
-          .slice(0, 10);
+        const tomorrow = this.getDayKey(this.getNow() + 86400000);
         this.meta.quotaPausedUntilDayKey = tomorrow;
       }
       this.notifyMeta();
@@ -1403,9 +1420,7 @@ export class SyncBudgetController {
     } catch (err) {
       this.meta.dirtyDocs = Array.from(new Set([...previousDirty, ...this.meta.dirtyDocs]));
       if (isQuotaOrResourceExhaustedError(err)) {
-        const tomorrow = new Date(this.getNow() + 86400000)
-          .toISOString()
-          .slice(0, 10);
+        const tomorrow = this.getDayKey(this.getNow() + 86400000);
         this.meta.quotaPausedUntilDayKey = tomorrow;
         this.notifyMeta();
         return {
@@ -1695,7 +1710,7 @@ export async function performCloudSyncCycle(
 
   const meta = loadSyncOutboxMeta();
   const now = Date.now();
-  const todayKey = new Date(now).toISOString().slice(0, 10);
+  const todayKey = getLocalCalendarDateKey(now);
 
   if (meta.dailyWritesDayKey !== todayKey) {
     meta.dailyWritesDayKey = todayKey;
@@ -1737,9 +1752,7 @@ export async function performCloudSyncCycle(
     }
   } catch (err) {
     if (isQuotaOrResourceExhaustedError(err)) {
-      meta.quotaPausedUntilDayKey = new Date(now + 86400000)
-        .toISOString()
-        .slice(0, 10);
+      meta.quotaPausedUntilDayKey = getLocalCalendarDateKey(now + 86400000);
       saveSyncOutboxMeta(meta);
       controllerArg?.pauseForQuotaError();
       return {
@@ -1791,9 +1804,7 @@ export async function performCloudSyncCycle(
             }
           } catch (err) {
             if (isQuotaOrResourceExhaustedError(err)) {
-              meta.quotaPausedUntilDayKey = new Date(now + 86400000)
-                .toISOString()
-                .slice(0, 10);
+              meta.quotaPausedUntilDayKey = getLocalCalendarDateKey(now + 86400000);
               saveSyncOutboxMeta(meta);
               controllerArg?.pauseForQuotaError();
               return {
@@ -1931,9 +1942,7 @@ export async function performCloudSyncCycle(
       Object.assign(meta.knownRemoteDocTs, pendingRemoteTs);
     } catch (err) {
       if (isQuotaOrResourceExhaustedError(err)) {
-        meta.quotaPausedUntilDayKey = new Date(now + 86400000)
-          .toISOString()
-          .slice(0, 10);
+        meta.quotaPausedUntilDayKey = getLocalCalendarDateKey(now + 86400000);
         saveSyncOutboxMeta(meta);
         controllerArg?.pauseForQuotaError();
         return {
@@ -2029,6 +2038,22 @@ export async function deleteAllUserCloudData(uid: string): Promise<number> {
   deletedCount += 1;
 
   await batch.commit();
+
+  // Sweep the entire users/{uid}/meta and users/{uid}/months collections and delete every document found in batches of at most 400
+  const [metaSnap, monthsSnap] = await Promise.all([
+    getDocs(collection(db, 'users', uid, 'meta')),
+    getDocs(collection(db, 'users', uid, 'months')),
+  ]);
+  const allFoundDocs = [...metaSnap.docs, ...monthsSnap.docs];
+  for (let i = 0; i < allFoundDocs.length; i += 400) {
+    const chunk = allFoundDocs.slice(i, i + 400);
+    const cleanupBatch = writeBatch(db);
+    for (const d of chunk) {
+      cleanupBatch.delete(d.ref);
+      deletedCount += 1;
+    }
+    await cleanupBatch.commit();
+  }
 
   const meta = loadSyncOutboxMeta();
   meta.knownRemoteDocTs = {};

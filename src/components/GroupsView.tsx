@@ -124,6 +124,454 @@ function sumMemberRange(
   return sum;
 }
 
+export interface LeaderboardProps {
+  members: Record<string, MemberEntry>;
+  todayKey: string;
+  myUid?: string | null;
+  nowTs?: number;
+  onRefresh?: () => void | Promise<void>;
+  isRefreshing?: boolean;
+  lastUpdatedAt?: number | null;
+}
+
+export type WeeklyStudyLeaderboardProps = LeaderboardProps;
+
+function isMemberStudyingNow(entry: MemberEntry, nowTs: number): boolean {
+  return Boolean(
+    !entry.paused &&
+      entry.sh?.l &&
+      entry.live &&
+      entry.live.until > nowTs &&
+      entry.live.since <= nowTs + 60_000
+  );
+}
+
+export function formatCurrentSessionDuration(
+  sinceMs: number | undefined,
+  nowMs: number
+): string {
+  if (
+    typeof sinceMs !== 'number' ||
+    !Number.isFinite(sinceMs) ||
+    sinceMs <= 0
+  ) {
+    return '1m 0s';
+  }
+  const elapsedSec = Math.max(1, Math.floor((nowMs - sinceMs) / 1000));
+  const hours = Math.floor(elapsedSec / 3600);
+  const mins = Math.floor((elapsedSec % 3600) / 60);
+  const secs = elapsedSec % 60;
+  if (hours > 0) {
+    return `${hours}h ${mins}m ${secs}s`;
+  }
+  return `${mins}m ${secs}s`;
+}
+
+function getStudyingNowTooltipText(
+  entry: MemberEntry,
+  nowMs: number,
+  fallbackSinceMs?: number
+): string {
+  const sinceMs = entry.live?.since ?? fallbackSinceMs;
+  const exactDuration = formatCurrentSessionDuration(sinceMs, nowMs);
+  return `Studying now — Current session: ${exactDuration}`;
+}
+
+export const Leaderboard: React.FC<LeaderboardProps> = ({
+  members,
+  todayKey,
+  myUid,
+  nowTs,
+  onRefresh,
+  isRefreshing = false,
+  lastUpdatedAt = null,
+}) => {
+  const [refreshTickTs, setRefreshTickTs] = useState<number>(() =>
+    typeof nowTs === 'number' ? nowTs : Date.now()
+  );
+  const [localRefreshing, setLocalRefreshing] = useState(false);
+  const [hoveredLiveKey, setHoveredLiveKey] = useState<string | null>(null);
+
+  const effectiveNowTs = typeof nowTs === 'number' ? nowTs : refreshTickTs;
+  const busyRefreshing = isRefreshing || localRefreshing;
+
+  const handleManualRefresh = async () => {
+    if (busyRefreshing) return;
+    setRefreshTickTs(Date.now());
+    if (onRefresh) {
+      try {
+        setLocalRefreshing(true);
+        await onRefresh();
+      } finally {
+        setLocalRefreshing(false);
+        setRefreshTickTs(Date.now());
+      }
+    }
+  };
+
+  const rows = useMemo(
+    () => rankWeekBoard(members, todayKey),
+    [members, todayKey]
+  );
+
+  const maxWeeklyMinutes = useMemo(() => {
+    let maxVal = 60;
+    for (const r of rows) {
+      if (!r.hidden && r.primaryValue > maxVal) {
+        maxVal = r.primaryValue;
+      }
+    }
+    return maxVal;
+  }, [rows]);
+
+  return (
+    <div>
+      <div
+        className="row sp"
+        style={{
+          marginBottom: 10,
+          padding: '4px 4px 8px',
+          borderBottom: '1px solid var(--bd)',
+          gap: 8,
+          flexWrap: 'wrap',
+        }}
+      >
+        <div className="row" style={{ gap: 8 }}>
+          <b style={{ fontSize: 13.5 }}>Weekly Study Leaderboard</b>
+          <span
+            className="mut mono"
+            style={{
+              fontSize: 11,
+              background: 'var(--c2)',
+              padding: '2px 7px',
+              borderRadius: 6,
+            }}
+          >
+            {rows.length} {rows.length === 1 ? 'member' : 'members'}
+          </span>
+          {lastUpdatedAt ? (
+            <span className="mut mono" style={{ fontSize: 11 }}>
+              · Synced {Math.max(0, Math.floor((effectiveNowTs - lastUpdatedAt) / 60000))}m ago
+            </span>
+          ) : null}
+        </div>
+        <button
+          type="button"
+          className="g"
+          onClick={handleManualRefresh}
+          disabled={busyRefreshing}
+          aria-label="Refresh leaderboard stats"
+          title="Pull latest member stats on demand"
+          style={{
+            minHeight: 36,
+            padding: '6px 12px',
+            borderRadius: 10,
+            fontSize: 12,
+            fontWeight: 700,
+            display: 'inline-flex',
+            alignItems: 'center',
+            gap: 6,
+            cursor: busyRefreshing ? 'not-allowed' : 'pointer',
+            opacity: busyRefreshing ? 0.65 : 1,
+          }}
+        >
+          <span aria-hidden="true">↻</span>
+          <span>{busyRefreshing ? 'Refreshing...' : 'Refresh'}</span>
+        </button>
+      </div>
+
+      {rows.length === 0 ? (
+        <div className="mut" style={{ textAlign: 'center', padding: 16 }}>
+          No members in this weekly study leaderboard yet.
+        </div>
+      ) : (
+        <div role="list" aria-label="Weekly study duration leaderboard">
+          {rows.map((row) => {
+            const isMe = Boolean(myUid && row.uid === myUid);
+            const studyingNow = isMemberStudyingNow(row.entry, effectiveNowTs);
+            const liveTooltip = studyingNow
+              ? getStudyingNowTooltipText(row.entry, effectiveNowTs)
+              : '';
+            const activeToday = (row.entry.days?.[todayKey] || 0) > 0;
+            const pctBar = row.hidden
+              ? 0
+              : Math.min(
+                  100,
+                  Math.round((row.primaryValue / maxWeeklyMinutes) * 100)
+                );
+            const rankBadge =
+              row.rank === 1
+                ? '🥇'
+                : row.rank === 2
+                  ? '🥈'
+                  : row.rank === 3
+                    ? '🥉'
+                    : row.rank !== null
+                      ? `#${row.rank}`
+                      : '—';
+            const dotHoverKey = `dot_${row.uid}`;
+            const badgeHoverKey = `badge_${row.uid}`;
+
+            return (
+              <div
+                key={row.uid}
+                role="listitem"
+                className="row sp"
+                style={{
+                  padding: '10px 12px',
+                  borderBottom: '1px solid var(--bd)',
+                  background: isMe ? 'rgba(56, 189, 248, 0.09)' : 'transparent',
+                  borderRadius: isMe ? 12 : 0,
+                  opacity: row.hidden ? 0.65 : 1,
+                  gap: 10,
+                }}
+              >
+                <div className="row" style={{ gap: 10, minWidth: 0, flex: 1 }}>
+                  <span
+                    className="mono"
+                    style={{
+                      minWidth: 30,
+                      textAlign: 'center',
+                      fontWeight: 800,
+                      fontSize: row.rank && row.rank <= 3 ? 18 : 13,
+                    }}
+                  >
+                    {rankBadge}
+                  </span>
+
+                  <div
+                    style={{
+                      position: 'relative',
+                      width: 38,
+                      height: 38,
+                      borderRadius: 12,
+                      background: studyingNow
+                        ? 'rgba(16, 185, 129, 0.14)'
+                        : 'var(--c2)',
+                      border: studyingNow
+                        ? '1.5px solid rgba(16, 185, 129, 0.55)'
+                        : isMe
+                          ? '1.5px solid rgba(56, 189, 248, 0.5)'
+                          : '1px solid var(--bd)',
+                      display: 'flex',
+                      alignItems: 'center',
+                      justifyContent: 'center',
+                      flexShrink: 0,
+                    }}
+                  >
+                    <span
+                      style={{ fontSize: 20, lineHeight: 1 }}
+                      aria-hidden="true"
+                    >
+                      {row.entry.emoji}
+                    </span>
+                    <span
+                      role="status"
+                      tabIndex={studyingNow ? 0 : undefined}
+                      onMouseEnter={() => {
+                        if (studyingNow) setHoveredLiveKey(dotHoverKey);
+                      }}
+                      onMouseLeave={() => {
+                        if (hoveredLiveKey === dotHoverKey)
+                          setHoveredLiveKey(null);
+                      }}
+                      onFocus={() => {
+                        if (studyingNow) setHoveredLiveKey(dotHoverKey);
+                      }}
+                      onBlur={() => {
+                        if (hoveredLiveKey === dotHoverKey)
+                          setHoveredLiveKey(null);
+                      }}
+                      aria-label={
+                        studyingNow
+                          ? liveTooltip
+                          : row.entry.paused
+                            ? 'Sharing paused'
+                            : activeToday
+                              ? 'Studied today'
+                              : 'Offline'
+                      }
+                      title={
+                        studyingNow
+                          ? liveTooltip
+                          : row.entry.paused
+                            ? 'Sharing paused'
+                            : activeToday
+                              ? 'Studied today'
+                              : 'Idle today'
+                      }
+                      style={{
+                        position: 'absolute',
+                        right: -2,
+                        bottom: -2,
+                        width: 11,
+                        height: 11,
+                        borderRadius: '50%',
+                        background: studyingNow
+                          ? '#10b981'
+                          : row.entry.paused
+                            ? '#f59e0b'
+                            : activeToday
+                              ? '#38bdf8'
+                              : 'var(--bd)',
+                        border: '2px solid var(--card)',
+                        boxShadow: studyingNow
+                          ? '0 0 0 2px rgba(16, 185, 129, 0.28)'
+                          : 'none',
+                        cursor: studyingNow ? 'help' : 'default',
+                      }}
+                    />
+                    {studyingNow && hoveredLiveKey === dotHoverKey && (
+                      <div
+                        role="tooltip"
+                        className="mono"
+                        style={{
+                          position: 'absolute',
+                          bottom: 'calc(100% + 6px)',
+                          left: 0,
+                          zIndex: 30,
+                          whiteSpace: 'nowrap',
+                          background: 'var(--card)',
+                          color: 'var(--tx)',
+                          border: '1px solid rgba(16, 185, 129, 0.5)',
+                          boxShadow: '0 6px 18px rgba(0, 0, 0, 0.28)',
+                          padding: '4px 8px',
+                          borderRadius: 6,
+                          fontSize: 11,
+                          fontWeight: 700,
+                          pointerEvents: 'none',
+                        }}
+                      >
+                        {liveTooltip}
+                      </div>
+                    )}
+                  </div>
+
+                  <div style={{ minWidth: 0, flex: 1 }}>
+                    <div className="row" style={{ gap: 6, flexWrap: 'wrap' }}>
+                      <b
+                        style={{
+                          fontSize: 13.5,
+                          overflow: 'hidden',
+                          textOverflow: 'ellipsis',
+                          whiteSpace: 'nowrap',
+                        }}
+                      >
+                        {row.entry.nick}
+                        {isMe ? ' (You)' : ''}
+                      </b>
+                      {studyingNow && (
+                        <span
+                          title={liveTooltip}
+                          aria-label={liveTooltip}
+                          onMouseEnter={() => setHoveredLiveKey(badgeHoverKey)}
+                          onMouseLeave={() => {
+                            if (hoveredLiveKey === badgeHoverKey)
+                              setHoveredLiveKey(null);
+                          }}
+                          style={{
+                            position: 'relative',
+                            display: 'inline-flex',
+                            alignItems: 'center',
+                            gap: 4,
+                            fontSize: 10.5,
+                            fontWeight: 700,
+                            color: '#10b981',
+                            background: 'rgba(16, 185, 129, 0.12)',
+                            padding: '1px 7px',
+                            borderRadius: 6,
+                            cursor: 'help',
+                          }}
+                        >
+                          <span
+                            aria-hidden="true"
+                            style={{
+                              width: 6,
+                              height: 6,
+                              borderRadius: '50%',
+                              background: '#10b981',
+                            }}
+                          />
+                          Studying now
+                          {hoveredLiveKey === badgeHoverKey && (
+                            <span
+                              role="tooltip"
+                              className="mono"
+                              style={{
+                                position: 'absolute',
+                                bottom: 'calc(100% + 6px)',
+                                left: 0,
+                                zIndex: 30,
+                                whiteSpace: 'nowrap',
+                                background: 'var(--card)',
+                                color: 'var(--tx)',
+                                border: '1px solid rgba(16, 185, 129, 0.5)',
+                                boxShadow: '0 6px 18px rgba(0, 0, 0, 0.28)',
+                                padding: '4px 8px',
+                                borderRadius: 6,
+                                fontSize: 11,
+                                fontWeight: 700,
+                                pointerEvents: 'none',
+                              }}
+                            >
+                              {liveTooltip}
+                            </span>
+                          )}
+                        </span>
+                      )}
+                    </div>
+                    {!row.hidden && (
+                      <div
+                        style={{
+                          marginTop: 4,
+                          height: 4,
+                          borderRadius: 4,
+                          background: 'var(--c2)',
+                          overflow: 'hidden',
+                          maxWidth: 180,
+                        }}
+                      >
+                        <div
+                          style={{
+                            width: `${pctBar}%`,
+                            height: '100%',
+                            borderRadius: 4,
+                            background: studyingNow ? '#10b981' : 'var(--ac)',
+                          }}
+                        />
+                      </div>
+                    )}
+                  </div>
+                </div>
+
+                <div style={{ textAlign: 'right', flexShrink: 0 }}>
+                  <b
+                    className="mono"
+                    style={{
+                      fontSize: 14,
+                      fontVariantNumeric: 'tabular-nums',
+                      color: row.hidden ? 'var(--mu)' : 'var(--tx)',
+                    }}
+                  >
+                    {row.displayLabel}
+                  </b>
+                  {row.subLabel && (
+                    <div className="mut mono" style={{ fontSize: 10.5 }}>
+                      {row.subLabel}
+                    </div>
+                  )}
+                </div>
+              </div>
+            );
+          })}
+        </div>
+      )}
+    </div>
+  );
+};
+
+export const WeeklyStudyLeaderboard = Leaderboard;
+
 interface GroupsViewProps {
   state: PulseHabitState;
   todayKey: string;
@@ -904,6 +1352,10 @@ export const GroupsView: React.FC<GroupsViewProps> = ({
     }
   }, [activeGroupDoc, boardTab, todayKey, xpSortMode, mockSortMode]);
 
+  const [hoveredLiveStatusKey, setHoveredLiveStatusKey] = useState<
+    string | null
+  >(null);
+
   const studyingNowList = useMemo(() => {
     if (!activeGroupDoc || !activeSnapshot) return [];
     return getActiveStudyingNowMembers(
@@ -917,6 +1369,14 @@ export const GroupsView: React.FC<GroupsViewProps> = ({
     () => new Set(studyingNowList.map((m) => m.uid)),
     [studyingNowList]
   );
+
+  const studyingNowByUid = useMemo(() => {
+    const map = new Map<string, (typeof studyingNowList)[number]>();
+    for (const item of studyingNowList) {
+      map.set(item.uid, item);
+    }
+    return map;
+  }, [studyingNowList]);
 
   // Filtered rows for interactive search & filter chips
   const filteredRows = useMemo(() => {
@@ -2320,6 +2780,16 @@ export const GroupsView: React.FC<GroupsViewProps> = ({
                       const isExpanded = expandedMemberUid === row.uid;
                       const isPaceTarget = activePaceTargetUid === row.uid;
                       const isLiveNow = studyingNowUidSet.has(row.uid);
+                      const liveMemberInfo = studyingNowByUid.get(row.uid);
+                      const liveTooltipText = isLiveNow
+                        ? getStudyingNowTooltipText(
+                            row.entry,
+                            nowTick,
+                            liveMemberInfo?.since
+                          )
+                        : '';
+                      const dotHoverKey = `gv_dot_${row.uid}`;
+                      const badgeHoverKey = `gv_badge_${row.uid}`;
                       const rankBadge =
                         row.rank === 1
                           ? '🥇'
@@ -2406,12 +2876,123 @@ export const GroupsView: React.FC<GroupsViewProps> = ({
                               >
                                 {rankBadge}
                               </span>
-                              <span
-                                style={{ fontSize: 22 }}
-                                aria-hidden="true"
+
+                              {/* Enhanced User Avatar with Status Indicator Dot */}
+                              <div
+                                style={{
+                                  position: 'relative',
+                                  width: 40,
+                                  height: 40,
+                                  borderRadius: 12,
+                                  background: isLiveNow
+                                    ? 'rgba(16, 185, 129, 0.14)'
+                                    : isMe
+                                      ? 'rgba(56, 189, 248, 0.14)'
+                                      : 'var(--c2)',
+                                  border: isLiveNow
+                                    ? '1.5px solid rgba(16, 185, 129, 0.55)'
+                                    : isMe
+                                      ? '1.5px solid rgba(56, 189, 248, 0.48)'
+                                      : '1px solid var(--bd)',
+                                  display: 'flex',
+                                  alignItems: 'center',
+                                  justifyContent: 'center',
+                                  flexShrink: 0,
+                                }}
                               >
-                                {row.entry.emoji}
-                              </span>
+                                <span
+                                  style={{ fontSize: 21, lineHeight: 1 }}
+                                  aria-hidden="true"
+                                >
+                                  {row.entry.emoji}
+                                </span>
+                                <span
+                                  role="status"
+                                  tabIndex={isLiveNow ? 0 : undefined}
+                                  onMouseEnter={() => {
+                                    if (isLiveNow)
+                                      setHoveredLiveStatusKey(dotHoverKey);
+                                  }}
+                                  onMouseLeave={() => {
+                                    if (hoveredLiveStatusKey === dotHoverKey)
+                                      setHoveredLiveStatusKey(null);
+                                  }}
+                                  onFocus={() => {
+                                    if (isLiveNow)
+                                      setHoveredLiveStatusKey(dotHoverKey);
+                                  }}
+                                  onBlur={() => {
+                                    if (hoveredLiveStatusKey === dotHoverKey)
+                                      setHoveredLiveStatusKey(null);
+                                  }}
+                                  aria-label={
+                                    isLiveNow
+                                      ? liveTooltipText
+                                      : row.entry.paused
+                                        ? 'Sharing paused'
+                                        : memberTodayMins > 0
+                                          ? 'Studied today'
+                                          : 'Idle today'
+                                  }
+                                  title={
+                                    isLiveNow
+                                      ? liveTooltipText
+                                      : row.entry.paused
+                                        ? 'Sharing paused'
+                                        : memberTodayMins > 0
+                                          ? `Studied ${formatMinutesAsHoursMins(memberTodayMins)} today`
+                                          : 'No study logged yet today'
+                                  }
+                                  style={{
+                                    position: 'absolute',
+                                    right: -2,
+                                    bottom: -2,
+                                    width: 11,
+                                    height: 11,
+                                    borderRadius: '50%',
+                                    background: isLiveNow
+                                      ? '#10b981'
+                                      : row.entry.paused
+                                        ? '#f59e0b'
+                                        : memberTodayMins > 0
+                                          ? '#38bdf8'
+                                          : 'var(--bd)',
+                                    border: '2px solid var(--card)',
+                                    boxShadow: isLiveNow
+                                      ? '0 0 0 2px rgba(16, 185, 129, 0.3)'
+                                      : 'none',
+                                    cursor: isLiveNow ? 'help' : 'default',
+                                  }}
+                                />
+                                {isLiveNow &&
+                                  hoveredLiveStatusKey === dotHoverKey && (
+                                    <div
+                                      role="tooltip"
+                                      className="mono"
+                                      style={{
+                                        position: 'absolute',
+                                        bottom: 'calc(100% + 6px)',
+                                        left: 0,
+                                        zIndex: 30,
+                                        whiteSpace: 'nowrap',
+                                        background: 'var(--card)',
+                                        color: 'var(--tx)',
+                                        border:
+                                          '1px solid rgba(16, 185, 129, 0.5)',
+                                        boxShadow:
+                                          '0 6px 18px rgba(0, 0, 0, 0.28)',
+                                        padding: '4px 8px',
+                                        borderRadius: 6,
+                                        fontSize: 11,
+                                        fontWeight: 700,
+                                        pointerEvents: 'none',
+                                      }}
+                                    >
+                                      {liveTooltipText}
+                                    </div>
+                                  )}
+                              </div>
+
                               <div style={{ minWidth: 0 }}>
                                 <div
                                   className="row"
@@ -2422,14 +3003,82 @@ export const GroupsView: React.FC<GroupsViewProps> = ({
                                     {isMe ? ' (You)' : ''}
                                   </b>
                                   {isLiveNow && (
-                                    <small
+                                    <span
+                                      title={liveTooltipText}
+                                      aria-label={liveTooltipText}
+                                      onMouseEnter={() =>
+                                        setHoveredLiveStatusKey(badgeHoverKey)
+                                      }
+                                      onMouseLeave={() => {
+                                        if (
+                                          hoveredLiveStatusKey === badgeHoverKey
+                                        )
+                                          setHoveredLiveStatusKey(null);
+                                      }}
                                       style={{
+                                        position: 'relative',
+                                        display: 'inline-flex',
+                                        alignItems: 'center',
+                                        gap: 4,
                                         color: '#10b981',
+                                        background: 'rgba(16, 185, 129, 0.12)',
+                                        border:
+                                          '1px solid rgba(16, 185, 129, 0.3)',
+                                        padding: '1px 7px',
+                                        borderRadius: 6,
                                         fontWeight: 700,
-                                        fontSize: 11,
+                                        fontSize: 10.5,
+                                        cursor: 'help',
                                       }}
                                     >
-                                      · 🟢 Live
+                                      <span
+                                        aria-hidden="true"
+                                        style={{
+                                          width: 6,
+                                          height: 6,
+                                          borderRadius: '50%',
+                                          background: '#10b981',
+                                        }}
+                                      />
+                                      Studying now
+                                      {hoveredLiveStatusKey ===
+                                        badgeHoverKey && (
+                                        <span
+                                          role="tooltip"
+                                          className="mono"
+                                          style={{
+                                            position: 'absolute',
+                                            bottom: 'calc(100% + 6px)',
+                                            left: 0,
+                                            zIndex: 30,
+                                            whiteSpace: 'nowrap',
+                                            background: 'var(--card)',
+                                            color: 'var(--tx)',
+                                            border:
+                                              '1px solid rgba(16, 185, 129, 0.5)',
+                                            boxShadow:
+                                              '0 6px 18px rgba(0, 0, 0, 0.28)',
+                                            padding: '4px 8px',
+                                            borderRadius: 6,
+                                            fontSize: 11,
+                                            fontWeight: 700,
+                                            pointerEvents: 'none',
+                                          }}
+                                        >
+                                          {liveTooltipText}
+                                        </span>
+                                      )}
+                                    </span>
+                                  )}
+                                  {!isLiveNow && row.entry.paused && (
+                                    <small
+                                      style={{
+                                        color: '#f59e0b',
+                                        fontWeight: 600,
+                                        fontSize: 10.5,
+                                      }}
+                                    >
+                                      · Paused
                                     </small>
                                   )}
                                   {isPaceTarget && (

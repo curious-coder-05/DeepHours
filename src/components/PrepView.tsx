@@ -150,7 +150,12 @@ export const PrepView: React.FC<PrepViewProps> = ({
     const baseDate = ch.completedOn || todayKey;
     const intervals = state.set.revisionIntervals || [1, 3, 7, 21];
     const existingDates = (ch.revisions || []).map((r) => r.date);
-    const suggested = suggestRevisionDates(baseDate, intervals, existingDates);
+    const suggested = suggestRevisionDates(
+      baseDate,
+      intervals,
+      existingDates,
+      state.set.dayResetHour ?? 4
+    );
     setSuggestedRevDrafts((prev) => ({
       ...prev,
       [ch.id]: suggested,

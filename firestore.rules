@@ -38,6 +38,10 @@ service cloud.firestore {
       allow create, update: if signedIn()
         && request.auth.uid == userId
         && coll in ['meta', 'months']
+        && (
+          (coll == 'meta' && docId.matches('^(index|core|habits|syllabus|mocks|mistakes|doubts|pyq|tasks)(__[0-9]{1,2})?$'))
+          || (coll == 'months' && docId.matches('^[0-9]{4}-[0-9]{2}(__[0-9]{1,2})?$'))
+        )
         && request.resource.data.updatedAt is number
         && request.resource.size() < 800000;
     }
@@ -175,7 +179,10 @@ service cloud.firestore {
       match /cheers/{cheerId} {
         allow read: if signedIn()
           && (resource.data.to == request.auth.uid || resource.data.from == request.auth.uid);
-        allow create, update: if signedIn()
+        allow create: if signedIn()
+          && exists(/databases/$(database)/documents/groups/$(groupId))
+          && request.auth.uid in get(/databases/$(database)/documents/groups/$(groupId)).data.members
+          && request.resource.data.to in get(/databases/$(database)/documents/groups/$(groupId)).data.members
           && request.resource.size() < 1024
           && request.resource.data.keys().hasAll(['from','to','fromNick','dayKey','e','ts'])
           && request.resource.data.keys().hasOnly(['from','to','fromNick','dayKey','e','ts'])

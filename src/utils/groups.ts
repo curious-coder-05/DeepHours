@@ -293,7 +293,7 @@ export function sanitizeRemoteMemberEntry(
       if (typeof v !== 'number' && typeof v !== 'string') continue;
       const num = Number(v);
       if (!Number.isFinite(num)) continue;
-      days[dk] = clampInt(num, 0, 1440, 0);
+      days[dk] = clampInt(num, 0, 960, 0);
     }
   }
 
@@ -305,7 +305,7 @@ export function sanitizeRemoteMemberEntry(
       if (typeof v !== 'number' && typeof v !== 'string') continue;
       const num = Number(v);
       if (!Number.isFinite(num)) continue;
-      xpDays[dk] = clampInt(num, 0, 3000, 0);
+      xpDays[dk] = clampInt(num, 0, 2000, 0);
     }
   }
 
@@ -1211,8 +1211,16 @@ interface DailyBudgetState {
   pausedUntilDayKey?: string;
 }
 
+export function getLocalDateKey(ts = Date.now()): string {
+  const d = new Date(ts);
+  const y = d.getFullYear();
+  const m = String(d.getMonth() + 1).padStart(2, '0');
+  const day = String(d.getDate()).padStart(2, '0');
+  return `${y}-${m}-${day}`;
+}
+
 function getUtcDayKey(ts = Date.now()): string {
-  return new Date(ts).toISOString().slice(0, 10);
+  return getLocalDateKey(ts);
 }
 
 function loadBudgetState(now = Date.now()): DailyBudgetState {
@@ -1716,6 +1724,59 @@ export async function joinGroupInCloud(params: {
   return { groupId, groupDoc: updatedGroup };
 }
 
+export async function deleteMySentCheersInGroup(params: {
+  groupId: string;
+  budget: GroupPublishBudgetController;
+  uid?: string;
+  fetchSentCheerIds?: (
+    groupId: string,
+    uid: string,
+    maxLimit: number
+  ) => Promise<string[]>;
+  deleteCheerById?: (groupId: string, cheerId: string) => Promise<void>;
+}): Promise<number> {
+  const uid = params.uid || auth?.currentUser?.uid;
+  if (!uid) return 0;
+  if (!params.budget.canRead(1) || !params.budget.canWrite(1)) return 0;
+
+  let deleted = 0;
+  try {
+    let cheerIds: string[] = [];
+    if (params.fetchSentCheerIds) {
+      cheerIds = (await params.fetchSentCheerIds(params.groupId, uid, 20)).slice(
+        0,
+        20
+      );
+      params.budget.recordRead(1);
+    } else {
+      if (!db) return 0;
+      const qSent = query(
+        collection(db, 'groups', params.groupId, 'cheers'),
+        where('from', '==', uid),
+        limit(20)
+      );
+      const snap = await getDocs(qSent);
+      params.budget.recordRead(1);
+      cheerIds = snap.docs.slice(0, 20).map((d) => d.id);
+    }
+
+    for (const cheerId of cheerIds) {
+      if (!params.budget.canWrite(1)) break;
+      if (params.deleteCheerById) {
+        await params.deleteCheerById(params.groupId, cheerId);
+      } else if (db) {
+        await deleteDoc(doc(db, 'groups', params.groupId, 'cheers', cheerId));
+      }
+      params.budget.recordWrite(1);
+      deleted += 1;
+      if (deleted >= 20) break;
+    }
+  } catch {
+    // Best-effort cleanup; ignore errors
+  }
+  return deleted;
+}
+
 export async function leaveGroupInCloud(params: {
   groupId: string;
   budget: GroupPublishBudgetController;
@@ -1731,6 +1792,11 @@ export async function leaveGroupInCloud(params: {
     });
     params.budget.recordWrite(1);
   }
+  await deleteMySentCheersInGroup({
+    groupId: params.groupId,
+    budget: params.budget,
+    uid: user.uid,
+  });
   removeCachedGroupSnapshot(params.groupId);
 }
 
@@ -1996,19 +2062,28 @@ export async function ownerCloseGroupInCloud(params: {
 
   await deleteDoc(doc(db, 'groups', params.groupId));
   params.budget.recordWrite(1);
+  await deleteMySentCheersInGroup({
+    groupId: params.groupId,
+    budget: params.budget,
+    uid: user.uid,
+  });
   removeCachedGroupSnapshot(params.groupId);
 }
 
 /**
  * Called by "Delete my cloud data" in MoreView / App.tsx (Milestone 2.7):
- * Removes the user's entry from all joined groups and deletes any group owned by the user.
+ * Removes the user's entry from all joined groups, deletes any group owned by the user,
+ * and best-effort deletes up to 20 sent cheers per group within budget limits.
  */
 export async function cleanupUserGroupsOnCloudDelete(
-  state: PulseHabitState
+  state: PulseHabitState,
+  budget?: GroupPublishBudgetController
 ): Promise<void> {
   const user = auth?.currentUser;
   if (!user || !db) return;
 
+  const activeBudget =
+    budget || new GroupPublishBudgetController(async () => {});
   const joined = state.groupsConfig?.joined || [];
   const cachedAll = loadCachedGroupSnapshots();
 
@@ -2018,22 +2093,37 @@ export async function cleanupUserGroupsOnCloudDelete(
     try {
       const ref = doc(db, 'groups', gid);
       let ownerUid: string | undefined = cachedAll[gid]?.doc?.ownerUid;
-      if (!ownerUid) {
+      if (!ownerUid && activeBudget.canRead(1)) {
         const snap = await getDoc(ref);
+        activeBudget.recordRead(1);
         if (!snap.exists()) {
+          await deleteMySentCheersInGroup({
+            groupId: gid,
+            budget: activeBudget,
+            uid: user.uid,
+          });
           removeCachedGroupSnapshot(gid);
           continue;
         }
         ownerUid = (snap.data() as { ownerUid?: string })?.ownerUid;
       }
-      if (ownerUid === user.uid) {
-        await deleteDoc(ref);
-      } else {
-        await updateDoc(ref, {
-          [`members.${user.uid}`]: deleteField(),
-          updatedAt: Date.now(),
-        });
+      if (activeBudget.canWrite(1)) {
+        if (ownerUid === user.uid) {
+          await deleteDoc(ref);
+          activeBudget.recordWrite(1);
+        } else {
+          await updateDoc(ref, {
+            [`members.${user.uid}`]: deleteField(),
+            updatedAt: Date.now(),
+          });
+          activeBudget.recordWrite(1);
+        }
       }
+      await deleteMySentCheersInGroup({
+        groupId: gid,
+        budget: activeBudget,
+        uid: user.uid,
+      });
     } catch {
       // Continue cleaning remaining groups
     } finally {

@@ -53,10 +53,13 @@ import {
 import {
   SyncBudgetController,
   detectDirtyDocKeys,
+  getLocalCalendarDateKey,
+  getSyncTodayWrites,
   mergeEntityCollectionsLWW,
   mergeStateWithCloudDocs,
   partitionStateToCloudDocs,
   sanitizeForFirestore,
+  saveSyncOutboxMeta,
 } from './cloudSync.ts';
 import {
   computeDayXpBreakdown,
@@ -72,9 +75,11 @@ import {
   computeCompletedWeekStandings,
   computeMemberMedals,
   computeWeeklyGroupGoalProgress,
+  deleteMySentCheersInGroup,
   formatGroupCode,
   generateGroupId,
   getActiveStudyingNowMembers,
+  getLocalDateKey,
   hashMemberEntry,
   isValidGroupCode,
   makeCheerId,
@@ -89,6 +94,7 @@ import {
   sanitizeRemoteMemberEntry,
   validateNickname,
 } from './groups.ts';
+import { getLocalDownloadDate } from '../components/ErrorBoundary.tsx';
 
 describe('Part C: Deep Hours NEET Study & Habit Logger Unit Tests', () => {
   it('1. logicalKey around midnight and the reset hour (04:00 AM)', () => {
@@ -1801,11 +1807,11 @@ describe('Part C: Deep Hours NEET Study & Habit Logger Unit Tests', () => {
     const sanitized = sanitizeRemoteMemberEntry(adversarialRaw, todayKey)!;
     assert.ok(sanitized);
     assert.equal(sanitized.nick.length, 20);
-    assert.equal(sanitized.days?.['2026-10-30'], 1440);
+    assert.equal(sanitized.days?.['2026-10-30'], 960);
     assert.equal(sanitized.days?.['2026-10-29'], 0);
     assert.equal(sanitized.days?.['2026-01-01'], undefined);
     assert.equal(sanitized.days?.['not-a-date'], undefined);
-    assert.equal(sanitized.xpDays?.['2026-10-30'], 3000);
+    assert.equal(sanitized.xpDays?.['2026-10-30'], 2000);
     assert.equal(sanitized.xpTotal, 10_000_000);
     assert.equal(sanitized.streak, 3650);
     assert.equal(sanitized.consistency, 100);
@@ -2070,6 +2076,185 @@ describe('Part C: Deep Hours NEET Study & Habit Logger Unit Tests', () => {
     assert.deepEqual(oldState.profile, { nick: '', emoji: '🧬' });
     assert.deepEqual(oldState.groupHistory, {});
     assert.deepEqual(oldState.groupsConfig, { consentAccepted: false, joined: [] });
+  });
+
+  it('29. Security & Hardening: new 960/2000 clamps, local-date & logicalKey fixes, firestore.rules docId regexes (__2 chunks), and sent-cheer cleanup budget', async (t) => {
+    // 1. New clamps in sanitizeRemoteMemberEntry (days: 0..960, xpDays: 0..2000, other clamps preserved)
+    const todayKey = '2026-10-30';
+    const clamped = sanitizeRemoteMemberEntry(
+      {
+        nick: 'ClampTester',
+        emoji: '🩺',
+        joinedAt: 1000,
+        updatedAt: 2000,
+        sh: DEFAULT_SHARING_FLAGS,
+        days: {
+          '2026-10-30': 1440,
+          '2026-10-29': 960,
+          '2026-10-28': -10,
+        },
+        xpDays: {
+          '2026-10-30': 3000,
+          '2026-10-29': 2000,
+          '2026-10-28': -5,
+        },
+        xpTotal: 15_000_000,
+        streak: 5000,
+        consistency: 120,
+      },
+      todayKey
+    )!;
+    assert.equal(clamped.days?.['2026-10-30'], 960);
+    assert.equal(clamped.days?.['2026-10-29'], 960);
+    assert.equal(clamped.days?.['2026-10-28'], 0);
+    assert.equal(clamped.xpDays?.['2026-10-30'], 2000);
+    assert.equal(clamped.xpDays?.['2026-10-29'], 2000);
+    assert.equal(clamped.xpDays?.['2026-10-28'], 0);
+    assert.equal(clamped.xpTotal, 10_000_000);
+    assert.equal(clamped.streak, 3650);
+    assert.equal(clamped.consistency, 100);
+
+    // 2. Local-date & logicalKey fixes in pace.ts, cloudSync.ts, groups.ts, and ErrorBoundary.tsx
+    t.mock.timers.enable({ apis: ['Date'] });
+    // Set mock time to local 2026-10-25 02:30:00 (before 4 AM dayResetHour -> logical day is 2026-10-24, local calendar date is 2026-10-25)
+    const local0230 = new Date(2026, 9, 25, 2, 30, 0);
+    t.mock.timers.setTime(local0230.getTime());
+
+    // pace.ts suggestRevisionDates fallback uses logicalKey(new Date(), dayResetHour)
+    const chWithoutCompletedOn: Chapter = {
+      id: 'ch_fallback',
+      subjectId: 'sub_phy',
+      name: 'Thermodynamics',
+      status: 'completed',
+      revisions: [],
+    };
+    const revFromCh = suggestRevisionDates(chWithoutCompletedOn, [1, 3], [], 4);
+    // At 02:30 AM with dayResetHour=4, logicalKey is '2026-10-24' -> +1d is '2026-10-25', +3d is '2026-10-27'
+    assert.deepEqual(revFromCh, ['2026-10-25', '2026-10-27']);
+    const revFromInvalidStr = suggestRevisionDates('invalid-date', [1, 3], [], 4);
+    assert.deepEqual(revFromInvalidStr, ['2026-10-25', '2026-10-27']);
+    // With dayResetHour=0, logicalKey at 02:30 AM is '2026-10-25' -> +1d is '2026-10-26', +3d is '2026-10-28'
+    const revReset0 = suggestRevisionDates('invalid-date', [1, 3], [], 0);
+    assert.deepEqual(revReset0, ['2026-10-26', '2026-10-28']);
+
+    // Local calendar date helpers in cloudSync.ts, groups.ts, and ErrorBoundary.tsx
+    assert.equal(getLocalCalendarDateKey(local0230.getTime()), '2026-10-25');
+    assert.equal(getLocalDateKey(local0230.getTime()), '2026-10-25');
+    assert.equal(getLocalDownloadDate(local0230), '2026-10-25');
+
+    saveSyncOutboxMeta({
+      dirtyDocs: [],
+      lastPushTs: 0,
+      lastPullTs: 0,
+      knownRemoteDocTs: {},
+      dailyWritesDayKey: '2026-10-25',
+      dailyWritesCount: 17,
+      quotaPausedUntilDayKey: null,
+      firstSignInMergedUids: [],
+    });
+    assert.equal(getSyncTodayWrites(local0230.getTime()), 17);
+
+    // 3. Plain regex tests on the strings used for meta and months doc IDs in firestore.rules (including __2 chunks)
+    const metaDocIdRegex =
+      /^(index|core|habits|syllabus|mocks|mistakes|doubts|pyq|tasks)(__[0-9]{1,2})?$/;
+    const monthsDocIdRegex = /^[0-9]{4}-[0-9]{2}(__[0-9]{1,2})?$/;
+
+    const sampleState = createBlankState();
+    for (let i = 0; i < 15; i++) {
+      sampleState.tasks.push(
+        createDailyTask(`Chunk Task ${i}`, '2026-10-25', 'sub_phy', 1000 + i)!
+      );
+      sampleState.sessions.push({
+        id: `ses_${i}`,
+        subjectId: 'sub_phy',
+        heading: `Session ${i}`,
+        dayKey: '2026-10-25',
+        startTs: 1000,
+        endTs: 2000,
+        activeMs: 60000,
+        pausedMs: 0,
+        pauseCount: 0,
+        overtimeMs: 0,
+        purity: 100,
+        mode: 'pomo',
+        rating: 5,
+        note: 'x'.repeat(80),
+        updatedAt: 2000,
+      });
+    }
+    // Force chunking with small maxBytes (500 bytes) so __2, __3 chunks are generated for both meta/* and months/*
+    const chunkedPartition = partitionStateToCloudDocs(sampleState, 2000, 500);
+    const allGeneratedKeys = ['meta/index', ...Object.keys(chunkedPartition.docs)];
+    assert.ok(allGeneratedKeys.some((k) => k === 'meta/tasks__2'));
+    assert.ok(allGeneratedKeys.some((k) => k === 'months/2026-10__2'));
+
+    for (const fullKey of allGeneratedKeys) {
+      const [coll, docId] = fullKey.split('/');
+      if (coll === 'meta') {
+        assert.equal(
+          metaDocIdRegex.test(docId),
+          true,
+          `Expected meta docId "${docId}" to match firestore.rules regex`
+        );
+      } else if (coll === 'months') {
+        assert.equal(
+          monthsDocIdRegex.test(docId),
+          true,
+          `Expected months docId "${docId}" to match firestore.rules regex`
+        );
+      } else {
+        assert.fail(`Unexpected collection "${coll}"`);
+      }
+    }
+
+    // Negative regex checks
+    for (const badMetaId of ['unknown', 'core__', 'habits__100', 'habits_2', '2026-10']) {
+      assert.equal(metaDocIdRegex.test(badMetaId), false);
+    }
+    for (const badMonthId of ['2026-1', '2026-10-01', '2026-10__', '2026-10__100', 'core']) {
+      assert.equal(monthsDocIdRegex.test(badMonthId), false);
+    }
+
+    // 4. Cheer cleanup budget (deleteMySentCheersInGroup: max 20 per group, respects read/write budget)
+    const budgetFull = new GroupPublishBudgetController(async () => {});
+    const deletedIds1: string[] = [];
+    const count1 = await deleteMySentCheersInGroup({
+      groupId: 'GRP2345678',
+      budget: budgetFull,
+      uid: 'uid_me',
+      fetchSentCheerIds: async () =>
+        Array.from({ length: 25 }, (_, i) => `cheer_${i + 1}`),
+      deleteCheerById: async (_gid, cid) => {
+        deletedIds1.push(cid);
+      },
+    });
+    // Capped at 20 cheers per group even if 25 exist; records 1 read and 20 writes
+    assert.equal(count1, 20);
+    assert.equal(deletedIds1.length, 20);
+    assert.equal(budgetFull.getReadsToday(), 1);
+    assert.equal(budgetFull.getWritesToday(), 20);
+
+    // When only 4 writes remain before hitting the 60/day cap, deletes only 4 cheers and stops
+    const budgetTight = new GroupPublishBudgetController(async () => {});
+    budgetTight.recordWrite(56 - budgetTight.getWritesToday()); // 56 writes used -> 4 writes left
+    const deletedIds2: string[] = [];
+    const count2 = await deleteMySentCheersInGroup({
+      groupId: 'GRP2345678',
+      budget: budgetTight,
+      uid: 'uid_me',
+      fetchSentCheerIds: async () =>
+        Array.from({ length: 15 }, (_, i) => `cheer_tight_${i + 1}`),
+      deleteCheerById: async (_gid, cid) => {
+        deletedIds2.push(cid);
+      },
+    });
+    assert.equal(count2, 4);
+    assert.equal(deletedIds2.length, 4);
+    assert.equal(budgetTight.getWritesToday(), 60);
+    assert.equal(budgetTight.canWrite(1), false);
+
+    budgetFull.dispose();
+    budgetTight.dispose();
   });
 });
 

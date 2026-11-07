@@ -1,5 +1,5 @@
 import type { Chapter, DDay, PulseHabitState } from '../types';
-import { addD, getSubject, parseD } from './studyLogic.ts';
+import { addD, getSubject, logicalKey, parseD } from './studyLogic.ts';
 
 export type PaceStatus = 'ahead' | 'behind' | 'on track' | 'no-exam' | 'past-exam' | 'no-chapters' | 'completed';
 
@@ -456,8 +456,15 @@ export function computeStudyNext(
 export function suggestRevisionDates(
   baseDateOrChapter: string | Chapter,
   intervalsOrBaseDate: number[] | string = [1, 3, 7, 21],
-  existingDatesOrIntervals: string[] | number[] = []
+  existingDatesOrIntervals: string[] | number[] | number = [],
+  dayResetHour = 4
 ): string[] {
+  const resolvedResetHour =
+    typeof existingDatesOrIntervals === 'number' && Number.isFinite(existingDatesOrIntervals)
+      ? existingDatesOrIntervals
+      : typeof dayResetHour === 'number' && Number.isFinite(dayResetHour)
+        ? dayResetHour
+        : 4;
   let baseDateKey: string;
   let intervals: number[];
   let existingDates: string[];
@@ -466,10 +473,13 @@ export function suggestRevisionDates(
     baseDateKey =
       typeof intervalsOrBaseDate === 'string'
         ? intervalsOrBaseDate
-        : baseDateOrChapter.completedOn || new Date().toISOString().slice(0, 10);
-    intervals = Array.isArray(existingDatesOrIntervals)
-      ? (existingDatesOrIntervals as number[])
-      : [1, 3, 7, 21];
+        : baseDateOrChapter.completedOn || logicalKey(new Date(), resolvedResetHour);
+    intervals =
+      Array.isArray(existingDatesOrIntervals) && existingDatesOrIntervals.length > 0
+        ? (existingDatesOrIntervals as number[])
+        : Array.isArray(intervalsOrBaseDate) && intervalsOrBaseDate.length > 0
+          ? intervalsOrBaseDate
+          : [1, 3, 7, 21];
     existingDates = (baseDateOrChapter.revisions || []).map((r) => r.date);
   } else {
     baseDateKey = baseDateOrChapter;
@@ -481,7 +491,7 @@ export function suggestRevisionDates(
 
   const cleanBase = /^\d{4}-\d{2}-\d{2}$/.test(baseDateKey)
     ? baseDateKey
-    : new Date().toISOString().slice(0, 10);
+    : logicalKey(new Date(), resolvedResetHour);
   const existingSet = new Set(existingDates);
   const cleanIntervals =
     Array.isArray(intervals) && intervals.length > 0 ? intervals : [1, 3, 7, 21];
