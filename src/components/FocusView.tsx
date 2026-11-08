@@ -1,4 +1,13 @@
-import React, { useEffect, useState } from 'react';
+import React, { useEffect, useMemo, useState } from 'react';
+import {
+  Bar,
+  BarChart,
+  ReferenceLine,
+  ResponsiveContainer,
+  Tooltip,
+  XAxis,
+  YAxis,
+} from 'recharts';
 import type { ActiveTimerMode, PulseHabitState, SoundscapeMode } from '../types';
 import {
   fmtClockTime,
@@ -239,6 +248,68 @@ export const FocusView: React.FC<FocusViewProps> = ({
   };
 
   const progressPct = m ? Math.min(100, Math.max(2, m.progressPct)) : 0;
+
+  // Current study session duration vs target data for the Recharts visualization
+  const sessionChartMetrics = useMemo(() => {
+    const activeMs = m ? m.totalActiveMs : 0;
+    const elapsedMins = Math.round((activeMs / 60000) * 10) / 10;
+
+    let rawTargetMs = 0;
+    if (t && t.mode !== 'stopwatch' && (t.targetMs || 0) > 0) {
+      rawTargetMs = t.targetMs;
+    } else if (mode === 'pomo') {
+      rawTargetMs = (state.set.pomoWork || 25) * 60000;
+    } else if (mode === 'countdown') {
+      rawTargetMs = (customCountdownMins || state.set.countdownMins || 45) * 60000;
+    } else if (mode === 'fullMock') {
+      rawTargetMs = (state.set.fullMockMins || 200) * 60000;
+    } else {
+      // Stopwatch pace reference (next 30m/60m milestone)
+      const baseMins = Math.max(60, Math.ceil((elapsedMins + 0.1) / 30) * 30);
+      rawTargetMs = baseMins * 60000;
+    }
+
+    const targetMins = Math.max(1, Math.round((rawTargetMs / 60000) * 10) / 10);
+    const remainingMins = Math.max(
+      0,
+      Math.round((targetMins - elapsedMins) * 10) / 10
+    );
+    const overtimeMins = Math.max(
+      0,
+      Math.round((elapsedMins - targetMins) * 10) / 10
+    );
+    const domainMax = Math.max(targetMins, elapsedMins, 1);
+    const pctOfTarget = Math.min(
+      999,
+      Math.round((activeMs / Math.max(60000, rawTargetMs)) * 100)
+    );
+
+    return {
+      activeMs,
+      elapsedMins,
+      targetMins,
+      remainingMins,
+      overtimeMins,
+      domainMax,
+      pctOfTarget,
+      data: [
+        {
+          name: 'Session',
+          elapsed: elapsedMins,
+          remaining: remainingMins,
+          target: targetMins,
+        },
+      ],
+    };
+  }, [
+    m,
+    t,
+    mode,
+    state.set.pomoWork,
+    state.set.countdownMins,
+    state.set.fullMockMins,
+    customCountdownMins,
+  ]);
 
   return (
     <div>
@@ -617,6 +688,115 @@ export const FocusView: React.FC<FocusViewProps> = ({
             FLOW OVERTIME +{fmtMS(m.overtimeMs)}
           </div>
         )}
+
+        {/* Recharts Current Study Session Duration vs Target Progress Chart */}
+        <div
+          aria-label="Current study session duration vs target chart"
+          style={{
+            width: '100%',
+            maxWidth: '380px',
+            margin: '8px auto 10px',
+            padding: '8px 12px',
+            borderRadius: '12px',
+            background: 'color-mix(in srgb, var(--c2) 78%, transparent)',
+            border: '1px solid var(--bd)',
+          }}
+        >
+          <div
+            className="row sp"
+            style={{ marginBottom: '4px', fontSize: '11.5px', gap: '8px' }}
+          >
+            <span className="mut" style={{ fontWeight: 600 }}>
+              Session vs Target
+            </span>
+            <span
+              className="mono"
+              style={{
+                fontWeight: 700,
+                fontVariantNumeric: 'tabular-nums',
+                color:
+                  m?.status === 'paused'
+                    ? 'var(--am)'
+                    : sessionChartMetrics.overtimeMins > 0
+                      ? 'var(--em)'
+                      : 'var(--tx)',
+              }}
+            >
+              {fmtMS(sessionChartMetrics.activeMs)} / {sessionChartMetrics.targetMins}m (
+              {sessionChartMetrics.pctOfTarget}%)
+            </span>
+          </div>
+          <div style={{ width: '100%', height: 42 }}>
+            <ResponsiveContainer width="100%" height="100%">
+              <BarChart
+                data={sessionChartMetrics.data}
+                layout="vertical"
+                margin={{ top: 4, right: 8, bottom: 4, left: 8 }}
+              >
+                <XAxis
+                  type="number"
+                  domain={[0, sessionChartMetrics.domainMax]}
+                  hide
+                />
+                <YAxis type="category" dataKey="name" hide />
+                <Tooltip
+                  cursor={{ fill: 'transparent' }}
+                  contentStyle={{
+                    background: 'var(--card)',
+                    border: '1px solid var(--bd)',
+                    borderRadius: '8px',
+                    fontSize: '11px',
+                    padding: '4px 8px',
+                    color: 'var(--tx)',
+                  }}
+                  formatter={(value, name) => [
+                    `${Number(value ?? 0)} min`,
+                    name === 'elapsed' ? 'Elapsed' : 'Remaining to target',
+                  ]}
+                  labelFormatter={() =>
+                    `Target: ${sessionChartMetrics.targetMins} min (${sessionChartMetrics.pctOfTarget}%)`
+                  }
+                />
+                <Bar
+                  dataKey="elapsed"
+                  stackId="session"
+                  fill={
+                    m?.status === 'paused'
+                      ? '#f59e0b'
+                      : sessionChartMetrics.overtimeMins > 0
+                        ? '#10b981'
+                        : accentColor
+                  }
+                  radius={
+                    sessionChartMetrics.remainingMins <= 0
+                      ? [6, 6, 6, 6]
+                      : [6, 0, 0, 6]
+                  }
+                  barSize={14}
+                  isAnimationActive={false}
+                />
+                <Bar
+                  dataKey="remaining"
+                  stackId="session"
+                  fill="rgba(148, 163, 184, 0.22)"
+                  radius={
+                    sessionChartMetrics.elapsedMins <= 0
+                      ? [6, 6, 6, 6]
+                      : [0, 6, 6, 0]
+                  }
+                  barSize={14}
+                  isAnimationActive={false}
+                />
+                <ReferenceLine
+                  x={sessionChartMetrics.targetMins}
+                  stroke="#38bdf8"
+                  strokeDasharray="3 3"
+                  strokeWidth={1.5}
+                />
+              </BarChart>
+            </ResponsiveContainer>
+          </div>
+        </div>
 
         {t && m && m.status === 'running' && (
           <div

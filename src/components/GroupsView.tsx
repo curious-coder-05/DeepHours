@@ -1,4 +1,12 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import {
+  Bar,
+  BarChart,
+  ResponsiveContainer,
+  Tooltip,
+  XAxis,
+  YAxis,
+} from 'recharts';
 import type {
   GroupSharingFlags,
   GroupsUserConfig,
@@ -132,9 +140,47 @@ export interface LeaderboardProps {
   onRefresh?: () => void | Promise<void>;
   isRefreshing?: boolean;
   lastUpdatedAt?: number | null;
+  previousRanks?: Record<string, number | null>;
 }
 
 export type WeeklyStudyLeaderboardProps = LeaderboardProps;
+
+export interface RankTrendInfo {
+  direction: 'up' | 'down' | 'same' | 'none';
+  delta: number;
+  previousRank: number | null;
+}
+
+export function computeRankDelta(
+  previousRank: number | null | undefined,
+  currentRank: number | null | undefined
+): RankTrendInfo {
+  if (
+    typeof previousRank !== 'number' ||
+    typeof currentRank !== 'number' ||
+    !Number.isFinite(previousRank) ||
+    !Number.isFinite(currentRank) ||
+    previousRank <= 0 ||
+    currentRank <= 0
+  ) {
+    return { direction: 'none', delta: 0, previousRank: null };
+  }
+  if (currentRank < previousRank) {
+    return {
+      direction: 'up',
+      delta: previousRank - currentRank,
+      previousRank,
+    };
+  }
+  if (currentRank > previousRank) {
+    return {
+      direction: 'down',
+      delta: currentRank - previousRank,
+      previousRank,
+    };
+  }
+  return { direction: 'same', delta: 0, previousRank };
+}
 
 function isMemberStudyingNow(entry: MemberEntry, nowTs: number): boolean {
   return Boolean(
@@ -177,6 +223,118 @@ function getStudyingNowTooltipText(
   return `Studying now — Current session: ${exactDuration}`;
 }
 
+export interface TimeOfDayBadgeInfo {
+  type: 'earlyBird' | 'nightOwl';
+  label: 'Early Bird' | 'Night Owl';
+  emoji: '🌅' | '🦉';
+  hour: number;
+  tooltip: string;
+}
+
+export function getMemberTimeOfDayBadge(
+  entry: MemberEntry | undefined,
+  latestSessionTs?: number
+): TimeOfDayBadgeInfo | null {
+  if (!entry || entry.paused) return null;
+
+  const hasLoggedStudy =
+    Boolean(entry.live && entry.live.since > 0) ||
+    Object.values(entry.days || {}).some((mins) => (Number(mins) || 0) > 0);
+
+  const candidateTs =
+    typeof latestSessionTs === 'number' &&
+    Number.isFinite(latestSessionTs) &&
+    latestSessionTs > 0
+      ? latestSessionTs
+      : typeof entry.live?.since === 'number' &&
+          Number.isFinite(entry.live.since) &&
+          entry.live.since > 0
+        ? entry.live.since
+        : hasLoggedStudy &&
+            typeof entry.updatedAt === 'number' &&
+            Number.isFinite(entry.updatedAt) &&
+            entry.updatedAt > 0
+          ? entry.updatedAt
+          : 0;
+
+  if (!candidateTs || candidateTs <= 0) return null;
+
+  const dt = new Date(candidateTs);
+  const hour = dt.getHours();
+  if (!Number.isFinite(hour)) return null;
+
+  const timeFormatted = dt.toLocaleTimeString([], {
+    hour: 'numeric',
+    minute: '2-digit',
+  });
+
+  if (hour < 8) {
+    return {
+      type: 'earlyBird',
+      label: 'Early Bird',
+      emoji: '🌅',
+      hour,
+      tooltip: `Early Bird — Latest study session at ${timeFormatted} (before 8 AM)`,
+    };
+  }
+
+  if (hour >= 23) {
+    return {
+      type: 'nightOwl',
+      label: 'Night Owl',
+      emoji: '🦉',
+      hour,
+      tooltip: `Night Owl — Latest study session at ${timeFormatted} (after 11 PM)`,
+    };
+  }
+
+  return null;
+}
+
+export interface MemberConsistencyDayPoint {
+  dayKey: string;
+  label: string;
+  minutes: number;
+}
+
+export function buildMemberLast7DaysConsistencyData(
+  entry: MemberEntry | undefined,
+  todayKey: string
+): {
+  days: MemberConsistencyDayPoint[];
+  activeDaysCount: number;
+  totalMinutes: number;
+  consistencyPct: number;
+} {
+  const days: MemberConsistencyDayPoint[] = [];
+  let activeDaysCount = 0;
+  let totalMinutes = 0;
+
+  for (let i = 6; i >= 0; i--) {
+    const dk = addD(todayKey, -i);
+    const mins = Math.max(0, Math.round(Number(entry?.days?.[dk]) || 0));
+    if (mins > 0) activeDaysCount += 1;
+    totalMinutes += mins;
+    days.push({
+      dayKey: dk,
+      label: dk.slice(5),
+      minutes: mins,
+    });
+  }
+
+  const consistencyPct =
+    typeof entry?.consistency === 'number' && Number.isFinite(entry.consistency)
+      ? Math.max(0, Math.min(100, Math.round(entry.consistency)))
+      : Math.round((activeDaysCount / 7) * 100);
+
+  return {
+    days,
+    activeDaysCount,
+    totalMinutes,
+    consistencyPct,
+  };
+}
+
 export const Leaderboard: React.FC<LeaderboardProps> = ({
   members,
   todayKey,
@@ -185,18 +343,60 @@ export const Leaderboard: React.FC<LeaderboardProps> = ({
   onRefresh,
   isRefreshing = false,
   lastUpdatedAt = null,
+  previousRanks,
 }) => {
   const [refreshTickTs, setRefreshTickTs] = useState<number>(() =>
     typeof nowTs === 'number' ? nowTs : Date.now()
   );
   const [localRefreshing, setLocalRefreshing] = useState(false);
   const [hoveredLiveKey, setHoveredLiveKey] = useState<string | null>(null);
+  const [expandedMemberUid, setExpandedMemberUid] = useState<string | null>(
+    null
+  );
+
+  const rows = useMemo(
+    () => rankWeekBoard(members, todayKey),
+    [members, todayKey]
+  );
+
+  const currentRanksMap = useMemo(() => {
+    const map: Record<string, number | null> = {};
+    for (const r of rows) {
+      map[r.uid] = r.rank;
+    }
+    return map;
+  }, [rows]);
+
+  const [prevRanksState, setPrevRanksState] = useState<
+    Record<string, number | null>
+  >(() => currentRanksMap);
+  const lastCommittedRanksRef =
+    useRef<Record<string, number | null>>(currentRanksMap);
+
+  useEffect(() => {
+    const prevCommitted = lastCommittedRanksRef.current;
+    let hasRankChange = false;
+    for (const uid of Object.keys(currentRanksMap)) {
+      if (
+        prevCommitted[uid] !== undefined &&
+        prevCommitted[uid] !== currentRanksMap[uid]
+      ) {
+        hasRankChange = true;
+        break;
+      }
+    }
+    if (hasRankChange) {
+      setPrevRanksState(prevCommitted);
+    }
+    lastCommittedRanksRef.current = currentRanksMap;
+  }, [currentRanksMap]);
 
   const effectiveNowTs = typeof nowTs === 'number' ? nowTs : refreshTickTs;
   const busyRefreshing = isRefreshing || localRefreshing;
 
   const handleManualRefresh = async () => {
     if (busyRefreshing) return;
+    setPrevRanksState(lastCommittedRanksRef.current);
     setRefreshTickTs(Date.now());
     if (onRefresh) {
       try {
@@ -208,11 +408,6 @@ export const Leaderboard: React.FC<LeaderboardProps> = ({
       }
     }
   };
-
-  const rows = useMemo(
-    () => rankWeekBoard(members, todayKey),
-    [members, todayKey]
-  );
 
   const maxWeeklyMinutes = useMemo(() => {
     let maxVal = 60;
@@ -251,7 +446,9 @@ export const Leaderboard: React.FC<LeaderboardProps> = ({
           </span>
           {lastUpdatedAt ? (
             <span className="mut mono" style={{ fontSize: 11 }}>
-              · Synced {Math.max(0, Math.floor((effectiveNowTs - lastUpdatedAt) / 60000))}m ago
+              · Synced{' '}
+              {Math.max(0, Math.floor((effectiveNowTs - lastUpdatedAt) / 60000))}
+              m ago
             </span>
           ) : null}
         </div>
@@ -312,255 +509,458 @@ export const Leaderboard: React.FC<LeaderboardProps> = ({
             const dotHoverKey = `dot_${row.uid}`;
             const badgeHoverKey = `badge_${row.uid}`;
 
+            const prevRankForMember =
+              previousRanks && row.uid in previousRanks
+                ? previousRanks[row.uid]
+                : prevRanksState[row.uid];
+            const rankTrend = computeRankDelta(prevRankForMember, row.rank);
+            const timeBadge = getMemberTimeOfDayBadge(row.entry);
+            const isExpanded = expandedMemberUid === row.uid;
+            const consistencyData = isExpanded
+              ? buildMemberLast7DaysConsistencyData(row.entry, todayKey)
+              : null;
+
             return (
               <div
                 key={row.uid}
                 role="listitem"
-                className="row sp"
                 style={{
                   padding: '10px 12px',
                   borderBottom: '1px solid var(--bd)',
-                  background: isMe ? 'rgba(56, 189, 248, 0.09)' : 'transparent',
-                  borderRadius: isMe ? 12 : 0,
+                  background: isMe
+                    ? 'rgba(56, 189, 248, 0.09)'
+                    : isExpanded
+                      ? 'color-mix(in srgb, var(--c2) 55%, transparent)'
+                      : 'transparent',
+                  borderRadius: isMe || isExpanded ? 12 : 0,
                   opacity: row.hidden ? 0.65 : 1,
-                  gap: 10,
                 }}
               >
-                <div className="row" style={{ gap: 10, minWidth: 0, flex: 1 }}>
-                  <span
-                    className="mono"
-                    style={{
-                      minWidth: 30,
-                      textAlign: 'center',
-                      fontWeight: 800,
-                      fontSize: row.rank && row.rank <= 3 ? 18 : 13,
-                    }}
-                  >
-                    {rankBadge}
-                  </span>
-
-                  <div
-                    style={{
-                      position: 'relative',
-                      width: 38,
-                      height: 38,
-                      borderRadius: 12,
-                      background: studyingNow
-                        ? 'rgba(16, 185, 129, 0.14)'
-                        : 'var(--c2)',
-                      border: studyingNow
-                        ? '1.5px solid rgba(16, 185, 129, 0.55)'
-                        : isMe
-                          ? '1.5px solid rgba(56, 189, 248, 0.5)'
-                          : '1px solid var(--bd)',
-                      display: 'flex',
-                      alignItems: 'center',
-                      justifyContent: 'center',
-                      flexShrink: 0,
-                    }}
-                  >
+                <div className="row sp" style={{ gap: 10 }}>
+                  <div className="row" style={{ gap: 10, minWidth: 0, flex: 1 }}>
                     <span
-                      style={{ fontSize: 20, lineHeight: 1 }}
-                      aria-hidden="true"
-                    >
-                      {row.entry.emoji}
-                    </span>
-                    <span
-                      role="status"
-                      tabIndex={studyingNow ? 0 : undefined}
-                      onMouseEnter={() => {
-                        if (studyingNow) setHoveredLiveKey(dotHoverKey);
-                      }}
-                      onMouseLeave={() => {
-                        if (hoveredLiveKey === dotHoverKey)
-                          setHoveredLiveKey(null);
-                      }}
-                      onFocus={() => {
-                        if (studyingNow) setHoveredLiveKey(dotHoverKey);
-                      }}
-                      onBlur={() => {
-                        if (hoveredLiveKey === dotHoverKey)
-                          setHoveredLiveKey(null);
-                      }}
-                      aria-label={
-                        studyingNow
-                          ? liveTooltip
-                          : row.entry.paused
-                            ? 'Sharing paused'
-                            : activeToday
-                              ? 'Studied today'
-                              : 'Offline'
-                      }
-                      title={
-                        studyingNow
-                          ? liveTooltip
-                          : row.entry.paused
-                            ? 'Sharing paused'
-                            : activeToday
-                              ? 'Studied today'
-                              : 'Idle today'
-                      }
+                      className="mono"
                       style={{
-                        position: 'absolute',
-                        right: -2,
-                        bottom: -2,
-                        width: 11,
-                        height: 11,
-                        borderRadius: '50%',
-                        background: studyingNow
-                          ? '#10b981'
-                          : row.entry.paused
-                            ? '#f59e0b'
-                            : activeToday
-                              ? '#38bdf8'
-                              : 'var(--bd)',
-                        border: '2px solid var(--card)',
-                        boxShadow: studyingNow
-                          ? '0 0 0 2px rgba(16, 185, 129, 0.28)'
-                          : 'none',
-                        cursor: studyingNow ? 'help' : 'default',
+                        minWidth: 30,
+                        textAlign: 'center',
+                        fontWeight: 800,
+                        fontSize: row.rank && row.rank <= 3 ? 18 : 13,
                       }}
-                    />
-                    {studyingNow && hoveredLiveKey === dotHoverKey && (
-                      <div
-                        role="tooltip"
-                        className="mono"
+                    >
+                      {rankBadge}
+                    </span>
+
+                    <div
+                      style={{
+                        position: 'relative',
+                        width: 38,
+                        height: 38,
+                        borderRadius: 12,
+                        background: studyingNow
+                          ? 'rgba(16, 185, 129, 0.14)'
+                          : 'var(--c2)',
+                        border: studyingNow
+                          ? '1.5px solid rgba(16, 185, 129, 0.55)'
+                          : isMe
+                            ? '1.5px solid rgba(56, 189, 248, 0.5)'
+                            : '1px solid var(--bd)',
+                        display: 'flex',
+                        alignItems: 'center',
+                        justifyContent: 'center',
+                        flexShrink: 0,
+                      }}
+                    >
+                      <span
+                        style={{ fontSize: 20, lineHeight: 1 }}
+                        aria-hidden="true"
+                      >
+                        {row.entry.emoji}
+                      </span>
+                      <span
+                        role="status"
+                        tabIndex={studyingNow ? 0 : undefined}
+                        onMouseEnter={() => {
+                          if (studyingNow) setHoveredLiveKey(dotHoverKey);
+                        }}
+                        onMouseLeave={() => {
+                          if (hoveredLiveKey === dotHoverKey)
+                            setHoveredLiveKey(null);
+                        }}
+                        onFocus={() => {
+                          if (studyingNow) setHoveredLiveKey(dotHoverKey);
+                        }}
+                        onBlur={() => {
+                          if (hoveredLiveKey === dotHoverKey)
+                            setHoveredLiveKey(null);
+                        }}
+                        aria-label={
+                          studyingNow
+                            ? liveTooltip
+                            : row.entry.paused
+                              ? 'Sharing paused'
+                              : activeToday
+                                ? 'Studied today'
+                                : 'Offline'
+                        }
+                        title={
+                          studyingNow
+                            ? liveTooltip
+                            : row.entry.paused
+                              ? 'Sharing paused'
+                              : activeToday
+                                ? 'Studied today'
+                                : 'Idle today'
+                        }
                         style={{
                           position: 'absolute',
-                          bottom: 'calc(100% + 6px)',
-                          left: 0,
-                          zIndex: 30,
-                          whiteSpace: 'nowrap',
-                          background: 'var(--card)',
-                          color: 'var(--tx)',
-                          border: '1px solid rgba(16, 185, 129, 0.5)',
-                          boxShadow: '0 6px 18px rgba(0, 0, 0, 0.28)',
-                          padding: '4px 8px',
-                          borderRadius: 6,
-                          fontSize: 11,
-                          fontWeight: 700,
-                          pointerEvents: 'none',
+                          right: -2,
+                          bottom: -2,
+                          width: 11,
+                          height: 11,
+                          borderRadius: '50%',
+                          background: studyingNow
+                            ? '#10b981'
+                            : row.entry.paused
+                              ? '#f59e0b'
+                              : activeToday
+                                ? '#38bdf8'
+                                : 'var(--bd)',
+                          border: '2px solid var(--card)',
+                          boxShadow: studyingNow
+                            ? '0 0 0 2px rgba(16, 185, 129, 0.28)'
+                            : 'none',
+                          cursor: studyingNow ? 'help' : 'default',
                         }}
-                      >
-                        {liveTooltip}
-                      </div>
-                    )}
-                  </div>
-
-                  <div style={{ minWidth: 0, flex: 1 }}>
-                    <div className="row" style={{ gap: 6, flexWrap: 'wrap' }}>
-                      <b
-                        style={{
-                          fontSize: 13.5,
-                          overflow: 'hidden',
-                          textOverflow: 'ellipsis',
-                          whiteSpace: 'nowrap',
-                        }}
-                      >
-                        {row.entry.nick}
-                        {isMe ? ' (You)' : ''}
-                      </b>
-                      {studyingNow && (
-                        <span
-                          title={liveTooltip}
-                          aria-label={liveTooltip}
-                          onMouseEnter={() => setHoveredLiveKey(badgeHoverKey)}
-                          onMouseLeave={() => {
-                            if (hoveredLiveKey === badgeHoverKey)
-                              setHoveredLiveKey(null);
-                          }}
+                      />
+                      {studyingNow && hoveredLiveKey === dotHoverKey && (
+                        <div
+                          role="tooltip"
+                          className="mono"
                           style={{
-                            position: 'relative',
+                            position: 'absolute',
+                            bottom: 'calc(100% + 6px)',
+                            left: 0,
+                            zIndex: 30,
+                            whiteSpace: 'nowrap',
+                            background: 'var(--card)',
+                            color: 'var(--tx)',
+                            border: '1px solid rgba(16, 185, 129, 0.5)',
+                            boxShadow: '0 6px 18px rgba(0, 0, 0, 0.28)',
+                            padding: '4px 8px',
+                            borderRadius: 6,
+                            fontSize: 11,
+                            fontWeight: 700,
+                            pointerEvents: 'none',
+                          }}
+                        >
+                          {liveTooltip}
+                        </div>
+                      )}
+                    </div>
+
+                    <div style={{ minWidth: 0, flex: 1 }}>
+                      <div className="row" style={{ gap: 6, flexWrap: 'wrap' }}>
+                        <button
+                          type="button"
+                          onClick={() =>
+                            setExpandedMemberUid((cur) =>
+                              cur === row.uid ? null : row.uid
+                            )
+                          }
+                          aria-expanded={isExpanded}
+                          title="Click to view 7-day study consistency chart"
+                          style={{
+                            background: 'transparent',
+                            border: 'none',
+                            padding: 0,
+                            margin: 0,
+                            minHeight: 'auto',
+                            fontSize: 13.5,
+                            fontWeight: 700,
+                            color: 'var(--tx)',
+                            cursor: 'pointer',
                             display: 'inline-flex',
                             alignItems: 'center',
                             gap: 4,
-                            fontSize: 10.5,
-                            fontWeight: 700,
-                            color: '#10b981',
-                            background: 'rgba(16, 185, 129, 0.12)',
-                            padding: '1px 7px',
-                            borderRadius: 6,
-                            cursor: 'help',
+                            textAlign: 'left',
                           }}
                         >
                           <span
+                            style={{
+                              overflow: 'hidden',
+                              textOverflow: 'ellipsis',
+                              whiteSpace: 'nowrap',
+                            }}
+                          >
+                            {row.entry.nick}
+                            {isMe ? ' (You)' : ''}
+                          </span>
+                          <span
                             aria-hidden="true"
                             style={{
-                              width: 6,
-                              height: 6,
-                              borderRadius: '50%',
-                              background: '#10b981',
+                              fontSize: 10,
+                              color: 'var(--ac)',
+                              opacity: 0.85,
                             }}
-                          />
-                          Studying now
-                          {hoveredLiveKey === badgeHoverKey && (
+                          >
+                            {isExpanded ? '▴' : '▾'}
+                          </span>
+                        </button>
+
+                        {timeBadge && (
+                          <span
+                            title={timeBadge.tooltip}
+                            aria-label={timeBadge.tooltip}
+                            style={{
+                              display: 'inline-flex',
+                              alignItems: 'center',
+                              gap: 3,
+                              fontSize: 10.5,
+                              fontWeight: 700,
+                              padding: '1px 7px',
+                              borderRadius: 6,
+                              color:
+                                timeBadge.type === 'earlyBird'
+                                  ? '#f59e0b'
+                                  : '#a855f7',
+                              background:
+                                timeBadge.type === 'earlyBird'
+                                  ? 'rgba(245, 158, 11, 0.14)'
+                                  : 'rgba(168, 85, 247, 0.14)',
+                              border:
+                                timeBadge.type === 'earlyBird'
+                                  ? '1px solid rgba(245, 158, 11, 0.35)'
+                                  : '1px solid rgba(168, 85, 247, 0.35)',
+                            }}
+                          >
+                            <span aria-hidden="true">{timeBadge.emoji}</span>
+                            <span>{timeBadge.label}</span>
+                          </span>
+                        )}
+
+                        {studyingNow && (
+                          <span
+                            title={liveTooltip}
+                            aria-label={liveTooltip}
+                            onMouseEnter={() => setHoveredLiveKey(badgeHoverKey)}
+                            onMouseLeave={() => {
+                              if (hoveredLiveKey === badgeHoverKey)
+                                setHoveredLiveKey(null);
+                            }}
+                            style={{
+                              position: 'relative',
+                              display: 'inline-flex',
+                              alignItems: 'center',
+                              gap: 4,
+                              fontSize: 10.5,
+                              fontWeight: 700,
+                              color: '#10b981',
+                              background: 'rgba(16, 185, 129, 0.12)',
+                              padding: '1px 7px',
+                              borderRadius: 6,
+                              cursor: 'help',
+                            }}
+                          >
                             <span
-                              role="tooltip"
-                              className="mono"
+                              aria-hidden="true"
                               style={{
-                                position: 'absolute',
-                                bottom: 'calc(100% + 6px)',
-                                left: 0,
-                                zIndex: 30,
-                                whiteSpace: 'nowrap',
-                                background: 'var(--card)',
-                                color: 'var(--tx)',
-                                border: '1px solid rgba(16, 185, 129, 0.5)',
-                                boxShadow: '0 6px 18px rgba(0, 0, 0, 0.28)',
-                                padding: '4px 8px',
-                                borderRadius: 6,
-                                fontSize: 11,
-                                fontWeight: 700,
-                                pointerEvents: 'none',
+                                width: 6,
+                                height: 6,
+                                borderRadius: '50%',
+                                background: '#10b981',
                               }}
-                            >
-                              {liveTooltip}
-                            </span>
-                          )}
-                        </span>
-                      )}
-                    </div>
-                    {!row.hidden && (
-                      <div
-                        style={{
-                          marginTop: 4,
-                          height: 4,
-                          borderRadius: 4,
-                          background: 'var(--c2)',
-                          overflow: 'hidden',
-                          maxWidth: 180,
-                        }}
-                      >
+                            />
+                            Studying now
+                            {hoveredLiveKey === badgeHoverKey && (
+                              <span
+                                role="tooltip"
+                                className="mono"
+                                style={{
+                                  position: 'absolute',
+                                  bottom: 'calc(100% + 6px)',
+                                  left: 0,
+                                  zIndex: 30,
+                                  whiteSpace: 'nowrap',
+                                  background: 'var(--card)',
+                                  color: 'var(--tx)',
+                                  border: '1px solid rgba(16, 185, 129, 0.5)',
+                                  boxShadow: '0 6px 18px rgba(0, 0, 0, 0.28)',
+                                  padding: '4px 8px',
+                                  borderRadius: 6,
+                                  fontSize: 11,
+                                  fontWeight: 700,
+                                  pointerEvents: 'none',
+                                }}
+                              >
+                                {liveTooltip}
+                              </span>
+                            )}
+                          </span>
+                        )}
+                      </div>
+                      {!row.hidden && (
                         <div
                           style={{
-                            width: `${pctBar}%`,
-                            height: '100%',
+                            marginTop: 4,
+                            height: 4,
                             borderRadius: 4,
-                            background: studyingNow ? '#10b981' : 'var(--ac)',
+                            background: 'var(--c2)',
+                            overflow: 'hidden',
+                            maxWidth: 180,
                           }}
-                        />
+                        >
+                          <div
+                            style={{
+                              width: `${pctBar}%`,
+                              height: '100%',
+                              borderRadius: 4,
+                              background: studyingNow ? '#10b981' : 'var(--ac)',
+                            }}
+                          />
+                        </div>
+                      )}
+                    </div>
+                  </div>
+
+                  <div style={{ textAlign: 'right', flexShrink: 0 }}>
+                    <div
+                      className="row"
+                      style={{
+                        gap: 5,
+                        justifyContent: 'flex-end',
+                        alignItems: 'center',
+                      }}
+                    >
+                      {(rankTrend.direction === 'up' ||
+                        rankTrend.direction === 'down') && (
+                        <span
+                          className="mono"
+                          aria-label={
+                            rankTrend.direction === 'up'
+                              ? `Moved up ${rankTrend.delta} ${rankTrend.delta === 1 ? 'rank' : 'ranks'} since last refresh`
+                              : `Moved down ${rankTrend.delta} ${rankTrend.delta === 1 ? 'rank' : 'ranks'} since last refresh`
+                          }
+                          title={
+                            rankTrend.direction === 'up'
+                              ? `Moved up ${rankTrend.delta} ${rankTrend.delta === 1 ? 'spot' : 'spots'} since last refresh (from #${rankTrend.previousRank} to #${row.rank})`
+                              : `Moved down ${rankTrend.delta} ${rankTrend.delta === 1 ? 'spot' : 'spots'} since last refresh (from #${rankTrend.previousRank} to #${row.rank})`
+                          }
+                          style={{
+                            display: 'inline-flex',
+                            alignItems: 'center',
+                            gap: 1,
+                            fontSize: 11,
+                            fontWeight: 800,
+                            lineHeight: 1,
+                            padding: '2px 5px',
+                            borderRadius: 5,
+                            color:
+                              rankTrend.direction === 'up'
+                                ? '#10b981'
+                                : '#ef4444',
+                            background:
+                              rankTrend.direction === 'up'
+                                ? 'rgba(16, 185, 129, 0.14)'
+                                : 'rgba(239, 68, 68, 0.14)',
+                          }}
+                        >
+                          <span aria-hidden="true">
+                            {rankTrend.direction === 'up' ? '▲' : '▼'}
+                          </span>
+                          {rankTrend.delta > 1 ? (
+                            <span>{rankTrend.delta}</span>
+                          ) : null}
+                        </span>
+                      )}
+                      <b
+                        className="mono"
+                        style={{
+                          fontSize: 14,
+                          fontVariantNumeric: 'tabular-nums',
+                          color: row.hidden ? 'var(--mu)' : 'var(--tx)',
+                        }}
+                      >
+                        {row.displayLabel}
+                      </b>
+                    </div>
+                    {row.subLabel && (
+                      <div className="mut mono" style={{ fontSize: 10.5 }}>
+                        {row.subLabel}
                       </div>
                     )}
                   </div>
                 </div>
 
-                <div style={{ textAlign: 'right', flexShrink: 0 }}>
-                  <b
-                    className="mono"
+                {/* Inline Recharts 7-Day Study Consistency Chart when clicking member name */}
+                {isExpanded && consistencyData && (
+                  <div
+                    aria-label={`7-day study consistency chart for ${row.entry.nick}`}
                     style={{
-                      fontSize: 14,
-                      fontVariantNumeric: 'tabular-nums',
-                      color: row.hidden ? 'var(--mu)' : 'var(--tx)',
+                      marginTop: 10,
+                      padding: '10px 12px',
+                      borderRadius: 10,
+                      background: 'var(--c2)',
+                      border: '1px solid var(--bd)',
                     }}
                   >
-                    {row.displayLabel}
-                  </b>
-                  {row.subLabel && (
-                    <div className="mut mono" style={{ fontSize: 10.5 }}>
-                      {row.subLabel}
+                    <div
+                      className="row sp"
+                      style={{
+                        marginBottom: 6,
+                        fontSize: 11.5,
+                        gap: 8,
+                        flexWrap: 'wrap',
+                      }}
+                    >
+                      <b>📊 7-Day Study Consistency ({row.entry.nick})</b>
+                      <span className="mut mono">
+                        {consistencyData.activeDaysCount}/7 days active ·{' '}
+                        {consistencyData.consistencyPct}% consistency ·{' '}
+                        {formatMinutesAsHoursMins(consistencyData.totalMinutes)}{' '}
+                        total
+                      </span>
                     </div>
-                  )}
-                </div>
+                    <div style={{ width: '100%', height: 104 }}>
+                      <ResponsiveContainer width="100%" height="100%">
+                        <BarChart
+                          data={consistencyData.days}
+                          margin={{ top: 6, right: 6, bottom: 2, left: 6 }}
+                        >
+                          <XAxis
+                            dataKey="label"
+                            tick={{ fontSize: 10, fill: 'var(--mu)' }}
+                            axisLine={false}
+                            tickLine={false}
+                          />
+                          <YAxis hide domain={[0, 'dataMax + 30']} />
+                          <Tooltip
+                            cursor={{ fill: 'rgba(148, 163, 184, 0.1)' }}
+                            contentStyle={{
+                              background: 'var(--card)',
+                              border: '1px solid var(--bd)',
+                              borderRadius: 8,
+                              fontSize: 11,
+                              padding: '4px 8px',
+                              color: 'var(--tx)',
+                            }}
+                            formatter={(value) => [
+                              formatMinutesAsHoursMins(Number(value ?? 0)),
+                              'Study time',
+                            ]}
+                            labelFormatter={(label) => `Date: ${label}`}
+                          />
+                          <Bar
+                            dataKey="minutes"
+                            fill={studyingNow ? '#10b981' : '#38bdf8'}
+                            radius={[4, 4, 0, 0]}
+                            barSize={18}
+                            isAnimationActive={false}
+                          />
+                        </BarChart>
+                      </ResponsiveContainer>
+                    </div>
+                  </div>
+                )}
               </div>
             );
           })}
@@ -623,6 +1023,13 @@ export const GroupsView: React.FC<GroupsViewProps> = ({
   const [snapshots, setSnapshots] = useState<Record<string, CachedGroupSnapshot>>(() =>
     loadCachedGroupSnapshots()
   );
+  const [prevGroupDocs, setPrevGroupDocs] = useState<
+    Record<string, CachedGroupSnapshot['doc']>
+  >({});
+  const snapshotsRef = useRef<Record<string, CachedGroupSnapshot>>(snapshots);
+  useEffect(() => {
+    snapshotsRef.current = snapshots;
+  }, [snapshots]);
   const [boardTab, setBoardTab] = useState<BoardTab>('today');
   const [xpSortMode, setXpSortMode] = useState<XpSortMode>('weekly');
   const [mockSortMode, setMockSortMode] = useState<MockSortMode>('latest');
@@ -704,6 +1111,15 @@ export const GroupsView: React.FC<GroupsViewProps> = ({
       0
     );
 
+    let latestMySessionTs = state.activeTimer?.startTs || 0;
+    for (const ses of state.sessions || []) {
+      if (!ses) continue;
+      const ts = Number(ses.startTs) || Number(ses.endTs) || 0;
+      if (ts > latestMySessionTs) {
+        latestMySessionTs = ts;
+      }
+    }
+
     return {
       totalXp,
       levelInfo,
@@ -716,6 +1132,7 @@ export const GroupsView: React.FC<GroupsViewProps> = ({
       xpByDay,
       weekKeys,
       last7Keys,
+      latestMySessionTs,
     };
   }, [state, todayKey]);
 
@@ -768,6 +1185,10 @@ export const GroupsView: React.FC<GroupsViewProps> = ({
           budget: groupBudget,
         });
         if (snap) {
+          const priorDoc = snapshotsRef.current[groupId]?.doc;
+          if (priorDoc) {
+            setPrevGroupDocs((prev) => ({ ...prev, [groupId]: priorDoc }));
+          }
           setSnapshots((prev) => ({ ...prev, [groupId]: snap }));
           onUpdateGroupsConfig((prev) => {
             const existing = prev.joined.find((j) => j.groupId === groupId);
@@ -1351,6 +1772,37 @@ export const GroupsView: React.FC<GroupsViewProps> = ({
         return [];
     }
   }, [activeGroupDoc, boardTab, todayKey, xpSortMode, mockSortMode]);
+
+  const previousBoardRanksMap = useMemo(() => {
+    const map: Record<string, number | null> = {};
+    const prevDoc = activeGroupId ? prevGroupDocs[activeGroupId] : undefined;
+    if (!prevDoc) return map;
+    const members = prevDoc.members || {};
+    let prevRows: RankedMemberRow[] = [];
+    switch (boardTab) {
+      case 'today':
+        prevRows = rankTodayBoard(members, todayKey);
+        break;
+      case 'week':
+        prevRows = rankWeekBoard(members, todayKey);
+        break;
+      case 'xp':
+        prevRows = rankXpBoard(members, todayKey, xpSortMode);
+        break;
+      case 'streak':
+        prevRows = rankStreakBoard(members, todayKey);
+        break;
+      case 'mocks':
+        prevRows = rankMocksBoard(members, todayKey, mockSortMode);
+        break;
+      default:
+        prevRows = [];
+    }
+    for (const r of prevRows) {
+      map[r.uid] = r.rank;
+    }
+    return map;
+  }, [activeGroupId, prevGroupDocs, boardTab, todayKey, xpSortMode, mockSortMode]);
 
   const [hoveredLiveStatusKey, setHoveredLiveStatusKey] = useState<
     string | null
@@ -3002,6 +3454,48 @@ export const GroupsView: React.FC<GroupsViewProps> = ({
                                     {row.entry.nick}
                                     {isMe ? ' (You)' : ''}
                                   </b>
+                                  {(() => {
+                                    const memberTimeBadge =
+                                      getMemberTimeOfDayBadge(
+                                        row.entry,
+                                        isMe
+                                          ? myPersonalStats.latestMySessionTs
+                                          : undefined
+                                      );
+                                    if (!memberTimeBadge) return null;
+                                    return (
+                                      <span
+                                        title={memberTimeBadge.tooltip}
+                                        aria-label={memberTimeBadge.tooltip}
+                                        style={{
+                                          display: 'inline-flex',
+                                          alignItems: 'center',
+                                          gap: 3,
+                                          fontSize: 10.5,
+                                          fontWeight: 700,
+                                          padding: '1px 7px',
+                                          borderRadius: 6,
+                                          color:
+                                            memberTimeBadge.type === 'earlyBird'
+                                              ? '#f59e0b'
+                                              : '#a855f7',
+                                          background:
+                                            memberTimeBadge.type === 'earlyBird'
+                                              ? 'rgba(245, 158, 11, 0.14)'
+                                              : 'rgba(168, 85, 247, 0.14)',
+                                          border:
+                                            memberTimeBadge.type === 'earlyBird'
+                                              ? '1px solid rgba(245, 158, 11, 0.35)'
+                                              : '1px solid rgba(168, 85, 247, 0.35)',
+                                        }}
+                                      >
+                                        <span aria-hidden="true">
+                                          {memberTimeBadge.emoji}
+                                        </span>
+                                        <span>{memberTimeBadge.label}</span>
+                                      </span>
+                                    );
+                                  })()}
                                   {isLiveNow && (
                                     <span
                                       title={liveTooltipText}
@@ -3139,17 +3633,78 @@ export const GroupsView: React.FC<GroupsViewProps> = ({
                               onClick={(e) => e.stopPropagation()}
                             >
                               <div style={{ textAlign: 'right' }}>
-                                <b
-                                  className="mono"
-                                  style={{
-                                    fontSize: 14.5,
-                                    color: row.hidden
-                                      ? 'var(--mu)'
-                                      : 'var(--tx)',
-                                  }}
-                                >
-                                  {row.displayLabel}
-                                </b>
+                                {(() => {
+                                  const rowRankTrend = computeRankDelta(
+                                    previousBoardRanksMap[row.uid],
+                                    row.rank
+                                  );
+                                  return (
+                                    <div
+                                      className="row"
+                                      style={{
+                                        gap: 5,
+                                        justifyContent: 'flex-end',
+                                        alignItems: 'center',
+                                      }}
+                                    >
+                                      {(rowRankTrend.direction === 'up' ||
+                                        rowRankTrend.direction === 'down') && (
+                                        <span
+                                          className="mono"
+                                          aria-label={
+                                            rowRankTrend.direction === 'up'
+                                              ? `Moved up ${rowRankTrend.delta} ${rowRankTrend.delta === 1 ? 'rank' : 'ranks'} since last refresh`
+                                              : `Moved down ${rowRankTrend.delta} ${rowRankTrend.delta === 1 ? 'rank' : 'ranks'} since last refresh`
+                                          }
+                                          title={
+                                            rowRankTrend.direction === 'up'
+                                              ? `Moved up ${rowRankTrend.delta} ${rowRankTrend.delta === 1 ? 'spot' : 'spots'} since last refresh (from #${rowRankTrend.previousRank} to #${row.rank})`
+                                              : `Moved down ${rowRankTrend.delta} ${rowRankTrend.delta === 1 ? 'spot' : 'spots'} since last refresh (from #${rowRankTrend.previousRank} to #${row.rank})`
+                                          }
+                                          style={{
+                                            display: 'inline-flex',
+                                            alignItems: 'center',
+                                            gap: 1,
+                                            fontSize: 11,
+                                            fontWeight: 800,
+                                            lineHeight: 1,
+                                            padding: '2px 5px',
+                                            borderRadius: 5,
+                                            color:
+                                              rowRankTrend.direction === 'up'
+                                                ? '#10b981'
+                                                : '#ef4444',
+                                            background:
+                                              rowRankTrend.direction === 'up'
+                                                ? 'rgba(16, 185, 129, 0.14)'
+                                                : 'rgba(239, 68, 68, 0.14)',
+                                          }}
+                                        >
+                                          <span aria-hidden="true">
+                                            {rowRankTrend.direction === 'up'
+                                              ? '▲'
+                                              : '▼'}
+                                          </span>
+                                          {rowRankTrend.delta > 1 ? (
+                                            <span>{rowRankTrend.delta}</span>
+                                          ) : null}
+                                        </span>
+                                      )}
+                                      <b
+                                        className="mono"
+                                        style={{
+                                          fontSize: 14.5,
+                                          fontVariantNumeric: 'tabular-nums',
+                                          color: row.hidden
+                                            ? 'var(--mu)'
+                                            : 'var(--tx)',
+                                        }}
+                                      >
+                                        {row.displayLabel}
+                                      </b>
+                                    </div>
+                                  );
+                                })()}
                               </div>
 
                               {/* One-Tap Cheer Buttons for Other Members */}
@@ -3238,6 +3793,106 @@ export const GroupsView: React.FC<GroupsViewProps> = ({
                                   </button>
                                 )}
                               </div>
+
+                              {/* Inline Recharts 7-Day Study Consistency Chart */}
+                              {(() => {
+                                const memberConsistency =
+                                  buildMemberLast7DaysConsistencyData(
+                                    row.entry,
+                                    todayKey
+                                  );
+                                return (
+                                  <div
+                                    aria-label={`7-day study consistency chart for ${row.entry.nick}`}
+                                    style={{
+                                      marginBottom: 10,
+                                      padding: '8px 10px',
+                                      borderRadius: 12,
+                                      background: 'var(--c2)',
+                                      border: '1px solid var(--bd)',
+                                    }}
+                                  >
+                                    <div
+                                      className="row sp"
+                                      style={{
+                                        marginBottom: 4,
+                                        fontSize: 11,
+                                        gap: 6,
+                                        flexWrap: 'wrap',
+                                      }}
+                                    >
+                                      <span className="mut">
+                                        📊 7-Day Consistency ({row.entry.nick})
+                                      </span>
+                                      <span className="mono mut">
+                                        {memberConsistency.activeDaysCount}/7 days ·{' '}
+                                        {memberConsistency.consistencyPct}%
+                                      </span>
+                                    </div>
+                                    <div style={{ width: '100%', height: 96 }}>
+                                      <ResponsiveContainer
+                                        width="100%"
+                                        height="100%"
+                                      >
+                                        <BarChart
+                                          data={memberConsistency.days}
+                                          margin={{
+                                            top: 4,
+                                            right: 4,
+                                            bottom: 0,
+                                            left: 4,
+                                          }}
+                                        >
+                                          <XAxis
+                                            dataKey="label"
+                                            tick={{
+                                              fontSize: 10,
+                                              fill: 'var(--mu)',
+                                            }}
+                                            axisLine={false}
+                                            tickLine={false}
+                                          />
+                                          <YAxis
+                                            hide
+                                            domain={[0, 'dataMax + 30']}
+                                          />
+                                          <Tooltip
+                                            cursor={{
+                                              fill: 'rgba(148, 163, 184, 0.1)',
+                                            }}
+                                            contentStyle={{
+                                              background: 'var(--card)',
+                                              border: '1px solid var(--bd)',
+                                              borderRadius: 8,
+                                              fontSize: 11,
+                                              padding: '4px 8px',
+                                              color: 'var(--tx)',
+                                            }}
+                                            formatter={(value) => [
+                                              formatMinutesAsHoursMins(
+                                                Number(value ?? 0)
+                                              ),
+                                              'Study time',
+                                            ]}
+                                            labelFormatter={(label) =>
+                                              `Date: ${label}`
+                                            }
+                                          />
+                                          <Bar
+                                            dataKey="minutes"
+                                            fill={
+                                              isLiveNow ? '#10b981' : '#38bdf8'
+                                            }
+                                            radius={[4, 4, 0, 0]}
+                                            barSize={18}
+                                            isAnimationActive={false}
+                                          />
+                                        </BarChart>
+                                      </ResponsiveContainer>
+                                    </div>
+                                  </div>
+                                );
+                              })()}
 
                               {/* 7-Day Sparkline Bars */}
                               <div
