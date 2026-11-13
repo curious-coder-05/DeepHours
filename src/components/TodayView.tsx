@@ -76,12 +76,15 @@ import {
   Button,
   Card,
   Chip,
-  ProgressRing,
+  ConcentricProgressRing,
+  CountUp,
+  EmptyState,
   Meter,
   Select,
   SectionHeader,
   SwipeableRow,
   WindowedList,
+  type ConcentricRingSegment,
 } from './ui';
 
 export interface TodayViewProps {
@@ -177,6 +180,10 @@ export const TodayView: React.FC<TodayViewProps> = ({
   );
   const [quickChapterId, setQuickChapterId] = useState<string>('');
   const [quickHeading, setQuickHeading] = useState<string>('');
+  const [quickMode, setQuickMode] = useState<'pomo' | 'countdown' | 'stopwatch'>(() => {
+    const dm = state.set.defaultMode;
+    return dm === 'countdown' || dm === 'stopwatch' ? dm : 'pomo';
+  });
   const [tipOffset, setTipOffset] = useState<number>(0);
 
   // Daily Tasks local UI state
@@ -268,6 +275,58 @@ export const TodayView: React.FC<TodayViewProps> = ({
     () => getDailyStudyGoalProgress(state, sel, todayKey),
     [state, sel, todayKey]
   );
+
+  // Subject breakdown segments for outer hero ring
+  const outerSegments = useMemo<ConcentricRingSegment[]>(() => {
+    const bySubject = new Map<string, number>();
+    selectedDaySessions.forEach((s) => {
+      bySubject.set(s.subjectId, (bySubject.get(s.subjectId) || 0) + s.activeMs);
+    });
+    return Array.from(bySubject.entries())
+      .sort((a, b) => b[1] - a[1])
+      .map(([subjectId, value]) => ({
+        id: subjectId,
+        value,
+        color: getSubject(state, subjectId).color || 'var(--ac)',
+      }));
+  }, [selectedDaySessions, state]);
+
+  // 7-day rolling week summary for proportional mini bars
+  const weekDaysSummary = useMemo(() => {
+    const rows = days.map((k) => {
+      const dp = Math.round(getDayProgress(state, k).pct * 100);
+      const studyMs = getDayTotalStudyMs(state, k, todayKey);
+      return { key: k, dp, studyMs };
+    });
+    const maxWeekMs = Math.max(
+      studyProg.goalMs || 0,
+      ...rows.map((r) => r.studyMs),
+      1
+    );
+    return rows.map((r) => ({
+      ...r,
+      barPct:
+        r.studyMs > 0
+          ? Math.max(18, Math.min(100, Math.round((r.studyMs / maxWeekMs) * 100)))
+          : r.dp > 0
+            ? Math.max(14, Math.min(100, r.dp))
+            : 0,
+    }));
+  }, [days, state, todayKey, studyProg.goalMs]);
+
+  const heroCoachingCopy = useMemo(() => {
+    if (studyProg.goalMs > 0) {
+      const rem = Math.max(0, studyProg.goalMs - selectedDayTotalMs);
+      if (rem === 0) return 'Daily study goal reached';
+      if (selectedDayTotalMs > 0) return `${fmtHMShort(rem)} to hit your goal`;
+      return `Aim for ${fmtDuration(studyProg.goalMs)} today`;
+    }
+    if (selectedDayTotalMs > 0) {
+      return `${selectedDaySessions.length} deep focus session${selectedDaySessions.length === 1 ? '' : 's'} logged`;
+    }
+    return 'Start a focus block today';
+  }, [studyProg.goalMs, selectedDayTotalMs, selectedDaySessions.length]);
+
   const dailyTip = useMemo(
     () => getDailyFocusTip(sel, tipOffset),
     [sel, tipOffset]
@@ -439,7 +498,7 @@ export const TodayView: React.FC<TodayViewProps> = ({
               <span
                 className="pill"
                 style={{
-                  fontSize: 12,
+                  fontSize: 13,
                   padding: '2px 8px',
                   background: 'var(--ac-soft)',
                   color: 'var(--ac-ink)',
@@ -453,7 +512,7 @@ export const TodayView: React.FC<TodayViewProps> = ({
               <span
                 className="pill"
                 style={{
-                  fontSize: 12,
+                  fontSize: 13,
                   padding: '2px 8px',
                   background: 'var(--sf-2)',
                   color: 'var(--tx-2)',
@@ -477,14 +536,14 @@ export const TodayView: React.FC<TodayViewProps> = ({
           </div>
 
           <div className="row" style={{ gap: 8, marginTop: 4, flexWrap: 'wrap' }}>
-            <small style={{ fontSize: 12, fontVariantNumeric: 'tabular-nums' }}>
+            <small style={{ fontSize: 13, fontVariantNumeric: 'tabular-nums' }}>
               {metaParts.join(' · ')}
             </small>
             {s.cur > 0 && (
               <span
                 className="pill"
                 style={{
-                  fontSize: 12,
+                  fontSize: 13,
                   padding: '2px 8px',
                   background: 'color-mix(in srgb, var(--warn) 14%, transparent)',
                   color: 'var(--warn-ink)',
@@ -493,7 +552,7 @@ export const TodayView: React.FC<TodayViewProps> = ({
                   gap: 4,
                 }}
               >
-                <Flame size={12} strokeWidth={2} />
+                <Flame size={13} strokeWidth={2} />
                 <span style={{ fontVariantNumeric: 'tabular-nums' }}>{s.cur}d</span>
               </span>
             )}
@@ -607,7 +666,7 @@ export const TodayView: React.FC<TodayViewProps> = ({
               <span
                 style={{
                   display: 'block',
-                  fontSize: 12,
+                  fontSize: 13,
                   color: 'var(--tx-2)',
                   fontWeight: 500,
                 }}
@@ -702,9 +761,8 @@ export const TodayView: React.FC<TodayViewProps> = ({
 
       {/* 4. 7-Day Rolling Week Strip */}
       <div className="wk" role="group" aria-label="7-day date selector">
-        {days.map((k) => {
+        {weekDaysSummary.map(({ key: k, barPct }) => {
           const d = parseD(k);
-          const dp = Math.round(getDayProgress(state, k).pct * 100);
           return (
             <button
               key={k}
@@ -712,9 +770,11 @@ export const TodayView: React.FC<TodayViewProps> = ({
               className={k === sel ? 'on' : ''}
               onClick={() => onSelectDay(k)}
             >
-              <small style={{ fontSize: 12 }}>{DN[d.getDay()]}</small>
+              <small style={{ fontSize: 13 }}>{DN[d.getDay()]}</small>
               <b>{d.getDate()}</b>
-              <i style={{ '--p': dp } as React.CSSProperties} />
+              <span className="wk-bar-track" aria-hidden="true">
+                <span className="wk-bar-fill" style={{ height: `${barPct}%` }} />
+              </span>
             </button>
           );
         })}
@@ -758,14 +818,26 @@ export const TodayView: React.FC<TodayViewProps> = ({
       <div className="today-desktop-layout">
         <div className="today-main-col">
           {/* 5. Top Hero Progress + Primary Focus Session Starter */}
-          <Card style={{ marginTop: 4 }}>
+          <Card className="dh-hero-lumen" style={{ marginTop: 4 }}>
             <div className="hero-grid">
               <div style={{ display: 'flex', justifyContent: 'center' }}>
-                <ProgressRing
-                  pct={p}
-                  size={116}
-                  strokeWidth={10}
-                  color={p === 100 && dayProg.total > 0 ? 'var(--ok)' : 'var(--ac)'}
+                <ConcentricProgressRing
+                  size={168}
+                  outerPct={
+                    studyProg.goalMs > 0
+                      ? studyProg.pct
+                      : selectedDayTotalMs > 0
+                        ? 100
+                        : 0
+                  }
+                  outerSegments={outerSegments}
+                  outerTotal={
+                    studyProg.goalMs > 0 ? studyProg.goalMs : selectedDayTotalMs
+                  }
+                  innerPct={p}
+                  innerColor={
+                    p === 100 && dayProg.total > 0 ? 'var(--ok)' : 'var(--ok)'
+                  }
                 >
                   <div>
                     <b
@@ -777,34 +849,86 @@ export const TodayView: React.FC<TodayViewProps> = ({
                         fontVariantNumeric: 'tabular-nums',
                       }}
                     >
-                      {p}%
+                      <CountUp
+                        value={studyProg.goalMs > 0 ? studyProg.pct : p}
+                        formatter={(v) => `${Math.round(v)}%`}
+                      />
                     </b>
-                    <small style={{ fontSize: 12, color: 'var(--tx-2)' }}>
-                      {dayProg.habitsTotal > 0 || dayProg.tasksTotal > 0
-                        ? `${dayProg.habitsDone}/${dayProg.habitsTotal}h · ${dayProg.tasksDone}/${dayProg.tasksTotal}t`
-                        : 'Daily goal'}
-                    </small>
+                    <span
+                      style={{
+                        fontSize: 13,
+                        color: 'var(--tx-2)',
+                        display: 'block',
+                        marginTop: 2,
+                      }}
+                    >
+                      {studyProg.goalMs > 0 ? 'Study goal' : 'Daily goal'}
+                    </span>
+                    {(dayProg.habitsTotal > 0 || dayProg.tasksTotal > 0) && (
+                      <span
+                        style={{
+                          fontSize: 13,
+                          color: 'var(--ok-ink)',
+                          fontWeight: 600,
+                          display: 'block',
+                          marginTop: 1,
+                        }}
+                      >
+                        {p}% habits
+                      </span>
+                    )}
                   </div>
-                </ProgressRing>
+                </ConcentricProgressRing>
               </div>
 
               <div style={{ minWidth: 0 }}>
-                <div className="stat-mini">
-                  <div className="stat-box">
-                    <small style={{ fontSize: 12 }}>Studied</small>
-                    <b style={{ color: 'var(--ac-ink)' }}>
+                <div style={{ marginBottom: 12 }}>
+                  <div
+                    style={{
+                      display: 'flex',
+                      alignItems: 'baseline',
+                      gap: 10,
+                      flexWrap: 'wrap',
+                    }}
+                  >
+                    <b
+                      style={{
+                        fontSize: 'clamp(36px, 8vw, 46px)',
+                        fontWeight: 700,
+                        lineHeight: 1.02,
+                        letterSpacing: '-0.025em',
+                        color: 'var(--ac-ink)',
+                        fontVariantNumeric: 'tabular-nums',
+                      }}
+                    >
                       {fmtHMShort(selectedDayTotalMs)}
                     </b>
-                    <small style={{ fontSize: 12 }}>
+                    <span style={{ fontSize: 14, color: 'var(--tx-2)' }}>
                       {studyProg.goalMs > 0
-                        ? `${studyProg.pct}% of ${fmtDuration(studyProg.goalMs)} goal`
+                        ? `of ${fmtDuration(studyProg.goalMs)} goal`
                         : `${selectedDaySessions.length} session${
                             selectedDaySessions.length === 1 ? '' : 's'
                           }`}
-                    </small>
+                    </span>
                   </div>
+                  <p
+                    style={{
+                      margin: '4px 0 0',
+                      fontSize: 13,
+                      color:
+                        studyProg.goalMs > 0 && studyProg.pct >= 100
+                          ? 'var(--ok-ink)'
+                          : 'var(--tx-2)',
+                      fontWeight: 500,
+                    }}
+                  >
+                    {heroCoachingCopy}
+                  </p>
+                </div>
+
+                <div className="stat-mini">
                   <div className="stat-box">
-                    <small style={{ fontSize: 12 }}>Focus purity</small>
+                    <small style={{ fontSize: 13 }}>Focus purity</small>
                     <b
                       style={{
                         color:
@@ -819,39 +943,23 @@ export const TodayView: React.FC<TodayViewProps> = ({
                         ? `${selectedDayAvgPurity}%`
                         : '—'}
                     </b>
-                    <small style={{ fontSize: 12 }}>
+                    <small style={{ fontSize: 13 }}>
                       {selectedDaySessions.length} session
                       {selectedDaySessions.length === 1 ? '' : 's'}
                     </small>
                   </div>
-                </div>
-
-                {studyProg.goalMs > 0 && (
-                  <div style={{ marginTop: 10 }}>
-                    <div className="split" style={{ marginBottom: 4 }}>
-                      <span style={{ fontSize: 12, color: 'var(--tx-2)' }}>
-                        Daily study target
-                      </span>
-                      <span
-                        style={{
-                          fontSize: 12,
-                          fontWeight: 600,
-                          color:
-                            studyProg.pct >= 100 ? 'var(--ok-ink)' : 'var(--tx)',
-                          fontVariantNumeric: 'tabular-nums',
-                        }}
-                      >
-                        {fmtDuration(studyProg.studiedMs)} /{' '}
-                        {fmtDuration(studyProg.goalMs)}
-                      </span>
-                    </div>
-                    <Meter
-                      value={studyProg.pct}
-                      color={studyProg.pct >= 100 ? 'var(--ok)' : 'var(--ac)'}
-                      label="Daily study target progress"
-                    />
+                  <div className="stat-box">
+                    <small style={{ fontSize: 13 }}>Habits &amp; tasks</small>
+                    <b style={{ color: p === 100 && dayProg.total > 0 ? 'var(--ok-ink)' : 'var(--tx)' }}>
+                      {dayProg.habitsTotal > 0 || dayProg.tasksTotal > 0
+                        ? `${dayProg.habitsDone + dayProg.tasksDone}/${dayProg.habitsTotal + dayProg.tasksTotal}`
+                        : '—'}
+                    </b>
+                    <small style={{ fontSize: 13 }}>
+                      {dayProg.habitsTotal} habits · {dayProg.tasksTotal} tasks
+                    </small>
                   </div>
-                )}
+                </div>
               </div>
             </div>
 
@@ -867,8 +975,8 @@ export const TodayView: React.FC<TodayViewProps> = ({
                 <div
                   className="split"
                   style={{
-                    padding: '10px 12px',
-                    borderRadius: 12,
+                    padding: '12px 14px',
+                    borderRadius: 14,
                     background: 'var(--ac-soft)',
                     border: '1px solid var(--ac-line)',
                     gap: 10,
@@ -893,7 +1001,7 @@ export const TodayView: React.FC<TodayViewProps> = ({
                           ? 'Focus session running'
                           : 'Focus session paused'}
                       </b>
-                      <span style={{ fontSize: 12, color: 'var(--tx-2)' }}>
+                      <span style={{ fontSize: 13, color: 'var(--tx-2)' }}>
                         {getSubject(state, state.activeTimer.subjectId).name} ·{' '}
                         {state.activeTimer.heading || 'Deep study'}
                       </span>
@@ -901,8 +1009,8 @@ export const TodayView: React.FC<TodayViewProps> = ({
                   </div>
                   <Button
                     variant="primary"
-                    size="sm"
-                    icon={<Play size={14} strokeWidth={2} />}
+                    size="md"
+                    icon={<Play size={15} strokeWidth={2} />}
                     onClick={() => onSwitchTab('focus')}
                   >
                     Open timer
@@ -935,15 +1043,7 @@ export const TodayView: React.FC<TodayViewProps> = ({
                   </div>
 
                   {/* Subject Selector Chips */}
-                  <div
-                    className="row"
-                    style={{
-                      gap: 6,
-                      overflowX: 'auto',
-                      paddingBottom: 6,
-                      scrollbarWidth: 'none',
-                    }}
-                  >
+                  <div className="dh-scroll-chips">
                     {activeSubjects.map((s) => (
                       <Chip
                         key={s.id}
@@ -997,59 +1097,54 @@ export const TodayView: React.FC<TodayViewProps> = ({
                     />
                   </div>
 
-                  {/* Mode Launch Buttons */}
+                  {/* Mode Selector + Prominent 56px Primary Focus CTA */}
                   <div
                     style={{
-                      display: 'grid',
-                      gridTemplateColumns: 'repeat(auto-fit, minmax(128px, 1fr))',
-                      gap: 8,
+                      display: 'flex',
+                      flexDirection: 'column',
+                      gap: 10,
                       marginTop: 10,
                     }}
                   >
+                    <div className="dh-scroll-chips" role="radiogroup" aria-label="Timer mode">
+                      <Chip
+                        selected={quickMode === 'pomo'}
+                        onClick={() => setQuickMode('pomo')}
+                      >
+                        <Timer size={14} strokeWidth={1.75} />
+                        Pomodoro ({state.set.pomoWork || 25}m)
+                      </Chip>
+                      <Chip
+                        selected={quickMode === 'countdown'}
+                        onClick={() => setQuickMode('countdown')}
+                      >
+                        <Hourglass size={14} strokeWidth={1.75} />
+                        Countdown ({state.set.countdownMins || 45}m)
+                      </Chip>
+                      <Chip
+                        selected={quickMode === 'stopwatch'}
+                        onClick={() => setQuickMode('stopwatch')}
+                      >
+                        <Clock size={14} strokeWidth={1.75} />
+                        Stopwatch
+                      </Chip>
+                    </div>
+
                     <Button
                       variant="primary"
-                      size="sm"
-                      icon={<Timer size={15} strokeWidth={1.75} />}
+                      size="xl"
+                      fullWidth
+                      icon={<Play size={18} strokeWidth={2.25} />}
                       onClick={() =>
                         onQuickStartSession(
                           effectiveQuickSubId,
                           quickHeading,
-                          'pomo',
+                          quickMode,
                           effectiveQuickChapId || undefined
                         )
                       }
                     >
-                      Pomodoro ({state.set.pomoWork || 25}m)
-                    </Button>
-                    <Button
-                      variant="secondary"
-                      size="sm"
-                      icon={<Hourglass size={15} strokeWidth={1.75} />}
-                      onClick={() =>
-                        onQuickStartSession(
-                          effectiveQuickSubId,
-                          quickHeading,
-                          'countdown',
-                          effectiveQuickChapId || undefined
-                        )
-                      }
-                    >
-                      Countdown ({state.set.countdownMins || 45}m)
-                    </Button>
-                    <Button
-                      variant="secondary"
-                      size="sm"
-                      icon={<Clock size={15} strokeWidth={1.75} />}
-                      onClick={() =>
-                        onQuickStartSession(
-                          effectiveQuickSubId,
-                          quickHeading,
-                          'stopwatch',
-                          effectiveQuickChapId || undefined
-                        )
-                      }
-                    >
-                      Stopwatch
+                      Start focus
                     </Button>
                   </div>
                 </div>
@@ -1104,7 +1199,7 @@ export const TodayView: React.FC<TodayViewProps> = ({
                       </div>
                       <span
                         style={{
-                          fontSize: 12,
+                          fontSize: 13,
                           color: 'var(--tx-2)',
                           fontVariantNumeric: 'tabular-nums',
                         }}
@@ -1153,8 +1248,8 @@ export const TodayView: React.FC<TodayViewProps> = ({
                   />
                   <div>
                     <h3 style={{ margin: 0, fontSize: 16 }}>Study next</h3>
-                    <small style={{ fontSize: 12 }}>
-                      Ranked by revisions due, mistakes & low confidence
+                    <small style={{ fontSize: 13 }}>
+                      Ranked by revisions due, mistakes &amp; low confidence
                     </small>
                   </div>
                 </div>
@@ -1166,28 +1261,23 @@ export const TodayView: React.FC<TodayViewProps> = ({
                   Syllabus
                 </Button>
               </div>
-              <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
+              <div className="dh-carousel">
                 {studyNextItems.map((item) => (
                   <div
                     key={item.chapter.id}
-                    className="split"
+                    className="dh-carousel-card"
                     style={{
-                      padding: '10px 12px',
-                      borderRadius: 12,
-                      background: 'var(--sf-2)',
-                      border: '1px solid var(--line)',
-                      borderLeft: `3px solid ${item.subjectColor}`,
-                      gap: 10,
+                      borderTop: `3px solid ${item.subjectColor}`,
                     }}
                   >
-                    <div style={{ minWidth: 0, flex: 1 }}>
-                      <div className="row" style={{ gap: 6, flexWrap: 'wrap' }}>
+                    <div style={{ minWidth: 0 }}>
+                      <div className="row" style={{ gap: 6, flexWrap: 'wrap', marginBottom: 4 }}>
                         <b
                           style={{
                             fontSize: 14,
-                            whiteSpace: 'nowrap',
                             overflow: 'hidden',
                             textOverflow: 'ellipsis',
+                            whiteSpace: 'nowrap',
                           }}
                         >
                           {item.subjectEmoji} {item.chapter.name}
@@ -1196,7 +1286,7 @@ export const TodayView: React.FC<TodayViewProps> = ({
                           <span
                             className="pill"
                             style={{
-                              fontSize: 12,
+                              fontSize: 13,
                               padding: '1px 7px',
                               background: 'var(--sf-3)',
                               color: 'var(--tx-2)',
@@ -1209,9 +1299,9 @@ export const TodayView: React.FC<TodayViewProps> = ({
                       <small
                         style={{
                           display: 'block',
-                          marginTop: 3,
-                          fontSize: 12,
+                          fontSize: 13,
                           color: 'var(--tx-2)',
+                          lineHeight: 1.4,
                         }}
                       >
                         {item.reasons.join(' · ')}
@@ -1220,6 +1310,7 @@ export const TodayView: React.FC<TodayViewProps> = ({
                     <Button
                       variant="primary"
                       size="sm"
+                      fullWidth
                       icon={<Play size={13} strokeWidth={2} />}
                       onClick={() =>
                         onQuickStartSession(
@@ -1238,7 +1329,7 @@ export const TodayView: React.FC<TodayViewProps> = ({
             </Card>
           )}
 
-          {/* 8. Daily Tasks Card (Compact when empty) */}
+          {/* 8. Daily Tasks Card */}
           <Card id="dailyTasksCard">
             <div className="split" style={{ marginBottom: 10 }}>
               <div className="row" style={{ gap: 8 }}>
@@ -1246,7 +1337,7 @@ export const TodayView: React.FC<TodayViewProps> = ({
                 <span
                   className="pill"
                   style={{
-                    fontSize: 12,
+                    fontSize: 13,
                     padding: '2px 8px',
                     background:
                       dayTasks.length > 0 && dayProg.tasksDone === dayTasks.length
@@ -1309,9 +1400,12 @@ export const TodayView: React.FC<TodayViewProps> = ({
             </form>
 
             {dayTasks.length === 0 ? (
-              <div style={{ fontSize: 13, color: 'var(--tx-3)', padding: '2px 0' }}>
-                No tasks scheduled for this day yet.
-              </div>
+              <EmptyState
+                illustration="noTasks"
+                compact
+                title="No tasks scheduled for this day"
+                description="Add a quick goal above to organize your study blocks."
+              />
             ) : (
               <WindowedList
                 items={dayTasks}
@@ -1354,25 +1448,13 @@ export const TodayView: React.FC<TodayViewProps> = ({
                       <div className="row" style={{ gap: 10 }}>
                         <button
                           type="button"
+                          className={`dh-task-check ${task.done ? 'checked' : ''}`}
                           aria-label={
                             task.done
                               ? `Mark "${task.title}" incomplete`
                               : `Complete "${task.title}"`
                           }
                           onClick={() => onToggleTask(task.id)}
-                          style={{
-                            width: 36,
-                            height: 36,
-                            minHeight: 36,
-                            padding: 0,
-                            borderRadius: 10,
-                            display: 'grid',
-                            placeItems: 'center',
-                            background: task.done ? 'var(--ok)' : 'var(--sf-1)',
-                            color: task.done ? 'var(--ok-on)' : 'var(--tx-2)',
-                            border: task.done ? 'none' : '1px solid var(--line)',
-                            flexShrink: 0,
-                          }}
                         >
                           {task.done ? <Check size={18} strokeWidth={2.25} /> : null}
                         </button>
@@ -1420,13 +1502,7 @@ export const TodayView: React.FC<TodayViewProps> = ({
                               onClick={() => onToggleTask(task.id)}
                             >
                               <span
-                                style={{
-                                  fontSize: 14,
-                                  fontWeight: 500,
-                                  textDecoration: task.done ? 'line-through' : 'none',
-                                  color: task.done ? 'var(--tx-2)' : 'var(--tx)',
-                                  wordBreak: 'break-word',
-                                }}
+                                className={`dh-task-title ${task.done ? 'done' : ''}`}
                               >
                                 {task.title}
                               </span>
@@ -1434,7 +1510,7 @@ export const TodayView: React.FC<TodayViewProps> = ({
                                 <span
                                   className="pill"
                                   style={{
-                                    fontSize: 12,
+                                    fontSize: 13,
                                     padding: '2px 8px',
                                     background: 'var(--sf-1)',
                                     color: 'var(--tx-2)',
@@ -1643,7 +1719,7 @@ export const TodayView: React.FC<TodayViewProps> = ({
                             >
                               {t.title}
                             </div>
-                            <small style={{ fontSize: 12 }}>
+                            <small style={{ fontSize: 13 }}>
                               From {t.dayKey} {sub ? `· ${sub.e} ${sub.name}` : ''}
                             </small>
                           </div>
@@ -1690,7 +1766,7 @@ export const TodayView: React.FC<TodayViewProps> = ({
                 <span
                   className="pill"
                   style={{
-                    fontSize: 12,
+                    fontSize: 13,
                     padding: '2px 8px',
                     background:
                       revisionsBundle.overdue.length > 0
@@ -1720,16 +1796,7 @@ export const TodayView: React.FC<TodayViewProps> = ({
             </div>
 
             {allRevisionsCount > 0 && (
-              <div
-                className="row"
-                style={{
-                  gap: 6,
-                  overflowX: 'auto',
-                  paddingBottom: 8,
-                  marginBottom: 8,
-                  scrollbarWidth: 'none',
-                }}
-              >
+              <div className="dh-scroll-chips" style={{ marginBottom: 8 }}>
                 <Chip
                   selected={revSubjectFilter === 'all'}
                   onClick={() => setRevSubjectFilter('all')}
@@ -1769,7 +1836,7 @@ export const TodayView: React.FC<TodayViewProps> = ({
                       className="row"
                       style={{
                         gap: 6,
-                        fontSize: 12,
+                        fontSize: 13,
                         fontWeight: 600,
                         color: 'var(--err-ink)',
                         marginBottom: 6,
@@ -1827,7 +1894,7 @@ export const TodayView: React.FC<TodayViewProps> = ({
                                   >
                                     {item.subject.e} {item.chapterName}
                                   </b>
-                                  <small style={{ fontSize: 12, color: 'var(--err-ink)' }}>
+                                  <small style={{ fontSize: 13, color: 'var(--err-ink)' }}>
                                     {item.label} · {item.daysLate}d overdue ({item.date})
                                   </small>
                                 </div>
@@ -1897,7 +1964,7 @@ export const TodayView: React.FC<TodayViewProps> = ({
                   <div>
                     <div
                       style={{
-                        fontSize: 12,
+                        fontSize: 13,
                         fontWeight: 600,
                         color: 'var(--ac-ink)',
                         marginBottom: 6,
@@ -1953,7 +2020,7 @@ export const TodayView: React.FC<TodayViewProps> = ({
                                   >
                                     {item.subject.e} {item.chapterName}
                                   </b>
-                                  <small style={{ fontSize: 12 }}>
+                                  <small style={{ fontSize: 13 }}>
                                     {item.subject.name} · {item.label} due
                                   </small>
                                 </div>
@@ -2039,16 +2106,7 @@ export const TodayView: React.FC<TodayViewProps> = ({
             />
 
             {allLiveHabits.length > 0 && (
-              <div
-                className="row"
-                style={{
-                  gap: 6,
-                  overflowX: 'auto',
-                  paddingBottom: 6,
-                  marginBottom: 6,
-                  scrollbarWidth: 'none',
-                }}
-              >
+              <div className="dh-scroll-chips" style={{ marginBottom: 6 }}>
                 <Chip selected={cat === 'All'} onClick={() => onSelectCat('All')}>
                   All
                 </Chip>
@@ -2150,7 +2208,7 @@ export const TodayView: React.FC<TodayViewProps> = ({
                   <div className="row" style={{ gap: 8, marginBottom: 4 }}>
                     <span
                       style={{
-                        fontSize: 12,
+                        fontSize: 13,
                         fontWeight: 600,
                         color: 'var(--ac-ink)',
                       }}
@@ -2160,7 +2218,7 @@ export const TodayView: React.FC<TodayViewProps> = ({
                     <span
                       className="pill"
                       style={{
-                        fontSize: 12,
+                        fontSize: 13,
                         padding: '1px 7px',
                         background: 'var(--sf-2)',
                         color: 'var(--tx-2)',
@@ -2222,9 +2280,12 @@ export const TodayView: React.FC<TodayViewProps> = ({
             </div>
 
             {selectedDaySessions.length === 0 ? (
-              <div style={{ fontSize: 13, color: 'var(--tx-3)', padding: '6px 0' }}>
-                No study sessions logged on this day yet.
-              </div>
+              <EmptyState
+                illustration="noSessions"
+                compact
+                title="No study sessions yet"
+                description="Start a focus timer or log hours manually."
+              />
             ) : (
               <WindowedList
                 items={selectedDaySessions}
@@ -2251,7 +2312,7 @@ export const TodayView: React.FC<TodayViewProps> = ({
                         <div className="row" style={{ gap: 6, flexWrap: 'wrap' }}>
                           <b
                             style={{
-                              fontSize: 13,
+                              fontSize: 14,
                               whiteSpace: 'nowrap',
                               overflow: 'hidden',
                               textOverflow: 'ellipsis',
@@ -2262,7 +2323,7 @@ export const TodayView: React.FC<TodayViewProps> = ({
                           <span
                             className="pill"
                             style={{
-                              fontSize: 12,
+                              fontSize: 13,
                               padding: '1px 7px',
                               background: 'var(--sf-3)',
                               color: 'var(--tx)',
@@ -2276,7 +2337,7 @@ export const TodayView: React.FC<TodayViewProps> = ({
                           style={{
                             display: 'block',
                             marginTop: 3,
-                            fontSize: 12,
+                            fontSize: 13,
                             fontVariantNumeric: 'tabular-nums',
                           }}
                         >
@@ -2288,7 +2349,7 @@ export const TodayView: React.FC<TodayViewProps> = ({
                             style={{
                               display: 'block',
                               marginTop: 2,
-                              fontSize: 12,
+                              fontSize: 13,
                               color: 'var(--tx-2)',
                             }}
                           >
@@ -2315,12 +2376,12 @@ export const TodayView: React.FC<TodayViewProps> = ({
           {/* Daily Reflection & Wellbeing */}
           <Card id="wellbeingReflectionCard">
             <h3 style={{ margin: '0 0 10px', fontSize: 16 }}>
-              Reflection & wellbeing
+              Reflection &amp; wellbeing
             </h3>
 
             {/* Mood Selector */}
             <div style={{ marginBottom: 12 }}>
-              <small style={{ display: 'block', marginBottom: 6, fontSize: 12 }}>
+              <small style={{ display: 'block', marginBottom: 6, fontSize: 13 }}>
                 How did your study feel?
               </small>
               <div className="row" style={{ gap: 6 }}>
@@ -2351,7 +2412,7 @@ export const TodayView: React.FC<TodayViewProps> = ({
                       <span>{emoji}</span>
                       <span
                         style={{
-                          fontSize: 12,
+                          fontSize: 13,
                           color: isSel ? 'var(--ac-ink)' : 'var(--tx-2)',
                           fontWeight: isSel ? 600 : 500,
                         }}
@@ -2389,7 +2450,7 @@ export const TodayView: React.FC<TodayViewProps> = ({
                 <div>
                   <div
                     className="row"
-                    style={{ gap: 4, fontSize: 12, color: 'var(--tx-2)' }}
+                    style={{ gap: 4, fontSize: 13, color: 'var(--tx-2)' }}
                   >
                     <Moon size={13} strokeWidth={1.75} />
                     <span>Sleep</span>
@@ -2433,7 +2494,7 @@ export const TodayView: React.FC<TodayViewProps> = ({
                   className="row"
                   style={{
                     gap: 4,
-                    fontSize: 12,
+                    fontSize: 13,
                     color: 'var(--tx-2)',
                     marginBottom: 4,
                   }}
@@ -2455,7 +2516,7 @@ export const TodayView: React.FC<TodayViewProps> = ({
                           flex: 1,
                           padding: '5px 0',
                           minHeight: 32,
-                          fontSize: 12,
+                          fontSize: 13,
                           fontWeight: 600,
                           borderRadius: 8,
                           background: isLit ? 'var(--ac)' : 'var(--sf-1)',

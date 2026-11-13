@@ -385,13 +385,13 @@ export const DayHistoryView: React.FC<DayHistoryViewProps> = ({
       <Card>
         <div className="split flex-wrap gap-3">
           <div>
-            <span className="text-[12px] font-medium text-[var(--ac-ink)]">
+            <span className="text-[13px] font-medium text-[var(--ac-ink)]">
               Daily activity history
             </span>
             <h3 className="text-[17px] font-semibold text-[var(--tx)]">
               {formatReadableDate(selectedDayKey)}
             </h3>
-            <p className="tnum text-[12px] text-[var(--tx-2)]">
+            <p className="tnum text-[13px] text-[var(--tx-2)]">
               {selectedDayKey}
               {selectedDayKey === todayKey
                 ? ' · Today'
@@ -502,7 +502,7 @@ export const DayHistoryView: React.FC<DayHistoryViewProps> = ({
                 return (
                   <span
                     key={i}
-                    className="text-[12px] font-medium text-[var(--tx-3)]"
+                    className="text-[13px] font-medium text-[var(--tx-3)]"
                   >
                     {DN[dow]}
                   </span>
@@ -524,7 +524,7 @@ export const DayHistoryView: React.FC<DayHistoryViewProps> = ({
                     type="button"
                     onClick={() => handleSelectDate(cell.dayKey)}
                     title={`${cell.dayKey}: Studied ${fmtHMShort(cell.studyMs)} · ${cell.doneCount}/${cell.totalCount} (${cell.pct}%)`}
-                    className={`tnum flex min-h-[38px] flex-col items-center justify-center gap-0.5 rounded-lg border text-[12px] transition-colors ${
+                    className={`tnum flex min-h-[38px] flex-col items-center justify-center gap-0.5 rounded-lg border text-[13px] transition-colors ${
                       cell.isSelected
                         ? 'border-[var(--ac)] bg-[var(--ac-soft)] font-bold text-[var(--ac-ink)]'
                         : cell.isToday
@@ -618,7 +618,7 @@ export const DayHistoryView: React.FC<DayHistoryViewProps> = ({
             title={`Did on ${selectedDayKey}`}
             subtitle="Completed habits, tasks, study sessions, chapters, revisions, and logs"
             action={
-              <span className="tnum rounded-md bg-[var(--sf-2)] px-2.5 py-1 text-[12px] font-medium text-[var(--ok-ink)]">
+              <span className="tnum rounded-md bg-[var(--sf-2)] px-2.5 py-1 text-[13px] font-medium text-[var(--ok-ink)]">
                 {totalDidCount} completed
               </span>
             }
@@ -634,7 +634,7 @@ export const DayHistoryView: React.FC<DayHistoryViewProps> = ({
               {/* Habits Completed */}
               {record.habitsCompleted.length > 0 && (
                 <div>
-                  <h4 className="mb-2 text-[12.5px] font-semibold text-[var(--tx-2)]">
+                  <h4 className="mb-2 text-[13px] font-semibold text-[var(--tx-2)]">
                     Habits completed ({record.habitsCompleted.length})
                   </h4>
                   <div className="divide-y divide-[var(--line)] rounded-xl border border-[var(--line)] bg-[var(--sf-2)] px-3">
@@ -646,14 +646,16 @@ export const DayHistoryView: React.FC<DayHistoryViewProps> = ({
                         <span className="flex items-center gap-2 font-medium text-[var(--tx)]">
                           <CheckCircle2 size={16} className="shrink-0 text-[var(--ok-ink)]" aria-hidden="true" />
                           {habit.e} {habit.name}
-                          <span
-                            className="rounded-md bg-[var(--sf-1)] px-2 py-0.5 text-[12px]"
-                            style={{ color: CC[habit.c] || 'var(--tx-2)' }}
-                          >
+                          <span className="inline-flex items-center gap-1.5 rounded-md border border-[var(--line)] bg-[var(--sf-1)] px-2 py-0.5 text-[13px] text-[var(--tx-2)]">
+                            <span
+                              aria-hidden="true"
+                              className="h-2 w-2 rounded-full"
+                              style={{ background: CC[habit.c] || 'var(--tx-3)' }}
+                            />
                             {habit.c}
                           </span>
                         </span>
-                        <span className="tnum text-[12.5px] font-semibold text-[var(--ok-ink)]">
+                        <span className="tnum text-[13px] font-semibold text-[var(--ok-ink)]">
                           {value}/{target} {unit}
                         </span>
                       </div>
@@ -665,7 +667,7 @@ export const DayHistoryView: React.FC<DayHistoryViewProps> = ({
               {/* Tasks Completed */}
               {record.tasksCompleted.length > 0 && (
                 <div>
-                  <h4 className="mb-2 text-[12.5px] font-semibold text-[var(--tx-2)]">
+                  <h4 className="mb-2 text-[13px] font-semibold text-[var(--tx-2)]">
                     Daily tasks finished ({record.tasksCompleted.length})
                   </h4>
                   <div className="divide-y divide-[var(--line)] rounded-xl border border-[var(--line)] bg-[var(--sf-2)] px-3">
@@ -683,7 +685,7 @@ export const DayHistoryView: React.FC<DayHistoryViewProps> = ({
                             {task.title}
                           </span>
                           {sub && (
-                            <span className="rounded-md bg-[var(--sf-1)] px-2 py-0.5 text-[12px] text-[var(--tx-2)]">
+                            <span className="rounded-md bg-[var(--sf-1)] px-2 py-0.5 text-[13px] text-[var(--tx-2)]">
                               {sub.e} {sub.name}
                             </span>
                           )}
@@ -698,7 +700,7 @@ export const DayHistoryView: React.FC<DayHistoryViewProps> = ({
               {record.sessions.length > 0 && (
                 <div>
                   <div className="split mb-2">
-                    <h4 className="text-[12.5px] font-semibold text-[var(--tx-2)]">
+                    <h4 className="text-[13px] font-semibold text-[var(--tx-2)]">
                       Study sessions ({record.sessions.length} ·{' '}
                       {fmtHMShort(record.studyMs)})
                     </h4>
@@ -735,12 +737,12 @@ export const DayHistoryView: React.FC<DayHistoryViewProps> = ({
                                 {sub.e} {sub.name} · {heading}
                               </span>
                             </div>
-                            <p className="tnum text-[12px] text-[var(--tx-2)]">
+                            <p className="tnum text-[13px] text-[var(--tx-2)]">
                               {fmtClockTime(ses.startTs)} – {fmtClockTime(ses.endTs)} ·{' '}
                               {ses.mode} · Purity {ses.purity ?? 100}%
                             </p>
                             {ses.note && (
-                              <p className="mt-0.5 text-[12px] text-[var(--tx-2)]">
+                              <p className="mt-0.5 text-[13px] text-[var(--tx-2)]">
                                 “{ses.note}”
                               </p>
                             )}
@@ -770,7 +772,7 @@ export const DayHistoryView: React.FC<DayHistoryViewProps> = ({
               {(record.chaptersCompleted.length > 0 ||
                 record.revisionsCompleted.length > 0) && (
                 <div>
-                  <h4 className="mb-2 text-[12.5px] font-semibold text-[var(--tx-2)]">
+                  <h4 className="mb-2 text-[13px] font-semibold text-[var(--tx-2)]">
                     Chapters &amp; revisions completed
                   </h4>
                   <div className="divide-y divide-[var(--line)] rounded-xl border border-[var(--line)] bg-[var(--sf-2)] px-3">
@@ -785,7 +787,7 @@ export const DayHistoryView: React.FC<DayHistoryViewProps> = ({
                             Completed chapter: <strong>{ch.name}</strong> ({sub.e}{' '}
                             {sub.name})
                           </span>
-                          <span className="tnum text-[12px] font-semibold text-[var(--ac-ink)]">
+                          <span className="tnum text-[13px] font-semibold text-[var(--ac-ink)]">
                             +25 XP
                           </span>
                         </div>
@@ -802,7 +804,7 @@ export const DayHistoryView: React.FC<DayHistoryViewProps> = ({
                             Revision {rev.label}: <strong>{rev.chapter.name}</strong> (
                             {sub.e} {sub.name})
                           </span>
-                          <span className="text-[12px] font-semibold text-[var(--ok-ink)]">
+                          <span className="text-[13px] font-semibold text-[var(--ok-ink)]">
                             Done
                           </span>
                         </div>
@@ -818,7 +820,7 @@ export const DayHistoryView: React.FC<DayHistoryViewProps> = ({
                 record.mistakes.length > 0 ||
                 record.doubtsCreated.length > 0) && (
                 <div>
-                  <h4 className="mb-2 text-[12.5px] font-semibold text-[var(--tx-2)]">
+                  <h4 className="mb-2 text-[13px] font-semibold text-[var(--tx-2)]">
                     Mocks, PYQs &amp; practice logs
                   </h4>
                   <div className="divide-y divide-[var(--line)] rounded-xl border border-[var(--line)] bg-[var(--sf-2)] px-3">
@@ -865,7 +867,7 @@ export const DayHistoryView: React.FC<DayHistoryViewProps> = ({
                             Mistake ({sub.e} {sub.name} · {ms.reason}):{' '}
                             {ms.note || 'Logged'}
                           </span>
-                          <span className="text-[12px] text-[var(--tx-2)]">
+                          <span className="text-[13px] text-[var(--tx-2)]">
                             {ms.resolved ? 'Resolved' : 'Open'}
                           </span>
                         </div>
@@ -881,7 +883,7 @@ export const DayHistoryView: React.FC<DayHistoryViewProps> = ({
                           <span className="text-[var(--tx)]">
                             Doubt ({sub.e} {sub.name}): {db.text}
                           </span>
-                          <span className="text-[12px] text-[var(--tx-2)]">
+                          <span className="text-[13px] text-[var(--tx-2)]">
                             {db.resolved ? 'Resolved' : 'Open'}
                           </span>
                         </div>
@@ -897,7 +899,7 @@ export const DayHistoryView: React.FC<DayHistoryViewProps> = ({
                 record.moodValue !== undefined ||
                 Boolean(record.dailyNote)) && (
                 <div>
-                  <h4 className="mb-2 text-[12.5px] font-semibold text-[var(--tx-2)]">
+                  <h4 className="mb-2 text-[13px] font-semibold text-[var(--tx-2)]">
                     Wellbeing &amp; reflection
                   </h4>
                   <div className="rounded-xl border border-[var(--line)] bg-[var(--sf-2)] p-3 text-[13px] text-[var(--tx)] space-y-1.5">
@@ -940,7 +942,7 @@ export const DayHistoryView: React.FC<DayHistoryViewProps> = ({
             title={`Didn't do on ${selectedDayKey}`}
             subtitle="Unfinished habits, pending tasks, and missed revisions"
             action={
-              <span className="tnum rounded-md bg-[var(--sf-2)] px-2.5 py-1 text-[12px] font-medium text-[var(--err-ink)]">
+              <span className="tnum rounded-md bg-[var(--sf-2)] px-2.5 py-1 text-[13px] font-medium text-[var(--err-ink)]">
                 {totalMissedCount} missed
               </span>
             }
@@ -961,7 +963,7 @@ export const DayHistoryView: React.FC<DayHistoryViewProps> = ({
                       <XCircle size={16} className="shrink-0 text-[var(--err-ink)]" aria-hidden="true" />
                       Daily study minimum not reached
                     </span>
-                    <span className="tnum text-[12px] text-[var(--err-ink)]">
+                    <span className="tnum text-[13px] text-[var(--err-ink)]">
                       {fmtHMShort(record.studyMs)} / {fmtHMShort(record.minTargetMs)}
                     </span>
                   </div>
@@ -969,7 +971,7 @@ export const DayHistoryView: React.FC<DayHistoryViewProps> = ({
 
               {record.habitsMissed.length > 0 && (
                 <div>
-                  <h4 className="mb-2 text-[12.5px] font-semibold text-[var(--tx-2)]">
+                  <h4 className="mb-2 text-[13px] font-semibold text-[var(--tx-2)]">
                     Due habits not completed ({record.habitsMissed.length})
                   </h4>
                   <div className="divide-y divide-[var(--line)] rounded-xl border border-[var(--line)] bg-[var(--sf-2)] px-3">
@@ -982,7 +984,7 @@ export const DayHistoryView: React.FC<DayHistoryViewProps> = ({
                           <XCircle size={16} className="shrink-0 text-[var(--err-ink)]" aria-hidden="true" />
                           {habit.e} {habit.name}
                         </span>
-                        <span className="tnum text-[12px] text-[var(--err-ink)]">
+                        <span className="tnum text-[13px] text-[var(--err-ink)]">
                           {value}/{target} {unit}
                         </span>
                       </div>
@@ -993,7 +995,7 @@ export const DayHistoryView: React.FC<DayHistoryViewProps> = ({
 
               {record.tasksMissed.length > 0 && (
                 <div>
-                  <h4 className="mb-2 text-[12.5px] font-semibold text-[var(--tx-2)]">
+                  <h4 className="mb-2 text-[13px] font-semibold text-[var(--tx-2)]">
                     Unfinished daily tasks ({record.tasksMissed.length})
                   </h4>
                   <div className="divide-y divide-[var(--line)] rounded-xl border border-[var(--line)] bg-[var(--sf-2)] px-3">
@@ -1011,7 +1013,7 @@ export const DayHistoryView: React.FC<DayHistoryViewProps> = ({
                             {task.title}
                           </span>
                           {sub && (
-                            <span className="rounded-md bg-[var(--sf-1)] px-2 py-0.5 text-[12px] text-[var(--tx-2)]">
+                            <span className="rounded-md bg-[var(--sf-1)] px-2 py-0.5 text-[13px] text-[var(--tx-2)]">
                               {sub.e} {sub.name}
                             </span>
                           )}
@@ -1024,7 +1026,7 @@ export const DayHistoryView: React.FC<DayHistoryViewProps> = ({
 
               {record.revisionsMissed.length > 0 && (
                 <div>
-                  <h4 className="mb-2 text-[12.5px] font-semibold text-[var(--tx-2)]">
+                  <h4 className="mb-2 text-[13px] font-semibold text-[var(--tx-2)]">
                     Scheduled revisions not marked done ({record.revisionsMissed.length})
                   </h4>
                   <div className="divide-y divide-[var(--line)] rounded-xl border border-[var(--line)] bg-[var(--sf-2)] px-3">
@@ -1039,7 +1041,7 @@ export const DayHistoryView: React.FC<DayHistoryViewProps> = ({
                             {rev.label}: <strong>{rev.chapter.name}</strong> ({sub.e}{' '}
                             {sub.name})
                           </span>
-                          <span className="tnum text-[12px] text-[var(--err-ink)]">
+                          <span className="tnum text-[13px] text-[var(--err-ink)]">
                             Due {rev.scheduledDate}
                           </span>
                         </div>
@@ -1051,14 +1053,14 @@ export const DayHistoryView: React.FC<DayHistoryViewProps> = ({
 
               {record.habitsSkipped.length > 0 && (
                 <div>
-                  <h4 className="mb-2 text-[12.5px] font-semibold text-[var(--tx-2)]">
+                  <h4 className="mb-2 text-[13px] font-semibold text-[var(--tx-2)]">
                     Skipped habits ({record.habitsSkipped.length})
                   </h4>
                   <div className="flex flex-wrap gap-2">
                     {record.habitsSkipped.map((h) => (
                       <span
                         key={h.id}
-                        className="rounded-lg border border-[var(--line)] bg-[var(--sf-2)] px-2.5 py-1 text-[12.5px] text-[var(--tx-2)]"
+                        className="rounded-lg border border-[var(--line)] bg-[var(--sf-2)] px-2.5 py-1 text-[13px] text-[var(--tx-2)]"
                       >
                         {h.e} {h.name}
                       </span>

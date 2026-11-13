@@ -1,5 +1,5 @@
 import React, { useMemo, useState } from 'react';
-import { BookCheck, CheckCircle2, Plus, Trash2 } from 'lucide-react';
+import { CheckCircle2, Plus, Trash2 } from 'lucide-react';
 import type { PulseHabitState } from '../types';
 import { getChapterPYQStats, getSubject } from '../utils/studyLogic';
 import { Button } from './ui/Button';
@@ -148,7 +148,7 @@ export const PYQView: React.FC<PYQViewProps> = ({
             <h3 className="text-[16px] font-semibold text-[var(--tx)]">
               Previous Year Questions (PYQ) Tracker
             </h3>
-            <p className="text-[12px] text-[var(--tx-2)]">
+            <p className="text-[13px] text-[var(--tx-2)]">
               Track chapter-wise NEET PYQ volume and accuracy across 37-year question banks
             </p>
           </div>
@@ -163,7 +163,7 @@ export const PYQView: React.FC<PYQViewProps> = ({
           </Button>
         </div>
 
-        <div className="grid grid-cols-3 gap-2.5">
+        <div className="grid grid-cols-1 gap-2.5 min-[360px]:grid-cols-2 sm:grid-cols-3">
           <Stat
             label="Questions solved"
             value={pyqStats.totalAttempted.toLocaleString()}
@@ -220,7 +220,7 @@ export const PYQView: React.FC<PYQViewProps> = ({
 
       {state.chapters.length === 0 ? (
         <EmptyState
-          icon={<BookCheck size={22} />}
+          illustration="noPyqs"
           title="Add syllabus chapters first"
           description="Add chapters in the Syllabus tab to start logging chapter-wise PYQ practice sets."
         />
@@ -259,7 +259,7 @@ export const PYQView: React.FC<PYQViewProps> = ({
                         <span className="truncate text-[14px] font-medium text-[var(--tx)]">
                           {chapter.name}
                         </span>
-                        <span className="text-[12px] text-[var(--tx-3)]">
+                        <span className="text-[13px] text-[var(--tx-3)]">
                           {subject.e} {subject.name}
                         </span>
                       </div>
@@ -271,7 +271,7 @@ export const PYQView: React.FC<PYQViewProps> = ({
                             color={accColor}
                           />
                         </div>
-                        <span className="tnum text-[12px] text-[var(--tx-2)]">
+                        <span className="tnum text-[13px] text-[var(--tx-2)]">
                           {summary.attempted > 0
                             ? `${summary.correct}/${summary.attempted} (${summary.accuracyPct}%)`
                             : 'No PYQs logged'}
@@ -293,16 +293,19 @@ export const PYQView: React.FC<PYQViewProps> = ({
           </Card>
 
           {/* Recent PYQ Logs */}
-          <Card>
-            <SectionHeader
-              title="Recent PYQ logs"
-              subtitle={`${pyqStats.filteredEntries.length} recorded practice batches`}
+          {pyqStats.filteredEntries.length === 0 ? (
+            <EmptyState
+              compact
+              illustration="noPyqs"
+              title="No PYQ batches logged for this filter"
+              description="Tap + Log on any chapter above or log a new PYQ batch to track chapter accuracy."
             />
-            {pyqStats.filteredEntries.length === 0 ? (
-              <div className="py-6 text-center text-[13px] text-[var(--tx-2)]">
-                No PYQ batches logged for this filter yet.
-              </div>
-            ) : (
+          ) : (
+            <Card>
+              <SectionHeader
+                title="Recent PYQ logs"
+                subtitle={`${pyqStats.filteredEntries.length} recorded practice batches`}
+              />
               <WindowedList
                 items={pyqStats.filteredEntries}
                 threshold={100}
@@ -328,10 +331,10 @@ export const PYQView: React.FC<PYQViewProps> = ({
                           <span className="text-[13.5px] font-medium text-[var(--tx)]">
                             {ch ? ch.name : 'Chapter'}
                           </span>
-                          <span className="tnum rounded-md bg-[var(--sf-2)] px-2 py-0.5 text-[12px] font-medium text-[var(--ac-ink)]">
+                          <span className="tnum rounded-md bg-[var(--sf-2)] px-2 py-0.5 text-[13px] font-medium text-[var(--ac-ink)]">
                             {entry.correct}/{entry.attempted} ({acc}%)
                           </span>
-                          <span className="tnum text-[12px] text-[var(--tx-3)]">
+                          <span className="tnum text-[13px] text-[var(--tx-3)]">
                             {entry.dayKey || todayKey}
                           </span>
                         </div>
@@ -346,8 +349,8 @@ export const PYQView: React.FC<PYQViewProps> = ({
                   );
                 }}
               />
-            )}
-          </Card>
+            </Card>
+          )}
         </>
       )}
 

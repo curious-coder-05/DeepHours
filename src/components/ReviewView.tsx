@@ -60,7 +60,7 @@ export const ReviewView: React.FC<ReviewViewProps> = ({
               <div className="tnum text-[15px] font-semibold text-[var(--tx)]">
                 {review.weekStartKey} → {review.weekEndKey}
               </div>
-              <div className="text-[12px] text-[var(--tx-2)]">
+              <div className="text-[13px] text-[var(--tx-2)]">
                 {selectedWeekStart === currentWeekStart
                   ? 'Current week review'
                   : 'Past week review'}
@@ -177,26 +177,26 @@ export const ReviewView: React.FC<ReviewViewProps> = ({
       <Card>
         <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-4">
           <div className="rounded-xl border border-[var(--line)] bg-[var(--sf-2)] p-3">
-            <span className="block text-[12px] text-[var(--tx-2)]">Tasks completed</span>
+            <span className="block text-[13px] text-[var(--tx-2)]">Tasks completed</span>
             <strong className="tnum mt-1 block text-[15px] text-[var(--tx)]">
               {review.tasksDone} / {review.tasksTotal} tasks done
             </strong>
           </div>
           <div className="rounded-xl border border-[var(--line)] bg-[var(--sf-2)] p-3">
-            <span className="block text-[12px] text-[var(--tx-2)]">Mock score trend</span>
+            <span className="block text-[13px] text-[var(--tx-2)]">Mock score trend</span>
             <strong className="tnum mt-1 block text-[15px] text-[var(--tx)]">
               {review.mockScoreTrendLabel}
             </strong>
           </div>
           <div className="rounded-xl border border-[var(--line)] bg-[var(--sf-2)] p-3">
-            <span className="block text-[12px] text-[var(--tx-2)]">Mistakes logged</span>
+            <span className="block text-[13px] text-[var(--tx-2)]">Mistakes logged</span>
             <strong className="tnum mt-1 block text-[15px] text-[var(--tx)]">
               {review.mistakesAdded} added · {review.mistakesResolved} resolved
             </strong>
           </div>
           <div className="rounded-xl border border-[var(--line)] bg-[var(--sf-2)] p-3">
-            <span className="block text-[12px] text-[var(--tx-2)]">Best &amp; lightest day</span>
-            <div className="tnum mt-1 text-[12.5px] text-[var(--tx)]">
+            <span className="block text-[13px] text-[var(--tx-2)]">Best &amp; lightest day</span>
+            <div className="tnum mt-1 text-[13px] text-[var(--tx)]">
               <div>
                 Best:{' '}
                 {review.bestDay
@@ -241,11 +241,11 @@ export const ReviewView: React.FC<ReviewViewProps> = ({
                       {idx + 1}. {item.subjectEmoji} {item.chapter.name}
                     </span>
                   </div>
-                  <p className="mt-0.5 text-[12px] text-[var(--tx-2)]">
+                  <p className="mt-0.5 text-[13px] text-[var(--tx-2)]">
                     {item.reasons.join(' · ')}
                   </p>
                 </div>
-                <span className="tnum rounded-md bg-[var(--sf-1)] px-2.5 py-1 text-[12px] font-medium text-[var(--tx-2)]">
+                <span className="tnum rounded-md bg-[var(--sf-1)] px-2.5 py-1 text-[13px] font-medium text-[var(--tx-2)]">
                   Conf {item.confidence}/5
                 </span>
               </div>

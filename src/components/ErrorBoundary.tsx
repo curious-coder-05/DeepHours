@@ -98,8 +98,8 @@ export class ErrorBoundary extends React.Component<
                   padding: '8px',
                   borderRadius: '8px',
                   background: 'var(--c2)',
-                  color: 'var(--dg)',
-                  fontSize: '11px',
+                  color: 'var(--err-ink)',
+                  fontSize: '12px',
                   wordBreak: 'break-word',
                 }}
               >
@@ -112,8 +112,8 @@ export class ErrorBoundary extends React.Component<
                   display: 'block',
                   padding: '8px 10px',
                   borderRadius: '8px',
-                  background: 'var(--c2)',
-                  color: '#fbbf24',
+                  background: 'var(--sf-2)',
+                  color: 'var(--warn-ink)',
                   fontSize: '12px',
                   fontWeight: 600,
                 }}

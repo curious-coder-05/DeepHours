@@ -1,8 +1,13 @@
-import React, { useRef, useState } from 'react';
+import React, { useEffect, useRef, useState } from 'react';
 import { Calendar, RotateCcw } from 'lucide-react';
 import { fmtHMShort } from '../../utils/studyLogic';
 import { Button } from '../ui/Button';
-import { Scene3D, type Scene3DContext, type Ui3dSetting } from './Scene3D';
+import {
+  Scene3D,
+  type Scene3DContext,
+  type Ui3dQuality,
+  type Ui3dSetting,
+} from './Scene3D';
 
 export interface SkylineDayCell {
   key: string;
@@ -14,6 +19,7 @@ export interface SkylineDayCell {
 export interface StudySkylineSceneProps {
   cells: SkylineDayCell[];
   ui3dSetting?: Ui3dSetting;
+  ui3dQuality?: Ui3dQuality;
   onInspectDay?: (dayKey: string) => void;
 }
 
@@ -38,6 +44,7 @@ function getLevelHexColor(lvlClass: string, isFuture: boolean): number {
 export const StudySkylineScene: React.FC<StudySkylineSceneProps> = ({
   cells,
   ui3dSetting = 'auto',
+  ui3dQuality = 'auto',
   onInspectDay,
 }) => {
   const cellsRef = useRef(cells);
@@ -55,8 +62,13 @@ export const StudySkylineScene: React.FC<StudySkylineSceneProps> = ({
   });
 
   const resetOrbitRef = useRef<(() => void) | null>(null);
+  const updateInstancesRef = useRef<((idx: number | null) => void) | null>(null);
   const selectedCell =
     selectedIdx !== null && cells[selectedIdx] ? cells[selectedIdx] : null;
+
+  useEffect(() => {
+    updateInstancesRef.current?.(selectedIdx);
+  }, [cells, selectedIdx]);
 
   return (
     <div className="space-y-2.5">
@@ -64,9 +76,10 @@ export const StudySkylineScene: React.FC<StudySkylineSceneProps> = ({
         <Scene3D
           testId="study-skyline-scene"
           ui3dSetting={ui3dSetting}
+          ui3dQuality={ui3dQuality}
           active={true}
           continuous={true}
-          height={236}
+          height={248}
           fov={38}
           cameraPosition={[0, 7.2, 11.5]}
           setup={(ctx: Scene3DContext) => {
@@ -165,6 +178,7 @@ export const StudySkylineScene: React.FC<StudySkylineSceneProps> = ({
               instancedBars.computeBoundingSphere();
             };
 
+            updateInstancesRef.current = updateInstances;
             updateInstances(selectedIdx);
             worldGroup.add(instancedBars);
 
@@ -284,7 +298,7 @@ export const StudySkylineScene: React.FC<StudySkylineSceneProps> = ({
             type="button"
             onClick={() => resetOrbitRef.current?.()}
             aria-label="Reset 3D skyline camera angle"
-            className="pointer-events-auto inline-flex min-h-[32px] items-center gap-1.5 rounded-lg border border-[var(--line)] bg-[var(--sf-1)] px-2.5 py-1 text-[12px] font-medium text-[var(--tx-2)] hover:text-[var(--tx)]"
+            className="pointer-events-auto inline-flex min-h-[32px] items-center gap-1.5 rounded-lg border border-[var(--line)] bg-[var(--sf-1)] px-2.5 py-1 text-[13px] font-medium text-[var(--tx-2)] hover:text-[var(--tx)]"
           >
             <RotateCcw size={13} />
             Reset view
@@ -296,7 +310,7 @@ export const StudySkylineScene: React.FC<StudySkylineSceneProps> = ({
       <div
         role="status"
         aria-live="polite"
-        className="flex flex-wrap items-center justify-between gap-2 rounded-xl border border-[var(--line)] bg-[var(--sf-2)] px-3.5 py-2.5 text-[12.5px]"
+        className="flex flex-wrap items-center justify-between gap-2 rounded-xl border border-[var(--line)] bg-[var(--sf-2)] px-3.5 py-2.5 text-[13px]"
       >
         {selectedCell ? (
           <>

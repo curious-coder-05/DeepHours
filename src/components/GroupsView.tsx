@@ -1,13 +1,5 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
-  Bar,
-  BarChart,
-  ResponsiveContainer,
-  Tooltip,
-  XAxis,
-  YAxis,
-} from 'recharts';
-import {
   Award,
   Check,
   ChevronDown,
@@ -75,11 +67,13 @@ import {
   computeTotalXp,
   computeXpByDay,
 } from '../utils/xp';
+import { BarChart } from './ui/Charts';
 import { Button } from './ui/Button';
 import { Card } from './ui/Card';
 import { Chip } from './ui/Chip';
 import { EmptyState } from './ui/EmptyState';
 import { Field } from './ui/Field';
+import { Illustration } from './ui/Illustrations';
 import { Meter } from './ui/Meter';
 import { SectionHeader } from './ui/SectionHeader';
 import { Segmented } from './ui/Segmented';
@@ -102,6 +96,13 @@ function loadPaceTargets(): Record<string, string> {
     if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) return {};
     const out: Record<string, string> = {};
     for (const [gid, uid] of Object.entries(parsed)) {
+      if (
+        gid === '__proto__' ||
+        gid === 'constructor' ||
+        gid === 'prototype'
+      ) {
+        continue;
+      }
       if (typeof gid === 'string' && typeof uid === 'string' && uid) {
         out[gid] = uid;
       }
@@ -443,11 +444,11 @@ export const Leaderboard: React.FC<LeaderboardProps> = ({
           <strong className="text-[14px] font-semibold text-[var(--tx)]">
             Weekly study leaderboard
           </strong>
-          <span className="tnum rounded-md bg-[var(--sf-2)] px-2 py-0.5 text-[12px] text-[var(--tx-2)]">
+          <span className="tnum rounded-md bg-[var(--sf-2)] px-2 py-0.5 text-[13px] text-[var(--tx-2)]">
             {rows.length} {rows.length === 1 ? 'member' : 'members'}
           </span>
           {lastUpdatedAt ? (
-            <span className="tnum text-[12px] text-[var(--tx-3)]">
+            <span className="tnum text-[13px] text-[var(--tx-3)]">
               · Synced {Math.max(0, Math.floor((effectiveNowTs - lastUpdatedAt) / 60000))}m
               ago
             </span>
@@ -577,7 +578,7 @@ export const Leaderboard: React.FC<LeaderboardProps> = ({
                             {row.entry.nick}
                             {isMe ? ' (You)' : ''}
                           </span>
-                          <span className="text-[12px] text-[var(--ac-ink)]" aria-hidden="true">
+                          <span className="text-[13px] text-[var(--ac-ink)]" aria-hidden="true">
                             {isExpanded ? '▴' : '▾'}
                           </span>
                         </button>
@@ -586,7 +587,7 @@ export const Leaderboard: React.FC<LeaderboardProps> = ({
                           <span
                             title={timeBadge.tooltip}
                             aria-label={timeBadge.tooltip}
-                            className="inline-flex items-center gap-1 rounded-md border border-[var(--line)] bg-[var(--sf-2)] px-2 py-0.5 text-[12px] font-medium text-[var(--tx-2)]"
+                            className="inline-flex items-center gap-1 rounded-md border border-[var(--line)] bg-[var(--sf-2)] px-2 py-0.5 text-[13px] font-medium text-[var(--tx-2)]"
                           >
                             <span aria-hidden="true">{timeBadge.emoji}</span>
                             <span>{timeBadge.label}</span>
@@ -601,7 +602,7 @@ export const Leaderboard: React.FC<LeaderboardProps> = ({
                             onMouseLeave={() => {
                               if (hoveredLiveKey === badgeHoverKey) setHoveredLiveKey(null);
                             }}
-                            className="inline-flex items-center gap-1.5 rounded-md bg-[var(--sf-2)] px-2 py-0.5 text-[12px] font-medium text-[var(--ok-ink)]"
+                            className="inline-flex items-center gap-1.5 rounded-md bg-[var(--sf-2)] px-2 py-0.5 text-[13px] font-medium text-[var(--ok-ink)]"
                           >
                             <span className="h-1.5 w-1.5 rounded-full bg-[var(--ok)]" />
                             Studying now
@@ -631,7 +632,7 @@ export const Leaderboard: React.FC<LeaderboardProps> = ({
                               ? `Moved up ${rankTrend.delta}`
                               : `Moved down ${rankTrend.delta}`
                           }
-                          className="tnum rounded px-1.5 py-0.5 text-[12px] font-semibold"
+                          className="tnum rounded px-1.5 py-0.5 text-[13px] font-semibold"
                           style={{
                             color:
                               rankTrend.direction === 'up'
@@ -649,7 +650,7 @@ export const Leaderboard: React.FC<LeaderboardProps> = ({
                       </strong>
                     </div>
                     {row.subLabel && (
-                      <div className="tnum text-[12px] text-[var(--tx-2)]">
+                      <div className="tnum text-[13px] text-[var(--tx-2)]">
                         {row.subLabel}
                       </div>
                     )}
@@ -661,7 +662,7 @@ export const Leaderboard: React.FC<LeaderboardProps> = ({
                     aria-label={`7-day study consistency chart for ${row.entry.nick}`}
                     className="mt-3 rounded-xl border border-[var(--line)] bg-[var(--sf-2)] p-3"
                   >
-                    <div className="split mb-2 flex-wrap gap-2 text-[12px]">
+                    <div className="split mb-2 flex-wrap gap-2 text-[13px]">
                       <strong className="text-[var(--tx)]">
                         7-day study consistency ({row.entry.nick})
                       </strong>
@@ -671,43 +672,17 @@ export const Leaderboard: React.FC<LeaderboardProps> = ({
                         {formatMinutesAsHoursMins(consistencyData.totalMinutes)} total
                       </span>
                     </div>
-                    <div className="h-[104px] w-full">
-                      <ResponsiveContainer width="100%" height="100%">
-                        <BarChart
-                          data={consistencyData.days}
-                          margin={{ top: 6, right: 6, bottom: 2, left: 6 }}
-                        >
-                          <XAxis
-                            dataKey="label"
-                            tick={{ fontSize: 12, fill: '#A3ABB8' }}
-                            axisLine={false}
-                            tickLine={false}
-                          />
-                          <YAxis hide domain={[0, 'dataMax + 30']} />
-                          <Tooltip
-                            contentStyle={{
-                              background: '#181C22',
-                              border: '1px solid rgba(255,255,255,0.08)',
-                              borderRadius: 8,
-                              fontSize: 12,
-                              color: '#ECEFF4',
-                            }}
-                            formatter={(value) => [
-                              formatMinutesAsHoursMins(Number(value ?? 0)),
-                              'Study time',
-                            ]}
-                            labelFormatter={(label) => `Date: ${label}`}
-                          />
-                          <Bar
-                            dataKey="minutes"
-                            fill={studyingNow ? '#4ADE80' : '#F5C451'}
-                            radius={[4, 4, 0, 0]}
-                            barSize={18}
-                            isAnimationActive={false}
-                          />
-                        </BarChart>
-                      </ResponsiveContainer>
-                    </div>
+                    <BarChart
+                      orientation="vertical"
+                      height={148}
+                      data={consistencyData.days.map((d) => ({
+                        label: d.label,
+                        value: d.minutes,
+                        color: studyingNow ? 'var(--ok)' : 'var(--ac)',
+                      }))}
+                      valueFormatter={(mins) => formatMinutesAsHoursMins(Math.round(mins))}
+                      ariaLabel={`7-day study consistency chart for ${row.entry.nick}`}
+                    />
                   </div>
                 )}
               </div>
@@ -1746,7 +1721,7 @@ export const GroupsView: React.FC<GroupsViewProps> = ({
       {/* Pull-to-refresh visual indicator */}
       {pullOffsetY > 0 && (
         <div
-          className="flex items-center justify-center gap-2 rounded-xl border border-[var(--line)] bg-[var(--sf-1)] py-2 text-[12.5px] font-medium text-[var(--ac-ink)] transition-all"
+          className="flex items-center justify-center gap-2 rounded-xl border border-[var(--line)] bg-[var(--sf-1)] py-2 text-[13px] font-medium text-[var(--ac-ink)] transition-all"
           style={{ height: `${Math.max(36, pullOffsetY)}px` }}
         >
           <RefreshCw
@@ -1780,7 +1755,7 @@ export const GroupsView: React.FC<GroupsViewProps> = ({
                   {state.profile?.nick || 'Anonymous Aspirant'}
                 </strong>
                 {state.profile?.examYear ? (
-                  <span className="tnum text-[12px] text-[var(--tx-2)]">
+                  <span className="tnum text-[13px] text-[var(--tx-2)]">
                     · NEET {state.profile.examYear}
                   </span>
                 ) : null}
@@ -1792,7 +1767,7 @@ export const GroupsView: React.FC<GroupsViewProps> = ({
                   Edit profile
                 </Button>
               </div>
-              <p className="tnum mt-0.5 text-[12.5px] text-[var(--tx-2)]">
+              <p className="tnum mt-0.5 text-[13px] text-[var(--tx-2)]">
                 Level <strong>{myPersonalStats.levelInfo.level}</strong> ·{' '}
                 <strong>{myPersonalStats.totalXp.toLocaleString()} XP</strong>
                 {myRankOnCurrentBoard ? (
@@ -1839,7 +1814,7 @@ export const GroupsView: React.FC<GroupsViewProps> = ({
 
         {/* Level Progress Meter */}
         <div>
-          <div className="split mb-1 text-[12px] text-[var(--tx-2)]">
+          <div className="split mb-1 text-[13px] text-[var(--tx-2)]">
             <span>
               Lv. {myPersonalStats.levelInfo.level} → Lv.{' '}
               {myPersonalStats.levelInfo.level + 1} (
@@ -1869,7 +1844,7 @@ export const GroupsView: React.FC<GroupsViewProps> = ({
         </div>
 
         {showMyXpDrawer && (
-          <div className="space-y-3 border-t border-[var(--line)] pt-3 text-[12.5px]">
+          <div className="space-y-3 border-t border-[var(--line)] pt-3 text-[13px]">
             <div className="split">
               <strong className="text-[var(--tx)]">
                 Today&apos;s XP v2 breakdown ({todayKey})
@@ -1929,7 +1904,7 @@ export const GroupsView: React.FC<GroupsViewProps> = ({
                 >
                   <div>
                     <div className="font-medium text-[var(--tx)]">{item.label}</div>
-                    <span className="text-[12px] text-[var(--tx-3)]">{item.cap}</span>
+                    <span className="text-[13px] text-[var(--tx-3)]">{item.cap}</span>
                   </div>
                   <strong
                     className="tnum"
@@ -1942,7 +1917,7 @@ export const GroupsView: React.FC<GroupsViewProps> = ({
                 </div>
               ))}
             </div>
-            <details className="text-[12px] text-[var(--tx-2)]">
+            <details className="text-[13px] text-[var(--tx-2)]">
               <summary className="cursor-pointer font-medium text-[var(--tx)]">
                 How XP v2 &amp; fair group scoring work
               </summary>
@@ -1960,56 +1935,60 @@ export const GroupsView: React.FC<GroupsViewProps> = ({
 
       {/* 1. Signed-Out Landing Card */}
       {!myUid ? (
-        <Card className="space-y-4 p-6">
-          <div className="flex items-start gap-3">
-            <div className="flex h-11 w-11 shrink-0 items-center justify-center rounded-xl border border-[var(--ac-line)] bg-[var(--ac-soft)] text-[var(--ac-ink)]">
-              <Users size={22} aria-hidden="true" />
-            </div>
-            <div>
-              <h3 className="text-[17px] font-semibold text-[var(--tx)]">
+        <Card className="dh-hero-lumen space-y-5 p-6">
+          <div className="flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
+            <div className="min-w-0 flex-1 space-y-2">
+              <div className="inline-flex items-center gap-2 text-[13px] font-semibold text-[var(--ac-ink)]">
+                <Users size={16} aria-hidden="true" />
+                Private NEET study squads
+              </div>
+              <h3 className="text-[20px] font-bold leading-snug text-[var(--tx)]">
                 Sign in to join private study groups
               </h3>
-              <p className="mt-1 text-[13.5px] text-[var(--tx-2)]">
+              <p className="text-[14px] leading-relaxed text-[var(--tx-2)]">
                 Study alongside up to 3 private NEET squads using 10-character invite
                 codes. Compare timer-verified hours, XP v2, consistency streaks, and 7-day
                 pace while keeping your Google account private.
               </p>
             </div>
+            <div className="shrink-0 self-center sm:self-auto">
+              <Illustration name="signedOutCommunity" width={132} height={94} />
+            </div>
           </div>
 
           <div className="grid grid-cols-1 gap-2.5 sm:grid-cols-3">
-            <div className="rounded-xl border border-[var(--line)] bg-[var(--sf-2)] p-3">
-              <div className="flex items-center gap-2 text-[13px] font-semibold text-[var(--tx)]">
-                <ShieldCheck size={16} className="text-[var(--ok-ink)]" aria-hidden="true" />
+            <div className="rounded-xl border border-[var(--line)] bg-[var(--sf-2)] p-3.5">
+              <div className="flex items-center gap-2 text-[13.5px] font-semibold text-[var(--tx)]">
+                <ShieldCheck size={16} className="shrink-0 text-[var(--ok-ink)]" aria-hidden="true" />
                 Anonymous identity
               </div>
-              <p className="mt-1 text-[12px] text-[var(--tx-2)]">
+              <p className="mt-1 text-[13px] leading-snug text-[var(--tx-2)]">
                 Your email and Google profile are never exposed. You choose a nickname and
                 avatar.
               </p>
             </div>
-            <div className="rounded-xl border border-[var(--line)] bg-[var(--sf-2)] p-3">
-              <div className="flex items-center gap-2 text-[13px] font-semibold text-[var(--tx)]">
-                <Timer size={16} className="text-[var(--ac-ink)]" aria-hidden="true" />
+            <div className="rounded-xl border border-[var(--line)] bg-[var(--sf-2)] p-3.5">
+              <div className="flex items-center gap-2 text-[13.5px] font-semibold text-[var(--tx)]">
+                <Timer size={16} className="shrink-0 text-[var(--ac-ink)]" aria-hidden="true" />
                 Timer-verified hours
               </div>
-              <p className="mt-1 text-[12px] text-[var(--tx-2)]">
+              <p className="mt-1 text-[13px] leading-snug text-[var(--tx-2)]">
                 Only real focus timer sessions count toward squad leaderboards.
               </p>
             </div>
-            <div className="rounded-xl border border-[var(--line)] bg-[var(--sf-2)] p-3">
-              <div className="flex items-center gap-2 text-[13px] font-semibold text-[var(--tx)]">
-                <Lock size={16} className="text-[var(--info-ink)]" aria-hidden="true" />
+            <div className="rounded-xl border border-[var(--line)] bg-[var(--sf-2)] p-3.5">
+              <div className="flex items-center gap-2 text-[13.5px] font-semibold text-[var(--tx)]">
+                <Lock size={16} className="shrink-0 text-[var(--info-ink)]" aria-hidden="true" />
                 Granular sharing
               </div>
-              <p className="mt-1 text-[12px] text-[var(--tx-2)]">
+              <p className="mt-1 text-[13px] leading-snug text-[var(--tx-2)]">
                 Toggle hours, XP, streak, mocks, or live status per group anytime.
               </p>
             </div>
           </div>
 
-          <div className="flex justify-start">
-            <Button variant="primary" onClick={onSignIn}>
+          <div className="flex flex-wrap items-center gap-3">
+            <Button variant="primary" size="lg" onClick={onSignIn}>
               Sign in with Google
             </Button>
           </div>
@@ -2021,7 +2000,7 @@ export const GroupsView: React.FC<GroupsViewProps> = ({
             <h3 className="text-[16px] font-semibold text-[var(--tx)]">
               Privacy-first study groups
             </h3>
-            <p className="text-[12.5px] text-[var(--tx-2)]">
+            <p className="text-[13px] text-[var(--tx-2)]">
               How group sharing works in Deep Hours
             </p>
           </div>
@@ -2055,7 +2034,7 @@ export const GroupsView: React.FC<GroupsViewProps> = ({
                 <h3 className="text-[15px] font-semibold text-[var(--tx)]">
                   My study squads ({joinedGroups.length}/{MAX_JOINED_GROUPS})
                 </h3>
-                <p className="text-[12px] text-[var(--tx-2)]">
+                <p className="text-[13px] text-[var(--tx-2)]">
                   Switch groups or create/join with a 10-character code
                 </p>
               </div>
@@ -2091,7 +2070,7 @@ export const GroupsView: React.FC<GroupsViewProps> = ({
                     </Button>
                   </>
                 ) : (
-                  <span className="tnum text-[12px] text-[var(--tx-2)]">
+                  <span className="tnum text-[13px] text-[var(--tx-2)]">
                     Max {MAX_JOINED_GROUPS} groups joined
                   </span>
                 )}
@@ -2163,7 +2142,7 @@ export const GroupsView: React.FC<GroupsViewProps> = ({
                 </div>
               </Field>
               {actionError && (
-                <p className="text-[12.5px] text-[var(--err-ink)]">{actionError}</p>
+                <p className="text-[13px] text-[var(--err-ink)]">{actionError}</p>
               )}
               <div className="flex justify-end gap-2">
                 <Button
@@ -2200,7 +2179,7 @@ export const GroupsView: React.FC<GroupsViewProps> = ({
                 />
               </Field>
               {actionError && (
-                <p className="text-[12.5px] text-[var(--err-ink)]">{actionError}</p>
+                <p className="text-[13px] text-[var(--err-ink)]">{actionError}</p>
               )}
               <div className="flex justify-end gap-2">
                 <Button
@@ -2294,11 +2273,11 @@ export const GroupsView: React.FC<GroupsViewProps> = ({
                         <strong className="text-[16px] font-semibold text-[var(--tx)]">
                           {activeGroupDoc.name}
                         </strong>
-                        <span className="tnum text-[12px] text-[var(--tx-2)]">
+                        <span className="tnum text-[13px] text-[var(--tx-2)]">
                           · {memberCount}/{activeGroupDoc.memberCap || 50} members
                         </span>
                       </div>
-                      <p className="tnum text-[12px] text-[var(--tx-2)]">
+                      <p className="tnum text-[13px] text-[var(--tx-2)]">
                         Invite code:{' '}
                         <strong className="mono text-[var(--tx)]">
                           {formatGroupCode(activeGroupId)}
@@ -2379,7 +2358,7 @@ export const GroupsView: React.FC<GroupsViewProps> = ({
 
                 {/* Friendly Rival Pace Comparison */}
                 {paceComparison && (
-                  <div className="split flex-wrap gap-2 rounded-xl border border-[var(--line)] bg-[var(--sf-2)] px-3.5 py-2.5 text-[12.5px]">
+                  <div className="split flex-wrap gap-2 rounded-xl border border-[var(--line)] bg-[var(--sf-2)] px-3.5 py-2.5 text-[13px]">
                     <div>
                       <strong className="text-[var(--tx)]">
                         Pace target: {paceComparison.entry.emoji}{' '}
@@ -2432,7 +2411,7 @@ export const GroupsView: React.FC<GroupsViewProps> = ({
                 {/* Weekly Group Goal */}
                 {weeklyGoalProg && weeklyGoalProg.hasGoal && (
                   <div className="space-y-2 pt-1">
-                    <div className="split text-[12.5px]">
+                    <div className="split text-[13px]">
                       <span className="text-[var(--tx-2)]">
                         Weekly squad goal:{' '}
                         <strong className="tnum text-[var(--tx)]">
@@ -2461,7 +2440,7 @@ export const GroupsView: React.FC<GroupsViewProps> = ({
                       color={weeklyGoalProg.reached ? 'var(--ok)' : 'var(--ac)'}
                     />
                     {showGoalBreakdown && weeklyMemberContributions.length > 0 && (
-                      <div className="rounded-xl border border-[var(--line)] bg-[var(--sf-2)] p-3 text-[12.5px] space-y-1.5">
+                      <div className="rounded-xl border border-[var(--line)] bg-[var(--sf-2)] p-3 text-[13px] space-y-1.5">
                         {weeklyMemberContributions.map((c) => (
                           <div key={c.uid} className="split">
                             <span>
@@ -2560,7 +2539,7 @@ export const GroupsView: React.FC<GroupsViewProps> = ({
                         onChange={(e) => setMemberSearch(e.target.value)}
                         placeholder="Filter member…"
                         aria-label="Filter group members by nickname"
-                        className="h-9 rounded-xl border border-[var(--line)] bg-[var(--sf-2)] px-3 text-[12.5px] sm:w-44"
+                        className="h-9 rounded-xl border border-[var(--line)] bg-[var(--sf-2)] px-3 text-[13px] sm:w-44"
                       />
                     )}
                   </div>
@@ -2573,7 +2552,7 @@ export const GroupsView: React.FC<GroupsViewProps> = ({
                 !memberSearch.trim() &&
                 podiumRows.length > 0 && (
                   <Card className="space-y-3">
-                    <div className="split text-[12.5px]">
+                    <div className="split text-[13px]">
                       <strong className="text-[var(--tx)]">
                         Top podium ·{' '}
                         {boardTab === 'today'
@@ -2600,7 +2579,7 @@ export const GroupsView: React.FC<GroupsViewProps> = ({
                           return (
                             <div
                               key={targetRank}
-                              className="grid min-h-[100px] place-items-center rounded-xl border border-dashed border-[var(--line)] p-3 text-center text-[12px] text-[var(--tx-3)]"
+                              className="grid min-h-[100px] place-items-center rounded-xl border border-dashed border-[var(--line)] p-3 text-center text-[13px] text-[var(--tx-3)]"
                             >
                               #{targetRank} open
                             </div>
@@ -2616,7 +2595,7 @@ export const GroupsView: React.FC<GroupsViewProps> = ({
                                 cur === pRow.uid ? null : pRow.uid
                               )
                             }
-                            className={`podium-rise flex flex-col items-center justify-center gap-1 rounded-xl border p-3 text-center transition-colors ${
+                            className={`podium-rise flex min-w-0 flex-col items-center justify-center gap-1 rounded-xl border p-2.5 text-center transition-colors ${
                               targetRank === 1
                                 ? 'min-h-[126px] border-[var(--ac)] bg-[var(--ac-soft)]'
                                 : isMe
@@ -2624,7 +2603,7 @@ export const GroupsView: React.FC<GroupsViewProps> = ({
                                   : 'min-h-[106px] border-[var(--line)] bg-[var(--sf-2)]'
                             }`}
                           >
-                            <span className="tnum text-[12px] font-bold text-[var(--ac-ink)]">
+                            <span className="tnum text-[13px] font-bold text-[var(--ac-ink)]">
                               #{targetRank}
                             </span>
                             <span className="text-[22px]">{pRow.entry.emoji}</span>
@@ -2632,7 +2611,7 @@ export const GroupsView: React.FC<GroupsViewProps> = ({
                               {pRow.entry.nick}
                               {isMe ? ' (You)' : ''}
                             </strong>
-                            <span className="tnum text-[12.5px] font-semibold text-[var(--ac-ink)]">
+                            <span className="tnum max-w-full truncate text-[13px] font-semibold text-[var(--ac-ink)]">
                               {pRow.displayLabel}
                             </span>
                           </button>
@@ -2760,7 +2739,7 @@ export const GroupsView: React.FC<GroupsViewProps> = ({
                                       <span
                                         title={memberTimeBadge.tooltip}
                                         aria-label={memberTimeBadge.tooltip}
-                                        className="inline-flex items-center gap-1 rounded-md border border-[var(--line)] bg-[var(--sf-2)] px-2 py-0.5 text-[12px] font-medium text-[var(--tx-2)]"
+                                        className="inline-flex items-center gap-1 rounded-md border border-[var(--line)] bg-[var(--sf-2)] px-2 py-0.5 text-[13px] font-medium text-[var(--tx-2)]"
                                       >
                                         <span aria-hidden="true">
                                           {memberTimeBadge.emoji}
@@ -2771,19 +2750,19 @@ export const GroupsView: React.FC<GroupsViewProps> = ({
                                       {isLiveNow && (
                                         <span
                                           title={liveTooltipText}
-                                          className="inline-flex items-center gap-1.5 rounded-md bg-[var(--sf-2)] px-2 py-0.5 text-[12px] font-medium text-[var(--ok-ink)]"
+                                          className="inline-flex items-center gap-1.5 rounded-md bg-[var(--sf-2)] px-2 py-0.5 text-[13px] font-medium text-[var(--ok-ink)]"
                                         >
                                           <span className="h-1.5 w-1.5 rounded-full bg-[var(--ok)]" />
                                           Studying now
                                         </span>
                                       )}
                                       {isPaceTarget && (
-                                        <span className="rounded-md bg-[var(--sf-2)] px-2 py-0.5 text-[12px] font-medium text-[var(--ac-ink)]">
+                                        <span className="rounded-md bg-[var(--sf-2)] px-2 py-0.5 text-[13px] font-medium text-[var(--ac-ink)]">
                                           Target
                                         </span>
                                       )}
                                     </div>
-                                    <div className="text-[12px] text-[var(--tx-2)]">
+                                    <div className="text-[13px] text-[var(--tx-2)]">
                                       Updated{' '}
                                       {formatRelativeAgo(row.entry.updatedAt, nowTick)}
                                       {row.subLabel ? ` · ${row.subLabel}` : ''} ·{' '}
@@ -2803,7 +2782,7 @@ export const GroupsView: React.FC<GroupsViewProps> = ({
                                       {(rowRankTrend.direction === 'up' ||
                                         rowRankTrend.direction === 'down') && (
                                         <span
-                                          className="tnum rounded bg-[var(--sf-2)] px-1.5 py-0.5 text-[12px] font-semibold"
+                                          className="tnum rounded bg-[var(--sf-2)] px-1.5 py-0.5 text-[13px] font-semibold"
                                           style={{
                                             color:
                                               rowRankTrend.direction === 'up'
@@ -2852,9 +2831,9 @@ export const GroupsView: React.FC<GroupsViewProps> = ({
                               </div>
                             </div>
 
-                            {/* Expandable 7-Day Study Consistency Recharts Drawer */}
+                            {/* Expandable 7-Day Study Consistency SVG Drawer */}
                             {isExpanded && (
-                              <div className="mt-3 space-y-3 border-t border-[var(--line)] pt-3 text-[12.5px]">
+                              <div className="mt-3 space-y-3 border-t border-[var(--line)] pt-3 text-[13px]">
                                 <div className="split flex-wrap gap-2">
                                   <strong className="text-[var(--tx)]">
                                     7-day study comparison:{' '}
@@ -2892,7 +2871,7 @@ export const GroupsView: React.FC<GroupsViewProps> = ({
                                       aria-label={`7-day study consistency chart for ${row.entry.nick}`}
                                       className="rounded-xl border border-[var(--line)] bg-[var(--sf-2)] p-3"
                                     >
-                                      <div className="split mb-2 text-[12px]">
+                                      <div className="split mb-2 flex-wrap gap-2 text-[13px]">
                                         <span className="text-[var(--tx-2)]">
                                           7-day consistency ({row.entry.nick})
                                         </span>
@@ -2901,71 +2880,26 @@ export const GroupsView: React.FC<GroupsViewProps> = ({
                                           {memberConsistency.consistencyPct}%
                                         </span>
                                       </div>
-                                      <div className="h-[96px] w-full">
-                                        <ResponsiveContainer
-                                          width="100%"
-                                          height="100%"
-                                        >
-                                          <BarChart
-                                            data={memberConsistency.days}
-                                            margin={{
-                                              top: 4,
-                                              right: 4,
-                                              bottom: 0,
-                                              left: 4,
-                                            }}
-                                          >
-                                            <XAxis
-                                              dataKey="label"
-                                              tick={{
-                                                fontSize: 12,
-                                                fill: '#A3ABB8',
-                                              }}
-                                              axisLine={false}
-                                              tickLine={false}
-                                            />
-                                            <YAxis
-                                              hide
-                                              domain={[0, 'dataMax + 30']}
-                                            />
-                                            <Tooltip
-                                              contentStyle={{
-                                                background: '#181C22',
-                                                border:
-                                                  '1px solid rgba(255,255,255,0.08)',
-                                                borderRadius: 8,
-                                                fontSize: 12,
-                                                color: '#ECEFF4',
-                                              }}
-                                              formatter={(value) => [
-                                                formatMinutesAsHoursMins(
-                                                  Number(value ?? 0)
-                                                ),
-                                                'Study time',
-                                              ]}
-                                              labelFormatter={(label) =>
-                                                `Date: ${label}`
-                                              }
-                                            />
-                                            <Bar
-                                              dataKey="minutes"
-                                              fill={
-                                                isLiveNow ? '#4ADE80' : '#F5C451'
-                                              }
-                                              radius={[4, 4, 0, 0]}
-                                              barSize={18}
-                                              isAnimationActive={false}
-                                            />
-                                          </BarChart>
-                                        </ResponsiveContainer>
-                                      </div>
+                                      <BarChart
+                                        orientation="vertical"
+                                        height={140}
+                                        data={memberConsistency.days.map((d) => ({
+                                          label: d.label,
+                                          value: d.minutes,
+                                          color: isLiveNow ? 'var(--ok)' : 'var(--ac)',
+                                        }))}
+                                        valueFormatter={(mins) =>
+                                          formatMinutesAsHoursMins(Math.round(mins))
+                                        }
+                                        ariaLabel={`7-day consistency chart for ${row.entry.nick}`}
+                                      />
                                     </div>
                                   );
                                 })()}
 
                                 <div className="grid grid-cols-2 gap-2 sm:grid-cols-4">
                                   <div className="rounded-xl border border-[var(--line)] bg-[var(--sf-2)] p-2.5">
-                                    <span className="block text-[12px] text-[var(--tx-2)]">
+                                    <span className="block text-[13px] text-[var(--tx-2)]">
                                       Today study
                                     </span>
                                     <strong className="tnum text-[13.5px] text-[var(--tx)]">
@@ -2975,7 +2909,7 @@ export const GroupsView: React.FC<GroupsViewProps> = ({
                                     </strong>
                                   </div>
                                   <div className="rounded-xl border border-[var(--line)] bg-[var(--sf-2)] p-2.5">
-                                    <span className="block text-[12px] text-[var(--tx-2)]">
+                                    <span className="block text-[13px] text-[var(--tx-2)]">
                                       This week study
                                     </span>
                                     <strong className="tnum text-[13.5px] text-[var(--tx)]">
@@ -2985,7 +2919,7 @@ export const GroupsView: React.FC<GroupsViewProps> = ({
                                     </strong>
                                   </div>
                                   <div className="rounded-xl border border-[var(--line)] bg-[var(--sf-2)] p-2.5">
-                                    <span className="block text-[12px] text-[var(--tx-2)]">
+                                    <span className="block text-[13px] text-[var(--tx-2)]">
                                       Week / total XP
                                     </span>
                                     <strong className="tnum text-[13.5px] text-[var(--tx)]">
@@ -2995,7 +2929,7 @@ export const GroupsView: React.FC<GroupsViewProps> = ({
                                     </strong>
                                   </div>
                                   <div className="rounded-xl border border-[var(--line)] bg-[var(--sf-2)] p-2.5">
-                                    <span className="block text-[12px] text-[var(--tx-2)]">
+                                    <span className="block text-[13px] text-[var(--tx-2)]">
                                       Streak &amp; consistency
                                     </span>
                                     <strong className="tnum text-[13.5px] text-[var(--tx)]">
@@ -3089,7 +3023,7 @@ export const GroupsView: React.FC<GroupsViewProps> = ({
                     <h4 className="text-[14.5px] font-semibold text-[var(--tx)]">
                       My sharing preferences in &ldquo;{activeGroupDoc.name}&rdquo;
                     </h4>
-                    <p className="text-[12px] text-[var(--tx-2)]">
+                    <p className="text-[13px] text-[var(--tx-2)]">
                       Turned-off items are omitted from your group entry and shown as
                       hidden.
                     </p>
@@ -3147,7 +3081,7 @@ export const GroupsView: React.FC<GroupsViewProps> = ({
                   </div>
 
                   <div className="split flex-wrap gap-2 pt-2">
-                    <span className="tnum text-[12px] text-[var(--tx-3)]">
+                    <span className="tnum text-[13px] text-[var(--tx-3)]">
                       Group writes today: {groupBudget.getWritesToday()}/60 · Reads:{' '}
                       {groupBudget.getReadsToday()}/150
                     </span>
@@ -3254,7 +3188,7 @@ export const GroupsView: React.FC<GroupsViewProps> = ({
 
                       {Object.keys(activeGroupDoc.members).length > 1 && (
                         <div className="space-y-2">
-                          <span className="block text-[12.5px] font-medium text-[var(--tx-2)]">
+                          <span className="block text-[13px] font-medium text-[var(--tx-2)]">
                             Manage members
                           </span>
                           {Object.entries(activeGroupDoc.members)
@@ -3304,7 +3238,7 @@ export const GroupsView: React.FC<GroupsViewProps> = ({
                       <div className="border-t border-[var(--line)] pt-3">
                         {confirmCloseGroupId === activeGroupId ? (
                           <div className="split flex-wrap gap-2">
-                            <span className="text-[12.5px] text-[var(--err-ink)]">
+                            <span className="text-[13px] text-[var(--err-ink)]">
                               Permanently delete this group for all members?
                             </span>
                             <div className="flex items-center gap-2">

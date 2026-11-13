@@ -61,6 +61,7 @@ export const StatusRow: React.FC<StatusRowProps> = ({
           <Flame
             size={16}
             strokeWidth={1.75}
+            className={minStreakInfo.streak >= 3 ? 'dh-flame-flicker' : undefined}
             style={{
               color:
                 minStreakInfo.todayMetMinimum || minStreakInfo.todayIsRestDay
@@ -325,7 +326,7 @@ export const StatusRow: React.FC<StatusRowProps> = ({
             style={{
               display: 'flex',
               justifyContent: 'space-between',
-              fontSize: '12px',
+              fontSize: '13px',
               color: 'var(--tx-2)',
               marginTop: '8px',
             }}
@@ -399,7 +400,7 @@ export const ExamCountdownCard: React.FC<ExamCountdownCardProps> = ({
             <span style={{ display: 'block', fontSize: '14px', fontWeight: 600 }}>
               Set your exam date
             </span>
-            <span style={{ display: 'block', fontSize: '12px', color: 'var(--tx-2)' }}>
+            <span style={{ display: 'block', fontSize: '13px', color: 'var(--tx-2)' }}>
               Powers Syllabus Pace and daily countdown
             </span>
           </span>
@@ -465,7 +466,7 @@ export const ExamCountdownCard: React.FC<ExamCountdownCardProps> = ({
           >
             {headline}
           </span>
-          <span style={{ display: 'block', fontSize: '12px', color: 'var(--tx-2)' }}>
+          <span style={{ display: 'block', fontSize: '13px', color: 'var(--tx-2)' }}>
             {exam.date}
             {state.ddays.length > 1 ? ` · ${state.ddays.length} exams` : ''}
           </span>

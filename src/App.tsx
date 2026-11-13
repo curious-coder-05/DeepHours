@@ -93,11 +93,12 @@ import {
 } from './utils/uiHelpers';
 import { AppShell } from './components/AppShell';
 import { QuickActionsSheet, type QuickActionKind } from './components/QuickActionsSheet';
-import { Skeleton, Toast } from './components/ui';
+import { BrandLogo, Skeleton, Toast } from './components/ui';
 import { TodayView } from './components/TodayView';
 import { Modals, type ModalState } from './components/Modals';
 import { CommandPalette } from './components/CommandPalette';
 import { KeyboardShortcutsSheet } from './components/KeyboardShortcutsSheet';
+import type { OnboardingResult } from './components/OnboardingSheet';
 import type { SettingsSection } from './components/SettingsView';
 
 let cloudSyncCache: typeof import('./utils/cloudSync') | null = null;
@@ -143,6 +144,9 @@ const StatsView = React.lazy(() =>
 );
 const SettingsView = React.lazy(() =>
   import('./components/SettingsView').then((m) => ({ default: m.SettingsView }))
+);
+const OnboardingSheet = React.lazy(() =>
+  import('./components/OnboardingSheet').then((m) => ({ default: m.OnboardingSheet }))
 );
 
 function boomConfetti() {
@@ -209,8 +213,9 @@ export default function App() {
   const [state, setState] = useState<PulseHabitState>(() => createDefaultState());
   const [tab, setTab] = useState<AppTab>('today');
   const [prepSubTab, setPrepSubTab] = useState<PrepSubTab>('syllabus');
+  const [pyqJumpNonce, setPyqJumpNonce] = useState<number>(0);
   const [statsSubTab, setStatsSubTab] = useState<StatsSubTab>('summary');
-  const [sel, setSel] = useState<string>(() => logicalKey(new Date(), 4));
+  const [sel, setSel] = useState<string>(() => logicalKey(new Date(), 0));
   const [cat, setCat] = useState<'All' | HabitCategory>('All');
   const [deskMode, setDeskMode] = useState(false);
   const [modal, setModal] = useState<ModalState>({ type: 'none' });
@@ -246,6 +251,7 @@ export default function App() {
   const [quickActionsOpen, setQuickActionsOpen] = useState(false);
   const [commandPaletteOpen, setCommandPaletteOpen] = useState(false);
   const [shortcutsHelpOpen, setShortcutsHelpOpen] = useState(false);
+  const [onboardingOpen, setOnboardingOpen] = useState(false);
   const [amoled, setAmoled] = useState<boolean>(() => getAmoledPref());
 
   const handleToggleAmoled = useCallback((enabled: boolean) => {
@@ -659,6 +665,25 @@ export default function App() {
     window.history.replaceState({}, '', nextUrl);
   }, [ready]);
 
+  // First-run onboarding sheet for brand-new workspaces (persisted in localStorage)
+  useEffect(() => {
+    if (!ready || typeof window === 'undefined') return;
+    try {
+      if (localStorage.getItem('dh_onboarded_v2') === '1') return;
+    } catch {
+      return;
+    }
+    const cur = stateRef.current;
+    if (
+      !cur.activeTimer &&
+      cur.sessions.length === 0 &&
+      cur.chapters.length === 0 &&
+      cur.ddays.length === 0
+    ) {
+      setOnboardingOpen(true);
+    }
+  }, [ready]);
+
   // Desk mode class on body
   useEffect(() => {
     document.body.classList.toggle('desk-mode', deskMode);
@@ -1029,6 +1054,7 @@ export default function App() {
         set: {
           ...cur.set,
           defaultMode: m,
+          updatedAt: now,
         },
         activeTimer: {
           status: 'running',
@@ -2094,9 +2120,15 @@ export default function App() {
 
   const handleDismissBurnout = useCallback(() => {
     const until = addD(todayKey, 3);
+    const now = Date.now();
     updateAndSave((cur) => ({
       ...cur,
       burnoutDismissedUntil: until,
+      set: {
+        ...cur.set,
+        burnoutDismissedUntil: until,
+        updatedAt: now,
+      },
     }));
   }, [todayKey, updateAndSave]);
 
@@ -2289,6 +2321,7 @@ export default function App() {
           break;
         case 'logPyq':
           setPrepSubTab('syllabus');
+          setPyqJumpNonce((n) => n + 1);
           setTab('prep');
           window.scrollTo(0, 0);
           break;
@@ -2361,7 +2394,7 @@ export default function App() {
         if (stateRef.current.activeTimer) {
           toggleTimerPause();
         } else {
-          const defSub = stateRef.current.subjects.find((s) => !s.arch)?.id || 'phy';
+          const defSub = stateRef.current.subjects.find((s) => !s.arch)?.id || 'sub_phy';
           switchTabWithTransition('focus');
           startTimer(defSub, 'Focus Session');
         }
@@ -2389,13 +2422,13 @@ export default function App() {
             maxWidth: '430px',
             width: '100%',
             padding: '22px',
-            borderColor: 'rgba(239, 68, 68, 0.45)',
+            borderColor: 'var(--err-line)',
           }}
         >
-          <h2 style={{ fontSize: '19px', marginBottom: '6px', color: '#f87171' }}>
+          <h2 style={{ fontSize: '19px', marginBottom: '6px', color: 'var(--err-ink)' }}>
             Your saved data could not be loaded
           </h2>
-          <small style={{ display: 'block', marginBottom: '12px', lineHeight: 1.5 }}>
+          <small style={{ display: 'block', marginBottom: '12px', lineHeight: 1.5, color: 'var(--tx-2)' }}>
             Deep Hours paused startup so your stored study log is not overwritten. You can
             restore from the latest rolling backup, retry loading, or start fresh.
           </small>
@@ -2404,7 +2437,7 @@ export default function App() {
               style={{
                 display: 'block',
                 marginBottom: '10px',
-                color: '#fbbf24',
+                color: 'var(--warn-ink)',
                 fontWeight: 600,
               }}
             >
@@ -2451,11 +2484,11 @@ export default function App() {
               <div
                 className="stat-box"
                 style={{
-                  border: '1px solid rgba(239, 68, 68, 0.45)',
+                  border: '1px solid var(--err-line)',
                   marginTop: '4px',
                 }}
               >
-                <small style={{ display: 'block', marginBottom: '8px', color: '#fca5a5' }}>
+                <small style={{ display: 'block', marginBottom: '8px', color: 'var(--err-ink)' }}>
                   Are you sure you want to start fresh? This will overwrite unreadable
                   local storage with a new blank state.
                 </small>
@@ -2500,11 +2533,14 @@ export default function App() {
           textAlign: 'center',
         }}
       >
-        <div>
-          <b style={{ fontSize: '18px' }}>Deep Hours</b>
-          <small style={{ display: 'block', marginTop: '6px' }}>
-            Loading your study log…
-          </small>
+        <div style={{ display: 'grid', justifyItems: 'center', gap: '12px' }}>
+          <BrandLogo size={54} />
+          <div>
+            <b style={{ fontSize: '20px', display: 'block' }}>Deep Hours</b>
+            <small style={{ display: 'block', marginTop: '4px', fontSize: '14px' }}>
+              Loading your study log…
+            </small>
+          </div>
         </div>
       </main>
     );
@@ -2534,7 +2570,7 @@ export default function App() {
     : tab === 'today'
       ? `${selDateFormatted} · Reset ${pad(state.set.dayResetHour ?? 0)}:00`
       : tab === 'focus'
-        ? 'Study timer, desk mode & focus sounds'
+        ? 'Timer & ambient sounds'
         : tab === 'prep'
           ? 'Syllabus pace, mocks, mistakes & doubts'
           : tab === 'stats'
@@ -2687,6 +2723,7 @@ export default function App() {
               state={state}
               todayKey={todayKey}
               subTab={prepSubTab}
+              pyqJumpNonce={pyqJumpNonce}
               onChangeSubTab={setPrepSubTab}
               onAddChapters={handleAddChapters}
               onUpdateChapter={handleUpdateChapter}
@@ -2699,9 +2736,10 @@ export default function App() {
               onEditMock={(mockId) => setModal({ type: 'mock', id: mockId })}
               onDeleteMock={handleDeleteMock}
               onUpdateTargetScore={(target: number) => {
+                const now = Date.now();
                 updateAndSave((prev) => ({
                   ...prev,
-                  set: { ...prev.set, targetMockScore: target },
+                  set: { ...prev.set, targetMockScore: target, updatedAt: now },
                 }));
               }}
               onAddMistake={handleAddMistake}
@@ -2757,6 +2795,7 @@ export default function App() {
                     set: {
                       ...prev.set,
                       defaultMode: m,
+                      updatedAt: Date.now(),
                     },
                     activeTimer: prev.activeTimer
                       ? {
@@ -2788,16 +2827,18 @@ export default function App() {
               onOpenTimerConfig={() => setModal({ type: 'timerConfig' })}
               onSetSoundscape={(mode: SoundscapeMode) => {
                 ensureAudioEngine();
+                const now = Date.now();
                 updateAndSave((prev) => ({
                   ...prev,
-                  set: { ...prev.set, soundscape: mode },
+                  set: { ...prev.set, soundscape: mode, updatedAt: now },
                 }));
               }}
               onSetSoundVolume={(vol: number) => {
                 setSoundscapeVolume(vol);
+                const now = Date.now();
                 updateAndSave((prev) => ({
                   ...prev,
-                  set: { ...prev.set, soundVol: vol },
+                  set: { ...prev.set, soundVol: vol, updatedAt: now },
                 }));
               }}
               onAddTodo={(text) => {
@@ -3520,6 +3561,78 @@ export default function App() {
         </Suspense>
       )}
 
+      {onboardingOpen && (
+        <Suspense fallback={null}>
+          <OnboardingSheet
+            open={onboardingOpen}
+            state={state}
+            todayKey={todayKey}
+            onClose={() => {
+              try {
+                localStorage.setItem('dh_onboarded_v2', '1');
+              } catch {
+                // Ignore storage errors
+              }
+              setOnboardingOpen(false);
+            }}
+            onComplete={(result: OnboardingResult) => {
+              try {
+                localStorage.setItem('dh_onboarded_v2', '1');
+              } catch {
+                // Ignore storage errors
+              }
+              const now = Date.now();
+              const activeSet = new Set(result.activeSubjectIds);
+              updateAndSave((prev) => {
+                const updatedSubjects = prev.subjects.map((s) => ({
+                  ...s,
+                  arch: (activeSet.has(s.id) ? 0 : 1) as 0 | 1,
+                  updatedAt: now,
+                }));
+                let nextDdays = prev.ddays;
+                if (result.examTitle && result.examDate) {
+                  const cleanTitle = result.examTitle.trim();
+                  const newDday: DDay = {
+                    id: uid('dd'),
+                    title: cleanTitle,
+                    date: result.examDate,
+                    e: cleanTitle.includes('INI')
+                      ? '🧬'
+                      : cleanTitle.includes('FMGE')
+                        ? '⚕️'
+                        : '🩺',
+                    color: LUMEN_ACCENT,
+                    primary: true,
+                    updatedAt: now,
+                  };
+                  nextDdays = [
+                    ...prev.ddays.map((d) => ({ ...d, primary: false, updatedAt: now })),
+                    newDday,
+                  ];
+                }
+                return {
+                  ...prev,
+                  ob: 1,
+                  subjects: updatedSubjects,
+                  ddays: nextDdays,
+                  set: {
+                    ...prev.set,
+                    targets: {
+                      ...(prev.set.targets || {}),
+                      minDayMinutes: result.minDayMinutes,
+                      restPassesPerMonth: prev.set.targets?.restPassesPerMonth ?? 2,
+                    },
+                    updatedAt: now,
+                  },
+                };
+              });
+              setOnboardingOpen(false);
+              showToast('Workspace ready — start your first focus block!');
+            }}
+          />
+        </Suspense>
+      )}
+
       {/* Lightweight SVG Perfect Day Celebration Overlay */}
       {perfectDayBanner && (
         <div
@@ -3566,7 +3679,7 @@ export default function App() {
                 <path
                   d="M44 61 L55 72 L77 48"
                   fill="none"
-                  stroke="#f8fafc"
+                  stroke="var(--tx)"
                   strokeWidth="5.5"
                   strokeLinecap="round"
                   strokeLinejoin="round"
@@ -3577,18 +3690,18 @@ export default function App() {
             <span
               className="pill"
               style={{
-                background: 'rgba(16, 185, 129, 0.2)',
-                borderColor: 'rgba(52, 211, 153, 0.5)',
-                color: '#6ee7b7',
+                background: 'var(--ok-soft)',
+                borderColor: 'var(--ok-line)',
+                color: 'var(--ok-ink)',
                 marginBottom: '8px',
               }}
             >
               ✨ 100% Daily Goal Achieved
             </span>
-            <h3 style={{ fontSize: '21px', marginBottom: '4px', color: '#f8fafc' }}>
+            <h3 style={{ fontSize: '21px', marginBottom: '4px', color: 'var(--tx)' }}>
               Perfect Day Unlocked! 🎉
             </h3>
-            <small style={{ color: '#cbd5e1', display: 'block' }}>
+            <small style={{ color: 'var(--tx-2)', display: 'block' }}>
               Every scheduled habit for this day is complete. Keep the streak alive!
             </small>
           </div>

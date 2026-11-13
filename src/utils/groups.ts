@@ -427,7 +427,16 @@ export function sanitizeRemoteGroupDoc(
   if (rec.members && typeof rec.members === 'object' && !Array.isArray(rec.members)) {
     const rawMembers = Object.entries(rec.members as Record<string, unknown>);
     for (const [uid, mVal] of rawMembers.slice(0, MAX_GROUP_MEMBER_CAP)) {
-      if (typeof uid !== 'string' || !uid.trim() || uid.length > 128) continue;
+      if (
+        typeof uid !== 'string' ||
+        !uid.trim() ||
+        uid.length > 128 ||
+        uid === '__proto__' ||
+        uid === 'constructor' ||
+        uid === 'prototype'
+      ) {
+        continue;
+      }
       const sanitized = sanitizeRemoteMemberEntry(mVal, todayKey);
       if (sanitized) {
         members[uid] = sanitized;
@@ -1543,6 +1552,13 @@ export function loadCachedGroupSnapshots(): Record<string, CachedGroupSnapshot> 
         const parsed = JSON.parse(raw) as Record<string, CachedGroupSnapshot>;
         if (parsed && typeof parsed === 'object') {
           for (const [gid, snap] of Object.entries(parsed)) {
+            if (
+              gid === '__proto__' ||
+              gid === 'constructor' ||
+              gid === 'prototype'
+            ) {
+              continue;
+            }
             if (snap && snap.doc && typeof snap.fetchedAt === 'number') {
               out[gid] = snap;
               memoryGroupCache.set(gid, snap);

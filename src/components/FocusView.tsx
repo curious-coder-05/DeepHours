@@ -1,4 +1,4 @@
-import React, { Suspense, useEffect, useMemo, useState } from 'react';
+import React, { useEffect, useMemo, useState } from 'react';
 import {
   Play,
   Pause,
@@ -19,6 +19,8 @@ import {
   Edit3,
   BookOpen,
   ListChecks,
+  ChevronDown,
+  Clock,
 } from 'lucide-react';
 import type {
   ActiveTimerMode,
@@ -28,7 +30,6 @@ import type {
   TimerAesthetic,
 } from '../types';
 import {
-  computeStudySummary,
   fmtClockTime,
   fmtHMS,
   fmtHMShort,
@@ -40,19 +41,18 @@ import {
   getTodaySubjectMs,
 } from '../utils/studyLogic';
 import {
+  BarChart,
   Button,
   Card,
   Chip,
+  EmptyState,
+  Meter,
   Segmented,
   Select,
-  Meter,
+  Sheet,
   WindowedList,
 } from './ui';
 import { FocusOrbitScene } from './three/FocusOrbitScene';
-
-const FocusSessionChart = React.lazy(() =>
-  import('./FocusSessionChart').then((m) => ({ default: m.FocusSessionChart }))
-);
 
 export interface FocusViewProps {
   state: PulseHabitState;
@@ -107,7 +107,6 @@ const SOUNDSCAPE_ITEMS: Array<[SoundscapeMode, string]> = [
 
 export const FocusView: React.FC<FocusViewProps> = ({
   state,
-  sel,
   todayKey,
   deskMode,
   onToggleDeskMode,
@@ -145,8 +144,9 @@ export const FocusView: React.FC<FocusViewProps> = ({
   const [newTodoText, setNewTodoText] = useState<string>('');
   const [quoteOffset, setQuoteOffset] = useState<number>(0);
   const [showAllTodaySessions, setShowAllTodaySessions] = useState<boolean>(false);
+  const [topicSheetOpen, setTopicSheetOpen] = useState<boolean>(false);
+  const [breatheCue, setBreatheCue] = useState<string | null>(null);
 
-  // Sync local inputs when activeTimer changes
   useEffect(() => {
     if (t?.subjectId) setSelectedSubjectId(t.subjectId);
     if (t?.chapterId !== undefined) setSelectedChapterId(t.chapterId || '');
@@ -162,14 +162,13 @@ export const FocusView: React.FC<FocusViewProps> = ({
     () => state.chapters.filter((ch) => ch.subjectId === effectiveSubId),
     [state.chapters, effectiveSubId]
   );
-  const effectiveChapId = subjectChapters.some(
-    (ch) => ch.id === selectedChapterId
-  )
+  const effectiveChapId = subjectChapters.some((ch) => ch.id === selectedChapterId)
     ? selectedChapterId
     : '';
   const curChapter = subjectChapters.find((ch) => ch.id === effectiveChapId);
 
   const curMode: ActiveTimerMode = t?.mode || state.set.defaultMode || 'pomo';
+  const isStopwatch = curMode === 'stopwatch';
   const aesthetic: TimerAesthetic = state.set.timerAesthetic || 'neon';
   const m = getTimerMetrics(state);
 
@@ -184,9 +183,7 @@ export const FocusView: React.FC<FocusViewProps> = ({
 
   const displayMs = m ? m.displayMs : defaultIdleMs;
   const clockStr =
-    curMode === 'stopwatch' || displayMs >= 3600000
-      ? fmtHMS(displayMs)
-      : fmtMS(displayMs);
+    isStopwatch || displayMs >= 3600000 ? fmtHMS(displayMs) : fmtMS(displayMs);
 
   const todaySubMs = getTodaySubjectMs(state, curSubject.id, todayKey, true);
   const todaySessions = useMemo(
@@ -196,6 +193,12 @@ export const FocusView: React.FC<FocusViewProps> = ({
       ),
     [state.sessions, todayKey]
   );
+
+  const completedPomodorosToday = useMemo(
+    () => todaySessions.filter((s) => s.mode === 'pomo').length,
+    [todaySessions]
+  );
+
   const recentHeadings = useMemo(() => {
     const seen = new Set<string>();
     const list: Array<{ subjectId: string; heading: string }> = [];
@@ -213,7 +216,6 @@ export const FocusView: React.FC<FocusViewProps> = ({
     return list;
   }, [state.sessions]);
 
-  // Analog Retro clock angles
   const totalElapsedSec = Math.floor((m ? m.totalActiveMs : 0) / 1000);
   const secAngle = (totalElapsedSec % 60) * 6;
   const minAngle = (((m ? m.totalActiveMs : 0) / 60000) % 60) * 6;
@@ -224,23 +226,20 @@ export const FocusView: React.FC<FocusViewProps> = ({
     ? t.heading || `${curSubject.name} Study`
     : headingInput.trim() || curChapter?.name || `${curSubject.name} Study`;
 
-  // Session progress vs Target chart data (in minutes)
   const targetMins = t
     ? t.targetMs > 0
       ? +(t.targetMs / 60000).toFixed(1)
-      : 60
-    : +(defaultIdleMs / 60000).toFixed(1) || 60;
+      : 0
+    : +(defaultIdleMs / 60000).toFixed(1);
   const elapsedMins = m ? +(m.totalActiveMs / 60000).toFixed(1) : 0;
-  const chartDomainMax = Math.max(targetMins, elapsedMins, 10);
-  const sessionProgressData = [
-    {
-      name: 'Elapsed',
-      minutes: elapsedMins,
-      target: targetMins,
-    },
-  ];
   const progressRatio =
     targetMins > 0 ? Math.min(100, Math.round((elapsedMins / targetMins) * 100)) : 0;
+
+  // Stopwatch milestone helper (15-min milestones)
+  const stopwatchActiveMs = m ? m.totalActiveMs : 0;
+  const stopwatchMilestonesHit = Math.floor(stopwatchActiveMs / 900000);
+  const stopwatchNextMilestoneMs = (stopwatchMilestonesHit + 1) * 900000;
+  const stopwatchRemainingToMilestone = Math.max(0, stopwatchNextMilestoneMs - stopwatchActiveMs);
 
   const chapterOptions = useMemo(
     () => [
@@ -269,70 +268,39 @@ export const FocusView: React.FC<FocusViewProps> = ({
         : 'Paused'
     : 'Ready';
 
+  const show3dCore = !deskMode && state.set.ui3d !== 'off';
+
   return (
     <div>
-      {/* 1. Top Mode Selector & Studio Controls */}
-      <div
-        className="split hide-desk"
-        style={{
-          gap: 10,
-          flexWrap: 'wrap',
-          marginBottom: 14,
-        }}
-      >
-        <div style={{ flex: '1 1 320px', minWidth: 0 }}>
-          <Segmented
-            aria-label="Timer mode"
-            value={curMode}
-            onChange={onSetMode}
-            options={TIMER_MODES}
-          />
-        </div>
-
-        <div className="row" style={{ gap: 8 }}>
-          <Button
-            variant="secondary"
-            size="sm"
-            icon={<SlidersHorizontal size={15} strokeWidth={1.75} />}
-            onClick={onOpenTimerConfig}
-          >
-            Durations
-          </Button>
-          <Button
-            variant="secondary"
-            size="sm"
-            icon={<Maximize2 size={15} strokeWidth={1.75} />}
-            onClick={onToggleDeskMode}
-          >
-            {deskMode ? 'Exit desk' : 'Desk mode'}
-          </Button>
-          <Button
-            variant="secondary"
-            size="sm"
-            icon={<PictureInPicture2 size={15} strokeWidth={1.75} />}
-            onClick={onOpenPiP}
-          >
-            Float PiP
-          </Button>
-        </div>
+      {/* 1. Non-Wrapping Mode Switcher */}
+      <div className="hide-desk" style={{ marginBottom: 14 }}>
+        <Segmented
+          aria-label="Timer mode"
+          value={curMode}
+          onChange={onSetMode}
+          options={TIMER_MODES}
+        />
       </div>
 
-      {/* 2. Primary Timer Stage Card */}
+      {/* 2. Primary Focus Core Hero Card */}
       <div
         className={`card timer-shell aesthetic-${aesthetic} ${
           m ? (m.status === 'running' ? 'running' : 'paused') : ''
         }`}
+        style={{ padding: deskMode ? '28px 18px' : '16px 16px 20px' }}
       >
-        {/* Top Row inside Stage: Status Pill + Active Subject/Chapter + Clock Style */}
+        {/* Top Row: Status Pill + Interactive Subject/Topic Chip + Clock Style */}
         <div
           className="split"
           style={{
             gap: 8,
             flexWrap: 'wrap',
             marginBottom: 8,
+            position: 'relative',
+            zIndex: 3,
           }}
         >
-          <div className="row" style={{ gap: 8, flexWrap: 'wrap' }}>
+          <div className="row" style={{ gap: 8, flexWrap: 'wrap', minWidth: 0, flex: '1 1 200px' }}>
             <span
               className={`status-pill ${
                 m ? (m.status === 'running' ? 'run' : 'pau') : 'idle'
@@ -340,8 +308,8 @@ export const FocusView: React.FC<FocusViewProps> = ({
             >
               <span
                 style={{
-                  width: 7,
-                  height: 7,
+                  width: 8,
+                  height: 8,
                   borderRadius: '50%',
                   background: m
                     ? m.status === 'running'
@@ -353,21 +321,29 @@ export const FocusView: React.FC<FocusViewProps> = ({
               {statusText}
             </span>
 
-            <span
-              className="pill"
+            <button
+              type="button"
+              onClick={() => setTopicSheetOpen(true)}
+              aria-label={`Change study subject or topic. Current: ${curSubject.name}${
+                curChapter ? `, ${curChapter.name}` : ''
+              }`}
               style={{
-                background: 'var(--sf-2)',
-                color: 'var(--tx)',
-                border: '1px solid var(--line)',
-                fontSize: 12,
-                padding: '4px 10px',
                 display: 'inline-flex',
                 alignItems: 'center',
                 gap: 6,
+                minHeight: 38,
+                padding: '5px 12px',
+                borderRadius: 99,
+                background: 'color-mix(in srgb, var(--sf-2) 86%, transparent)',
+                border: '1px solid var(--line-strong, var(--line))',
+                color: 'var(--tx)',
+                fontSize: 13,
+                fontWeight: 600,
                 maxWidth: '100%',
               }}
             >
               <span
+                aria-hidden="true"
                 style={{
                   width: 8,
                   height: 8,
@@ -385,9 +361,12 @@ export const FocusView: React.FC<FocusViewProps> = ({
               >
                 {curSubject.e} {curSubject.name}
                 {curChapter ? ` · ${curChapter.name}` : ''}
-                {activeHeadingDisplay ? ` · "${activeHeadingDisplay}"` : ''}
+                {activeHeadingDisplay && activeHeadingDisplay !== `${curSubject.name} Study`
+                  ? ` · ${activeHeadingDisplay}`
+                  : ''}
               </span>
-            </span>
+              <ChevronDown size={14} strokeWidth={2} style={{ color: 'var(--tx-2)', flexShrink: 0 }} />
+            </button>
           </div>
 
           <span
@@ -395,23 +374,23 @@ export const FocusView: React.FC<FocusViewProps> = ({
             style={{
               background: 'var(--sf-2)',
               color: 'var(--tx-2)',
-              fontSize: 12,
+              fontSize: 13,
               padding: '4px 10px',
             }}
           >
-            {TIMER_STYLE_LABELS[aesthetic]} clock
+            {TIMER_STYLE_LABELS[aesthetic]}
           </span>
         </div>
 
-        {/* Countdown Presets when idle */}
+        {/* Countdown Quick Presets when idle */}
         {curMode === 'countdown' && !t && (
           <div
-            className="row hide-desk"
+            className="dh-scroll-chips hide-desk"
             style={{
               justifyContent: 'center',
-              gap: 6,
-              marginTop: 8,
-              flexWrap: 'wrap',
+              marginTop: 4,
+              position: 'relative',
+              zIndex: 3,
             }}
           >
             {[25, 45, 60, 90, 120].map((mins) => (
@@ -434,19 +413,18 @@ export const FocusView: React.FC<FocusViewProps> = ({
           </div>
         )}
 
-        {/* Full Mock Exam Info when in fullMock mode */}
+        {/* Full Mock Exam Info */}
         {curMode === 'fullMock' && !t && (
-          <div style={{ marginTop: 6, fontSize: 12, color: 'var(--tx-2)' }}>
-            NEET 3-hour exam simulation ({state.set.fullMockMins || 180} mins) · Record
-            section splits as you complete each section
+          <div style={{ marginTop: 4, fontSize: 13, color: 'var(--tx-2)', position: 'relative', zIndex: 3 }}>
+            Exam simulation ({state.set.fullMockMins || 180} mins) · Record section splits cleanly
           </div>
         )}
 
-        {/* Clock Display + Centered 3D Focus Orbit Scene Behind Readout */}
+        {/* Interactive Full-Bleed 3D Focus Core Stage + Layered Large Clock */}
         <div
           style={{
             position: 'relative',
-            minHeight: !deskMode && state.set.ui3d !== 'off' ? 210 : undefined,
+            minHeight: show3dCore ? 320 : undefined,
             display: 'flex',
             flexDirection: 'column',
             alignItems: 'center',
@@ -454,35 +432,42 @@ export const FocusView: React.FC<FocusViewProps> = ({
             margin: '4px 0',
           }}
         >
-          {!deskMode && state.set.ui3d !== 'off' && (
+          {show3dCore && (
             <div
-              aria-hidden="true"
               style={{
                 position: 'absolute',
                 inset: 0,
-                display: 'flex',
-                alignItems: 'center',
-                justifyContent: 'center',
-                pointerEvents: 'none',
                 zIndex: 0,
-                opacity: aesthetic === 'retro' ? 0.45 : 0.88,
+                opacity: aesthetic === 'retro' ? 0.42 : 0.94,
               }}
             >
               <FocusOrbitScene
                 ui3dSetting={state.set.ui3d || 'auto'}
+                ui3dQuality={state.set.ui3dQuality || 'auto'}
                 deskMode={deskMode}
                 status={m ? m.status : 'idle'}
                 mode={curMode}
                 phase={m ? m.phase : 'work'}
                 subjectColor={curSubject.color}
+                subjectName={curSubject.name}
                 progressPct={m ? m.progressPct : 0}
                 totalActiveMs={m ? m.totalActiveMs : 0}
                 overtimeMs={m ? m.overtimeMs : 0}
+                completedPomodorosToday={completedPomodorosToday}
+                onBreatheStateChange={setBreatheCue}
               />
             </div>
           )}
 
-          <div style={{ position: 'relative', zIndex: 1 }}>
+          {/* Non-blocking Clock Overlay so Canvas Drag/Tap/Hold works seamlessly */}
+          <div
+            style={{
+              position: 'relative',
+              zIndex: 2,
+              pointerEvents: 'none',
+              padding: '0 8px',
+            }}
+          >
             {aesthetic === 'retro' ? (
               <div className="retro-clock-wrap">
                 <svg
@@ -534,7 +519,7 @@ export const FocusView: React.FC<FocusViewProps> = ({
                       y={n.y}
                       textAnchor="middle"
                       fill="var(--tx-2)"
-                      fontSize="12"
+                      fontSize="13"
                       fontWeight="700"
                       fontFamily="var(--font-mono)"
                     >
@@ -585,7 +570,46 @@ export const FocusView: React.FC<FocusViewProps> = ({
                 {clockStr}
               </div>
             )}
+
+            {breatheCue && (
+              <div
+                role="status"
+                style={{
+                  display: 'inline-block',
+                  marginTop: 6,
+                  padding: '4px 12px',
+                  borderRadius: 99,
+                  background: 'var(--ac-soft)',
+                  border: '1px solid var(--ac-bd)',
+                  color: 'var(--ac-ink)',
+                  fontSize: 13,
+                  fontWeight: 600,
+                }}
+              >
+                Breathe: {breatheCue}
+              </div>
+            )}
           </div>
+
+          {show3dCore && !breatheCue && (
+            <div
+              className="hide-desk"
+              style={{
+                position: 'absolute',
+                bottom: 4,
+                left: 8,
+                right: 8,
+                zIndex: 2,
+                pointerEvents: 'none',
+                textAlign: 'center',
+                fontSize: 13,
+                color: 'var(--tx-2)',
+              }}
+            >
+              Drag to spin · Hold to breathe · {completedPomodorosToday} orb
+              {completedPomodorosToday === 1 ? '' : 's'} today
+            </div>
+          )}
         </div>
 
         {/* Overtime indicator */}
@@ -598,43 +622,73 @@ export const FocusView: React.FC<FocusViewProps> = ({
           </span>
         </div>
 
-        {/* Progress Meter & Quick Target Extension */}
-        <div style={{ maxWidth: 360, margin: '8px auto 12px' }}>
-          <Meter
-            value={m ? m.progressPct : 0}
-            color={
-              m?.phase === 'break'
-                ? 'var(--info)'
-                : m && m.overtimeMs > 0
-                  ? 'var(--ok)'
-                  : 'var(--ac)'
-            }
-            label="Session progress"
-          />
-          {t && t.mode !== 'stopwatch' && (
-            <div
-              className="row"
-              style={{ justifyContent: 'center', gap: 8, marginTop: 8 }}
-            >
-              <Button
-                variant="secondary"
-                size="sm"
-                onClick={() => onExtendTarget(5)}
+        {/* Target Meter (Hidden cleanly in Stopwatch mode) */}
+        {!isStopwatch ? (
+          <div style={{ maxWidth: 380, margin: '8px auto 12px' }}>
+            <Meter
+              value={m ? m.progressPct : 0}
+              color={
+                m?.phase === 'break'
+                  ? 'var(--info)'
+                  : m && m.overtimeMs > 0
+                    ? 'var(--ok)'
+                    : 'var(--ac)'
+              }
+              label="Session progress"
+            />
+            {t && (
+              <div
+                className="row"
+                style={{ justifyContent: 'center', gap: 8, marginTop: 8 }}
               >
-                +5m target
-              </Button>
-              <Button
-                variant="secondary"
-                size="sm"
-                onClick={() => onExtendTarget(15)}
-              >
-                +15m target
-              </Button>
-            </div>
-          )}
-        </div>
+                <Button
+                  variant="secondary"
+                  size="sm"
+                  onClick={() => onExtendTarget(5)}
+                >
+                  +5m target
+                </Button>
+                <Button
+                  variant="secondary"
+                  size="sm"
+                  onClick={() => onExtendTarget(15)}
+                >
+                  +15m target
+                </Button>
+              </div>
+            )}
+          </div>
+        ) : (
+          <div
+            style={{
+              display: 'inline-flex',
+              alignItems: 'center',
+              gap: 6,
+              padding: '6px 12px',
+              borderRadius: 12,
+              background: 'var(--sf-2)',
+              border: '1px solid var(--line)',
+              fontSize: 13,
+              color: 'var(--tx-2)',
+              margin: '6px auto 12px',
+            }}
+          >
+            <Clock size={14} strokeWidth={1.75} style={{ color: 'var(--ac-ink)' }} />
+            {t ? (
+              <span className="tabular-nums">
+                {stopwatchMilestonesHit > 0
+                  ? `${stopwatchMilestonesHit} × 15m milestone${
+                      stopwatchMilestonesHit === 1 ? '' : 's'
+                    } · next in ${fmtMS(stopwatchRemainingToMilestone)}`
+                  : `Open-ended count · 15m milestone in ${fmtMS(stopwatchRemainingToMilestone)}`}
+              </span>
+            ) : (
+              <span>Open-ended count · stop and log any time</span>
+            )}
+          </div>
+        )}
 
-        {/* Full Mock Section Splits List */}
+        {/* Full Mock Section Splits */}
         {t?.mode === 'fullMock' &&
           t.mockSections &&
           t.mockSections.length > 0 && (
@@ -652,22 +706,21 @@ export const FocusView: React.FC<FocusViewProps> = ({
                   key={idx}
                   className="pill"
                   style={{
-                    fontSize: 12,
-                    padding: '3px 9px',
+                    fontSize: 13,
+                    padding: '3px 10px',
                     background: 'var(--sf-2)',
                     color: 'var(--tx)',
                     border: '1px solid var(--line)',
                     fontVariantNumeric: 'tabular-nums',
                   }}
                 >
-                  {sec.label || sec.name || `Section ${idx + 1}`}:{' '}
-                  {fmtHMS(sec.elapsedMs)}
+                  {sec.label || sec.name || `Section ${idx + 1}`}: {fmtHMS(sec.elapsedMs)}
                 </span>
               ))}
             </div>
           )}
 
-        {/* Primary Transport Controls */}
+        {/* Prominent 56px Primary Transport CTA + Companion Controls */}
         <div
           className="row"
           style={{
@@ -680,24 +733,24 @@ export const FocusView: React.FC<FocusViewProps> = ({
           {t ? (
             <Button
               variant="primary"
-              size="lg"
+              size="xl"
               icon={
                 t.status === 'running' ? (
-                  <Pause size={18} strokeWidth={2} />
+                  <Pause size={20} strokeWidth={2} />
                 ) : (
-                  <Play size={18} strokeWidth={2} />
+                  <Play size={20} strokeWidth={2} />
                 )
               }
               onClick={onTogglePause}
-              style={{ minWidth: 148 }}
+              style={{ minWidth: 184 }}
             >
-              {t.status === 'running' ? 'Pause' : 'Resume'}
+              {t.status === 'running' ? 'Pause session' : 'Resume session'}
             </Button>
           ) : (
             <Button
               variant="primary"
-              size="lg"
-              icon={<Play size={18} strokeWidth={2} />}
+              size="xl"
+              icon={<Play size={20} strokeWidth={2} />}
               onClick={() =>
                 onStartTimer(
                   effectiveSubId,
@@ -707,7 +760,7 @@ export const FocusView: React.FC<FocusViewProps> = ({
                   effectiveChapId || undefined
                 )
               }
-              style={{ minWidth: 148 }}
+              style={{ minWidth: 196 }}
             >
               Start focus
             </Button>
@@ -748,65 +801,98 @@ export const FocusView: React.FC<FocusViewProps> = ({
               icon={<Square size={16} strokeWidth={2} />}
               onClick={onStopAndReflect}
             >
-              Stop & log
+              Stop &amp; log
             </Button>
           )}
         </div>
 
-        {/* Session Duration vs Target Recharts Visualization */}
+        {/* Compact Icon Action Row (Durations, Desk Mode, PiP, Topic Sheet, Log Hours) */}
         <div
-          aria-label="Current study session duration vs target chart"
+          className="row hide-desk"
           style={{
-            maxWidth: 380,
-            margin: '4px auto 12px',
-            padding: '10px 14px',
-            borderRadius: 12,
-            background: 'var(--sf-2)',
-            border: '1px solid var(--line)',
+            justifyContent: 'center',
+            gap: 8,
+            flexWrap: 'wrap',
+            marginBottom: 10,
           }}
         >
+          <Button
+            variant="ghost"
+            size="sm"
+            icon={<SlidersHorizontal size={15} strokeWidth={1.75} />}
+            onClick={onOpenTimerConfig}
+          >
+            Durations
+          </Button>
+          <Button
+            variant="ghost"
+            size="sm"
+            icon={<Maximize2 size={15} strokeWidth={1.75} />}
+            onClick={onToggleDeskMode}
+          >
+            Desk mode
+          </Button>
+          <Button
+            variant="ghost"
+            size="sm"
+            icon={<PictureInPicture2 size={15} strokeWidth={1.75} />}
+            onClick={onOpenPiP}
+          >
+            Float PiP
+          </Button>
+          <Button
+            variant="ghost"
+            size="sm"
+            icon={<Edit3 size={15} strokeWidth={1.75} />}
+            onClick={() => setTopicSheetOpen(true)}
+          >
+            Topic
+          </Button>
+        </div>
+
+        {/* Custom SVG Session vs Target Chart (Hidden cleanly in Stopwatch mode) */}
+        {!isStopwatch && (
           <div
-            className="split"
+            aria-label="Current study session duration vs target chart"
             style={{
-              fontSize: 12,
-              color: 'var(--tx-2)',
-              marginBottom: 6,
+              maxWidth: 400,
+              margin: '4px auto 12px',
+              padding: '10px 14px',
+              borderRadius: 12,
+              background: 'var(--sf-2)',
+              border: '1px solid var(--line)',
+              textAlign: 'left',
             }}
           >
-            <span>Session vs target</span>
-            <span
-              style={{
-                fontWeight: 600,
-                color: 'var(--tx)',
-                fontVariantNumeric: 'tabular-nums',
-              }}
-            >
-              {elapsedMins}m / {targetMins}m ({progressRatio}%)
-            </span>
+            <BarChart
+              orientation="horizontal"
+              height={46}
+              goalValue={targetMins}
+              goalLabel={`${targetMins}m`}
+              valueFormatter={(v) => `${v}m`}
+              ariaLabel="Session duration vs target"
+              data={[
+                {
+                  label: 'Session vs target',
+                  value: elapsedMins,
+                  hint: `${progressRatio}%`,
+                  color:
+                    m?.phase === 'break'
+                      ? 'var(--info)'
+                      : m && m.overtimeMs > 0
+                        ? 'var(--ok)'
+                        : curSubject.color || 'var(--ac)',
+                },
+              ]}
+            />
           </div>
-          <div style={{ width: '100%', height: 48 }}>
-            <Suspense fallback={<div style={{ width: '100%', height: 48 }} />}>
-              <FocusSessionChart
-                data={sessionProgressData}
-                chartDomainMax={chartDomainMax}
-                targetMins={targetMins}
-                fillColor={
-                  m?.phase === 'break'
-                    ? 'var(--info)'
-                    : m && m.overtimeMs > 0
-                      ? 'var(--ok)'
-                      : curSubject.color || 'var(--ac)'
-                }
-              />
-            </Suspense>
-          </div>
-        </div>
+        )}
 
         {/* Motivational Quote Bar while timer is active */}
         {m && (
           <div id="focusMotivationalQuote" className="focus-quote-bar">
             <span className="focus-quote-text">
-              "{getStudyQuoteForTimer(t?.startTs || 0, m.totalActiveMs, quoteOffset)}"
+              &ldquo;{getStudyQuoteForTimer(t?.startTs || 0, m.totalActiveMs, quoteOffset)}&rdquo;
             </span>
             <button
               type="button"
@@ -815,41 +901,40 @@ export const FocusView: React.FC<FocusViewProps> = ({
               aria-label="Next quote"
               onClick={() => setQuoteOffset((n) => n + 1)}
             >
-              <RotateCw size={13} strokeWidth={1.75} />
+              <RotateCw size={14} strokeWidth={1.75} />
             </button>
           </div>
         )}
 
-        {/* Purity & Today's Subject Total Bar */}
+        {/* Purity & Today's Subject Total */}
         <div className="purity-bar" style={{ marginBottom: 4 }}>
           <span>
             Focus purity <b id="livePurity">{m ? m.purity : 100}%</b>
           </span>
           <span>·</span>
           <span>
-            Today {curSubject.name}{' '}
-            <b id="liveTodaySub">{fmtHMShort(todaySubMs)}</b>
+            Today {curSubject.name} <b id="liveTodaySub">{fmtHMShort(todaySubMs)}</b>
           </span>
         </div>
 
-        {/* Desk Mode Controls (only shown when top toolbar is hidden in Desk Mode) */}
+        {/* Desk Mode Controls */}
         {deskMode && (
           <div
             className="row"
-            style={{ justifyContent: 'center', gap: 8, marginTop: 8 }}
+            style={{ justifyContent: 'center', gap: 8, marginTop: 12 }}
           >
             <Button
               variant="secondary"
-              size="sm"
-              icon={<PictureInPicture2 size={14} strokeWidth={1.75} />}
+              size="md"
+              icon={<PictureInPicture2 size={15} strokeWidth={1.75} />}
               onClick={onOpenPiP}
             >
               Floating timer (PiP)
             </Button>
             <Button
               variant="secondary"
-              size="sm"
-              icon={<Minimize2 size={14} strokeWidth={1.75} />}
+              size="md"
+              icon={<Minimize2 size={15} strokeWidth={1.75} />}
               onClick={onToggleDeskMode}
             >
               Exit desk mode
@@ -858,168 +943,7 @@ export const FocusView: React.FC<FocusViewProps> = ({
         )}
       </div>
 
-      {/* 3. Topic, Subject & Chapter Switcher Card */}
-      <Card className="hide-desk">
-        <div className="split" style={{ marginBottom: 10 }}>
-          <div>
-            <h3 style={{ margin: 0, fontSize: 16 }}>Subject & chapter</h3>
-            <small style={{ fontSize: 12 }}>
-              {t
-                ? 'Tap another subject or chapter to auto-log current slice and switch immediately'
-                : 'Select what you are studying for this session'}
-            </small>
-          </div>
-        </div>
-
-        {/* Subject Chips */}
-        <div
-          className="row"
-          style={{
-            gap: 6,
-            overflowX: 'auto',
-            paddingBottom: 8,
-            scrollbarWidth: 'none',
-          }}
-        >
-          {activeSubjects.map((s) => (
-            <Chip
-              key={s.id}
-              selected={effectiveSubId === s.id}
-              colorDot={s.color}
-              onClick={() => {
-                setSelectedSubjectId(s.id);
-                setSelectedChapterId('');
-                if (t) {
-                  const nextHeading =
-                    headingInput.trim() &&
-                    headingInput.trim() !== `${curSubject.name} Study`
-                      ? headingInput.trim()
-                      : `${s.name} Study`;
-                  setHeadingInput(nextHeading);
-                  onSwitchTopic(s.id, nextHeading, undefined);
-                }
-              }}
-            >
-              {s.e} {s.name}
-            </Chip>
-          ))}
-        </div>
-
-        {/* Chapter Select Sheet Picker */}
-        <div style={{ marginTop: 8 }}>
-          <Select
-            aria-label="Link syllabus chapter"
-            title={`Link ${curSubject.name} chapter`}
-            value={effectiveChapId}
-            options={chapterOptions}
-            onChange={(nextChapId) => {
-              setSelectedChapterId(nextChapId);
-              const chap = subjectChapters.find((c) => c.id === nextChapId);
-              const nextHeading = chap
-                ? chap.name
-                : headingInput.trim() || `${curSubject.name} Study`;
-              if (chap) setHeadingInput(chap.name);
-              if (t) {
-                onSwitchTopic(
-                  effectiveSubId,
-                  nextHeading,
-                  nextChapId || undefined
-                );
-              }
-            }}
-            placeholder="General subject study"
-          />
-        </div>
-
-        {/* Session Heading / Topic */}
-        <div style={{ marginTop: 12 }}>
-          <label
-            htmlFor="sessionHeadingInput"
-            style={{
-              display: 'block',
-              fontSize: 13,
-              fontWeight: 500,
-              color: 'var(--tx-2)',
-              marginBottom: 6,
-            }}
-          >
-            Session topic or goal
-          </label>
-          <div className="row" style={{ gap: 8, flexWrap: 'wrap' }}>
-            <input
-              id="sessionHeadingInput"
-              type="text"
-              placeholder="e.g., Rotational Mechanics PYQs, NCERT Ch 4..."
-              value={headingInput}
-              onChange={(e) => setHeadingInput(e.target.value)}
-              onKeyDown={(e) => {
-                if (e.key === 'Enter' && t) {
-                  e.preventDefault();
-                  onSwitchTopic(
-                    effectiveSubId,
-                    headingInput,
-                    effectiveChapId || undefined
-                  );
-                }
-              }}
-              style={{ flex: '1 1 220px', minHeight: 44, fontSize: 14 }}
-            />
-            {t && headingInput.trim() && headingInput.trim() !== t.heading && (
-              <Button
-                variant="primary"
-                size="sm"
-                onClick={() =>
-                  onSwitchTopic(
-                    effectiveSubId,
-                    headingInput,
-                    effectiveChapId || undefined
-                  )
-                }
-              >
-                Switch topic
-              </Button>
-            )}
-          </div>
-
-          {recentHeadings.length > 0 && (
-            <div
-              className="row"
-              style={{
-                gap: 6,
-                marginTop: 8,
-                overflowX: 'auto',
-                paddingBottom: 2,
-                scrollbarWidth: 'none',
-              }}
-            >
-              <span style={{ fontSize: 12, color: 'var(--tx-3)', flexShrink: 0 }}>
-                Recent:
-              </span>
-              {recentHeadings.map((h) => (
-                <Chip
-                  key={`${h.subjectId}_${h.heading}`}
-                  selected={headingInput === h.heading}
-                  onClick={() => {
-                    setSelectedSubjectId(h.subjectId);
-                    setHeadingInput(h.heading);
-                    if (t) {
-                      onSwitchTopic(
-                        h.subjectId,
-                        h.heading,
-                        effectiveChapId || undefined
-                      );
-                    }
-                  }}
-                >
-                  {h.heading}
-                </Chip>
-              ))}
-            </div>
-          )}
-        </div>
-      </Card>
-
-      {/* 4. Focus Sounds Card (Renamed from Procedural Focus Soundscape) */}
+      {/* 3. Focus Sounds Card */}
       <Card className="hide-desk">
         <div className="split" style={{ marginBottom: 10 }}>
           <div className="row" style={{ gap: 8 }}>
@@ -1029,8 +953,8 @@ export const FocusView: React.FC<FocusViewProps> = ({
               <Volume2 size={18} strokeWidth={1.75} style={{ color: 'var(--ac-ink)' }} />
             )}
             <div>
-              <h3 style={{ margin: 0, fontSize: 16 }}>Focus sounds</h3>
-              <small style={{ fontSize: 12 }}>
+              <h3 style={{ margin: 0, fontSize: 18 }}>Focus sounds</h3>
+              <small style={{ fontSize: 13 }}>
                 Offline ambient audio while the timer runs
               </small>
             </div>
@@ -1041,8 +965,8 @@ export const FocusView: React.FC<FocusViewProps> = ({
               style={{
                 background: 'color-mix(in srgb, var(--ok) 15%, transparent)',
                 color: 'var(--ok-ink)',
-                fontSize: 12,
-                padding: '2px 8px',
+                fontSize: 13,
+                padding: '2px 10px',
               }}
             >
               Active
@@ -1051,10 +975,8 @@ export const FocusView: React.FC<FocusViewProps> = ({
         </div>
 
         <div
-          className="row"
+          className="dh-scroll-chips"
           style={{
-            gap: 6,
-            flexWrap: 'wrap',
             marginBottom: state.set.soundscape !== 'off' ? 12 : 0,
           }}
         >
@@ -1071,7 +993,7 @@ export const FocusView: React.FC<FocusViewProps> = ({
 
         {state.set.soundscape !== 'off' && (
           <div className="row" style={{ gap: 10 }}>
-            <small style={{ fontSize: 12, minWidth: 52 }}>Volume</small>
+            <small style={{ fontSize: 13, minWidth: 52 }}>Volume</small>
             <input
               type="range"
               min="0.05"
@@ -1084,9 +1006,9 @@ export const FocusView: React.FC<FocusViewProps> = ({
             />
             <small
               style={{
-                width: 38,
+                width: 42,
                 textAlign: 'right',
-                fontSize: 12,
+                fontSize: 13,
                 fontVariantNumeric: 'tabular-nums',
               }}
             >
@@ -1096,18 +1018,14 @@ export const FocusView: React.FC<FocusViewProps> = ({
         )}
       </Card>
 
-      {/* 5. Session Checklist Card */}
+      {/* 4. Session Checklist Card */}
       <Card className="hide-desk">
         <div className="split" style={{ marginBottom: 10 }}>
           <div className="row" style={{ gap: 8 }}>
-            <ListChecks
-              size={18}
-              strokeWidth={1.75}
-              style={{ color: 'var(--ac-ink)' }}
-            />
-            <h3 style={{ margin: 0, fontSize: 16 }}>Session checklist</h3>
+            <ListChecks size={18} strokeWidth={1.75} style={{ color: 'var(--ac-ink)' }} />
+            <h3 style={{ margin: 0, fontSize: 18 }}>Session checklist</h3>
           </div>
-          <small style={{ fontSize: 12 }}>
+          <small style={{ fontSize: 13 }}>
             {globalTodos.filter((x) => x.done).length}/{globalTodos.length} done
           </small>
         </div>
@@ -1172,27 +1090,12 @@ export const FocusView: React.FC<FocusViewProps> = ({
                   }}
                 >
                   <span
-                    style={{
-                      width: 24,
-                      height: 24,
-                      borderRadius: 7,
-                      display: 'grid',
-                      placeItems: 'center',
-                      background: td.done ? 'var(--ok)' : 'var(--sf-1)',
-                      color: td.done ? 'var(--ok-on)' : 'transparent',
-                      border: td.done ? 'none' : '1px solid var(--line)',
-                      flexShrink: 0,
-                    }}
+                    className={`dh-task-check ${td.done ? 'checked' : ''}`}
+                    style={{ width: 26, height: 26, minWidth: 26, minHeight: 26 }}
                   >
-                    <Check size={14} strokeWidth={2.25} />
+                    {td.done ? <Check size={14} strokeWidth={2.25} /> : null}
                   </span>
-                  <span
-                    style={{
-                      fontSize: 14,
-                      textDecoration: td.done ? 'line-through' : 'none',
-                      color: td.done ? 'var(--tx-2)' : 'var(--tx)',
-                    }}
-                  >
+                  <span className={`dh-task-title ${td.done ? 'done' : ''}`}>
                     {td.text}
                   </span>
                 </button>
@@ -1211,17 +1114,13 @@ export const FocusView: React.FC<FocusViewProps> = ({
         )}
       </Card>
 
-      {/* 6. Today's Logged Sessions */}
+      {/* 5. Today's Logged Sessions */}
       <Card className="hide-desk">
         <div className="split" style={{ marginBottom: 10 }}>
           <div className="row" style={{ gap: 8 }}>
-            <BookOpen
-              size={18}
-              strokeWidth={1.75}
-              style={{ color: 'var(--ac-ink)' }}
-            />
-            <h3 style={{ margin: 0, fontSize: 16 }}>
-              Today's sessions ({todaySessions.length})
+            <BookOpen size={18} strokeWidth={1.75} style={{ color: 'var(--ac-ink)' }} />
+            <h3 style={{ margin: 0, fontSize: 18 }}>
+              Today&apos;s sessions ({todaySessions.length})
             </h3>
           </div>
           <Button
@@ -1232,14 +1131,17 @@ export const FocusView: React.FC<FocusViewProps> = ({
               onOpenManualSession(effectiveSubId, effectiveChapId || undefined)
             }
           >
-            Log manual hours
+            Log hours
           </Button>
         </div>
 
         {todaySessions.length === 0 ? (
-          <div style={{ fontSize: 13, color: 'var(--tx-3)', padding: '4px 0' }}>
-            Start the timer above or log past study hours manually.
-          </div>
+          <EmptyState
+            illustration="noSessions"
+            compact
+            title="No sessions logged today"
+            description="Start the focus core above or log completed study hours manually."
+          />
         ) : (
           <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
             <WindowedList
@@ -1282,7 +1184,7 @@ export const FocusView: React.FC<FocusViewProps> = ({
                         <span
                           className="pill"
                           style={{
-                            fontSize: 12,
+                            fontSize: 13,
                             padding: '1px 8px',
                             background: 'var(--sf-3)',
                             color: 'var(--tx)',
@@ -1296,12 +1198,12 @@ export const FocusView: React.FC<FocusViewProps> = ({
                         style={{
                           display: 'block',
                           marginTop: 3,
-                          fontSize: 12,
+                          fontSize: 13,
                           fontVariantNumeric: 'tabular-nums',
                         }}
                       >
-                        {sSub.name} · {fmtClockTime(ses.startTs)} –{' '}
-                        {fmtClockTime(ses.endTs)} · {ses.purity || 100}% purity
+                        {sSub.name} · {fmtClockTime(ses.startTs)} – {fmtClockTime(ses.endTs)} ·{' '}
+                        {ses.purity || 100}% purity
                         {ses.note ? ` · "${ses.note}"` : ''}
                       </small>
                     </div>
@@ -1324,13 +1226,150 @@ export const FocusView: React.FC<FocusViewProps> = ({
                 onClick={() => setShowAllTodaySessions((v) => !v)}
               >
                 {showAllTodaySessions
-                  ? 'Show recent 10 sessions'
+                  ? 'Show recent 10 only'
                   : `Show all ${todaySessions.length} sessions`}
               </Button>
             )}
           </div>
         )}
       </Card>
+
+      {/* Subject, Chapter & Topic Sheet */}
+      <Sheet
+        open={topicSheetOpen}
+        onClose={() => setTopicSheetOpen(false)}
+        title="Subject & topic"
+        subtitle={
+          t
+            ? 'Switching saves your current study slice and starts the new topic seamlessly'
+            : 'Choose what you are studying for this focus block'
+        }
+      >
+        <div>
+          <div style={{ fontSize: 13, fontWeight: 600, color: 'var(--tx-2)', marginBottom: 8 }}>
+            Subject
+          </div>
+          <div className="dh-scroll-chips">
+            {activeSubjects.map((s) => (
+              <Chip
+                key={s.id}
+                selected={effectiveSubId === s.id}
+                colorDot={s.color}
+                onClick={() => {
+                  setSelectedSubjectId(s.id);
+                  setSelectedChapterId('');
+                  if (t) {
+                    const nextHeading =
+                      headingInput.trim() &&
+                      headingInput.trim() !== `${curSubject.name} Study`
+                        ? headingInput.trim()
+                        : `${s.name} Study`;
+                    setHeadingInput(nextHeading);
+                    onSwitchTopic(s.id, nextHeading, undefined);
+                  }
+                }}
+              >
+                {s.e} {s.name}
+              </Chip>
+            ))}
+          </div>
+        </div>
+
+        <div>
+          <div style={{ fontSize: 13, fontWeight: 600, color: 'var(--tx-2)', marginBottom: 8 }}>
+            Syllabus chapter
+          </div>
+          <Select
+            aria-label="Link syllabus chapter"
+            title={`Link ${curSubject.name} chapter`}
+            value={effectiveChapId}
+            options={chapterOptions}
+            onChange={(nextChapId) => {
+              setSelectedChapterId(nextChapId);
+              const chap = subjectChapters.find((c) => c.id === nextChapId);
+              const nextHeading = chap
+                ? chap.name
+                : headingInput.trim() || `${curSubject.name} Study`;
+              if (chap) setHeadingInput(chap.name);
+              if (t) {
+                onSwitchTopic(effectiveSubId, nextHeading, nextChapId || undefined);
+              }
+            }}
+            placeholder="General subject study"
+          />
+        </div>
+
+        <div>
+          <label
+            htmlFor="sessionHeadingInput"
+            style={{
+              display: 'block',
+              fontSize: 13,
+              fontWeight: 600,
+              color: 'var(--tx-2)',
+              marginBottom: 8,
+            }}
+          >
+            Session topic or goal
+          </label>
+          <div className="row" style={{ gap: 8, flexWrap: 'wrap' }}>
+            <input
+              id="sessionHeadingInput"
+              type="text"
+              placeholder="e.g., Rotational Mechanics PYQs, NCERT Ch 4..."
+              value={headingInput}
+              onChange={(e) => setHeadingInput(e.target.value)}
+              onKeyDown={(e) => {
+                if (e.key === 'Enter') {
+                  e.preventDefault();
+                  if (t) {
+                    onSwitchTopic(effectiveSubId, headingInput, effectiveChapId || undefined);
+                  }
+                  setTopicSheetOpen(false);
+                }
+              }}
+              style={{ flex: '1 1 220px', minHeight: 44, fontSize: 14 }}
+            />
+            <Button
+              variant="primary"
+              size="md"
+              onClick={() => {
+                if (t) {
+                  onSwitchTopic(effectiveSubId, headingInput, effectiveChapId || undefined);
+                }
+                setTopicSheetOpen(false);
+              }}
+            >
+              {t ? 'Apply switch' : 'Done'}
+            </Button>
+          </div>
+
+          {recentHeadings.length > 0 && (
+            <div style={{ marginTop: 12 }}>
+              <div style={{ fontSize: 13, color: 'var(--tx-3)', marginBottom: 6 }}>
+                Recent topics
+              </div>
+              <div className="dh-scroll-chips">
+                {recentHeadings.map((h) => (
+                  <Chip
+                    key={`${h.subjectId}_${h.heading}`}
+                    selected={headingInput === h.heading}
+                    onClick={() => {
+                      setSelectedSubjectId(h.subjectId);
+                      setHeadingInput(h.heading);
+                      if (t) {
+                        onSwitchTopic(h.subjectId, h.heading, effectiveChapId || undefined);
+                      }
+                    }}
+                  >
+                    {h.heading}
+                  </Chip>
+                ))}
+              </div>
+            </div>
+          )}
+        </div>
+      </Sheet>
     </div>
   );
 };

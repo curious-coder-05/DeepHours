@@ -16,16 +16,18 @@ export const Field: React.FC<FieldProps> = ({
   children,
 }) => {
   const autoId = useId();
-  const isIntrinsicControl =
+  const isIdAcceptingControl =
     React.isValidElement<{ id?: string }>(children) &&
     (children.type === 'input' ||
       children.type === 'textarea' ||
-      children.type === 'select');
-  const existingChildId = isIntrinsicControl ? children.props.id : undefined;
+      children.type === 'select' ||
+      (typeof children.type === 'function' &&
+        (children.type as { displayName?: string }).displayName === 'Select'));
+  const existingChildId = isIdAcceptingControl ? children.props.id : undefined;
   const resolvedHtmlFor =
-    htmlFor || existingChildId || (isIntrinsicControl ? autoId : undefined);
+    htmlFor || existingChildId || (isIdAcceptingControl ? autoId : undefined);
   const renderedChildren =
-    isIntrinsicControl && !existingChildId && resolvedHtmlFor
+    isIdAcceptingControl && !existingChildId && resolvedHtmlFor
       ? React.cloneElement(children, { id: resolvedHtmlFor })
       : children;
 
@@ -43,7 +45,7 @@ export const Field: React.FC<FieldProps> = ({
       </label>
       {renderedChildren}
       {hint && !error && (
-        <span style={{ fontSize: '12px', color: 'var(--tx-3)', lineHeight: 1.35 }}>
+        <span style={{ fontSize: '13px', color: 'var(--tx-3)', lineHeight: 1.35 }}>
           {hint}
         </span>
       )}
@@ -51,7 +53,7 @@ export const Field: React.FC<FieldProps> = ({
         <span
           role="alert"
           style={{
-            fontSize: '12px',
+            fontSize: '13px',
             color: 'var(--err-ink)',
             fontWeight: 600,
             lineHeight: 1.35,

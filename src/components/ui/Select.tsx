@@ -156,3 +156,5 @@ export function Select<T extends string = string>({
     </>
   );
 }
+
+Select.displayName = 'Select';

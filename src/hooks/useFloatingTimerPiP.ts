@@ -238,18 +238,6 @@ export function useFloatingTimerPiP(
     if (!cur.activeTimer) {
       actionsRef.current.onStart();
     } else if (cur.activeTimer.status === 'paused') {
-      const t = cur.activeTimer;
-      const deltaPause = t.pauseStartTs ? Math.max(0, now - t.pauseStartTs) : 0;
-      stateRef.current = {
-        ...cur,
-        activeTimer: {
-          ...t,
-          status: 'running',
-          pauseStartTs: null,
-          pausedDurationMs: (t.pausedDurationMs || 0) + deltaPause,
-          slicePausedMs: (t.slicePausedMs || 0) + deltaPause,
-        },
-      };
       actionsRef.current.onResume();
     }
     drawCanvasFrame();
@@ -275,19 +263,7 @@ export function useFloatingTimerPiP(
 
   const handleExternalPause = useCallback(() => {
     const cur = stateRef.current;
-    const now = Date.now();
     if (cur.activeTimer?.status === 'running') {
-      const t = cur.activeTimer;
-      stateRef.current = {
-        ...cur,
-        activeTimer: {
-          ...t,
-          status: 'paused',
-          pauseStartTs: now,
-          pauseCount: (t.pauseCount || 0) + 1,
-          slicePauseCount: (t.slicePauseCount || 0) + 1,
-        },
-      };
       actionsRef.current.onPause();
     }
     drawCanvasFrame();

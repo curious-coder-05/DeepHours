@@ -39,7 +39,7 @@ export const Stat: React.FC<StatProps> = ({
         minWidth: 0,
       }}
     >
-      <div style={{ fontSize: '12px', color: 'var(--tx-2)', lineHeight: 1.3 }}>
+      <div style={{ fontSize: '13px', color: 'var(--tx-2)', lineHeight: 1.3 }}>
         {label}
       </div>
       <div
@@ -55,7 +55,7 @@ export const Stat: React.FC<StatProps> = ({
         {value}
       </div>
       {subtitle && (
-        <div style={{ fontSize: '12px', color: 'var(--tx-3)', marginTop: '2px' }}>
+        <div style={{ fontSize: '13px', color: 'var(--tx-3)', marginTop: '2px' }}>
           {subtitle}
         </div>
       )}

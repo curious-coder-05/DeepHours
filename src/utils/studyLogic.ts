@@ -438,6 +438,7 @@ export function createBlankState(): PulseHabitState {
       avatarEmoji: '🩺',
       defaultsVersion: 2,
       ui3d: 'auto',
+      ui3dQuality: 'auto',
       targets: {
         dailyMinutes: {},
         weeklyMinutes: {},
@@ -565,6 +566,10 @@ export function norm(raw: unknown): PulseHabitState {
       ? s.set.burnoutDismissedUntil
       : undefined;
   s.set.ui3d = s.set.ui3d === 'on' || s.set.ui3d === 'off' ? s.set.ui3d : 'auto';
+  s.set.ui3dQuality =
+    s.set.ui3dQuality === 'high' || s.set.ui3dQuality === 'lite'
+      ? s.set.ui3dQuality
+      : 'auto';
   s.set.updatedAt = Number.isFinite(s.set.updatedAt) ? Number(s.set.updatedAt) : 0;
 
   // Subjects: preserve existing user subjects if non-empty
@@ -763,8 +768,38 @@ export function norm(raw: unknown): PulseHabitState {
     s.sessions = [];
   }
 
-  // Plans
-  s.plans = src.plans && typeof src.plans === 'object' ? (src.plans as PulseHabitState['plans']) : {};
+  // Plans (sanitize YYYY-MM-DD keys, slot IDs, and reject prototype pollution keys)
+  const cleanPlans: PulseHabitState['plans'] = {};
+  if (src.plans && typeof src.plans === 'object' && !Array.isArray(src.plans)) {
+    for (const [dk, rawSlots] of Object.entries(src.plans as Record<string, unknown>)) {
+      if (
+        !/^\d{4}-\d{2}-\d{2}$/.test(dk) ||
+        !rawSlots ||
+        typeof rawSlots !== 'object' ||
+        Array.isArray(rawSlots)
+      ) {
+        continue;
+      }
+      const daySlots: Record<string, string> = {};
+      for (const [slotKey, topicVal] of Object.entries(rawSlots as Record<string, unknown>)) {
+        if (
+          slotKey === '__proto__' ||
+          slotKey === 'constructor' ||
+          slotKey === 'prototype' ||
+          !/^\d+$/.test(slotKey)
+        ) {
+          continue;
+        }
+        if (typeof topicVal === 'string' && topicVal.trim()) {
+          daySlots[slotKey] = topicVal.trim().slice(0, 120);
+        }
+      }
+      if (Object.keys(daySlots).length > 0) {
+        cleanPlans[dk] = daySlots;
+      }
+    }
+  }
+  s.plans = cleanPlans;
 
   // D-Days (preserve custom title across JSON stringify/parse cycle, including legacy 'name' key + primary flag)
   if (Array.isArray(src.ddays)) {
@@ -1183,8 +1218,17 @@ export function norm(raw: unknown): PulseHabitState {
   const delAtMap: Record<string, number> = {};
   if (src.delAt && typeof src.delAt === 'object') {
     for (const [id, ts] of Object.entries(src.delAt as Record<string, unknown>)) {
-      if (typeof id === 'string' && id.trim() && Number.isFinite(ts)) {
-        delAtMap[id.trim()] = Number(ts);
+      const cleanId = typeof id === 'string' ? id.trim() : '';
+      if (
+        !cleanId ||
+        cleanId === '__proto__' ||
+        cleanId === 'constructor' ||
+        cleanId === 'prototype'
+      ) {
+        continue;
+      }
+      if (Number.isFinite(ts)) {
+        delAtMap[cleanId] = Number(ts);
       }
     }
   }
@@ -1251,7 +1295,15 @@ export function norm(raw: unknown): PulseHabitState {
   if (src.groupHistory && typeof src.groupHistory === 'object') {
     const cleanGh: GroupHistoryMap = {};
     for (const [gid, rawWeeks] of Object.entries(src.groupHistory as Record<string, unknown>)) {
-      if (typeof gid !== 'string' || !gid.trim() || !rawWeeks || typeof rawWeeks !== 'object') {
+      const cleanGid = typeof gid === 'string' ? gid.trim() : '';
+      if (
+        !cleanGid ||
+        cleanGid === '__proto__' ||
+        cleanGid === 'constructor' ||
+        cleanGid === 'prototype' ||
+        !rawWeeks ||
+        typeof rawWeeks !== 'object'
+      ) {
         continue;
       }
       const weekEntries: Array<[string, { rank: number; of: number; minutes: number; xp: number }]> = [];

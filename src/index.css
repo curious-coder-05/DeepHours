@@ -4,15 +4,19 @@
   --font-ui: 'Geist Variable', system-ui, -apple-system, 'Segoe UI', sans-serif;
   --font-mono: 'Geist Mono Variable', ui-monospace, 'SF Mono', Menlo, Consolas, monospace;
 
-  /* Core Dark Palette (default) */
+  /* Core Dark Palette — Graphite Depth (default) */
   --bg: #0B0D10;
-  --sf-1: #12151A;
-  --sf-2: #181C22;
-  --sf-3: #20252D;
-  --line: rgba(255, 255, 255, 0.08);
+  --sf-1: #14181F;
+  --sf-2: #1B2029;
+  --sf-3: #232A35;
+  --line: rgba(255, 255, 255, 0.10);
+  --line-strong: rgba(255, 255, 255, 0.18);
   --tx: #ECEFF4;
-  --tx-2: #A3ABB8;
-  --tx-3: #8E97A6;
+  --tx-2: #B0B8C5;
+  --tx-3: #8F98A8;
+  --sf-highlight: inset 0 1px 0 rgba(255, 255, 255, 0.06);
+  --shadow-card: 0 8px 24px rgba(0, 0, 0, 0.24);
+  --r-card: 16px;
 
   /* Accent (Lumen default; dynamically updated by App.tsx) */
   --ac: #F5C451;
@@ -39,7 +43,7 @@
   /* Glass surfaces (strictly TopBar + TabBar) */
   --glass-bg: rgba(11, 13, 16, 0.84);
 
-  /* Legacy aliases so untouched M3–M5 views inherit the calm theme cleanly */
+  /* Legacy aliases so untouched views inherit the calm theme cleanly */
   --card: var(--sf-1);
   --c2: var(--sf-2);
   --c3: var(--sf-3);
@@ -69,7 +73,10 @@
   --sf-1: #0A0C0F;
   --sf-2: #12151A;
   --sf-3: #1A1E25;
-  --line: rgba(255, 255, 255, 0.1);
+  --line: rgba(255, 255, 255, 0.11);
+  --line-strong: rgba(255, 255, 255, 0.2);
+  --sf-highlight: inset 0 1px 0 rgba(255, 255, 255, 0.05);
+  --shadow-card: none;
   --glass-bg: rgba(0, 0, 0, 0.86);
 }
 
@@ -78,10 +85,13 @@
   --sf-1: #FFFFFF;
   --sf-2: #EFECE5;
   --sf-3: #E6E1D7;
-  --line: rgba(20, 22, 26, 0.1);
+  --line: rgba(20, 22, 26, 0.11);
+  --line-strong: rgba(20, 22, 26, 0.2);
   --tx: #14161A;
   --tx-2: #4B515C;
   --tx-3: #565E6B;
+  --sf-highlight: inset 0 1px 0 rgba(255, 255, 255, 0.72);
+  --shadow-card: 0 4px 18px rgba(20, 22, 26, 0.06);
   --ok: #16A34A;
   --ok-ink: #15803D;
   --ok-on: #FFFFFF;
@@ -183,7 +193,7 @@ body {
 }
 
 .dh-topbar-sub {
-  font-size: 12px;
+  font-size: 13px;
   color: var(--tx-2);
   line-height: 1.3;
   white-space: nowrap;
@@ -201,15 +211,21 @@ body {
 .dh-topbar-title {
   margin: 0;
   font-family: var(--font-ui);
-  font-size: 26px;
+  font-size: 30px;
   font-weight: 700;
   line-height: 1.15;
-  letter-spacing: -0.02em;
+  letter-spacing: -0.025em;
   color: var(--tx);
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
   transition: font-size var(--dur-mid) var(--ease-out);
+}
+
+@media (min-width: 768px) {
+  .dh-topbar-title {
+    font-size: 32px;
+  }
 }
 
 .dh-topbar.collapsed .dh-topbar-title {
@@ -283,7 +299,7 @@ body {
   background: transparent;
   border: 1px solid transparent;
   color: var(--tx-2);
-  font-size: clamp(10.5px, 3.1vw, 12px);
+  font-size: 13px;
   font-weight: 500;
   line-height: 1.15;
   min-width: 0;
@@ -293,15 +309,15 @@ body {
   white-space: nowrap;
 }
 
-@media (max-width: 360px) {
+@media (max-width: 390px) {
   .dh-tabbar {
-    padding-left: 4px;
-    padding-right: 4px;
-    gap: 2px;
+    padding-left: 3px;
+    padding-right: 3px;
+    gap: 1px;
   }
   .dh-tab-btn {
     padding: 4px 1px;
-    letter-spacing: -0.015em;
+    letter-spacing: -0.03em;
   }
 }
 
@@ -518,10 +534,10 @@ textarea:focus {
 h1 {
   margin: 0;
   font-family: var(--font-ui);
-  font-size: 28px;
+  font-size: 32px;
   font-weight: 700;
   line-height: 1.15;
-  letter-spacing: -0.02em;
+  letter-spacing: -0.025em;
   color: var(--tx);
 }
 
@@ -536,7 +552,7 @@ h2 {
 
 h3 {
   margin: 0 0 6px;
-  font-size: 16px;
+  font-size: 18px;
   font-weight: 600;
   line-height: 1.3;
   color: var(--tx);
@@ -545,7 +561,7 @@ h3 {
 small,
 .mu,
 .mut {
-  font-size: 12px;
+  font-size: 13px;
   color: var(--tx-2);
 }
 
@@ -579,6 +595,24 @@ small,
   min-height: 48px;
   padding: 0 20px;
   font-size: 15px;
+}
+
+.dh-btn-xl {
+  min-height: 56px;
+  padding: 0 24px;
+  font-size: 16px;
+  border-radius: 14px;
+  position: relative;
+  overflow: hidden;
+}
+
+.dh-btn-xl:active:not(:disabled)::after {
+  content: '';
+  position: absolute;
+  inset: 0;
+  background: radial-gradient(circle at center, rgba(255, 255, 255, 0.28), transparent 70%);
+  animation: dhButtonRipple 260ms var(--ease-out) forwards;
+  pointer-events: none;
 }
 
 .dh-btn-primary,
@@ -641,6 +675,17 @@ small,
   padding: 18px;
   margin: 12px 0;
   min-width: 0;
+  box-shadow: var(--sf-highlight), var(--shadow-card);
+}
+
+.dh-hero-lumen {
+  position: relative;
+  overflow: hidden;
+  background-image: radial-gradient(
+    ellipse 85% 60% at 50% 0%,
+    color-mix(in srgb, var(--ac) 13%, transparent),
+    transparent 70%
+  );
 }
 
 .dh-list-group {
@@ -648,6 +693,7 @@ small,
   border: 1px solid var(--line);
   border-radius: 16px;
   overflow: hidden;
+  box-shadow: var(--sf-highlight), var(--shadow-card);
 }
 
 .dh-list-row {
@@ -676,25 +722,33 @@ small,
 
 .dh-segmented {
   position: relative;
-  display: grid;
-  grid-auto-flow: column;
-  grid-auto-columns: minmax(0, 1fr);
+  display: flex;
+  align-items: stretch;
+  overflow-x: auto;
+  scrollbar-width: none;
+  scroll-snap-type: x proximity;
   background: var(--sf-2);
   border: 1px solid var(--line);
   border-radius: 12px;
-  padding: 4px;
-  gap: 4px;
+  padding: 3px;
+  gap: 2px;
+}
+
+.dh-segmented::-webkit-scrollbar {
+  display: none;
 }
 
 .dh-seg-thumb {
   position: absolute;
-  top: 4px;
-  bottom: 4px;
-  left: 4px;
+  top: 3px;
+  bottom: 3px;
+  left: 0;
   background: var(--ac-soft);
   border: 1px solid var(--ac-bd);
   border-radius: 9px;
-  transition: transform var(--dur-mid) var(--ease-out);
+  transition:
+    transform var(--dur-mid) var(--ease-out),
+    width var(--dur-mid) var(--ease-out);
   pointer-events: none;
 }
 
@@ -702,21 +756,31 @@ small,
   position: relative;
   z-index: 1;
   min-height: 40px;
-  padding: 6px 10px;
+  padding: 6px 5px;
   border: 0;
   border-radius: 9px;
   background: transparent !important;
   color: var(--tx-2);
   font-size: 13px;
   font-weight: 500;
+  letter-spacing: -0.015em;
   line-height: 1.2;
-  min-width: 0;
+  flex: 1 0 auto;
+  white-space: nowrap;
+  overflow-wrap: normal;
+  scroll-snap-align: center;
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  gap: 6px;
+  gap: 5px;
   text-align: center;
-  overflow-wrap: anywhere;
+}
+
+@media (min-width: 480px) {
+  .dh-seg-btn {
+    padding: 6px 12px;
+    letter-spacing: 0;
+  }
 }
 
 .dh-seg-btn.active {
@@ -891,21 +955,32 @@ small,
   }
 }
 
-/* Status Row on Today */
-.dh-status-row {
+/* Status Row & Scrollable Chip Rails */
+.dh-status-row,
+.dh-scroll-chips {
   display: flex;
   gap: 8px;
   overflow-x: auto;
-  padding: 2px 0 6px;
+  padding: 2px 12px 6px 0;
   scrollbar-width: none;
+  scroll-snap-type: x proximity;
+  scroll-padding-inline: 8px;
+  -webkit-mask-image: linear-gradient(to right, #000 0, #000 calc(100% - 18px), transparent 100%);
+  mask-image: linear-gradient(to right, #000 0, #000 calc(100% - 18px), transparent 100%);
 }
 
-.dh-status-row::-webkit-scrollbar {
+.dh-status-row::-webkit-scrollbar,
+.dh-scroll-chips::-webkit-scrollbar {
   display: none;
+}
+
+.dh-scroll-chips > * {
+  scroll-snap-align: start;
 }
 
 .dh-status-pill {
   flex: none;
+  scroll-snap-align: start;
   display: inline-flex;
   align-items: center;
   gap: 8px;
@@ -922,10 +997,10 @@ small,
 
 .dh-status-pill-label {
   color: var(--tx-2);
-  font-size: 12px;
+  font-size: 13px;
 }
 
-/* Legacy Helper Classes Preserved for M3–M5 Views (Flat + AA Contrast) */
+/* Legacy Helper Classes Preserved for Existing Views */
 .row {
   display: flex;
   align-items: center;
@@ -967,7 +1042,7 @@ small,
   border: 1px solid var(--line);
   border-radius: 99px;
   padding: 5px 12px;
-  font-size: 12px;
+  font-size: 13px;
   font-weight: 600;
   display: inline-flex;
   align-items: center;
@@ -997,8 +1072,11 @@ small,
   display: flex;
   gap: 6px;
   overflow-x: auto;
-  padding-bottom: 4px;
+  padding: 0 12px 4px 0;
   scrollbar-width: none;
+  scroll-snap-type: x proximity;
+  -webkit-mask-image: linear-gradient(to right, #000 0, #000 calc(100% - 16px), transparent 100%);
+  mask-image: linear-gradient(to right, #000 0, #000 calc(100% - 16px), transparent 100%);
   max-width: 100%;
 }
 
@@ -1085,9 +1163,9 @@ small,
 
 .wk button {
   display: grid;
-  gap: 3px;
+  gap: 4px;
   justify-items: center;
-  padding: 8px 0;
+  padding: 8px 2px;
   border-radius: 12px;
   background: var(--sf-1);
   border: 1px solid var(--line);
@@ -1098,11 +1176,23 @@ small,
   font-variant-numeric: tabular-nums;
 }
 
-.wk i {
-  height: 4px;
-  width: calc(var(--p) * 0.01 * 68% + 4px);
-  border-radius: 99px;
+.wk-bar-track {
+  width: 18px;
+  height: 22px;
+  border-radius: 6px;
+  background: var(--sf-2);
+  display: flex;
+  align-items: flex-end;
+  overflow: hidden;
+  padding: 2px;
+}
+
+.wk-bar-fill {
+  display: block;
+  width: 100%;
+  border-radius: 4px;
   background: var(--ac);
+  transition: height var(--dur-mid) var(--ease-out);
 }
 
 .wk .on {
@@ -1115,18 +1205,62 @@ small,
   color: var(--ac-ink);
 }
 
-.wk .on i {
+.wk .on .wk-bar-fill {
   background: var(--ac);
+}
+
+/* Study Next Horizontal Carousel (<768px) -> 3-col Grid (>=768px) */
+.dh-carousel {
+  display: flex;
+  gap: 10px;
+  overflow-x: auto;
+  scroll-snap-type: x mandatory;
+  padding: 2px 14px 6px 0;
+  scrollbar-width: none;
+  -webkit-mask-image: linear-gradient(to right, #000 0, #000 calc(100% - 18px), transparent 100%);
+  mask-image: linear-gradient(to right, #000 0, #000 calc(100% - 18px), transparent 100%);
+}
+
+.dh-carousel::-webkit-scrollbar {
+  display: none;
+}
+
+.dh-carousel-card {
+  flex: 0 0 min(82%, 280px);
+  scroll-snap-align: start;
+  display: flex;
+  flex-direction: column;
+  justify-content: space-between;
+  gap: 10px;
+  padding: 14px;
+  border-radius: 14px;
+  background: var(--sf-2);
+  border: 1px solid var(--line);
+}
+
+@media (min-width: 768px) {
+  .dh-carousel {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+    overflow-x: visible;
+    padding-right: 0;
+    -webkit-mask-image: none;
+    mask-image: none;
+  }
+
+  .dh-carousel-card {
+    flex: initial;
+  }
 }
 
 .hero-grid {
   display: grid;
-  grid-template-columns: 126px 1fr;
-  gap: 16px;
+  grid-template-columns: 168px 1fr;
+  gap: 20px;
   align-items: center;
 }
 
-@media (max-width: 420px) {
+@media (max-width: 520px) {
   .hero-grid {
     grid-template-columns: 1fr;
     justify-items: stretch;
@@ -1286,7 +1420,7 @@ small,
   padding: 5px 12px;
   border-radius: 99px;
   font-family: var(--font-ui);
-  font-size: 12px;
+  font-size: 13px;
   font-weight: 600;
 }
 
@@ -1310,11 +1444,16 @@ small,
 .big-clock {
   font-family: var(--font-mono);
   font-weight: 700;
-  font-size: clamp(44px, 12vw, 64px);
-  line-height: 1.05;
-  letter-spacing: -0.025em;
-  margin: 12px 0 6px;
+  font-size: clamp(58px, 15vw, 88px);
+  line-height: 1.02;
+  letter-spacing: -0.03em;
+  margin: 10px 0 6px;
   font-variant-numeric: tabular-nums;
+  text-shadow: 0 2px 18px rgba(0, 0, 0, 0.42);
+}
+
+[data-t='light'] .big-clock {
+  text-shadow: none;
 }
 
 .overtime-tag {
@@ -1333,9 +1472,10 @@ small,
 .purity-bar {
   display: flex;
   justify-content: center;
-  gap: 14px;
+  flex-wrap: wrap;
+  gap: 10px 14px;
   margin: 8px 0 14px;
-  font-size: 12px;
+  font-size: 13px;
   color: var(--tx-2);
 }
 
@@ -1701,7 +1841,7 @@ body.desk-mode .retro-dial-svg {
 }
 
 .focus-quote-text {
-  font-size: 12px;
+  font-size: 13px;
   line-height: 1.4;
   color: var(--tx-2);
   text-align: left;
@@ -1709,12 +1849,12 @@ body.desk-mode .retro-dial-svg {
 }
 
 .focus-quote-next {
-  width: 28px;
-  height: 28px;
-  min-height: 28px;
+  width: 32px;
+  height: 32px;
+  min-height: 32px;
   padding: 0;
   border-radius: 8px;
-  font-size: 12px;
+  font-size: 13px;
   display: inline-flex;
   align-items: center;
   justify-content: center;
@@ -1766,10 +1906,10 @@ body.desk-mode .retro-dial-svg {
   background: var(--ac);
   color: var(--ac-on);
   border: 0;
-  min-height: 30px;
-  padding: 4px 10px;
+  min-height: 32px;
+  padding: 4px 12px;
   border-radius: 8px;
-  font-size: 12px;
+  font-size: 13px;
   font-weight: 600;
 }
 
@@ -1944,6 +2084,98 @@ body.desk-mode .retro-dial-svg {
 
 .podium-rise {
   animation: podiumRise var(--dur-slow) var(--ease-out) both;
+}
+
+/* R1 Motion Language Additions */
+@keyframes dhButtonRipple {
+  from {
+    opacity: 0.9;
+    transform: scale(0.75);
+  }
+  to {
+    opacity: 0;
+    transform: scale(1.25);
+  }
+}
+
+@keyframes dhFlameFlicker {
+  0%, 100% {
+    transform: scale(1) rotate(0deg);
+    opacity: 1;
+  }
+  40% {
+    transform: scale(1.08) rotate(-4deg);
+    opacity: 0.92;
+  }
+  70% {
+    transform: scale(0.96) rotate(4deg);
+    opacity: 1;
+  }
+}
+
+.dh-flame-flicker {
+  animation: dhFlameFlicker 2.2s ease-in-out infinite;
+  transform-origin: center bottom;
+}
+
+@keyframes dhStaggerIn {
+  from {
+    opacity: 0;
+    transform: translateY(6px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+.dh-stagger-item {
+  animation: dhStaggerIn var(--dur-mid) var(--ease-out) both;
+  animation-delay: calc(var(--stagger, 0) * 32ms);
+}
+
+/* Circular task checkbox + animated strike-through */
+.dh-task-check {
+  width: 36px;
+  height: 36px;
+  min-width: 36px;
+  min-height: 36px;
+  padding: 0;
+  border-radius: 999px !important;
+  display: grid;
+  place-items: center;
+  background: var(--sf-1);
+  color: var(--tx-2);
+  border: 1.5px solid var(--line-strong, var(--line));
+  transition:
+    transform var(--dur-fast) var(--ease-spring),
+    background-color var(--dur-mid) var(--ease-out),
+    border-color var(--dur-mid) var(--ease-out);
+  flex-shrink: 0;
+}
+
+.dh-task-check.checked {
+  background: var(--ok);
+  color: var(--ok-on);
+  border-color: transparent;
+  transform: scale(1.04);
+}
+
+.dh-task-title {
+  position: relative;
+  display: inline;
+  font-size: 15px;
+  font-weight: 500;
+  color: var(--tx);
+  word-break: break-word;
+  transition: color var(--dur-mid) var(--ease-out), opacity var(--dur-mid) var(--ease-out);
+}
+
+.dh-task-title.done {
+  color: var(--tx-2);
+  opacity: 0.85;
+  text-decoration: line-through;
+  text-decoration-thickness: 1.5px;
 }
 }
 

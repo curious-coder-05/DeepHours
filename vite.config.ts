@@ -55,13 +55,6 @@ export default defineConfig(() => {
             ) {
               return 'firebase';
             }
-            if (
-              id.includes('node_modules/recharts') ||
-              id.includes('node_modules/d3-') ||
-              id.includes('node_modules/victory-vendor')
-            ) {
-              return 'recharts';
-            }
             if (id.includes('node_modules/three')) {
               return 'three';
             }
@@ -71,6 +64,9 @@ export default defineConfig(() => {
       },
     },
     server: {
+      port: 3000,
+      host: '0.0.0.0',
+      allowedHosts: true,
       // HMR is disabled in AI Studio via DISABLE_HMR env var.
       // Do not modify—file watching is disabled to prevent flickering during agent edits.
       hmr: process.env.DISABLE_HMR !== 'true',

@@ -1,5 +1,5 @@
 import React, { useMemo, useState } from 'react';
-import { Check, HelpCircle, Plus, RotateCcw, Trash2 } from 'lucide-react';
+import { Check, Plus, RotateCcw, Trash2 } from 'lucide-react';
 import type { Doubt, PulseHabitState } from '../types';
 import { getSubject } from '../utils/studyLogic';
 import { Button } from './ui/Button';
@@ -27,7 +27,7 @@ export const DoubtsView: React.FC<DoubtsViewProps> = ({
   onToggleDoubtResolved,
   onDeleteDoubt,
 }) => {
-  const defaultSubjectId = state.subjects[0]?.id || 'phy';
+  const defaultSubjectId = state.subjects[0]?.id || 'sub_phy';
   const [subjectId, setSubjectId] = useState<string>(defaultSubjectId);
   const [chapterId, setChapterId] = useState<string>('');
   const [text, setText] = useState<string>('');
@@ -80,7 +80,7 @@ export const DoubtsView: React.FC<DoubtsViewProps> = ({
             <h3 className="text-[16px] font-semibold text-[var(--tx)]">
               Doubts &amp; questions queue
             </h3>
-            <p className="text-[12px] text-[var(--tx-2)]">
+            <p className="text-[13px] text-[var(--tx-2)]">
               Capture conceptual questions during study blocks without breaking focus
             </p>
           </div>
@@ -162,7 +162,7 @@ export const DoubtsView: React.FC<DoubtsViewProps> = ({
 
       {filteredDoubts.length === 0 ? (
         <EmptyState
-          icon={<HelpCircle size={22} />}
+          illustration="noDoubts"
           title="No doubts in this view"
           description="Jot down tricky NCERT lines or numerical doubts here so you never lose track before your next teacher session."
           action={
@@ -210,11 +210,11 @@ export const DoubtsView: React.FC<DoubtsViewProps> = ({
                         {sub.e} {sub.name}
                       </span>
                       {ch && (
-                        <span className="rounded-md bg-[var(--sf-2)] px-2 py-0.5 text-[12px] text-[var(--tx-2)]">
+                        <span className="rounded-md bg-[var(--sf-2)] px-2 py-0.5 text-[13px] text-[var(--tx-2)]">
                           {ch.name}
                         </span>
                       )}
-                      <span className="tnum text-[12px] text-[var(--tx-3)]">
+                      <span className="tnum text-[13px] text-[var(--tx-3)]">
                         {new Date(d.createdAt).toLocaleDateString()}
                       </span>
                     </div>

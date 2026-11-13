@@ -1,11 +1,9 @@
 import React, { useMemo, useState } from 'react';
 import {
   Award,
-  BarChart3,
   Calendar,
   ChevronDown,
   ChevronRight,
-  Clock,
   Flame,
   Plus,
 } from 'lucide-react';
@@ -35,15 +33,23 @@ import { computeLevelInfo, computeTotalXp } from '../utils/xp';
 import { PlannerView } from './PlannerView';
 import { ReviewView } from './ReviewView';
 import { DayHistoryView } from './DayHistoryView';
-import { Button } from './ui/Button';
-import { Card } from './ui/Card';
-import { EmptyState } from './ui/EmptyState';
-import { Meter } from './ui/Meter';
-import { SectionHeader } from './ui/SectionHeader';
-import { Segmented } from './ui/Segmented';
-import { Sparkline } from './ui/Sparkline';
-import { Stat } from './ui/Stat';
-import { WindowedList } from './ui/WindowedList';
+import {
+  AreaLineChart,
+  BarChart,
+  Button,
+  Card,
+  DonutChart,
+  EmptyState,
+  HeatmapGrid,
+  Meter,
+  RadialClock24h,
+  SectionHeader,
+  Segmented,
+  SemiCircleGauge,
+  Sparkline,
+  Stat,
+  WindowedList,
+} from './ui';
 import { resolveRuntimeUi3d } from './three/Scene3D';
 import { StudySkylineScene } from './three/StudySkylineScene';
 
@@ -92,13 +98,18 @@ export const StatsView: React.FC<StatsViewProps> = ({
   const [historyDateKey, setHistoryDateKey] = useState<string>(todayKey);
   const [showAllSessionsLog, setShowAllSessionsLog] = useState<boolean>(false);
 
-  // Default to Flat view when in Lite mode, 'off', or prefers-reduced-motion
+  // Default to 3D Skyline whenever WebGL is eligible, falling back gracefully when 'off' or reduced-motion
   const runtime3d = useMemo(
-    () => resolveRuntimeUi3d(state.set.ui3d || 'auto', false),
-    [state.set.ui3d]
+    () =>
+      resolveRuntimeUi3d(
+        state.set.ui3d || 'auto',
+        false,
+        state.set.ui3dQuality || 'auto'
+      ),
+    [state.set.ui3d, state.set.ui3dQuality]
   );
   const [heatmapViewMode, setHeatmapViewMode] = useState<'flat' | 'skyline'>(() =>
-    runtime3d.enabled && runtime3d.tier === 'normal' ? 'skyline' : 'flat'
+    runtime3d.enabled ? 'skyline' : 'flat'
   );
 
   const selectedCalDay: ConsistencyDay | null =
@@ -151,11 +162,46 @@ export const StatsView: React.FC<StatsViewProps> = ({
     return out;
   }, [state, todayKey]);
 
-  const maxWeekDayMs = Math.max(3600000, ...summary.last7Days.map((d) => d.ms));
-  const maxHrMs = Math.max(1800000, ...summary.hourlyMs);
+  // Row-major (7 days x 12 weeks) transposition for HeatmapGrid flat fallback
+  const flatHeatmapCells = useMemo(() => {
+    const out: Array<{
+      key: string;
+      label: string;
+      level: 0 | 1 | 2 | 3 | 4;
+      valueLabel: string;
+    }> = [];
+    for (let dayRow = 0; dayRow < 7; dayRow++) {
+      for (let weekCol = 0; weekCol < 12; weekCol++) {
+        const idx = weekCol * 7 + dayRow;
+        const c = hmCells[idx];
+        if (!c) continue;
+        const lvl: 0 | 1 | 2 | 3 | 4 =
+          c.future || c.lvlClass === 'hm-l0'
+            ? 0
+            : c.lvlClass === 'hm-l1'
+              ? 1
+              : c.lvlClass === 'hm-l2'
+                ? 2
+                : c.lvlClass === 'hm-l3'
+                  ? 3
+                  : 4;
+        out.push({
+          key: c.key,
+          label: c.key,
+          level: lvl,
+          valueLabel: c.future ? 'Upcoming date' : `${c.hrs.toFixed(1)}h studied`,
+        });
+      }
+    }
+    return out;
+  }, [hmCells]);
+
   const peak30dMs = Math.max(0, ...summary.last30Days.map((d) => d.ms));
-  const avg30dHours = Number((summary.monthAvgMsPerDay / 3600000).toFixed(2));
   const consistencyPct = Math.round((summary.monthActiveDays / 30) * 100);
+  const minDailyTargetMins = Math.max(
+    15,
+    Number(state.set.targets?.minDayMinutes) || 240
+  );
 
   const totalXp = computeTotalXp(state, todayKey);
   const levelInfo = computeLevelInfo(totalXp);
@@ -208,7 +254,7 @@ export const StatsView: React.FC<StatsViewProps> = ({
           {/* Clean Empty State when 0 sessions */}
           {state.sessions.length === 0 && (
             <EmptyState
-              icon={<BarChart3 size={22} />}
+              illustration="noSessions"
               title="No study sessions logged yet"
               description="Start a focus timer or log your first session to unlock subject breakdowns, peak hour detection, and 30-day trends."
               action={
@@ -224,25 +270,76 @@ export const StatsView: React.FC<StatsViewProps> = ({
             />
           )}
 
-          {/* Hero Metric Card: 7-Day Average + Delta vs Prior 7d + Sparkline */}
-          <Card>
+          {/* Hero Slot: 12-Week Study Skyline / Heatmap */}
+          <Card id="studySkylineHeroCard" className="space-y-3">
+            <div className="split flex-wrap gap-2">
+              <div>
+                <h3 className="text-[16px] font-semibold text-[var(--tx)]">
+                  12-week study skyline
+                </h3>
+                <p className="text-[13px] text-[var(--tx-2)]">
+                  Daily study depth across 84 days · 0h · &lt;2h · 4h · 6h · 8h+ peak
+                </p>
+              </div>
+              {runtime3d.enabled && (
+                <div className="w-48">
+                  <Segmented<'skyline' | 'flat'>
+                    value={heatmapViewMode}
+                    onChange={setHeatmapViewMode}
+                    ariaLabel="12-week study skyline view mode"
+                    options={[
+                      { value: 'skyline', label: '3D Skyline' },
+                      { value: 'flat', label: 'Flat view' },
+                    ]}
+                  />
+                </div>
+              )}
+            </div>
+
+            {heatmapViewMode === 'skyline' && runtime3d.enabled ? (
+              <StudySkylineScene
+                cells={hmCells}
+                ui3dSetting={state.set.ui3d || 'auto'}
+                ui3dQuality={state.set.ui3dQuality || 'auto'}
+                onInspectDay={(dayKey) => {
+                  setHistoryDateKey(dayKey);
+                  onChangeSubTab('history');
+                }}
+              />
+            ) : (
+              <HeatmapGrid
+                columns={12}
+                cells={flatHeatmapCells}
+                ariaLabel="12-week study depth heatmap"
+                onSelectCell={(cell) => {
+                  if (cell.valueLabel !== 'Upcoming date') {
+                    setHistoryDateKey(cell.key);
+                    onChangeSubTab('history');
+                  }
+                }}
+              />
+            )}
+          </Card>
+
+          {/* Hero Metric Card: 7-Day Average + Delta vs Prior 7d + Sparkline + BarChart */}
+          <Card className="dh-hero-lumen space-y-4">
             <div className="flex flex-col gap-4 md:flex-row md:items-center md:justify-between">
               <div className="space-y-1">
-                <span className="text-[12px] font-medium text-[var(--tx-2)]">
+                <span className="text-[13px] font-medium text-[var(--tx-2)]">
                   7-day daily average
                 </span>
-                <div className="flex items-baseline gap-2.5">
+                <div className="flex flex-wrap items-baseline gap-2.5">
                   <strong className="tnum text-[32px] font-bold leading-none text-[var(--tx)]">
                     {fmtHMShort(summary.weekAvgMsPerDay)}
                   </strong>
                   <span className="text-[13px] text-[var(--tx-2)]">/ day</span>
                   {weekDeltaPct !== null && (
                     <span
-                      className="tnum rounded-md px-2 py-0.5 text-[12px] font-semibold"
+                      className="tnum rounded-md px-2 py-0.5 text-[13px] font-semibold"
                       style={{
                         background: 'var(--sf-2)',
                         color:
-                          weekDeltaPct >= 0 ? 'var(--ok)' : 'var(--warn)',
+                          weekDeltaPct >= 0 ? 'var(--ok-ink)' : 'var(--warn-ink)',
                       }}
                     >
                       {weekDeltaPct >= 0 ? `+${weekDeltaPct}%` : `${weekDeltaPct}%`} vs
@@ -250,7 +347,7 @@ export const StatsView: React.FC<StatsViewProps> = ({
                     </span>
                   )}
                 </div>
-                <p className="tnum text-[12.5px] text-[var(--tx-2)]">
+                <p className="tnum text-[13px] text-[var(--tx-2)]">
                   Week total: <strong>{fmtHMShort(summary.weekTotalMs)}</strong> ·{' '}
                   {summary.weekActiveDays}/7 active days · 30d avg:{' '}
                   <strong>{fmtHMShort(summary.monthAvgMsPerDay)}/d</strong> · All-time:{' '}
@@ -260,7 +357,7 @@ export const StatsView: React.FC<StatsViewProps> = ({
 
               <div className="flex items-center gap-4">
                 <div className="rounded-xl border border-[var(--line)] bg-[var(--sf-2)] px-3.5 py-2.5">
-                  <span className="block text-[12px] text-[var(--tx-2)] mb-1">
+                  <span className="mb-1 block text-[13px] text-[var(--tx-2)]">
                     Last 7 days trend
                   </span>
                   <Sparkline
@@ -269,50 +366,27 @@ export const StatsView: React.FC<StatsViewProps> = ({
                     )}
                     width={140}
                     height={36}
+                    label="7-day study minutes sparkline"
                   />
                 </div>
               </div>
             </div>
 
-            {/* 7-Day Bar Strip */}
-            <div className="mt-4 grid grid-cols-7 gap-2 border-t border-[var(--line)] pt-4">
-              {summary.last7Days.map((d) => {
-                const barPct =
-                  d.ms > 0 ? Math.max(10, Math.round((d.ms / maxWeekDayMs) * 100)) : 5;
-                const isToday = d.key === todayKey;
-                return (
-                  <div
-                    key={d.key}
-                    className="flex flex-col items-center gap-1.5"
-                    title={`${d.shortDate}: ${fmtHMShort(d.ms)} (${d.sessionsCount} sessions)`}
-                  >
-                    <span className="tnum text-[12px] text-[var(--tx-2)]">
-                      {d.ms > 0 ? fmtHMShort(d.ms) : '0m'}
-                    </span>
-                    <div className="flex h-20 w-full max-w-[32px] items-end rounded-lg bg-[var(--sf-2)] p-0.5">
-                      <div
-                        className="w-full rounded-md transition-all"
-                        style={{
-                          height: `${barPct}%`,
-                          background:
-                            d.ms > 0
-                              ? isToday
-                                ? 'var(--ac)'
-                                : 'var(--ok)'
-                              : 'transparent',
-                        }}
-                      />
-                    </div>
-                    <span
-                      className={`text-[12px] font-medium ${
-                        isToday ? 'text-[var(--ac-ink)]' : 'text-[var(--tx-2)]'
-                      }`}
-                    >
-                      {d.dayName}
-                    </span>
-                  </div>
-                );
-              })}
+            <div className="border-t border-[var(--line)] pt-4">
+              <BarChart
+                orientation="vertical"
+                height={176}
+                data={summary.last7Days.map((d) => ({
+                  label: d.dayName,
+                  value: Math.round(d.ms / 60000),
+                  hint: d.shortDate,
+                  color: d.key === todayKey ? 'var(--ac)' : 'var(--ok)',
+                }))}
+                goalValue={minDailyTargetMins}
+                goalLabel="Daily target"
+                valueFormatter={(mins) => fmtHMShort(Math.round(mins * 60000))}
+                ariaLabel="7-day daily study breakdown"
+              />
             </div>
           </Card>
 
@@ -323,7 +397,7 @@ export const StatsView: React.FC<StatsViewProps> = ({
                 <h3 className="text-[15px] font-semibold text-[var(--tx)]">
                   Where your time goes
                 </h3>
-                <p className="text-[12px] text-[var(--tx-2)]">
+                <p className="text-[13px] text-[var(--tx-2)]">
                   Breakdown by subject, timer mode, or syllabus chapter
                 </p>
               </div>
@@ -342,27 +416,42 @@ export const StatsView: React.FC<StatsViewProps> = ({
             </div>
 
             {whereTab === 'subject' && (
-              <div className="space-y-3 pt-1">
-                {summary.subjectBreakdown.map((item) => (
-                  <div key={item.subjectId}>
-                    <div className="split mb-1 text-[13px]">
-                      <span className="flex items-center gap-2 font-medium text-[var(--tx)]">
-                        <span
-                          className="h-2.5 w-2.5 rounded-full"
-                          style={{ background: item.color }}
-                        />
-                        {item.e} {item.name}{' '}
-                        <span className="text-[12px] text-[var(--tx-3)]">
-                          ({item.count} {item.count === 1 ? 'session' : 'sessions'})
+              <div className="space-y-4 pt-1">
+                <DonutChart
+                  segments={summary.subjectBreakdown.map((item) => ({
+                    label: `${item.e} ${item.name}`,
+                    value: Math.round(item.ms / 60000),
+                    color: item.color,
+                  }))}
+                  centerLabel={fmtHMShort(summary.allTimeTotalMs)}
+                  centerSublabel="Total"
+                  valueFormatter={(mins) => fmtHMShort(Math.round(mins * 60000))}
+                  ariaLabel="Subject distribution donut chart"
+                />
+                <div className="space-y-2.5 border-t border-[var(--line)] pt-3">
+                  {summary.subjectBreakdown.map((item) => (
+                    <div key={item.subjectId}>
+                      <div className="split mb-1 text-[13px]">
+                        <span className="flex min-w-0 items-center gap-2 font-medium text-[var(--tx)]">
+                          <span
+                            className="h-2.5 w-2.5 shrink-0 rounded-full"
+                            style={{ background: item.color }}
+                          />
+                          <span className="truncate">
+                            {item.e} {item.name}
+                          </span>
+                          <span className="shrink-0 text-[13px] text-[var(--tx-3)]">
+                            ({item.count} {item.count === 1 ? 'session' : 'sessions'})
+                          </span>
                         </span>
-                      </span>
-                      <span className="tnum font-medium text-[var(--tx-2)]">
-                        {fmtHMShort(item.ms)} ({item.pct}%)
-                      </span>
+                        <span className="tnum shrink-0 font-medium text-[var(--tx-2)]">
+                          {fmtHMShort(item.ms)} ({item.pct}%)
+                        </span>
+                      </div>
+                      <Meter value={item.pct} max={100} color={item.color} />
                     </div>
-                    <Meter value={item.pct} max={100} color={item.color} />
-                  </div>
-                ))}
+                  ))}
+                </div>
               </div>
             )}
 
@@ -373,7 +462,7 @@ export const StatsView: React.FC<StatsViewProps> = ({
                     <div className="split mb-1 text-[13px]">
                       <span className="font-medium text-[var(--tx)]">
                         {item.label}{' '}
-                        <span className="text-[12px] text-[var(--tx-3)]">
+                        <span className="text-[13px] text-[var(--tx-3)]">
                           ({item.count} {item.count === 1 ? 'session' : 'sessions'})
                         </span>
                       </span>
@@ -400,11 +489,11 @@ export const StatsView: React.FC<StatsViewProps> = ({
                       <div className="split mb-1 text-[13px]">
                         <span className="truncate font-medium text-[var(--tx)]">
                           {row.subjectEmoji} {row.chapterName}{' '}
-                          <span className="text-[12px] text-[var(--tx-3)]">
+                          <span className="text-[13px] text-[var(--tx-3)]">
                             ({row.subjectName} · {row.count}s)
                           </span>
                         </span>
-                        <span className="tnum font-medium text-[var(--tx-2)]">
+                        <span className="tnum shrink-0 font-medium text-[var(--tx-2)]">
                           {fmtHMShort(row.ms)} ({row.pct}%)
                         </span>
                       </div>
@@ -416,66 +505,46 @@ export const StatsView: React.FC<StatsViewProps> = ({
             )}
           </Card>
 
-          {/* "When you study" Card (Hourly distribution & Peak window) */}
+          {/* "When you study" Card (24h Radial Clock & Peak window) */}
           <Card className="space-y-3">
-            <div className="split flex-wrap gap-2">
-              <div>
-                <h3 className="text-[15px] font-semibold text-[var(--tx)]">
-                  When you study
-                </h3>
-                <p className="text-[12px] text-[var(--tx-2)]">
-                  24-hour concentration rhythm · Peak 2h window:{' '}
-                  <strong className="tnum text-[var(--ac-ink)]">
-                    {summary.peakHourWindowLabel}
-                  </strong>{' '}
-                  ({summary.peakPeriodLabel})
-                </p>
-              </div>
-              <div className="flex flex-wrap gap-3 text-[12px] text-[var(--tx-2)]">
-                <span>
-                  Avg start:{' '}
-                  <strong className="tnum text-[var(--tx)]">
-                    {summary.avgStartHourLabel}
-                  </strong>
-                </span>
-                <span>
-                  Avg wrap-up:{' '}
-                  <strong className="tnum text-[var(--tx)]">
-                    {summary.avgEndHourLabel}
-                  </strong>
-                </span>
-                <span>
-                  Purity:{' '}
-                  <strong className="tnum text-[var(--ok-ink)]">
-                    {summary.avgPurity}%
-                  </strong>
-                </span>
-              </div>
+            <div>
+              <h3 className="text-[15px] font-semibold text-[var(--tx)]">
+                When you study
+              </h3>
+              <p className="text-[13px] text-[var(--tx-2)]">
+                24-hour concentration rhythm — tap or hover any spoke to inspect hourly focus
+              </p>
             </div>
 
-            <div className="circ-bars pt-2">
-              {summary.hourlyMs.map((ms, h) => {
-                const pctH = Math.round((ms / maxHrMs) * 100);
-                const isPeak =
-                  ms > 0 &&
-                  (h === summary.peakHourIndex ||
-                    h === (summary.peakHourIndex + 1) % 24);
-                return (
-                  <div key={h} title={`${pad(h)}:00 – ${fmtHMShort(ms)}`}>
-                    <i
-                      style={{
-                        height: `${Math.max(4, pctH * 0.8)}px`,
-                        background: isPeak
-                          ? 'var(--ac)'
-                          : ms > 0
-                            ? 'var(--ok)'
-                            : 'var(--sf-2)',
-                      }}
-                    />
-                    <span>{h % 3 === 0 ? pad(h) : ''}</span>
-                  </div>
-                );
-              })}
+            <div className="flex flex-col items-center gap-5 sm:flex-row sm:justify-between">
+              <RadialClock24h
+                hourlyMinutes={summary.hourlyMs.map((ms) => Math.round(ms / 60000))}
+                size={200}
+                ariaLabel="24-hour study distribution radial clock"
+              />
+
+              <div className="grid w-full flex-1 grid-cols-2 gap-2.5">
+                <Stat
+                  label="Peak 2h window"
+                  value={summary.peakHourWindowLabel}
+                  sub={summary.peakPeriodLabel}
+                />
+                <Stat
+                  label="Focus purity"
+                  value={`${summary.avgPurity}%`}
+                  sub="Active vs paused"
+                />
+                <Stat
+                  label="Avg start"
+                  value={summary.avgStartHourLabel}
+                  sub="First session"
+                />
+                <Stat
+                  label="Avg wrap-up"
+                  value={summary.avgEndHourLabel}
+                  sub="Last session"
+                />
+              </div>
             </div>
           </Card>
 
@@ -497,9 +566,8 @@ export const StatsView: React.FC<StatsViewProps> = ({
                   <h3 className="text-[15px] font-semibold text-[var(--tx)]">
                     Consistency &amp; 90-day habit calendar
                   </h3>
-                  <p className="text-[12px] text-[var(--tx-2)]">
-                    Composite score, 90-day daily completion grid, and 12-week study depth
-                    heatmap
+                  <p className="text-[13px] text-[var(--tx-2)]">
+                    Composite score and 90-day daily habit completion grid
                   </p>
                 </div>
               </div>
@@ -514,51 +582,62 @@ export const StatsView: React.FC<StatsViewProps> = ({
 
             {showConsistencyDetails && (
               <div className="space-y-4 border-t border-[var(--line)] p-4">
-                {/* 4 Pillars of Consistency */}
-                {consistencyScore.total !== null && (
-                  <div className="grid grid-cols-2 gap-2.5 sm:grid-cols-4">
-                    <Stat
-                      label="Min days (40%)"
-                      value={`${consistencyScore.minDayScore100}/100`}
-                      sub={`${consistencyScore.minDaysMetCount}/14 days met`}
-                    />
-                    <Stat
-                      label="Start regularity (20%)"
-                      value={
-                        consistencyScore.startRegularityScore100 !== null
-                          ? `${consistencyScore.startRegularityScore100}/100`
-                          : '—'
-                      }
-                      sub={
-                        consistencyScore.startStdDevMins !== null
-                          ? `±${consistencyScore.startStdDevMins}m std dev`
-                          : 'Need 2+ days'
-                      }
-                    />
-                    <Stat
-                      label="On-time revs (20%)"
-                      value={
-                        consistencyScore.revisionOnTimeScore100 !== null
-                          ? `${consistencyScore.revisionOnTimeScore100}/100`
-                          : '—'
-                      }
-                      sub={`${consistencyScore.revisionsOnTimeCount}/${consistencyScore.revisionsTotalCount} on time`}
-                    />
-                    <Stat
-                      label="Focus purity (20%)"
-                      value={
-                        consistencyScore.purityScore100 !== null
-                          ? `${consistencyScore.purityScore100}/100`
-                          : '—'
-                      }
-                      sub="Active vs paused"
+                {/* SemiCircle Gauge + 4 Pillars of Consistency */}
+                <div className="flex flex-col items-center gap-4 md:flex-row">
+                  <div className="shrink-0">
+                    <SemiCircleGauge
+                      value={consistencyScore.total ?? 0}
+                      max={100}
+                      label={consistencyScore.displayLabel}
+                      sublabel="Consistency / 100"
+                      width={210}
                     />
                   </div>
-                )}
+                  {consistencyScore.total !== null && (
+                    <div className="grid w-full flex-1 grid-cols-2 gap-2.5">
+                      <Stat
+                        label="Min days (40%)"
+                        value={`${consistencyScore.minDayScore100}/100`}
+                        sub={`${consistencyScore.minDaysMetCount}/14 days met`}
+                      />
+                      <Stat
+                        label="Start regularity (20%)"
+                        value={
+                          consistencyScore.startRegularityScore100 !== null
+                            ? `${consistencyScore.startRegularityScore100}/100`
+                            : '—'
+                        }
+                        sub={
+                          consistencyScore.startStdDevMins !== null
+                            ? `±${consistencyScore.startStdDevMins}m std dev`
+                            : 'Need 2+ days'
+                        }
+                      />
+                      <Stat
+                        label="On-time revs (20%)"
+                        value={
+                          consistencyScore.revisionOnTimeScore100 !== null
+                            ? `${consistencyScore.revisionOnTimeScore100}/100`
+                            : '—'
+                        }
+                        sub={`${consistencyScore.revisionsOnTimeCount}/${consistencyScore.revisionsTotalCount} on time`}
+                      />
+                      <Stat
+                        label="Focus purity (20%)"
+                        value={
+                          consistencyScore.purityScore100 !== null
+                            ? `${consistencyScore.purityScore100}/100`
+                            : '—'
+                        }
+                        sub="Active vs paused"
+                      />
+                    </div>
+                  )}
+                </div>
 
                 {/* 90-Day Calendar Grid */}
                 <div>
-                  <div className="split mb-2 text-[12.5px] text-[var(--tx-2)]">
+                  <div className="split mb-2 text-[13px] text-[var(--tx-2)]">
                     <span>
                       90-day habit completion · Perfect days:{' '}
                       <strong className="tnum text-[var(--tx)]">
@@ -631,7 +710,7 @@ export const StatsView: React.FC<StatsViewProps> = ({
                   </div>
 
                   {selectedCalDay && (
-                    <div className="mt-2.5 flex flex-wrap items-center justify-between gap-2 rounded-xl border border-[var(--line)] bg-[var(--sf-2)] px-3 py-2 text-[12.5px]">
+                    <div className="mt-2.5 flex flex-wrap items-center justify-between gap-2 rounded-xl border border-[var(--line)] bg-[var(--sf-2)] px-3 py-2 text-[13px]">
                       <span>
                         <strong>
                           {selectedCalDay.dayName}, {selectedCalDay.shortDate}
@@ -656,54 +735,6 @@ export const StatsView: React.FC<StatsViewProps> = ({
                     </div>
                   )}
                 </div>
-
-                {/* 12-Week Study Depth Heatmap / 3D Skyline */}
-                <div className="space-y-2.5">
-                  <div className="split flex-wrap gap-2">
-                    <div className="text-[12.5px] text-[var(--tx-2)]">
-                      <strong className="text-[var(--tx)]">12-week study depth</strong> · 0h ·
-                      &lt;2h · 4h · 6h · 8h+
-                    </div>
-                    {state.set.ui3d !== 'off' && (
-                      <div className="w-48">
-                        <Segmented<'skyline' | 'flat'>
-                          value={heatmapViewMode}
-                          onChange={setHeatmapViewMode}
-                          ariaLabel="12-week study depth view mode"
-                          options={[
-                            { value: 'skyline', label: '3D Skyline' },
-                            { value: 'flat', label: 'Flat view' },
-                          ]}
-                        />
-                      </div>
-                    )}
-                  </div>
-
-                  {heatmapViewMode === 'skyline' && state.set.ui3d !== 'off' ? (
-                    <StudySkylineScene
-                      cells={hmCells}
-                      ui3dSetting="on"
-                      onInspectDay={(dayKey) => {
-                        setHistoryDateKey(dayKey);
-                        onChangeSubTab('history');
-                      }}
-                    />
-                  ) : (
-                    <div className="hm">
-                      {hmCells.map((cell) =>
-                        cell.future ? (
-                          <i key={cell.key} style={{ opacity: 0.18 }} />
-                        ) : (
-                          <i
-                            key={cell.key}
-                            className={cell.lvlClass}
-                            title={`${cell.key}: ${cell.hrs.toFixed(1)}h studied`}
-                          />
-                        )
-                      )}
-                    </div>
-                  )}
-                </div>
               </div>
             )}
           </Card>
@@ -714,110 +745,20 @@ export const StatsView: React.FC<StatsViewProps> = ({
               title="Deep work frequency (last 30 days)"
               subtitle={`30d total ${fmtHMShort(summary.monthTotalMs)} · Peak day ${fmtHMShort(peak30dMs)} · ${summary.monthActiveDays}/30 active (${consistencyPct}%)`}
             />
-            {(() => {
-              const pts = summary.last30Days;
-              const W = 580;
-              const H = 180;
-              const padL = 42;
-              const padR = 14;
-              const padT = 14;
-              const padB = 28;
-              const plotW = W - padL - padR;
-              const plotH = H - padT - padB;
-              const maxHrs = Math.max(
-                2,
-                Math.ceil(Math.max(...pts.map((p) => p.hours)) + 0.5)
-              );
-              const toX = (i: number) =>
-                pts.length <= 1
-                  ? padL + plotW / 2
-                  : padL + (i / (pts.length - 1)) * plotW;
-              const toY = (hrs: number) => padT + plotH - (hrs / maxHrs) * plotH;
-              const polyPoints = pts
-                .map((p, i) => `${toX(i).toFixed(1)},${toY(p.hours).toFixed(1)}`)
-                .join(' ');
-              const avgY = avg30dHours > 0 ? toY(avg30dHours) : null;
-
-              return (
-                <svg
-                  id="deepWorkFrequencyChart"
-                  viewBox={`0 0 ${W} ${H}`}
-                  className="mt-2 block h-[180px] w-full"
-                  role="img"
-                  aria-label="Deep Work Frequency 30-Day Line Chart"
-                >
-                  {[0, 0.5, 1].map((frac) => {
-                    const hVal = Number((frac * maxHrs).toFixed(1));
-                    const y = toY(hVal);
-                    return (
-                      <g key={frac}>
-                        <line
-                          x1={padL}
-                          y1={y}
-                          x2={W - padR}
-                          y2={y}
-                          stroke="rgba(255,255,255,0.08)"
-                          strokeDasharray="3 3"
-                        />
-                        <text
-                          x={padL - 6}
-                          y={y + 4}
-                          textAnchor="end"
-                          fill="#A3ABB8"
-                          fontSize="12"
-                        >
-                          {hVal}h
-                        </text>
-                      </g>
-                    );
-                  })}
-                  {avgY !== null && avgY >= padT && avgY <= H - padB && (
-                    <line
-                      x1={padL}
-                      y1={avgY}
-                      x2={W - padR}
-                      y2={avgY}
-                      stroke="#F5C451"
-                      strokeDasharray="4 4"
-                      strokeOpacity="0.8"
-                    />
-                  )}
-                  <polyline
-                    fill="none"
-                    stroke="#4ADE80"
-                    strokeWidth="2.5"
-                    points={polyPoints}
-                  />
-                  {pts.map((p, i) => {
-                    const cx = toX(i);
-                    const cy = toY(p.hours);
-                    return (
-                      <g key={p.key}>
-                        <circle
-                          cx={cx}
-                          cy={cy}
-                          r={p.ms > 0 ? 3.5 : 2}
-                          fill={p.ms > 0 ? '#4ADE80' : '#6F7886'}
-                        >
-                          <title>{`${p.dayName}, ${p.shortDate} (${p.key}): ${p.formatted}`}</title>
-                        </circle>
-                        {i % 5 === 0 && (
-                          <text
-                            x={cx}
-                            y={H - 8}
-                            textAnchor="middle"
-                            fill="#A3ABB8"
-                            fontSize="12"
-                          >
-                            {p.shortDate}
-                          </text>
-                        )}
-                      </g>
-                    );
-                  })}
-                </svg>
-              );
-            })()}
+            <div className="mt-3">
+              <AreaLineChart
+                height={190}
+                data={summary.last30Days.map((p) => ({
+                  label: p.shortDate,
+                  value: Number((p.ms / 3600000).toFixed(2)),
+                  hint: p.formatted,
+                }))}
+                goalValue={Number((minDailyTargetMins / 60).toFixed(2))}
+                goalLabel="Daily goal"
+                valueFormatter={(h) => `${h.toFixed(1)}h`}
+                ariaLabel="Deep Work Frequency 30-Day Area Chart"
+              />
+            </div>
           </Card>
 
           {/* Session Headings & Study Log */}
@@ -838,7 +779,7 @@ export const StatsView: React.FC<StatsViewProps> = ({
                           style={{ background: item.color }}
                         />
                         {item.heading}{' '}
-                        <span className="text-[12px] text-[var(--tx-3)]">
+                        <span className="text-[13px] text-[var(--tx-3)]">
                           ({item.count}s)
                         </span>
                       </span>
@@ -866,7 +807,7 @@ export const StatsView: React.FC<StatsViewProps> = ({
               return (
                 <div className="border-t border-[var(--line)] pt-3">
                   <div className="split mb-2 flex-wrap gap-2">
-                    <h4 className="text-[12.5px] font-semibold text-[var(--tx-2)]">
+                    <h4 className="text-[13px] font-semibold text-[var(--tx-2)]">
                       Recent sessions ({sortedSessions.length})
                     </h4>
                     {sortedSessions.length > 6 && (
@@ -903,12 +844,12 @@ export const StatsView: React.FC<StatsViewProps> = ({
                                 {sub.e} {sub.name} · {heading}
                               </span>
                             </div>
-                            <p className="tnum text-[12px] text-[var(--tx-2)]">
+                            <p className="tnum text-[13px] text-[var(--tx-2)]">
                               {s.dayKey} · {fmtClockTime(s.startTs)} –{' '}
                               {fmtClockTime(s.endTs)} · {s.mode}
                             </p>
                             {s.note && (
-                              <p className="mt-0.5 text-[12px] text-[var(--tx-2)]">
+                              <p className="mt-0.5 text-[13px] text-[var(--tx-2)]">
                                 “{s.note}”
                               </p>
                             )}
@@ -946,7 +887,7 @@ export const StatsView: React.FC<StatsViewProps> = ({
                     Level {level} · {totalXp.toLocaleString()} XP
                   </h3>
                 </div>
-                <span className="tnum text-[12px] text-[var(--tx-2)]">
+                <span className="tnum text-[13px] text-[var(--tx-2)]">
                   {nx - totalXp} XP to Level {level + 1}
                 </span>
               </div>
@@ -958,7 +899,7 @@ export const StatsView: React.FC<StatsViewProps> = ({
                 {badges(state, todayKey).map(([n, unlocked]) => (
                   <span
                     key={n}
-                    className={`rounded-lg border border-[var(--line)] bg-[var(--sf-2)] px-2.5 py-1 text-[12px] ${
+                    className={`rounded-lg border border-[var(--line)] bg-[var(--sf-2)] px-2.5 py-1 text-[13px] ${
                       unlocked
                         ? 'font-medium text-[var(--tx)]'
                         : 'opacity-40 text-[var(--tx-3)]'
@@ -991,7 +932,7 @@ export const StatsView: React.FC<StatsViewProps> = ({
                         <span className="font-medium text-[var(--tx)]">
                           {h.e} {h.name}
                         </span>
-                        <span className="tnum text-[12px] text-[var(--tx-2)]">
+                        <span className="tnum text-[13px] text-[var(--tx-2)]">
                           {s.cur}d now · Best {s.best}d · 7d{' '}
                           {rate(state, h, 7, todayKey)}% · {total(state, h)} logs
                         </span>

@@ -408,7 +408,9 @@ export function splitDocIfOversized(
               month: payload.month,
               log: payload.log,
               notes: payload.notes,
+              ...(payload.noteUpdatedAt ? { noteUpdatedAt: payload.noteUpdatedAt } : {}),
               mood: payload.mood,
+              ...(payload.moodUpdatedAt ? { moodUpdatedAt: payload.moodUpdatedAt } : {}),
               wellbeing: payload.wellbeing,
               plans: payload.plans,
               tasks: payload.tasks,
@@ -448,7 +450,9 @@ export function splitDocIfOversized(
               month: payload.month,
               log: payload.log,
               notes: payload.notes,
+              ...(payload.noteUpdatedAt ? { noteUpdatedAt: payload.noteUpdatedAt } : {}),
               mood: payload.mood,
+              ...(payload.moodUpdatedAt ? { moodUpdatedAt: payload.moodUpdatedAt } : {}),
               wellbeing: payload.wellbeing,
               plans: payload.plans,
               tasks: payload.tasks,
@@ -591,7 +595,9 @@ export function partitionStateToCloudDocs(
   }
 
   for (const [habitId, dayMap] of Object.entries(state.log || {})) {
+    if (habitId === '__proto__' || habitId === 'constructor' || habitId === 'prototype') continue;
     for (const [dayKey, entry] of Object.entries(dayMap || {})) {
+      if (!/^\d{4}-\d{2}-\d{2}$/.test(dayKey)) continue;
       const mDoc = ensureMonth(dayKey.slice(0, 7));
       if (!mDoc.log[habitId]) mDoc.log[habitId] = {};
       mDoc.log[habitId][dayKey] = entry;
@@ -749,7 +755,15 @@ export function mergeEntityCollectionsLWW<T extends { id: string; updatedAt?: nu
     }
   } else if (remoteMap && typeof remoteMap === 'object') {
     for (const [id, remoteItem] of Object.entries(remoteMap)) {
-      if (!remoteItem || typeof remoteItem !== 'object') continue;
+      if (
+        id === '__proto__' ||
+        id === 'constructor' ||
+        id === 'prototype' ||
+        !remoteItem ||
+        typeof remoteItem !== 'object'
+      ) {
+        continue;
+      }
       const existing = combined.get(id);
       if (!existing) {
         combined.set(id, { ...remoteItem, id });
@@ -935,6 +949,7 @@ export function mergeStateWithCloudDocs(
     }
     if (mDoc.tasks && typeof mDoc.tasks === 'object') {
       for (const [tid, tItem] of Object.entries(mDoc.tasks)) {
+        if (tid === '__proto__' || tid === 'constructor' || tid === 'prototype') continue;
         const existing = remoteTasksMap[tid];
         if (!existing || (tItem.updatedAt ?? 0) > (existing.updatedAt ?? 0)) {
           remoteTasksMap[tid] = tItem;
@@ -943,9 +958,11 @@ export function mergeStateWithCloudDocs(
     }
     if (mDoc.log && typeof mDoc.log === 'object') {
       for (const [hid, dayEntries] of Object.entries(mDoc.log)) {
+        if (hid === '__proto__' || hid === 'constructor' || hid === 'prototype') continue;
         if (mergedTombstones[hid]) continue;
         if (!mergedLog[hid]) mergedLog[hid] = {};
         for (const [dk, rEntry] of Object.entries(dayEntries || {})) {
+          if (!/^\d{4}-\d{2}-\d{2}$/.test(dk)) continue;
           const lEntry = mergedLog[hid][dk];
           const lTs = lEntry?.updatedAt || lEntry?.t || 0;
           const rTs = rEntry?.updatedAt || rEntry?.t || 0;
@@ -1006,6 +1023,7 @@ export function mergeStateWithCloudDocs(
     }
     if (mDoc.wellbeing && typeof mDoc.wellbeing === 'object') {
       for (const [dk, rWb] of Object.entries(mDoc.wellbeing)) {
+        if (!/^\d{4}-\d{2}-\d{2}$/.test(dk)) continue;
         const lWb = mergedWellbeing[dk];
         if (!lWb || (rWb.updatedAt ?? 0) > (lWb.updatedAt ?? 0)) {
           mergedWellbeing[dk] = { ...rWb };
@@ -1014,6 +1032,7 @@ export function mergeStateWithCloudDocs(
     }
     if (mDoc.plans && typeof mDoc.plans === 'object') {
       for (const [dk, rPlanSlots] of Object.entries(mDoc.plans)) {
+        if (!/^\d{4}-\d{2}-\d{2}$/.test(dk)) continue;
         if (rPlanSlots && typeof rPlanSlots === 'object' && !Array.isArray(rPlanSlots)) {
           mergedPlans[dk] = {
             ...(mergedPlans[dk] || {}),
@@ -1095,7 +1114,15 @@ export function mergeStateWithCloudDocs(
   };
   if (remoteCore?.groupHistory && typeof remoteCore.groupHistory === 'object') {
     for (const [gid, remoteWeeks] of Object.entries(remoteCore.groupHistory)) {
-      if (!remoteWeeks || typeof remoteWeeks !== 'object') continue;
+      if (
+        gid === '__proto__' ||
+        gid === 'constructor' ||
+        gid === 'prototype' ||
+        !remoteWeeks ||
+        typeof remoteWeeks !== 'object'
+      ) {
+        continue;
+      }
       mergedGroupHistory[gid] = {
         ...remoteWeeks,
         ...(mergedGroupHistory[gid] || {}),

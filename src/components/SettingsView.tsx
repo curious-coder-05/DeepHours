@@ -1,4 +1,4 @@
-import React, { useMemo, useRef, useState } from 'react';
+import React, { useEffect, useMemo, useRef, useState } from 'react';
 import {
   ArrowLeft,
   Bell,
@@ -263,9 +263,11 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
   const [editSubEmoji, setEditSubEmoji] = useState('📘');
   const [editSubColor, setEditSubColor] = useState(ALL_SUBJECT_COLORS[0]);
   const [confirmDeleteCloud, setConfirmDeleteCloud] = useState(false);
-  const [intervalsInput, setIntervalsInput] = useState(
-    (state.set.revisionIntervals || [1, 3, 7, 21]).join(', ')
-  );
+  const revisionIntervalsStr = (state.set.revisionIntervals || [1, 3, 7, 21]).join(', ');
+  const [intervalsInput, setIntervalsInput] = useState(revisionIntervalsStr);
+  useEffect(() => {
+    setIntervalsInput(revisionIntervalsStr);
+  }, [revisionIntervalsStr]);
 
   const set = state.set;
   const activeSubjects = state.subjects.filter((s) => !s.arch);
@@ -566,13 +568,7 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
               label="XP level progress"
             />
 
-            <div
-              style={{
-                display: 'grid',
-                gridTemplateColumns: 'repeat(3, minmax(0, 1fr))',
-                gap: '8px',
-              }}
-            >
+            <div className="grid grid-cols-2 gap-2 sm:grid-cols-3">
               {[
                 { label: 'Timer study', val: todayBreakdown.study },
                 { label: 'Focus bonus', val: todayBreakdown.focusBonus },
@@ -1426,6 +1422,24 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
               onChange={(val) => onUpdateSetting('ui3d', val)}
             />
           </Field>
+
+          {currentUi3d !== 'off' && (
+            <Field
+              label="3D detail quality"
+              hint="Auto uses High on modern GPUs and Lite on software or low-power devices."
+            >
+              <Segmented<'auto' | 'high' | 'lite'>
+                aria-label="3D detail quality"
+                value={set.ui3dQuality || 'auto'}
+                options={[
+                  { value: 'auto', label: 'Auto' },
+                  { value: 'high', label: 'High' },
+                  { value: 'lite', label: 'Lite' },
+                ]}
+                onChange={(val) => onUpdateSetting('ui3dQuality', val)}
+              />
+            </Field>
+          )}
         </Card>
       )}
 
@@ -1446,7 +1460,7 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
           >
             <div>
               <div style={{ fontSize: '14px', fontWeight: 600 }}>Sounds, chimes &amp; haptics</div>
-              <div style={{ fontSize: '12px', color: 'var(--tx-2)' }}>
+              <div style={{ fontSize: '13px', color: 'var(--tx-2)' }}>
                 Audio cues when completing tasks, sprints, and timer targets
               </div>
             </div>

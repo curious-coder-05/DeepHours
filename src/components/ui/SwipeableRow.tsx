@@ -146,7 +146,11 @@ export const SwipeableRow: React.FC<SwipeableRowProps> = ({
               : triggered
                 ? 'var(--err)'
                 : 'color-mix(in srgb, var(--err) 25%, var(--sf-2))',
-            color: triggered ? '#0B0D10' : 'var(--tx)',
+            color: triggered
+              ? isRightActive
+                ? 'var(--ok-on)'
+                : 'var(--err-on)'
+              : 'var(--tx)',
             fontWeight: 600,
             fontSize: 12,
             gap: 6,

@@ -254,6 +254,7 @@ export interface AppSettings {
   avatarEmoji?: string;
   defaultsVersion?: number;
   ui3d?: 'auto' | 'on' | 'off';
+  ui3dQuality?: 'auto' | 'high' | 'lite';
   cloudAccount?: CloudAccountInfo;
   updatedAt?: number;
 }

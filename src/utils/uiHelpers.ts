@@ -92,7 +92,7 @@ export function getReadableAccentText(
   const rgb = hexToRgb(accentHex);
   if (!rgb) return themeMode === 'light' ? '#7A5400' : LUMEN_ACCENT;
 
-  const surface = themeMode === 'light' ? '#EFECE5' : '#181C22';
+  const surface = themeMode === 'light' ? '#EFECE5' : '#1B2029';
   const targetRatio = 4.6;
   if (contrastRatio(accentHex, surface) >= targetRatio) {
     return accentHex;
@@ -190,13 +190,13 @@ export function getTimerStyleDisplayLabel(
 
 export const CHART_THEME = {
   gridStroke: 'rgba(255,255,255,0.08)',
-  tickStyle: { fill: 'var(--tx-3)', fontSize: 12 },
+  tickStyle: { fill: 'var(--tx-2)', fontSize: 13 },
   tooltipStyle: {
     backgroundColor: 'var(--sf-1)',
     border: '1px solid var(--line)',
     borderRadius: '12px',
     color: 'var(--tx)',
-    fontSize: '12px',
+    fontSize: '13px',
     boxShadow: '0 8px 24px rgba(0,0,0,0.28)',
   },
   barRadius: [6, 6, 0, 0] as [number, number, number, number],
@@ -204,10 +204,12 @@ export const CHART_THEME = {
 };
 
 export type Ui3dSetting = 'auto' | 'on' | 'off';
+export type Ui3dQuality = 'auto' | 'high' | 'lite';
 export type QualityTier = 'normal' | 'lite' | 'off';
 
 export interface Ui3dEnvironmentProbe {
   ui3dSetting: Ui3dSetting;
+  ui3dQuality?: Ui3dQuality;
   webgl2Supported: boolean;
   isSoftwareGl: boolean;
   prefersReducedMotion: boolean;
@@ -220,6 +222,7 @@ export interface Ui3dEnvironmentProbe {
 export interface Ui3dResolution {
   enabled: boolean;
   tier: QualityTier;
+  resolvedQuality: 'high' | 'lite' | 'off';
   maxDpr: number;
   antialias: boolean;
   targetFps: number;
@@ -236,6 +239,7 @@ export function evaluateUi3dEligibility(probe: Ui3dEnvironmentProbe): Ui3dResolu
     return {
       enabled: false,
       tier: 'off',
+      resolvedQuality: 'off',
       maxDpr: 1,
       antialias: false,
       targetFps: 0,
@@ -249,6 +253,7 @@ export function evaluateUi3dEligibility(probe: Ui3dEnvironmentProbe): Ui3dResolu
     return {
       enabled: false,
       tier: 'off',
+      resolvedQuality: 'off',
       maxDpr: 1,
       antialias: false,
       targetFps: 0,
@@ -262,6 +267,7 @@ export function evaluateUi3dEligibility(probe: Ui3dEnvironmentProbe): Ui3dResolu
     return {
       enabled: false,
       tier: 'off',
+      resolvedQuality: 'off',
       maxDpr: 1,
       antialias: false,
       targetFps: 0,
@@ -286,6 +292,7 @@ export function evaluateUi3dEligibility(probe: Ui3dEnvironmentProbe): Ui3dResolu
       return {
         enabled: false,
         tier: 'off',
+        resolvedQuality: 'off',
         maxDpr: 1,
         antialias: false,
         targetFps: 0,
@@ -298,6 +305,7 @@ export function evaluateUi3dEligibility(probe: Ui3dEnvironmentProbe): Ui3dResolu
       return {
         enabled: false,
         tier: 'off',
+        resolvedQuality: 'off',
         maxDpr: 1,
         antialias: false,
         targetFps: 0,
@@ -310,6 +318,7 @@ export function evaluateUi3dEligibility(probe: Ui3dEnvironmentProbe): Ui3dResolu
       return {
         enabled: false,
         tier: 'off',
+        resolvedQuality: 'off',
         maxDpr: 1,
         antialias: false,
         targetFps: 0,
@@ -320,16 +329,31 @@ export function evaluateUi3dEligibility(probe: Ui3dEnvironmentProbe): Ui3dResolu
     }
   }
 
-  const tier: QualityTier =
-    isWeakHardware || probe.prefersReducedMotion || probe.saveData ? 'lite' : 'normal';
+  const requestedQuality = probe.ui3dQuality;
+  const forceLite =
+    requestedQuality === 'lite' ||
+    ((requestedQuality === undefined || requestedQuality === 'auto') &&
+      (isWeakHardware || probe.prefersReducedMotion || probe.saveData));
+
+  const tier: QualityTier = forceLite ? 'lite' : 'normal';
+  const resolvedQuality: 'high' | 'lite' = tier === 'lite' ? 'lite' : 'high';
+  const particleBudget =
+    requestedQuality === 'high' && tier === 'normal'
+      ? 1500
+      : requestedQuality === 'lite'
+        ? 400
+        : tier === 'lite'
+          ? 200
+          : 600;
 
   return {
     enabled: true,
     tier,
+    resolvedQuality,
     maxDpr: tier === 'lite' ? 1 : 1.5,
     antialias: tier === 'normal' && !probe.isSoftwareGl,
     targetFps: tier === 'lite' ? 30 : 60,
-    particleBudget: tier === 'lite' ? 200 : 600,
+    particleBudget,
     isSoftwareGl: probe.isSoftwareGl,
   };
 }

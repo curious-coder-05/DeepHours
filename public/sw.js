@@ -1,9 +1,10 @@
-const CACHE_NAME = 'deep-hours-v8';
+const CACHE_NAME = 'deep-hours-v9';
 const ASSETS = [
   '/',
   '/index.html',
   '/manifest.webmanifest',
-  '/icon.svg'
+  '/icon.svg',
+  '/icon-maskable.svg'
 ];
 
 function extractSameOriginAssetUrls(html, origin) {

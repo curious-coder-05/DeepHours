@@ -256,7 +256,7 @@ export const PlannerView: React.FC<PlannerViewProps> = ({
             <h3 className="text-[16px] font-semibold text-[var(--tx)]">
               10-minute study timeline ({sel})
             </h3>
-            <p className="text-[12px] text-[var(--tx-2)]">
+            <p className="text-[13px] text-[var(--tx-2)]">
               Automatic 10-minute resolution log from your focus timers and sessions
             </p>
           </div>
@@ -270,7 +270,7 @@ export const PlannerView: React.FC<PlannerViewProps> = ({
           </Button>
         </div>
 
-        <div className="grid grid-cols-3 gap-2.5">
+        <div className="grid grid-cols-1 gap-2.5 min-[360px]:grid-cols-3">
           <div id="gridTotalStudiedPill">
             <Stat label="Total studied" value={fmtHMShort(totalStudiedMs)} />
           </div>
@@ -341,7 +341,7 @@ export const PlannerView: React.FC<PlannerViewProps> = ({
                 {inspectedSlot.subjectEmoji} {inspectedSlot.subjectName} ·{' '}
                 {inspectedSlot.heading}
               </span>
-              <span className="tnum rounded-md bg-[var(--sf-2)] px-2 py-0.5 text-[12px] font-medium text-[var(--ok-ink)]">
+              <span className="tnum rounded-md bg-[var(--sf-2)] px-2 py-0.5 text-[13px] font-medium text-[var(--ok-ink)]">
                 {inspectedSlot.mins} / 10 min active
                 {inspectedSlot.isLive ? ' · LIVE' : ''}
               </span>
@@ -356,20 +356,12 @@ export const PlannerView: React.FC<PlannerViewProps> = ({
             </Button>
           </div>
         ) : (
-          <div className="split flex-wrap gap-2 text-[12.5px] text-[var(--tx-2)]">
-            <span className="flex items-center gap-2">
-              <Clock size={15} className="text-[var(--ac-ink)]" aria-hidden="true" />
+          <div className="flex items-center gap-2 text-[13px] text-[var(--tx-2)]">
+            <Clock size={15} className="shrink-0 text-[var(--ac-ink)]" aria-hidden="true" />
+            <span>
               Tap any colored 10-minute block below to inspect its exact window and active
               minutes.
             </span>
-            <div className="flex items-center gap-2">
-              <span className="text-[12px] text-[var(--tx-2)]">Show full 24h</span>
-              <Switch
-                checked={showFull24h}
-                onChange={setShowFull24h}
-                label="Show full 24-hour timeline"
-              />
-            </div>
           </div>
         )}
       </Card>
@@ -379,15 +371,25 @@ export const PlannerView: React.FC<PlannerViewProps> = ({
         <SectionHeader
           title={showFull24h ? 'Full 24-hour grid' : 'Active window (±1h)'}
           subtitle="Each row is 1 hour split into six 10-minute blocks (:00 to :50)"
+          action={
+            <div className="flex items-center gap-2">
+              <span className="text-[13px] text-[var(--tx-2)]">Show full 24h</span>
+              <Switch
+                checked={showFull24h}
+                onChange={setShowFull24h}
+                label="Show full 24-hour timeline"
+              />
+            </div>
+          }
         />
 
         <div id="tenMinGrid" className="mt-3 space-y-1.5">
           {visibleHours.map((h) => (
             <div
               key={h}
-              className="grid grid-cols-[54px_1fr] items-center gap-2"
+              className="grid grid-cols-[58px_1fr] items-center gap-2"
             >
-              <div className="mono text-[12px] text-[var(--tx-2)]">{pad(h)}:00</div>
+              <div className="mono text-[13px] text-[var(--tx-2)]">{pad(h)}:00</div>
               <div className="grid grid-cols-6 gap-1.5">
                 {[0, 1, 2, 3, 4, 5].map((idx) => {
                   const slot = h * 6 + idx;

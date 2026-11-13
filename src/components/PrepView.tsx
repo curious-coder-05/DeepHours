@@ -1,8 +1,6 @@
-import React, { useMemo, useState } from 'react';
+import React, { useEffect, useMemo, useState } from 'react';
 import {
   AlertTriangle,
-  BookOpen,
-  Calendar,
   Check,
   ChevronDown,
   ChevronRight,
@@ -36,24 +34,29 @@ import { MistakesView } from './MistakesView';
 import { DoubtsView } from './DoubtsView';
 import { PYQView } from './PYQView';
 import { SyllabusGalaxyScene } from './three/SyllabusGalaxyScene';
-import { Button } from './ui/Button';
-import { Card } from './ui/Card';
-import { Chip } from './ui/Chip';
-import { EmptyState } from './ui/EmptyState';
-import { Field } from './ui/Field';
-import { IconButton } from './ui/IconButton';
-import { Meter } from './ui/Meter';
-import { SectionHeader } from './ui/SectionHeader';
-import { Segmented } from './ui/Segmented';
-import { Select } from './ui/Select';
-import { Sheet } from './ui/Sheet';
-import { Stat } from './ui/Stat';
-import { WindowedList } from './ui/WindowedList';
+import {
+  AreaLineChart,
+  Button,
+  Card,
+  Chip,
+  DonutChart,
+  EmptyState,
+  Field,
+  IconButton,
+  Meter,
+  SectionHeader,
+  Segmented,
+  Select,
+  Sheet,
+  Stat,
+  WindowedList,
+} from './ui';
 
 interface PrepViewProps {
   state: PulseHabitState;
   todayKey: string;
   subTab: PrepSubTab;
+  pyqJumpNonce?: number;
   onChangeSubTab: (sub: PrepSubTab) => void;
   onAddChapters: (subjectId: string, names: string[]) => void;
   onUpdateChapter: (chapterId: string, patch: Partial<Chapter>) => void;
@@ -100,6 +103,7 @@ export const PrepView: React.FC<PrepViewProps> = ({
   state,
   todayKey,
   subTab,
+  pyqJumpNonce,
   onChangeSubTab,
   onAddChapters,
   onUpdateChapter,
@@ -125,6 +129,12 @@ export const PrepView: React.FC<PrepViewProps> = ({
   const [showPyqsTab, setShowPyqsTab] = useState<boolean>(false);
   const activeUiTab: PrepUiTab = showPyqsTab ? 'pyqs' : subTab;
 
+  useEffect(() => {
+    if (pyqJumpNonce && pyqJumpNonce > 0) {
+      setShowPyqsTab(true);
+    }
+  }, [pyqJumpNonce]);
+
   const handleSelectUiTab = (next: PrepUiTab) => {
     if (next === 'pyqs') {
       setShowPyqsTab(true);
@@ -134,7 +144,7 @@ export const PrepView: React.FC<PrepViewProps> = ({
     }
   };
 
-  const defaultSubjectId = state.subjects[0]?.id || 'phy';
+  const defaultSubjectId = state.subjects[0]?.id || 'sub_phy';
   const [newChapterSub, setNewChapterSub] = useState<string>(defaultSubjectId);
   const [newChapterName, setNewChapterName] = useState<string>('');
 
@@ -145,7 +155,7 @@ export const PrepView: React.FC<PrepViewProps> = ({
   const [collapsedSubjects, setCollapsedSubjects] = useState<Record<string, boolean>>({});
   const [newRevDates, setNewRevDates] = useState<Record<string, string>>({});
   const [suggestedRevDrafts, setSuggestedRevDrafts] = useState<
-    Record<string, [string, string, string, string]>
+    Record<string, string[]>
   >({});
 
   // Bulk Paste Sheet
@@ -290,6 +300,9 @@ export const PrepView: React.FC<PrepViewProps> = ({
             chapters={state.chapters}
             dueChapterIds={dueChapterIds}
             ui3dSetting={state.set.ui3d || 'auto'}
+            ui3dQuality={state.set.ui3dQuality || 'auto'}
+            activeSubjectId={filterSub}
+            onSelectSubjectFilter={setFilterSub}
             onSelectChapter={(ch) =>
               onStartChapterFocus(ch.subjectId, ch.id, ch.name)
             }
@@ -305,7 +318,7 @@ export const PrepView: React.FC<PrepViewProps> = ({
                     Syllabus pace calculator
                   </h3>
                   {paceReport.exam && (
-                    <p className="text-[12px] text-[var(--tx-2)]">
+                    <p className="text-[13px] text-[var(--tx-2)]">
                       Target: {paceReport.exam.e} {paceReport.exam.title} ({paceReport.exam.date}) ·{' '}
                       {paceReport.revisionBufferDays}d revision buffer
                     </p>
@@ -316,7 +329,7 @@ export const PrepView: React.FC<PrepViewProps> = ({
                 paceReport.overall.status !== 'past-exam' &&
                 paceReport.overall.status !== 'no-chapters' && (
                   <span
-                    className="rounded-lg px-2.5 py-1 text-[12px] font-semibold"
+                    className="rounded-lg px-2.5 py-1 text-[13px] font-semibold"
                     style={{
                       background:
                         paceReport.overall.status === 'ahead' ||
@@ -386,14 +399,14 @@ export const PrepView: React.FC<PrepViewProps> = ({
             )}
           </Card>
 
-          {/* Completion per Subject Progress Rows */}
-          <Card>
-            <div className="split mb-3 flex-wrap gap-2">
+          {/* Completion per Subject Donut + Progress Rows */}
+          <Card className="space-y-4">
+            <div className="split flex-wrap gap-2">
               <div>
                 <h3 className="text-[15px] font-semibold text-[var(--tx)]">
                   Subject completion
                 </h3>
-                <p className="tnum text-[12px] text-[var(--tx-2)]">
+                <p className="tnum text-[13px] text-[var(--tx-2)]">
                   {syllabusMetrics.completed} of {syllabusMetrics.total} chapters completed ({syllabusMetrics.pct}%) ·{' '}
                   {syllabusMetrics.inProgress} in progress
                 </p>
@@ -403,11 +416,19 @@ export const PrepView: React.FC<PrepViewProps> = ({
               </span>
             </div>
 
-            <div className="mb-4">
-              <Meter value={syllabusMetrics.pct} max={100} color="var(--ac)" />
-            </div>
+            <DonutChart
+              segments={syllabusMetrics.bySubject.map((row) => ({
+                label: `${row.subject.e} ${row.subject.name}`,
+                value: row.completed,
+                color: row.subject.color,
+              }))}
+              centerLabel={`${syllabusMetrics.pct}%`}
+              centerSublabel={`${syllabusMetrics.completed}/${syllabusMetrics.total}`}
+              valueFormatter={(v) => `${v} ch`}
+              ariaLabel="Syllabus completion breakdown by subject"
+            />
 
-            <div className="space-y-2.5">
+            <div className="space-y-2.5 border-t border-[var(--line)] pt-3">
               {syllabusMetrics.bySubject.map((row) => (
                 <div key={row.subject.id} className="space-y-1">
                   <div className="split text-[13px]">
@@ -420,7 +441,7 @@ export const PrepView: React.FC<PrepViewProps> = ({
                         {row.subject.e} {row.subject.name}
                       </span>
                     </span>
-                    <span className="tnum text-[12px] text-[var(--tx-2)]">
+                    <span className="tnum text-[13px] text-[var(--tx-2)]">
                       {row.completed}/{row.total} ({row.pct}%)
                       {row.inProgress > 0 ? ` · ${row.inProgress} active` : ''}
                     </span>
@@ -455,11 +476,11 @@ export const PrepView: React.FC<PrepViewProps> = ({
                           <span className="text-[14px] font-medium text-[var(--tx)]">
                             {item.chapter.name}
                           </span>
-                          <span className="text-[12px] text-[var(--tx-3)]">
+                          <span className="text-[13px] text-[var(--tx-3)]">
                             {sub.e} {sub.name}
                           </span>
                         </div>
-                        <p className="mt-0.5 text-[12px] text-[var(--tx-2)]">
+                        <p className="mt-0.5 text-[13px] text-[var(--tx-2)]">
                           {item.reasons.join(' · ')}
                         </p>
                       </div>
@@ -589,7 +610,7 @@ export const PrepView: React.FC<PrepViewProps> = ({
           {/* Collapsible Subject Chapter Groups */}
           {state.chapters.length === 0 ? (
             <EmptyState
-              icon={<BookOpen size={22} />}
+              illustration="noSyllabus"
               title="Your syllabus tracker is empty"
               description="Add chapters individually or paste your entire NEET syllabus to track completion, confidence, and spaced revisions."
               action={
@@ -635,7 +656,7 @@ export const PrepView: React.FC<PrepViewProps> = ({
                           {subject.e} {subject.name}
                         </span>
                       </div>
-                      <span className="tnum text-[12px] text-[var(--tx-2)]">
+                      <span className="tnum text-[13px] text-[var(--tx-2)]">
                         {completedCount}/{totalCount} done ({pct}%)
                       </span>
                     </button>
@@ -664,22 +685,39 @@ export const PrepView: React.FC<PrepViewProps> = ({
                               return (
                                 <div className="space-y-2.5 py-3">
                                   <div className="flex flex-wrap items-start justify-between gap-2">
-                                    <div className="min-w-0 flex-1">
+                                    <div className="min-w-0 flex-1 space-y-1.5">
                                       <div className="flex flex-wrap items-center gap-2">
                                         <span className="text-[14.5px] font-semibold text-[var(--tx)]">
                                           {ch.name}
                                         </span>
                                         {ch.completedOn && ch.status === 'completed' && (
-                                          <span className="tnum rounded-md bg-[var(--sf-2)] px-2 py-0.5 text-[12px] text-[var(--ok-ink)]">
+                                          <span className="tnum rounded-md bg-[var(--sf-2)] px-2 py-0.5 text-[13px] text-[var(--ok-ink)]">
                                             Done {ch.completedOn}
                                           </span>
                                         )}
                                         {pyqSummary.attempted > 0 && (
-                                          <span className="tnum rounded-md bg-[var(--sf-2)] px-2 py-0.5 text-[12px] text-[var(--ac-ink)]">
+                                          <span className="tnum rounded-md bg-[var(--sf-2)] px-2 py-0.5 text-[13px] text-[var(--ac-ink)]">
                                             PYQ {pyqSummary.correct}/{pyqSummary.attempted} (
                                             {pyqSummary.accuracyPct}%)
                                           </span>
                                         )}
+                                      </div>
+                                      <div className="max-w-[220px]">
+                                        <Meter
+                                          value={
+                                            ch.status === 'completed'
+                                              ? 100
+                                              : ch.status === 'inProgress'
+                                                ? 50
+                                                : 0
+                                          }
+                                          max={100}
+                                          color={
+                                            ch.status === 'completed'
+                                              ? 'var(--ok)'
+                                              : subject.color
+                                          }
+                                        />
                                       </div>
                                     </div>
 
@@ -695,14 +733,14 @@ export const PrepView: React.FC<PrepViewProps> = ({
                                             ch.status !== 'completed'
                                           ) {
                                             const base = todayKey;
+                                            const intervals =
+                                              state.set.revisionIntervals &&
+                                              state.set.revisionIntervals.length > 0
+                                                ? state.set.revisionIntervals
+                                                : [1, 3, 7, 21];
                                             setSuggestedRevDrafts((prev) => ({
                                               ...prev,
-                                              [ch.id]: [
-                                                addD(base, 1),
-                                                addD(base, 3),
-                                                addD(base, 7),
-                                                addD(base, 21),
-                                              ],
+                                              [ch.id]: intervals.map((d) => addD(base, d)),
                                             }));
                                             setConfidencePromptChapterId(ch.id);
                                           }
@@ -743,7 +781,7 @@ export const PrepView: React.FC<PrepViewProps> = ({
                                 </div>
 
                                 {/* Confidence 1-5 selector */}
-                                <div className="flex flex-wrap items-center justify-between gap-2 text-[12px] text-[var(--tx-2)]">
+                                <div className="flex flex-wrap items-center justify-between gap-2 text-[13px] text-[var(--tx-2)]">
                                   <div className="flex items-center gap-1.5">
                                     <span>Confidence:</span>
                                     {([1, 2, 3, 4, 5] as const).map((lvl) => {
@@ -756,7 +794,7 @@ export const PrepView: React.FC<PrepViewProps> = ({
                                             onUpdateChapter(ch.id, { confidence: lvl })
                                           }
                                           aria-label={`Set confidence ${lvl} of 5 for ${ch.name}`}
-                                          className={`tnum h-6 w-6 rounded-md border text-[12px] font-semibold transition-colors ${
+                                          className={`tnum h-7 w-7 rounded-md border text-[13px] font-semibold transition-colors ${
                                             active
                                               ? 'border-[var(--ac)] bg-[var(--ac-soft)] text-[var(--ac-ink)]'
                                               : 'border-[var(--line)] bg-[var(--sf-2)] text-[var(--tx-3)]'
@@ -767,7 +805,7 @@ export const PrepView: React.FC<PrepViewProps> = ({
                                       );
                                     })}
                                     {isConfPrompt && (
-                                      <span className="text-[12px] text-[var(--ac-ink)]">
+                                      <span className="text-[13px] text-[var(--ac-ink)]">
                                         Rate your confidence!
                                       </span>
                                     )}
@@ -785,7 +823,7 @@ export const PrepView: React.FC<PrepViewProps> = ({
                                         }))
                                       }
                                       aria-label={`Revision date for ${ch.name}`}
-                                      className="h-8 rounded-lg border border-[var(--line)] bg-[var(--sf-2)] px-2 text-[12px] text-[var(--tx)]"
+                                      className="h-8 rounded-lg border border-[var(--line)] bg-[var(--sf-2)] px-2 text-[13px] text-[var(--tx)]"
                                     />
                                     <Button
                                       variant="secondary"
@@ -805,8 +843,16 @@ export const PrepView: React.FC<PrepViewProps> = ({
                                 {suggestedDraft && (
                                   <div className="rounded-xl border border-[var(--ac-line)] bg-[var(--ac-soft)] p-3">
                                     <div className="split mb-2 flex-wrap gap-2">
-                                      <span className="flex items-center gap-1.5 text-[12px] font-semibold text-[var(--ac-ink)]">
-                                        <Sparkles size={14} aria-hidden="true" /> Suggested spaced revisions (+1, +3, +7, +21d)
+                                      <span className="flex items-center gap-1.5 text-[13px] font-semibold text-[var(--ac-ink)]">
+                                        <Sparkles size={14} aria-hidden="true" /> Suggested spaced revisions (
+                                        {(state.set.revisionIntervals &&
+                                        state.set.revisionIntervals.length > 0
+                                          ? state.set.revisionIntervals
+                                          : [1, 3, 7, 21]
+                                        )
+                                          .map((d) => `+${d}d`)
+                                          .join(', ')}
+                                        )
                                       </span>
                                       <div className="flex gap-1.5">
                                         <Button
@@ -823,7 +869,7 @@ export const PrepView: React.FC<PrepViewProps> = ({
                                             });
                                           }}
                                         >
-                                          Schedule all 4
+                                          Schedule all {suggestedDraft.length}
                                         </Button>
                                         <Button
                                           variant="ghost"
@@ -848,16 +894,14 @@ export const PrepView: React.FC<PrepViewProps> = ({
                                           aria-label={`Suggested revision ${idx + 1} date for ${ch.name}`}
                                           value={dVal}
                                           onChange={(e) => {
-                                            const copy: [string, string, string, string] = [
-                                              ...suggestedDraft,
-                                            ] as [string, string, string, string];
+                                            const copy = [...suggestedDraft];
                                             copy[idx] = e.target.value;
                                             setSuggestedRevDrafts((prev) => ({
                                               ...prev,
                                               [ch.id]: copy,
                                             }));
                                           }}
-                                          className="h-8 rounded-lg border border-[var(--line)] bg-[var(--sf-1)] px-2 text-[12px] text-[var(--tx)]"
+                                          className="h-8 rounded-lg border border-[var(--line)] bg-[var(--sf-1)] px-2 text-[13px] text-[var(--tx)]"
                                         />
                                       ))}
                                     </div>
@@ -867,7 +911,7 @@ export const PrepView: React.FC<PrepViewProps> = ({
                                 {/* Inline PYQ Quick Drawer */}
                                 {isPyqOpen && (
                                   <div className="rounded-xl border border-[var(--line)] bg-[var(--sf-2)] p-3">
-                                    <div className="mb-2 text-[12px] font-semibold text-[var(--tx)]">
+                                    <div className="mb-2 text-[13px] font-semibold text-[var(--tx)]">
                                       Log PYQ batch for {ch.name}
                                     </div>
                                     <div className="flex flex-wrap items-center gap-2">
@@ -927,7 +971,7 @@ export const PrepView: React.FC<PrepViewProps> = ({
                                       return (
                                         <div
                                           key={rev.id}
-                                          className={`inline-flex items-center gap-1.5 rounded-lg border px-2 py-1 text-[12px] ${
+                                          className={`inline-flex items-center gap-1.5 rounded-lg border px-2 py-1 text-[13px] ${
                                             rev.done
                                               ? 'border-[var(--ok)]/30 bg-[var(--ok)]/10 text-[var(--ok-ink)]'
                                               : isOverdue
@@ -954,7 +998,7 @@ export const PrepView: React.FC<PrepViewProps> = ({
                                               )
                                             }
                                             aria-label={`${rev.label} revision date`}
-                                            className="tnum bg-transparent text-[12px] focus:outline-none"
+                                            className="tnum bg-transparent text-[13px] focus:outline-none"
                                           />
                                           <button
                                             type="button"
@@ -1045,7 +1089,7 @@ export const PrepView: React.FC<PrepViewProps> = ({
                 <h3 className="text-[16px] font-semibold text-[var(--tx)]">
                   Mock test performance &amp; accuracy
                 </h3>
-                <p className="text-[12px] text-[var(--tx-2)]">
+                <p className="text-[13px] text-[var(--tx-2)]">
                   NEET 720-mark progression, negative marking analysis &amp; subject breakdown
                 </p>
               </div>
@@ -1098,7 +1142,7 @@ export const PrepView: React.FC<PrepViewProps> = ({
             </div>
 
             {mocksOverview.lowestAccuracySubject && (
-              <div className="mt-3 flex items-center gap-2 rounded-xl border border-[var(--warn)]/30 bg-[var(--warn)]/10 px-3 py-2 text-[12.5px] text-[var(--warn-ink)]">
+              <div className="mt-3 flex items-center gap-2 rounded-xl border border-[var(--warn)]/30 bg-[var(--warn)]/10 px-3 py-2 text-[13px] text-[var(--warn-ink)]">
                 <AlertTriangle size={15} />
                 <span>
                   Focus area: <strong>{mocksOverview.lowestAccuracySubject.e} {mocksOverview.lowestAccuracySubject.name}</strong> has the lowest accuracy ({mocksOverview.lowestAccuracySubject.accuracyPct}%) across recent mocks.
@@ -1107,10 +1151,37 @@ export const PrepView: React.FC<PrepViewProps> = ({
             )}
           </Card>
 
+          {/* Mock Score Progression Chart */}
+          {mocksOverview.newestFirst.length >= 2 && (
+            <Card>
+              <SectionHeader
+                title="Mock score progression"
+                subtitle={`Chronological score trajectory across ${mocksOverview.newestFirst.length} mocks vs ${targetScore} target`}
+              />
+              <div className="mt-3">
+                <AreaLineChart
+                  height={190}
+                  data={mocksOverview.newestFirst
+                    .slice()
+                    .reverse()
+                    .map(({ mock, report }) => ({
+                      label: mock.dayKey.slice(5),
+                      value: report.totalScore,
+                      hint: `${mock.name} · ${report.accuracyPct}% acc`,
+                    }))}
+                  goalValue={targetScore}
+                  goalLabel={`Target ${targetScore}`}
+                  valueFormatter={(v) => `${Math.round(v)}`}
+                  ariaLabel="Mock test score progression"
+                />
+              </div>
+            </Card>
+          )}
+
           {/* Mock List */}
           {mocksOverview.newestFirst.length === 0 ? (
             <EmptyState
-              icon={<Calendar size={22} />}
+              illustration="noMocks"
               title="No mock tests logged yet"
               description="Log your coaching or full-length NEET mock scores to visualize score trends, accuracy, and negative marking losses."
               action={
@@ -1144,7 +1215,7 @@ export const PrepView: React.FC<PrepViewProps> = ({
                           {report.totalScore} / {mock.maxMarks} ({report.pct}%)
                         </span>
                       </div>
-                      <p className="tnum mt-0.5 text-[12px] text-[var(--tx-2)]">
+                      <p className="tnum mt-0.5 text-[13px] text-[var(--tx-2)]">
                         {mock.dayKey} · Accuracy {report.accuracyPct}% · +{report.totalCorrect} correct · −{report.totalWrong} wrong · {report.totalUnattempted} left
                       </p>
                       {mock.note && (
@@ -1175,7 +1246,7 @@ export const PrepView: React.FC<PrepViewProps> = ({
                           key={bs.subjectId}
                           className="rounded-xl border border-[var(--line)] bg-[var(--sf-2)] p-2.5"
                         >
-                          <div className="split text-[12px]">
+                          <div className="split text-[13px]">
                             <span className="font-medium text-[var(--tx)]">
                               {bs.e} {bs.name}
                             </span>
@@ -1183,7 +1254,7 @@ export const PrepView: React.FC<PrepViewProps> = ({
                               {bs.score} pts ({bs.accuracyPct}%)
                             </span>
                           </div>
-                          <div className="tnum mt-1 text-[12px] text-[var(--tx-3)]">
+                          <div className="tnum mt-1 text-[13px] text-[var(--tx-3)]">
                             +{bs.correct} / −{bs.wrong} / {bs.unattempted} skip
                           </div>
                         </div>

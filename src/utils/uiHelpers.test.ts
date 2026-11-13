@@ -179,6 +179,35 @@ describe('UI Helpers — contrast, D-Day pace fallback, display labels', () => {
       }).enabled,
       false
     );
+
+    // ui3dQuality 'lite' and 'high' resolve tiers & budgets cleanly
+    const liteOverride = evaluateUi3dEligibility({
+      ui3dSetting: 'auto',
+      ui3dQuality: 'lite',
+      webgl2Supported: true,
+      isSoftwareGl: false,
+      prefersReducedMotion: false,
+      saveData: false,
+      hardwareConcurrency: 8,
+      deviceMemory: 8,
+    });
+    assert.equal(liteOverride.tier, 'lite');
+    assert.equal(liteOverride.resolvedQuality, 'lite');
+    assert.equal(liteOverride.particleBudget, 400);
+
+    const highOverride = evaluateUi3dEligibility({
+      ui3dSetting: 'auto',
+      ui3dQuality: 'high',
+      webgl2Supported: true,
+      isSoftwareGl: false,
+      prefersReducedMotion: false,
+      saveData: false,
+      hardwareConcurrency: 8,
+      deviceMemory: 8,
+    });
+    assert.equal(highOverride.tier, 'normal');
+    assert.equal(highOverride.resolvedQuality, 'high');
+    assert.equal(highOverride.particleBudget, 1500);
   });
 
   it('computes deterministic WindowedList ranges with overscan clamping and measured heights', () => {

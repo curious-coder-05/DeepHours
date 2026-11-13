@@ -3,6 +3,7 @@ import {
   evaluateUi3dEligibility,
   type QualityTier,
   type Ui3dEnvironmentProbe,
+  type Ui3dQuality,
   type Ui3dResolution,
   type Ui3dSetting,
 } from '../../utils/uiHelpers';
@@ -11,6 +12,7 @@ export {
   evaluateUi3dEligibility,
   type QualityTier,
   type Ui3dEnvironmentProbe,
+  type Ui3dQuality,
   type Ui3dResolution,
   type Ui3dSetting,
 };
@@ -48,12 +50,14 @@ export function probeBrowserWebGL2(): { supported: boolean; isSoftwareGl: boolea
 
 export function resolveRuntimeUi3d(
   ui3dSetting: Ui3dSetting = 'auto',
-  deskMode = false
+  deskMode = false,
+  ui3dQuality: Ui3dQuality = 'auto'
 ): Ui3dResolution {
   if (typeof window === 'undefined') {
     return {
       enabled: false,
       tier: 'off',
+      resolvedQuality: 'off',
       maxDpr: 1,
       antialias: false,
       targetFps: 0,
@@ -64,6 +68,7 @@ export function resolveRuntimeUi3d(
   if (ui3dSetting === 'off' || deskMode) {
     return evaluateUi3dEligibility({
       ui3dSetting,
+      ui3dQuality,
       webgl2Supported: false,
       isSoftwareGl: false,
       prefersReducedMotion: false,
@@ -84,6 +89,7 @@ export function resolveRuntimeUi3d(
 
   return evaluateUi3dEligibility({
     ui3dSetting,
+    ui3dQuality,
     webgl2Supported: supported,
     isSoftwareGl,
     prefersReducedMotion,
@@ -118,6 +124,7 @@ export interface Scene3DControllers {
 
 export interface Scene3DProps {
   ui3dSetting?: Ui3dSetting;
+  ui3dQuality?: Ui3dQuality;
   deskMode?: boolean;
   active?: boolean;
   continuous?: boolean;
@@ -191,6 +198,7 @@ function disposeMaterial(mat: import('three').Material) {
 
 const Scene3DInner: React.FC<Scene3DProps> = ({
   ui3dSetting = 'auto',
+  ui3dQuality = 'auto',
   deskMode = false,
   active = true,
   continuous = true,
@@ -214,9 +222,17 @@ const Scene3DInner: React.FC<Scene3DProps> = ({
   const continuousRef = useRef(continuous);
   continuousRef.current = continuous;
 
+  const startOrResumeRef = useRef<(() => void) | null>(null);
+
   const [webglFailed, setWebglFailed] = useState(false);
 
-  const resolution = resolveRuntimeUi3d(ui3dSetting, deskMode);
+  const resolution = resolveRuntimeUi3d(ui3dSetting, deskMode, ui3dQuality);
+
+  useEffect(() => {
+    if (active) {
+      startOrResumeRef.current?.();
+    }
+  }, [active, continuous]);
 
   useEffect(() => {
     if (!resolution.enabled || webglFailed) return;
@@ -269,6 +285,7 @@ const Scene3DInner: React.FC<Scene3DProps> = ({
         canvas.style.display = 'block';
         canvas.style.width = '100%';
         canvas.style.height = '100%';
+        canvas.style.touchAction = 'pan-y';
 
         container.innerHTML = '';
         container.appendChild(canvas);
@@ -403,6 +420,7 @@ const Scene3DInner: React.FC<Scene3DProps> = ({
             ctx.requestRender();
           }
         };
+        startOrResumeRef.current = startOrResume;
 
         const pauseLoop = () => {
           window.cancelAnimationFrame(frameId);
@@ -489,6 +507,7 @@ const Scene3DInner: React.FC<Scene3DProps> = ({
 
     return () => {
       disposed = true;
+      startOrResumeRef.current = null;
       window.cancelAnimationFrame(frameId);
       window.clearTimeout(frameId);
       resizeObserver?.disconnect();
@@ -513,9 +532,11 @@ const Scene3DInner: React.FC<Scene3DProps> = ({
   }, [
     resolution.enabled,
     resolution.tier,
+    resolution.resolvedQuality,
     resolution.antialias,
     resolution.maxDpr,
     resolution.targetFps,
+    resolution.particleBudget,
     resolution.isSoftwareGl,
     webglFailed,
     fov,

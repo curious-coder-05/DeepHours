@@ -14,17 +14,17 @@
 
 ## 2. Color Tokens
 
-### Dark Default (`[data-t="dark"]`)
+### Dark Default (`[data-t="dark"]` — Graphite Depth)
 | Token | Value | Usage |
 | --- | --- | --- |
 | `--bg` | `#0B0D10` | Canvas background |
-| `--sf-1` | `#12151A` | Primary card & navigation rail surface |
-| `--sf-2` | `#181C22` | Controls, inputs, secondary rows |
-| `--sf-3` | `#20252D` | Hover / pressed / elevated controls |
-| `--line` | `rgba(255, 255, 255, 0.08)` | Hairline borders & dividers |
+| `--sf-1` | `#14181F` | Primary card & navigation rail surface |
+| `--sf-2` | `#1B2029` | Controls, inputs, secondary rows |
+| `--sf-3` | `#232A35` | Hover / pressed / elevated controls |
+| `--line` | `rgba(255, 255, 255, 0.10)` | Hairline borders & dividers |
 | `--tx` | `#ECEFF4` | Primary text |
 | `--tx-2` | `#A3ABB8` | Secondary text |
-| `--tx-3` | `#6F7886` | Tertiary metadata text |
+| `--tx-3` | `#8E97A6` | Tertiary metadata text (AA readable) |
 
 ### AMOLED True-Black Dark (`[data-t="dark"][data-amoled="1"]`)
 Persisted separately in `localStorage` under `dh_amoled` (`"1"` / `"0"`):
@@ -67,13 +67,13 @@ User subject colors stay intact and are used exclusively as **dots, thin progres
 ## 3. Typography
 - **UI Typeface**: `Geist Variable` (self-hosted `@fontsource-variable/geist`) with `font-variant-numeric: tabular-nums` on numeric counters and tables.
 - **Monospace Typeface**: `Geist Mono Variable` (self-hosted `@fontsource-variable/geist-mono`) used **exclusively** on study timers (`FocusView`, `MiniTimerBar`, active counters) and the `10m Timeline` clock grid.
-- **Type Scale** (minimum font size `12px`; zero `<12px` text anywhere):
-  - Display: `44px` (`font-weight: 700`, `line-height: 1.05`, `letter-spacing: -0.025em`)
-  - Title: `28px` (`font-weight: 700`, `line-height: 1.15`, `letter-spacing: -0.02em`)
+- **Type Scale** (minimum UI font size `13px`; zero `<13px` text in shell/cards):
+  - Display: `46px` (`font-weight: 700`, `line-height: 1.02`, `letter-spacing: -0.025em`)
+  - Title: `30px` phone / `32px` desktop (`font-weight: 700`, `line-height: 1.15`, `letter-spacing: -0.02em`)
   - Heading: `20px` (`font-weight: 600`, `line-height: 1.25`)
   - Body: `16px` (`font-weight: 500`, `line-height: 1.5`)
   - Secondary: `14px` (`font-weight: 500`, `line-height: 1.45`)
-  - Caption: `12px` (`font-weight: 500`, `line-height: 1.35`)
+  - Caption / Meta: `13px` (`font-weight: 500`, `line-height: 1.35`)
 
 ---
 
@@ -107,12 +107,14 @@ User subject colors stay intact and are used exclusively as **dots, thin progres
 - `Select` (button trigger opening a searchable/scrollable `Sheet` option picker instead of native `<select>`)
 - `Sheet` (drag handle pill mobile bottom sheet / centered modal desktop, backdrop & Escape dismiss, focus trap)
 - `Dialog` (confirmation & prompt dialog with focus return)
-- `ProgressRing`, `Meter`, `Stat`, `EmptyState`, `Skeleton`, `Toast`, `TopBar` (collapsing large title), `SectionHeader`, `Sparkline`
-- **Unified Chart Theme (`CHART_THEME`)**: `12px` muted tick labels, `rgba(..., 0.08)` horizontal grid only, `2px` strokes, `[6, 6, 0, 0]` rounded bars, Card-styled tooltip, and explicit `EmptyState` instead of zero-filled flat charts.
+- `ProgressRing`, `ConcentricProgressRing`, `Meter`, `Stat`, `CountUp`, `EmptyState`, `Illustration` (`noSyllabus` | `noSessions` | `noTasks` | `signedOutCommunity` | `noMocks` | `noMistakes` | `noDoubts` | `noPyqs`), `Skeleton`, `Toast`, `TopBar`, `BrandLogo`, `SectionHeader`, `OnboardingSheet` (`localStorage` `'dh_onboarded_v2'`)
+- **Custom SVG Chart Kit (`src/components/ui/Charts.tsx`)**: `Sparkline`, `AreaLineChart`, `BarChart`, `DonutChart`, `RadialClock24h`, `HeatmapGrid`, `SemiCircleGauge` — crisp zero-dependency interactive SVG charts (no `recharts` dependency) using `--tx-3` `13px` labels, horizontal hairlines (`--line`), smooth pointer tooltips, and explicit `EmptyState` fallbacks.
+- **Hero & Surface Elevation**: Hero Lumen cards (`.dh-hero-lumen`) carry an ambient radial Lumen wash above crisp top inner-edge highlights (`--sf-highlight`), and are never applied directly onto `Scene3D` WebGL containers.
 
 ---
 
-## 6. 3D Scenes Policy (`settings.ui3d`)
+## 6. 3D Scenes Policy (`settings.ui3d` & `settings.ui3dQuality`)
 - `settings.ui3d`: `'auto' | 'on' | 'off'` (default `'auto'`).
+- `settings.ui3dQuality`: `'auto' | 'high' | 'lite'` (default `'auto'`), exposed in `Settings > Appearance` whenever `ui3d !== 'off'`.
 - `'off'` disables WebGL canvas creation completely.
-- `'auto'` enables optional Three.js focal visuals only when WebGL2 is available, hardware performance isn't throttled, and `prefers-reduced-motion` is not enabled, pausing automatically when `document.hidden === true`.
+- `'auto'` enables interactive Three.js visuals (`FocusOrbitScene` Fresnel plasma/crystal shader core + orbiting Pomodoro satellites + curl particles, `StudySkylineScene` promoted hero in `Insights > Overview`, `SyllabusGalaxyScene` synced with subject filters in `Prep > Syllabus`) only when WebGL2 is available, hardware performance isn't throttled, and `prefers-reduced-motion` is not enabled, pausing automatically when `document.hidden === true`.

@@ -10,7 +10,7 @@ import {
 } from 'lucide-react';
 import type { AppTab, SyncStatus, TimerMetrics } from '../types';
 import { fmtHMS } from '../utils/studyLogic';
-import { IconButton, TopBar } from './ui';
+import { BrandLogo, IconButton, TopBar } from './ui';
 
 export type MainNavTab = 'today' | 'focus' | 'prep' | 'stats' | 'groups';
 
@@ -88,31 +88,11 @@ export const AppShell: React.FC<AppShellProps> = ({
       {/* Tablet / Desktop Left Rail */}
       <aside className="dh-rail" aria-label="Primary navigation">
         <div className="dh-rail-brand">
-          <div
-            aria-hidden="true"
-            style={{
-              width: '34px',
-              height: '34px',
-              borderRadius: '10px',
-              background: 'var(--ac)',
-              color: 'var(--ac-on)',
-              display: 'grid',
-              placeItems: 'center',
-              fontWeight: 700,
-              fontSize: '15px',
-              flexShrink: 0,
-            }}
-          >
-            DH
-          </div>
-          <div style={{ minWidth: 0 }}>
-            <div style={{ fontSize: '15px', fontWeight: 700, lineHeight: 1.2 }}>
-              Deep Hours
-            </div>
-            <div style={{ fontSize: '12px', color: 'var(--tx-2)' }}>
-              {todayPct}% daily goal
-            </div>
-          </div>
+          <BrandLogo
+            size={36}
+            showWordmark
+            subtitle={`${todayPct}% daily goal`}
+          />
         </div>
 
         <nav className="dh-rail-nav" aria-label="Main views">
@@ -198,7 +178,7 @@ export const AppShell: React.FC<AppShellProps> = ({
               >
                 {activeMetrics.heading}
               </span>
-              <span style={{ display: 'block', fontSize: '12px', color: 'var(--tx-2)' }}>
+              <span style={{ display: 'block', fontSize: '13px', color: 'var(--tx-2)' }}>
                 {activeMetrics.status === 'paused' ? 'Paused' : 'Studying'} ·{' '}
                 {activeMetrics.subject.name}
               </span>

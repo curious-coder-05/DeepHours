@@ -1,6 +1,5 @@
 import React, { useMemo, useState } from 'react';
 import {
-  AlertTriangle,
   CalendarPlus,
   Check,
   Plus,
@@ -41,12 +40,15 @@ const MISTAKE_REASON_LIST: MistakeReason[] = [
   'forgot',
 ];
 
-const REASON_LABELS: Record<MistakeReason, { label: string; color: string }> = {
-  concept: { label: 'Concept gap', color: '#F87171' },
-  silly: { label: 'Calculation / silly', color: '#F5C451' },
-  time: { label: 'Time pressure', color: '#60A5FA' },
-  guess: { label: 'Guessed', color: '#4ADE80' },
-  forgot: { label: 'Forgot formula / fact', color: '#FB923C' },
+const REASON_LABELS: Record<
+  MistakeReason,
+  { label: string; color: string; ink: string }
+> = {
+  concept: { label: 'Concept gap', color: 'var(--err)', ink: 'var(--err-ink)' },
+  silly: { label: 'Calculation / silly', color: 'var(--ac)', ink: 'var(--ac-ink)' },
+  time: { label: 'Time pressure', color: 'var(--info)', ink: 'var(--info-ink)' },
+  guess: { label: 'Guessed', color: 'var(--ok)', ink: 'var(--ok-ink)' },
+  forgot: { label: 'Forgot formula / fact', color: 'var(--warn)', ink: 'var(--warn-ink)' },
 };
 
 export const MistakesView: React.FC<MistakesViewProps> = ({
@@ -57,7 +59,7 @@ export const MistakesView: React.FC<MistakesViewProps> = ({
   onDeleteMistake,
   onScheduleRevision,
 }) => {
-  const defaultSubjectId = state.subjects[0]?.id || 'phy';
+  const defaultSubjectId = state.subjects[0]?.id || 'sub_phy';
   const [subjectId, setSubjectId] = useState<string>(defaultSubjectId);
   const [chapterId, setChapterId] = useState<string>('');
   const [mockId, setMockId] = useState<string>('');
@@ -157,7 +159,7 @@ export const MistakesView: React.FC<MistakesViewProps> = ({
             <h3 className="text-[16px] font-semibold text-[var(--tx)]">
               Mistake notebook &amp; root-cause log
             </h3>
-            <p className="text-[12px] text-[var(--tx-2)]">
+            <p className="text-[13px] text-[var(--tx-2)]">
               Convert mock and practice errors into targeted revisions
             </p>
           </div>
@@ -177,7 +179,7 @@ export const MistakesView: React.FC<MistakesViewProps> = ({
           </div>
         ) : (
           <div className="space-y-3">
-            <div className="flex flex-wrap items-center justify-between gap-2 text-[12px] text-[var(--tx-2)]">
+            <div className="flex flex-wrap items-center justify-between gap-2 text-[13px] text-[var(--tx-2)]">
               <span>
                 Open mistakes:{' '}
                 <strong className="tnum text-[var(--tx)]">{patterns.openCount}</strong> · Total logged:{' '}
@@ -195,7 +197,7 @@ export const MistakesView: React.FC<MistakesViewProps> = ({
                       key={r.reason}
                       className="rounded-xl border border-[var(--line)] bg-[var(--sf-2)] p-2.5"
                     >
-                      <div className="split mb-1.5 text-[12px]">
+                      <div className="split mb-1.5 text-[13px]">
                         <span className="font-medium text-[var(--tx)]">{meta.label}</span>
                         <span className="tnum text-[var(--tx-2)]">
                           {r.count} ({r.pct}%)
@@ -209,14 +211,14 @@ export const MistakesView: React.FC<MistakesViewProps> = ({
 
             {patterns.topWeakChapters.length > 0 && (
               <div className="pt-1">
-                <div className="mb-1.5 text-[12px] font-medium text-[var(--tx-2)]">
+                <div className="mb-1.5 text-[13px] font-medium text-[var(--tx-2)]">
                   Chapters with most open mistakes
                 </div>
                 <div className="flex flex-wrap gap-1.5">
                   {patterns.topWeakChapters.map((wc) => (
                     <span
                       key={wc.chapterId}
-                      className="tnum inline-flex items-center gap-1.5 rounded-lg border border-[var(--line)] bg-[var(--sf-2)] px-2.5 py-1 text-[12px] text-[var(--tx)]"
+                      className="tnum inline-flex items-center gap-1.5 rounded-lg border border-[var(--line)] bg-[var(--sf-2)] px-2.5 py-1 text-[13px] text-[var(--tx)]"
                     >
                       <span>{wc.subjectEmoji}</span>
                       <span>{wc.chapterName}</span>
@@ -274,35 +276,33 @@ export const MistakesView: React.FC<MistakesViewProps> = ({
       </Card>
 
       {/* Mistake Entries */}
-      <Card>
-        <SectionHeader
-          title="Mistake log"
-          subtitle={`${filteredMistakes.length} matching entries`}
+      {filteredMistakes.length === 0 ? (
+        <EmptyState
+          illustration="noMistakes"
+          title={
+            filterStatus === 'open'
+              ? 'No open mistakes in this view'
+              : 'No mistakes match your filter'
+          }
+          description="Log mistakes after mock tests or practice sets so you never repeat the same error on exam day."
+          action={
+            <Button
+              variant="primary"
+              size="sm"
+              icon={<Plus size={15} />}
+              onClick={() => setSheetOpen(true)}
+            >
+              Log mistake
+            </Button>
+          }
         />
+      ) : (
+        <Card>
+          <SectionHeader
+            title="Mistake log"
+            subtitle={`${filteredMistakes.length} matching entries`}
+          />
 
-        {filteredMistakes.length === 0 ? (
-          <div className="py-6">
-            <EmptyState
-              icon={<AlertTriangle size={22} />}
-              title={
-                filterStatus === 'open'
-                  ? 'No open mistakes in this view'
-                  : 'No mistakes match your filter'
-              }
-              description="Log mistakes after mock tests or practice sets so you never repeat the same error on exam day."
-              action={
-                <Button
-                  variant="primary"
-                  size="sm"
-                  icon={<Plus size={15} />}
-                  onClick={() => setSheetOpen(true)}
-                >
-                  Log mistake
-                </Button>
-              }
-            />
-          </div>
-        ) : (
           <WindowedList
             items={filteredMistakes}
             threshold={100}
@@ -333,26 +333,25 @@ export const MistakesView: React.FC<MistakesViewProps> = ({
                           {sub.e} {sub.name}
                         </span>
                         {ch && (
-                          <span className="rounded-md bg-[var(--sf-2)] px-2 py-0.5 text-[12px] text-[var(--tx-2)]">
+                          <span className="rounded-md bg-[var(--sf-2)] px-2 py-0.5 text-[13px] text-[var(--tx-2)]">
                             {ch.name}
                           </span>
                         )}
                         <span
-                          className="rounded-md px-2 py-0.5 text-[12px] font-medium"
+                          className="rounded-md border border-[var(--line)] px-2 py-0.5 text-[13px] font-medium"
                           style={{
                             background: 'var(--sf-2)',
-                            color: reasonMeta.color,
-                            border: `1px solid ${reasonMeta.color}44`,
+                            color: reasonMeta.ink,
                           }}
                         >
                           {reasonMeta.label}
                         </span>
                         {mk && (
-                          <span className="text-[12px] text-[var(--tx-3)]">
+                          <span className="text-[13px] text-[var(--tx-3)]">
                             Mock: {mk.name}
                           </span>
                         )}
-                        <span className="tnum text-[12px] text-[var(--tx-3)]">
+                        <span className="tnum text-[13px] text-[var(--tx-3)]">
                           {m.dayKey}
                         </span>
                       </div>
@@ -399,8 +398,8 @@ export const MistakesView: React.FC<MistakesViewProps> = ({
               );
             }}
           />
-        )}
-      </Card>
+        </Card>
+      )}
 
       {/* Sheet to Log Mistake */}
       <Sheet
