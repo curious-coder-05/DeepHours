@@ -306,6 +306,12 @@ export const PrepView: React.FC<PrepViewProps> = ({
             onSelectChapter={(ch) =>
               onStartChapterFocus(ch.subjectId, ch.id, ch.name)
             }
+            onOpenAddChapter={() => {
+              const el = document.getElementById('newChapterNameInput');
+              el?.scrollIntoView({ behavior: 'smooth', block: 'center' });
+              el?.focus();
+            }}
+            onOpenBulkPaste={() => setShowBulkPasteSheet(true)}
           />
 
           {/* Syllabus Pace Calculator Card (with nearest upcoming D-Day fallback) */}
@@ -540,6 +546,7 @@ export const PrepView: React.FC<PrepViewProps> = ({
               </div>
               <div className="sm:col-span-6">
                 <input
+                  id="newChapterNameInput"
                   type="text"
                   value={newChapterName}
                   onChange={(e) => setNewChapterName(e.target.value)}

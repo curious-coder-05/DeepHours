@@ -270,25 +270,25 @@ export const StatsView: React.FC<StatsViewProps> = ({
             />
           )}
 
-          {/* Hero Slot: 12-Week Study Skyline / Heatmap */}
+          {/* Hero Slot: 3D Study City / Heatmap */}
           <Card id="studySkylineHeroCard" className="space-y-3">
             <div className="split flex-wrap gap-2">
               <div>
                 <h3 className="text-[16px] font-semibold text-[var(--tx)]">
-                  12-week study skyline
+                  Study city
                 </h3>
                 <p className="text-[13px] text-[var(--tx-2)]">
-                  Daily study depth across 84 days · 0h · &lt;2h · 4h · 6h · 8h+ peak
+                  Stacked subject towers across 12 weeks or 30 days · Lit floors &amp; peak beacon
                 </p>
               </div>
               {runtime3d.enabled && (
-                <div className="w-48">
+                <div className="w-44">
                   <Segmented<'skyline' | 'flat'>
                     value={heatmapViewMode}
                     onChange={setHeatmapViewMode}
-                    ariaLabel="12-week study skyline view mode"
+                    ariaLabel="Study city view mode"
                     options={[
-                      { value: 'skyline', label: '3D Skyline' },
+                      { value: 'skyline', label: '3D City' },
                       { value: 'flat', label: 'Flat view' },
                     ]}
                   />
@@ -299,6 +299,9 @@ export const StatsView: React.FC<StatsViewProps> = ({
             {heatmapViewMode === 'skyline' && runtime3d.enabled ? (
               <StudySkylineScene
                 cells={hmCells}
+                sessions={state.sessions}
+                subjects={state.subjects}
+                todayKey={todayKey}
                 ui3dSetting={state.set.ui3d || 'auto'}
                 ui3dQuality={state.set.ui3dQuality || 'auto'}
                 onInspectDay={(dayKey) => {

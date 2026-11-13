@@ -1,4 +1,5 @@
-import React, { Component, useEffect, useRef, useState } from 'react';
+import React, { Component, useEffect, useLayoutEffect, useRef, useState } from 'react';
+import { evaluateFpsGovernor } from '../../utils/scene3dHelpers';
 import {
   evaluateUi3dEligibility,
   type QualityTier,
@@ -20,6 +21,44 @@ export {
 export type ThreeModule = typeof import('three');
 
 let cachedWebGlProbe: { supported: boolean; isSoftwareGl: boolean } | null = null;
+let sessionDowngradedToLite = false;
+let fpsDowngradeToastDispatched = false;
+const downgradeListeners = new Set<() => void>();
+
+const activeOverlayIds = new Set<string>();
+const overlayListeners = new Set<() => void>();
+let sceneInstanceSeq = 0;
+
+function notifyOverlayListeners() {
+  for (const fn of overlayListeners) {
+    try {
+      fn();
+    } catch {
+      // ignore listener errors
+    }
+  }
+}
+
+export function isSessionDowngradedToLite(): boolean {
+  return sessionDowngradedToLite;
+}
+
+export function triggerSessionLiteDowngrade(): void {
+  if (!sessionDowngradedToLite) {
+    sessionDowngradedToLite = true;
+    for (const fn of downgradeListeners) {
+      try {
+        fn();
+      } catch {
+        // ignore listener errors
+      }
+    }
+  }
+  if (!fpsDowngradeToastDispatched && typeof window !== 'undefined') {
+    fpsDowngradeToastDispatched = true;
+    window.dispatchEvent(new CustomEvent('dh-3d-fps-downgrade'));
+  }
+}
 
 export function probeBrowserWebGL2(): { supported: boolean; isSoftwareGl: boolean } {
   if (cachedWebGlProbe) return cachedWebGlProbe;
@@ -87,9 +126,12 @@ export function resolveRuntimeUi3d(
   const saveData = Boolean(nav.connection?.saveData);
   const { supported, isSoftwareGl } = probeBrowserWebGL2();
 
+  const effectiveQuality: Ui3dQuality =
+    ui3dQuality === 'auto' && sessionDowngradedToLite ? 'lite' : ui3dQuality;
+
   return evaluateUi3dEligibility({
     ui3dSetting,
-    ui3dQuality,
+    ui3dQuality: effectiveQuality,
     webgl2Supported: supported,
     isSoftwareGl,
     prefersReducedMotion,
@@ -128,6 +170,8 @@ export interface Scene3DProps {
   deskMode?: boolean;
   active?: boolean;
   continuous?: boolean;
+  /** Overlay scenes (e.g. OnboardingSheet, RewardBurstDialog) suspend stage WebGL contexts to keep <= 1 active context. */
+  priority?: 'stage' | 'overlay';
   height?: number | string;
   className?: string;
   style?: React.CSSProperties;
@@ -202,6 +246,7 @@ const Scene3DInner: React.FC<Scene3DProps> = ({
   deskMode = false,
   active = true,
   continuous = true,
+  priority = 'stage',
   height = 220,
   className = '',
   style,
@@ -219,23 +264,75 @@ const Scene3DInner: React.FC<Scene3DProps> = ({
   const activeRef = useRef(active);
   activeRef.current = active;
 
-  const continuousRef = useRef(continuous);
-  continuousRef.current = continuous;
+  const [downgradeEpoch, setDowngradeEpoch] = useState(0);
+  const [overlaySuppressed, setOverlaySuppressed] = useState(() =>
+    priority === 'stage' && activeOverlayIds.size > 0
+  );
+  const [webglFailed, setWebglFailed] = useState(false);
+
+  const instanceIdRef = useRef<string>('');
+  if (!instanceIdRef.current) {
+    sceneInstanceSeq += 1;
+    instanceIdRef.current = `sc3d_${sceneInstanceSeq}`;
+  }
+
+  useEffect(() => {
+    const onDowngrade = () => setDowngradeEpoch((n) => n + 1);
+    downgradeListeners.add(onDowngrade);
+    return () => {
+      downgradeListeners.delete(onDowngrade);
+    };
+  }, []);
+
+  const resolution = resolveRuntimeUi3d(ui3dSetting, deskMode, ui3dQuality);
+  // Keep downgradeEpoch referenced so lint doesn't complain while forcing re-evaluation
+  void downgradeEpoch;
+
+  const prefersReducedMotion =
+    typeof window !== 'undefined' &&
+    typeof window.matchMedia === 'function' &&
+    window.matchMedia('(prefers-reduced-motion: reduce)').matches;
+
+  // Render static hero frame (plus explicit interactive requestRender updates) when reduced motion or Lite quality
+  const effectiveContinuous =
+    continuous && !prefersReducedMotion && resolution.resolvedQuality !== 'lite';
+
+  const continuousRef = useRef(effectiveContinuous);
+  continuousRef.current = effectiveContinuous;
 
   const startOrResumeRef = useRef<(() => void) | null>(null);
 
-  const [webglFailed, setWebglFailed] = useState(false);
+  // Single active WebGL context guard: overlays suspend background stage scenes synchronously
+  useLayoutEffect(() => {
+    if (priority === 'overlay') {
+      if (!resolution.enabled || !active || webglFailed) return;
+      const myId = instanceIdRef.current;
+      activeOverlayIds.add(myId);
+      notifyOverlayListeners();
+      return () => {
+        activeOverlayIds.delete(myId);
+        notifyOverlayListeners();
+      };
+    }
 
-  const resolution = resolveRuntimeUi3d(ui3dSetting, deskMode, ui3dQuality);
+    const syncSuppressed = () => {
+      setOverlaySuppressed(activeOverlayIds.size > 0);
+    };
+    overlayListeners.add(syncSuppressed);
+    syncSuppressed();
+    return () => {
+      overlayListeners.delete(syncSuppressed);
+    };
+  }, [priority, resolution.enabled, active, webglFailed]);
 
   useEffect(() => {
-    if (active) {
+    if (active && !overlaySuppressed) {
       startOrResumeRef.current?.();
     }
-  }, [active, continuous]);
+  }, [active, effectiveContinuous, overlaySuppressed]);
 
   useEffect(() => {
-    if (!resolution.enabled || webglFailed) return;
+    if (!resolution.enabled || webglFailed || overlaySuppressed) return;
     const container = mountRef.current;
     if (!container) return;
 
@@ -305,10 +402,15 @@ const Scene3DInner: React.FC<Scene3DProps> = ({
           resolution.targetFps > 0 ? 1000 / resolution.targetFps : 16.6;
         let lastRenderTs = 0;
 
+        // FPS Governor state (only active when ui3dQuality === 'auto' on hardware GL)
+        const governorSamples: number[] = [];
+        let governorActiveMs = 0;
+        let governorChecked = false;
+        let prevGovernorTs = 0;
+
         const canRun = () =>
           !disposed &&
           !isContextLost &&
-          activeRef.current &&
           isVisibleInViewport &&
           (typeof document === 'undefined' || !document.hidden);
 
@@ -383,7 +485,34 @@ const Scene3DInner: React.FC<Scene3DProps> = ({
         }
 
         const loop = (now: number) => {
-          if (!canRun()) return;
+          if (!canRun() || !activeRef.current) return;
+
+          // Sample active frame deltas for 2s FPS governor
+          if (
+            !governorChecked &&
+            ui3dQuality === 'auto' &&
+            !resolution.isSoftwareGl &&
+            resolution.resolvedQuality !== 'lite' &&
+            !sessionDowngradedToLite
+          ) {
+            if (prevGovernorTs > 0) {
+              const rawDelta = now - prevGovernorTs;
+              if (rawDelta > 0 && rawDelta < 250) {
+                governorSamples.push(rawDelta);
+                governorActiveMs += rawDelta;
+                const evalRes = evaluateFpsGovernor(governorSamples, governorActiveMs, 2000, 28);
+                if (evalRes.ready) {
+                  governorChecked = true;
+                  if (evalRes.shouldDowngrade) {
+                    triggerSessionLiteDowngrade();
+                    return;
+                  }
+                }
+              }
+            }
+            prevGovernorTs = now;
+          }
+
           const deltaMs = now - lastRenderTs;
           if (!resolution.isSoftwareGl && deltaMs < minFrameIntervalMs * 0.85) {
             frameId = window.requestAnimationFrame(loop);
@@ -400,7 +529,7 @@ const Scene3DInner: React.FC<Scene3DProps> = ({
           if (!continuousRef.current) return;
           if (resolution.isSoftwareGl) {
             afterDraw(() => {
-              if (canRun() && continuousRef.current) {
+              if (canRun() && activeRef.current && continuousRef.current) {
                 loop(performance.now());
               }
             });
@@ -412,11 +541,13 @@ const Scene3DInner: React.FC<Scene3DProps> = ({
         const startOrResume = () => {
           window.cancelAnimationFrame(frameId);
           window.clearTimeout(frameId);
+          prevGovernorTs = 0;
           if (!canRun()) return;
           lastTime = performance.now();
-          if (continuousRef.current) {
+          if (activeRef.current && continuousRef.current) {
             frameId = window.requestAnimationFrame(loop);
           } else {
+            // Render crisp static fallback frame on demand
             ctx.requestRender();
           }
         };
@@ -426,6 +557,7 @@ const Scene3DInner: React.FC<Scene3DProps> = ({
           window.cancelAnimationFrame(frameId);
           window.clearTimeout(frameId);
           renderBusy = false;
+          prevGovernorTs = 0;
         };
 
         // ResizeObserver for responsive container sizing
@@ -443,7 +575,7 @@ const Scene3DInner: React.FC<Scene3DProps> = ({
             camera.updateProjectionMatrix();
             renderer.setSize(w, h, false);
             controllers?.onResize?.(w, h, ctx);
-            if (!continuousRef.current) {
+            if (!continuousRef.current || !activeRef.current) {
               ctx.requestRender();
             }
           });
@@ -538,7 +670,9 @@ const Scene3DInner: React.FC<Scene3DProps> = ({
     resolution.targetFps,
     resolution.particleBudget,
     resolution.isSoftwareGl,
+    ui3dQuality,
     webglFailed,
+    overlaySuppressed,
     fov,
   ]);
 
@@ -550,6 +684,7 @@ const Scene3DInner: React.FC<Scene3DProps> = ({
     <div
       data-testid={testId}
       data-tier={resolution.tier}
+      data-quality={resolution.resolvedQuality}
       className={`relative overflow-hidden ${className}`.trim()}
       style={{
         height: typeof height === 'number' ? `${height}px` : height,

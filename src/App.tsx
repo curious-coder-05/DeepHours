@@ -93,13 +93,17 @@ import {
 } from './utils/uiHelpers';
 import { AppShell } from './components/AppShell';
 import { QuickActionsSheet, type QuickActionKind } from './components/QuickActionsSheet';
-import { BrandLogo, Skeleton, Toast } from './components/ui';
+import { Skeleton, Toast } from './components/ui';
 import { TodayView } from './components/TodayView';
 import { Modals, type ModalState } from './components/Modals';
 import { CommandPalette } from './components/CommandPalette';
 import { KeyboardShortcutsSheet } from './components/KeyboardShortcutsSheet';
 import type { OnboardingResult } from './components/OnboardingSheet';
 import type { SettingsSection } from './components/SettingsView';
+import {
+  detectRewardMilestone,
+  type RewardMilestonePayload,
+} from './utils/scene3dHelpers';
 
 let cloudSyncCache: typeof import('./utils/cloudSync') | null = null;
 let cloudSyncPromise: Promise<typeof import('./utils/cloudSync')> | null = null;
@@ -148,6 +152,11 @@ const SettingsView = React.lazy(() =>
 const OnboardingSheet = React.lazy(() =>
   import('./components/OnboardingSheet').then((m) => ({ default: m.OnboardingSheet }))
 );
+const RewardBurstDialog = React.lazy(() =>
+  import('./components/three/RewardBurstDialog').then((m) => ({
+    default: m.RewardBurstDialog,
+  }))
+);
 
 function boomConfetti() {
   if (
@@ -186,7 +195,7 @@ async function sendNotification(title: string, body: string) {
     if (!('Notification' in window) || Notification.permission !== 'granted') return;
     const reg = await navigator.serviceWorker?.getRegistration();
     if (reg) {
-      await reg.showNotification(title, { body, icon: '/icon.svg', tag: 'ph' });
+      await reg.showNotification(title, { body, icon: '/icon-512.png', tag: 'ph' });
     } else {
       new Notification(title, { body });
     }
@@ -225,7 +234,7 @@ export default function App() {
     actionLabel?: string;
     onTap?: () => void;
   } | null>(null);
-  const [perfectDayBanner, setPerfectDayBanner] = useState(false);
+  const [rewardBurst, setRewardBurst] = useState<RewardMilestonePayload | null>(null);
   const [, setTickCounter] = useState(0);
 
   // Milestone 2: Firebase Auth & Cloud Sync state
@@ -318,7 +327,6 @@ export default function App() {
   }, []);
 
   const toastTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
-  const perfectDayTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const firedRemindersRef = useRef<Set<string>>(new Set());
   const wakeLockRef = useRef<WakeLockSentinel | null>(null);
   const waitingSwRef = useRef<ServiceWorker | null>(null);
@@ -350,17 +358,43 @@ export default function App() {
     []
   );
 
-  // A3 & A4: Never persist before initial IndexedDB load completes, and never run side effects inside setState
-  const saveNextState = useCallback((next: PulseHabitState) => {
-    const prev = stateRef.current;
-    const stamped: PulseHabitState = {
-      ...next,
-      savedAt: Date.now(),
+  useEffect(() => {
+    const onFpsDowngrade = () => {
+      showToast('Switched 3D quality to Lite for smooth battery performance');
     };
-    stateRef.current = stamped;
-    setState(stamped);
-    if (readyRef.current) {
-      persistState(stamped);
+    window.addEventListener('dh-3d-fps-downgrade', onFpsDowngrade);
+    return () => {
+      window.removeEventListener('dh-3d-fps-downgrade', onFpsDowngrade);
+    };
+  }, [showToast]);
+
+  // A3 & A4: Never persist before initial IndexedDB load completes, and never run side effects inside setState
+  const saveNextState = useCallback(
+    (next: PulseHabitState, opts?: { suppressMilestones?: boolean }) => {
+      const prev = stateRef.current;
+      const stamped: PulseHabitState = {
+        ...next,
+        savedAt: Date.now(),
+      };
+      stateRef.current = stamped;
+      setState(stamped);
+      if (readyRef.current) {
+        if (!opts?.suppressMilestones) {
+          const curTodayForMilestone = logicalKey(
+            new Date(),
+            stamped.set.dayResetHour ?? 0
+          );
+          const milestone = detectRewardMilestone(
+            prev,
+            stamped,
+            curTodayForMilestone
+          );
+          if (milestone) {
+            beep('win', !!stamped.set.snd);
+            setRewardBurst(milestone);
+          }
+        }
+        persistState(stamped);
       if (cloudSyncCache) {
         const dirtyKeys = cloudSyncCache.detectDirtyDocKeys(prev, next);
         if (dirtyKeys.length > 0) {
@@ -1588,12 +1622,13 @@ export default function App() {
         dueList.every((x) => done(next, x, dayKey))
       ) {
         beep('win', !!next.set.snd);
-        boomConfetti();
-        if (perfectDayTimeoutRef.current) clearTimeout(perfectDayTimeoutRef.current);
-        setPerfectDayBanner(true);
-        perfectDayTimeoutRef.current = setTimeout(() => {
-          setPerfectDayBanner(false);
-        }, 2900);
+        setRewardBurst({
+          kind: 'perfectDay',
+          title: 'Perfect Day Unlocked!',
+          subtitle: 'Every scheduled habit for this day is complete. Keep the streak alive!',
+          badgeText: '100% Daily Goal',
+          accentColor: '#4ADE80',
+        });
         showToast('Perfect day 🎉');
       }
     },
@@ -1659,7 +1694,7 @@ export default function App() {
         const restored = restoreDeletedItem(cur, record);
         const curToday = logicalKey(new Date(), restored.set.dayResetHour ?? 0);
         syncStudyHabitsForDays(restored, [sel, curToday], curToday);
-        saveNextState(restored);
+        saveNextState(restored, { suppressMilestones: true });
       });
     },
     [saveNextState, sel, showToast, updateAndSave]
@@ -1692,7 +1727,7 @@ export default function App() {
         const restored = restoreDeletedItem(cur, record);
         const curToday = logicalKey(new Date(), restored.set.dayResetHour ?? 0);
         syncStudyHabitsForDays(restored, [target.dayKey, sel, curToday], curToday);
-        saveNextState(restored);
+        saveNextState(restored, { suppressMilestones: true });
       });
     },
     [saveNextState, sel, showToast, todayKey]
@@ -2534,7 +2569,13 @@ export default function App() {
         }}
       >
         <div style={{ display: 'grid', justifyItems: 'center', gap: '12px' }}>
-          <BrandLogo size={54} />
+          <img
+            src="/icon-512.png"
+            alt="Deep Hours"
+            width={64}
+            height={64}
+            className="w-16 h-16 rounded-2xl shadow-lg object-cover border border-white/10"
+          />
           <div>
             <b style={{ fontSize: '20px', display: 'block' }}>Deep Hours</b>
             <small style={{ display: 'block', marginTop: '4px', fontSize: '14px' }}>
@@ -3251,10 +3292,10 @@ export default function App() {
                 ]);
                 syncStudyHabitsForDays(restored, allDays, newToday);
                 setSel(newToday);
-                saveNextState(restored);
+                saveNextState(restored, { suppressMilestones: true });
                 showToast('Full backup restored!', () => {
                   const reverted = norm(JSON.parse(snapJson));
-                  saveNextState(reverted);
+                  saveNextState(reverted, { suppressMilestones: true });
                 });
               } catch {
                 showToast('Invalid Deep Hours JSON backup file');
@@ -3524,12 +3565,12 @@ export default function App() {
           const snapJson = JSON.stringify(stateRef.current);
           const fresh = createBlankState();
           const newToday = logicalKey(new Date(), fresh.set.dayResetHour);
-          saveNextState(fresh);
+          saveNextState(fresh, { suppressMilestones: true });
           setSel(newToday);
           setModal({ type: 'none' });
           showToast('All device data reset to a clean slate', () => {
             const reverted = norm(JSON.parse(snapJson));
-            saveNextState(reverted);
+            saveNextState(reverted, { suppressMilestones: true });
           });
         }}
       />
@@ -3633,79 +3674,17 @@ export default function App() {
         </Suspense>
       )}
 
-      {/* Lightweight SVG Perfect Day Celebration Overlay */}
-      {perfectDayBanner && (
-        <div
-          className="perfect-day-overlay"
-          role="dialog"
-          aria-label="Perfect Day Celebration"
-          onClick={() => setPerfectDayBanner(false)}
-        >
-          <div className="perfect-day-card">
-            <div className="pd-svg-wrap">
-              <svg
-                viewBox="0 0 120 120"
-                width="96"
-                height="96"
-                aria-hidden="true"
-              >
-                <defs>
-                  <linearGradient id="pdGrad" x1="0%" y1="0%" x2="100%" y2="100%">
-                    <stop offset="0%" stopColor="#34d399" />
-                    <stop offset="50%" stopColor="#38bdf8" />
-                    <stop offset="100%" stopColor="#fbbf24" />
-                  </linearGradient>
-                </defs>
-                <g className="pd-rays" stroke="url(#pdGrad)" strokeWidth="2.5" strokeLinecap="round" opacity="0.55">
-                  <line x1="60" y1="4" x2="60" y2="14" />
-                  <line x1="60" y1="106" x2="60" y2="116" />
-                  <line x1="4" y1="60" x2="14" y2="60" />
-                  <line x1="106" y1="60" x2="116" y2="60" />
-                  <line x1="20" y1="20" x2="28" y2="28" />
-                  <line x1="92" y1="92" x2="100" y2="100" />
-                  <line x1="100" y1="20" x2="92" y2="28" />
-                  <line x1="28" y1="92" x2="20" y2="100" />
-                </g>
-                <circle
-                  cx="60"
-                  cy="60"
-                  r="38"
-                  fill="rgba(16, 185, 129, 0.16)"
-                  stroke="url(#pdGrad)"
-                  strokeWidth="4.5"
-                  strokeLinecap="round"
-                  className="pd-ring-circle"
-                />
-                <path
-                  d="M44 61 L55 72 L77 48"
-                  fill="none"
-                  stroke="var(--tx)"
-                  strokeWidth="5.5"
-                  strokeLinecap="round"
-                  strokeLinejoin="round"
-                  className="pd-check-path"
-                />
-              </svg>
-            </div>
-            <span
-              className="pill"
-              style={{
-                background: 'var(--ok-soft)',
-                borderColor: 'var(--ok-line)',
-                color: 'var(--ok-ink)',
-                marginBottom: '8px',
-              }}
-            >
-              ✨ 100% Daily Goal Achieved
-            </span>
-            <h3 style={{ fontSize: '21px', marginBottom: '4px', color: 'var(--tx)' }}>
-              Perfect Day Unlocked! 🎉
-            </h3>
-            <small style={{ color: 'var(--tx-2)', display: 'block' }}>
-              Every scheduled habit for this day is complete. Keep the streak alive!
-            </small>
-          </div>
-        </div>
+      {/* Lazy 3D Milestone Reward Burst Overlay (Level-Up, 7d/30d Streak, Perfect Day) */}
+      {rewardBurst && (
+        <Suspense fallback={null}>
+          <RewardBurstDialog
+            burst={rewardBurst}
+            ui3dSetting={state.set.ui3d || 'auto'}
+            ui3dQuality={state.set.ui3dQuality || 'auto'}
+            sndEnabled={Boolean(state.set.snd)}
+            onClose={() => setRewardBurst(null)}
+          />
+        </Suspense>
       )}
 
       {/* Toast Notification (supports Undo or Service Worker tap-to-reload) */}

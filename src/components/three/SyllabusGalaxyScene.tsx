@@ -1,6 +1,7 @@
 import React, { useEffect, useMemo, useRef, useState } from 'react';
-import { Play, Sparkles } from 'lucide-react';
+import { FileSpreadsheet, Pause, Play, Plus, RotateCcw, Sparkles } from 'lucide-react';
 import type { Chapter, Subject } from '../../types';
+import { buildSyllabusGalaxyLayout } from '../../utils/scene3dHelpers';
 import { Button } from '../ui/Button';
 import { Card } from '../ui/Card';
 import { Chip } from '../ui/Chip';
@@ -20,15 +21,50 @@ export interface SyllabusGalaxySceneProps {
   activeSubjectId?: string;
   onSelectSubjectFilter?: (subjectId: string) => void;
   onSelectChapter: (chapter: Chapter) => void;
+  onOpenAddChapter?: () => void;
+  onOpenBulkPaste?: () => void;
 }
 
-interface StarNode {
-  chapter: Chapter;
-  subject: Subject;
-  subjectIdx: number;
-  position: [number, number, number];
-  baseScale: number;
-  isDue: boolean;
+const MAX_STARS_HIGH = 600;
+const MAX_LINKS_HIGH = 600;
+
+function createStarGlowTexture(THREE: typeof import('three')): import('three').CanvasTexture {
+  const size = 128;
+  const c = document.createElement('canvas');
+  c.width = size;
+  c.height = size;
+  const ctx = c.getContext('2d');
+  if (ctx) {
+    const g = ctx.createRadialGradient(size / 2, size / 2, 1, size / 2, size / 2, size / 2);
+    g.addColorStop(0, 'rgba(255, 255, 255, 1)');
+    g.addColorStop(0.25, 'rgba(255, 255, 255, 0.58)');
+    g.addColorStop(0.6, 'rgba(255, 255, 255, 0.14)');
+    g.addColorStop(1, 'rgba(255, 255, 255, 0)');
+    ctx.fillStyle = g;
+    ctx.fillRect(0, 0, size, size);
+  }
+  const tex = new THREE.CanvasTexture(c);
+  tex.colorSpace = THREE.SRGBColorSpace;
+  return tex;
+}
+
+function createNebulaPuffTexture(THREE: typeof import('three')): import('three').CanvasTexture {
+  const size = 128;
+  const c = document.createElement('canvas');
+  c.width = size;
+  c.height = size;
+  const ctx = c.getContext('2d');
+  if (ctx) {
+    const g = ctx.createRadialGradient(size / 2, size / 2, 4, size / 2, size / 2, size / 2);
+    g.addColorStop(0, 'rgba(255, 255, 255, 0.34)');
+    g.addColorStop(0.45, 'rgba(255, 255, 255, 0.12)');
+    g.addColorStop(1, 'rgba(255, 255, 255, 0)');
+    ctx.fillStyle = g;
+    ctx.fillRect(0, 0, size, size);
+  }
+  const tex = new THREE.CanvasTexture(c);
+  tex.colorSpace = THREE.SRGBColorSpace;
+  return tex;
 }
 
 export const SyllabusGalaxyScene: React.FC<SyllabusGalaxySceneProps> = ({
@@ -40,60 +76,72 @@ export const SyllabusGalaxyScene: React.FC<SyllabusGalaxySceneProps> = ({
   activeSubjectId = 'all',
   onSelectSubjectFilter,
   onSelectChapter,
+  onOpenAddChapter,
+  onOpenBulkPaste,
 }) => {
+  const [ambientPaused, setAmbientPaused] = useState(false);
+
   const activeSubjects = useMemo(
     () => subjects.filter((s) => !s.arch),
     [subjects]
   );
 
-  const starNodes = useMemo<StarNode[]>(() => {
-    const nodes: StarNode[] = [];
-    const subCount = Math.max(1, activeSubjects.length);
+  const layout = useMemo(
+    () =>
+      buildSyllabusGalaxyLayout(
+        activeSubjects,
+        chapters,
+        dueChapterIds,
+        MAX_STARS_HIGH
+      ),
+    [activeSubjects, chapters, dueChapterIds]
+  );
 
-    activeSubjects.forEach((sub, sIdx) => {
-      const clusterAngle = (sIdx / subCount) * Math.PI * 2;
-      const clusterRadius = subCount === 1 ? 0 : 2.35;
-      const cx = Math.cos(clusterAngle) * clusterRadius;
-      const cz = Math.sin(clusterAngle) * clusterRadius * 0.68;
-      const cy = Math.sin(clusterAngle * 2) * 0.28;
-
-      const subChapters = chapters.filter((ch) => ch.subjectId === sub.id);
-      subChapters.forEach((ch, cIdx) => {
-        // Golden-angle spiral distribution around the subject cluster center
-        const phi = cIdx * 2.3999632;
-        const r = 0.32 + Math.sqrt(cIdx + 1) * 0.24;
-        const yOff = (((cIdx * 31) % 10) - 4.5) * 0.085;
-        const x = cx + Math.cos(phi) * r;
-        const y = cy + yOff;
-        const z = cz + Math.sin(phi) * r;
-        const conf = Math.max(1, Math.min(5, Number(ch.confidence) || 3));
-        const baseScale = 0.65 + conf * 0.14;
-        nodes.push({
-          chapter: ch,
-          subject: sub,
-          subjectIdx: sIdx,
-          position: [x, y, z],
-          baseScale,
-          isDue: dueChapterIds.has(ch.id),
-        });
-      });
-    });
-
-    return nodes.slice(0, 600);
-  }, [activeSubjects, chapters, dueChapterIds]);
-
-  const starNodesRef = useRef(starNodes);
-  starNodesRef.current = starNodes;
+  const starNodes = layout.nodes;
+  const layoutRef = useRef(layout);
+  layoutRef.current = layout;
 
   const activeSubjectIdRef = useRef(activeSubjectId);
   activeSubjectIdRef.current = activeSubjectId;
+
+  const ambientPausedRef = useRef(ambientPaused);
+  ambientPausedRef.current = ambientPaused;
 
   const [selectedStarIdx, setSelectedStarIdx] = useState<number | null>(() =>
     starNodes.length > 0 ? 0 : null
   );
 
-  // When subject filter changes, highlight the first chapter in that subject if current selection differs
+  const sceneCtxRef = useRef<Scene3DContext | null>(null);
+  const resetCameraRef = useRef<(() => void) | null>(null);
+  const flyToArmRef = useRef<((subId: string) => void) | null>(null);
+  const shootingStarTriggerRef = useRef<
+    ((targetPos: [number, number, number], colorHex: string) => void) | null
+  >(null);
+
+  // Detect newly completed chapter to launch a shooting-star streak
+  const prevCompletedIdsRef = useRef<Set<string> | null>(null);
   useEffect(() => {
+    const completedIds = new Set(
+      chapters.filter((ch) => ch.status === 'completed').map((ch) => ch.id)
+    );
+    if (prevCompletedIdsRef.current !== null) {
+      for (const id of completedIds) {
+        if (!prevCompletedIdsRef.current.has(id)) {
+          const node = starNodes.find((n) => n.chapter.id === id);
+          if (node) {
+            shootingStarTriggerRef.current?.(node.position, node.subject.color || '#F5C451');
+            break;
+          }
+        }
+      }
+    }
+    prevCompletedIdsRef.current = completedIds;
+  }, [chapters, starNodes]);
+
+  // Fly camera to subject arm & select matching node when chip filter changes
+  useEffect(() => {
+    flyToArmRef.current?.(activeSubjectId);
+    sceneCtxRef.current?.requestRender();
     if (activeSubjectId === 'all' || starNodes.length === 0) return;
     const current =
       selectedStarIdx !== null ? starNodes[selectedStarIdx] : undefined;
@@ -106,7 +154,11 @@ export const SyllabusGalaxyScene: React.FC<SyllabusGalaxySceneProps> = ({
     }
   }, [activeSubjectId, starNodes, selectedStarIdx]);
 
-  if (ui3dSetting === 'off' || chapters.length === 0) {
+  useEffect(() => {
+    sceneCtxRef.current?.requestRender();
+  }, [layout, selectedStarIdx, ambientPaused]);
+
+  if (ui3dSetting === 'off') {
     return null;
   }
 
@@ -115,6 +167,8 @@ export const SyllabusGalaxyScene: React.FC<SyllabusGalaxySceneProps> = ({
       ? starNodes[selectedStarIdx]
       : starNodes[0] || null;
 
+  const completedCount = chapters.filter((c) => c.status === 'completed').length;
+
   return (
     <Card className="space-y-3">
       <div className="split flex-wrap gap-2">
@@ -122,24 +176,48 @@ export const SyllabusGalaxyScene: React.FC<SyllabusGalaxySceneProps> = ({
           <Sparkles size={17} className="text-[var(--ac-ink)]" aria-hidden="true" />
           <div>
             <h3 className="text-[15px] font-semibold text-[var(--tx)]">
-              Syllabus constellation
+              Syllabus galaxy
             </h3>
             <p className="text-[13px] text-[var(--tx-2)]">
-              Each star is a chapter grouped by subject · Lit = completed, half-lit = in
-              progress, pulsing = revision due
+              Spiral arms per subject · Constellations light up as chapters complete · Pulsing = revision due
             </p>
           </div>
         </div>
-        <span className="tnum text-[13px] text-[var(--tx-2)]">
-          {starNodes.length} {starNodes.length === 1 ? 'chapter' : 'chapters'} mapped
-        </span>
+        <div className="flex items-center gap-1.5">
+          <span className="tnum mr-1 text-[13px] text-[var(--tx-2)]">
+            {starNodes.length} {starNodes.length === 1 ? 'chapter' : 'chapters'}
+          </span>
+          <button
+            type="button"
+            onClick={() => setAmbientPaused((v) => !v)}
+            aria-label={ambientPaused ? 'Resume galaxy orbit' : 'Pause galaxy orbit'}
+            aria-pressed={ambientPaused}
+            className="inline-flex min-h-[34px] items-center gap-1 rounded-lg border border-[var(--line)] bg-[var(--sf-2)] px-2.5 py-1 text-[13px] font-medium text-[var(--tx-2)] hover:text-[var(--tx)]"
+          >
+            {ambientPaused ? <Play size={13} /> : <Pause size={13} />}
+            <span>{ambientPaused ? 'Resume' : 'Pause'}</span>
+          </button>
+          <button
+            type="button"
+            onClick={() => resetCameraRef.current?.()}
+            aria-label="Reset galaxy view"
+            className="inline-flex min-h-[34px] items-center gap-1 rounded-lg border border-[var(--line)] bg-[var(--sf-2)] px-2.5 py-1 text-[13px] font-medium text-[var(--tx-2)] hover:text-[var(--tx)]"
+          >
+            <RotateCcw size={13} />
+          </button>
+        </div>
       </div>
+
+      <span className="sr-only">
+        Syllabus galaxy: {starNodes.length} chapters mapped across {activeSubjects.length} subjects,{' '}
+        {completedCount} completed, {dueChapterIds.size} revisions due.
+      </span>
 
       {onSelectSubjectFilter && activeSubjects.length > 1 && (
         <div
           className="dh-scroll-chips flex items-center gap-1.5 overflow-x-auto pb-0.5"
           role="group"
-          aria-label="Filter constellation by subject"
+          aria-label="Focus galaxy arm by subject"
         >
           <Chip
             selected={activeSubjectId === 'all'}
@@ -160,88 +238,184 @@ export const SyllabusGalaxyScene: React.FC<SyllabusGalaxySceneProps> = ({
         </div>
       )}
 
-      <div className="relative rounded-xl border border-[var(--line)] bg-[var(--sf-2)] overflow-hidden">
+      <div className="relative rounded-xl border border-[var(--line)] bg-[#090D16] overflow-hidden">
         <Scene3D
           testId="syllabus-galaxy-scene"
           ui3dSetting={ui3dSetting}
           ui3dQuality={ui3dQuality}
-          active={true}
-          continuous={true}
-          height={268}
+          active={!ambientPaused}
+          continuous={!ambientPaused}
+          height={280}
           fov={42}
-          cameraPosition={[0, 2.5, 6.8]}
+          cameraPosition={[0, 3.1, 6.9]}
           setup={(ctx: Scene3DContext) => {
             const { THREE, scene, camera, canvas, resolution } = ctx;
+            sceneCtxRef.current = ctx;
 
             const hemi = new THREE.HemisphereLight(0x93c5fd, 0x0b0d10, 0.95);
             scene.add(hemi);
 
-            const dirLight = new THREE.DirectionalLight(0xfff4d6, 1.25);
+            const dirLight = new THREE.DirectionalLight(0xfff4d6, 1.2);
             dirLight.position.set(4, 6, 5);
             scene.add(dirLight);
 
             const galaxyGroup = new THREE.Group();
             scene.add(galaxyGroup);
 
-            // Subject cluster orbital ring guides (composite THREE.Group per subject)
-            const subCount = Math.max(1, activeSubjects.length);
-            activeSubjects.forEach((sub, sIdx) => {
-              const clusterAngle = (sIdx / subCount) * Math.PI * 2;
-              const clusterRadius = subCount === 1 ? 0 : 2.35;
-              const cx = Math.cos(clusterAngle) * clusterRadius;
-              const cz = Math.sin(clusterAngle) * clusterRadius * 0.68;
-              const cy = Math.sin(clusterAngle * 2) * 0.28;
+            // 1. Ambient Nebula Glow Sprites + Subtle Core Starfield (visible even with 0 chapters)
+            const starGlowTex = createStarGlowTexture(THREE);
+            const nebulaTex = createNebulaPuffTexture(THREE);
 
-              const subClusterGroup = new THREE.Group();
-              subClusterGroup.position.set(cx, cy, cz);
-
-              const ringGeo = new THREE.TorusGeometry(0.95, 0.012, 8, 48);
-              const ringMat = new THREE.MeshBasicMaterial({
-                color: new THREE.Color(sub.color || '#F5C451'),
+            const nebulaColors = [0x4f46e5, 0xf5c451, 0x38bdf8, 0x34d399];
+            nebulaColors.forEach((hex, idx) => {
+              const spMat = new THREE.SpriteMaterial({
+                map: nebulaTex,
+                color: hex,
                 transparent: true,
-                opacity: 0.22,
+                opacity: 0.28,
+                blending: THREE.AdditiveBlending,
+                depthWrite: false,
               });
-              const ringMesh = new THREE.Mesh(ringGeo, ringMat);
-              ringMesh.rotation.x = Math.PI / 2;
-              subClusterGroup.add(ringMesh);
-
-              const hubGeo = new THREE.OctahedronGeometry(0.11, 0);
-              const hubMat = new THREE.MeshStandardMaterial({
-                color: new THREE.Color(sub.color || '#F5C451'),
-                roughness: 0.3,
-                metalness: 0.4,
-              });
-              const hubMesh = new THREE.Mesh(hubGeo, hubMat);
-              subClusterGroup.add(hubMesh);
-
-              galaxyGroup.add(subClusterGroup);
+              const sp = new THREE.Sprite(spMat);
+              const ang = (idx / nebulaColors.length) * Math.PI * 2;
+              sp.position.set(Math.cos(ang) * 1.15, (idx % 2 === 0 ? 1 : -1) * 0.18, Math.sin(ang) * 0.95);
+              sp.scale.set(4.8, 3.8, 1);
+              galaxyGroup.add(sp);
             });
 
-            // Chapter stars InstancedMesh (pre-allocate tier capacity so added chapters appear live)
-            const maxStars = resolution.tier === 'lite' ? 200 : 600;
-            const starGeo = new THREE.OctahedronGeometry(0.14, 1);
+            const dustCount = resolution.resolvedQuality === 'lite' ? 120 : 280;
+            const dustPos = new Float32Array(dustCount * 3);
+            for (let i = 0; i < dustCount; i++) {
+              const arm = (i % 4) * ((Math.PI * 2) / 4);
+              const r = 0.4 + ((i * 53) % 100) * 0.036;
+              const angle = arm + r * 0.78 + ((i * 19) % 13) * 0.04;
+              dustPos[i * 3] = Math.cos(angle) * r;
+              dustPos[i * 3 + 1] = (((i * 29) % 100) / 100 - 0.5) * 0.65;
+              dustPos[i * 3 + 2] = Math.sin(angle) * r * 0.86;
+            }
+            const dustGeo = new THREE.BufferGeometry();
+            dustGeo.setAttribute('position', new THREE.BufferAttribute(dustPos, 3));
+            const dustMat = new THREE.PointsMaterial({
+              color: 0xdbeafe,
+              size: 0.045,
+              transparent: true,
+              opacity: 0.5,
+              blending: THREE.AdditiveBlending,
+              depthWrite: false,
+            });
+            const dustPoints = new THREE.Points(dustGeo, dustMat);
+            galaxyGroup.add(dustPoints);
+
+            // 2. Constellation Lines (THREE.LineSegments connecting sequential chapters per spiral arm)
+            const maxLinkVerts = MAX_LINKS_HIGH * 2;
+            const linkPositions = new Float32Array(maxLinkVerts * 3);
+            const linkColors = new Float32Array(maxLinkVerts * 3);
+            const linkGeo = new THREE.BufferGeometry();
+            const linkPosAttr = new THREE.BufferAttribute(linkPositions, 3);
+            const linkColAttr = new THREE.BufferAttribute(linkColors, 3);
+            linkGeo.setAttribute('position', linkPosAttr);
+            linkGeo.setAttribute('color', linkColAttr);
+            linkGeo.setDrawRange(0, 0);
+            const linkMat = new THREE.LineBasicMaterial({
+              vertexColors: true,
+              transparent: true,
+              opacity: 0.72,
+              blending: THREE.AdditiveBlending,
+              depthWrite: false,
+            });
+            const constellationLines = new THREE.LineSegments(linkGeo, linkMat);
+            constellationLines.frustumCulled = false;
+            galaxyGroup.add(constellationLines);
+
+            // 3. Chapter Stars + Additive Billboard Glow Halos (InstancedMesh)
+            const maxStars = resolution.resolvedQuality === 'lite' ? 220 : MAX_STARS_HIGH;
+            const starGeo = new THREE.OctahedronGeometry(0.13, 1);
             const starMat = new THREE.MeshStandardMaterial({
               color: 0xffffff,
               roughness: 0.25,
-              metalness: 0.2,
+              metalness: 0.25,
               flatShading: true,
             });
             const instancedStars = new THREE.InstancedMesh(starGeo, starMat, maxStars);
-            instancedStars.count = Math.min(maxStars, starNodesRef.current.length);
+            instancedStars.count = 0;
+            instancedStars.frustumCulled = false;
+            galaxyGroup.add(instancedStars);
+
+            const haloGeo = new THREE.PlaneGeometry(0.54, 0.54);
+            const haloMat = new THREE.MeshBasicMaterial({
+              map: starGlowTex,
+              color: 0xffffff,
+              transparent: true,
+              opacity: 0.75,
+              blending: THREE.AdditiveBlending,
+              depthWrite: false,
+              side: THREE.DoubleSide,
+            });
+            const instancedHalos = new THREE.InstancedMesh(haloGeo, haloMat, maxStars);
+            instancedHalos.count = 0;
+            instancedHalos.frustumCulled = false;
+            galaxyGroup.add(instancedHalos);
+
+            // 4. Shooting-star streak mesh for newly completed chapters
+            const streakGeo = new THREE.CylinderGeometry(0.004, 0.028, 0.9, 6);
+            streakGeo.rotateX(Math.PI / 2);
+            const streakMat = new THREE.MeshBasicMaterial({
+              color: 0xf5c451,
+              transparent: true,
+              opacity: 0,
+              blending: THREE.AdditiveBlending,
+              depthWrite: false,
+            });
+            const streakMesh = new THREE.Mesh(streakGeo, streakMat);
+            streakMesh.visible = false;
+            galaxyGroup.add(streakMesh);
+
+            let shootingStar: {
+              from: import('three').Vector3;
+              to: import('three').Vector3;
+              progress: number;
+            } | null = null;
+
+            shootingStarTriggerRef.current = (targetPos, colorHex) => {
+              const toVec = new THREE.Vector3(targetPos[0], targetPos[1], targetPos[2]);
+              const fromVec = new THREE.Vector3(
+                targetPos[0] + (targetPos[0] >= 0 ? 2.4 : -2.4),
+                targetPos[1] + 2.2,
+                targetPos[2] - 2.1
+              );
+              streakMat.color.set(colorHex);
+              shootingStar = { from: fromVec, to: toVec, progress: 0 };
+              streakMesh.visible = true;
+              ctx.requestRender();
+            };
 
             const dummyMat = new THREE.Matrix4();
             const dummyPos = new THREE.Vector3();
             const dummyQuat = new THREE.Quaternion();
             const dummyScale = new THREE.Vector3();
             const cColor = new THREE.Color();
-            const dimBg = new THREE.Color('#20252D');
+            const haloColor = new THREE.Color();
+            const dimBg = new THREE.Color('#202632');
+            const warmDueAmber = new THREE.Color('#FB923C');
             const lumenHighlight = new THREE.Color('#F5C451');
 
-            const syncStarInstances = (elapsed: number, activeIdx: number | null) => {
-              const nodes = starNodesRef.current;
+            const syncGalaxy = (elapsed: number, activeIdx: number | null) => {
+              const curLayout = layoutRef.current;
+              const nodes = curLayout.nodes;
+              const links = curLayout.links;
               const subFilter = activeSubjectIdRef.current;
               const count = Math.min(maxStars, nodes.length);
+
               instancedStars.count = count;
+              instancedHalos.count = count;
+
+              // Inverse galaxy Y rotation so billboarded halos still face camera cleanly
+              const invRotY = new THREE.Quaternion().setFromAxisAngle(
+                new THREE.Vector3(0, 1, 0),
+                -galaxyGroup.rotation.y
+              );
+              const billboardQuat = invRotY.multiply(camera.quaternion);
+
               for (let i = 0; i < count; i++) {
                 const n = nodes[i];
                 const isSubjectMatch =
@@ -249,51 +423,146 @@ export const SyllabusGalaxyScene: React.FC<SyllabusGalaxySceneProps> = ({
                 dummyPos.set(n.position[0], n.position[1], n.position[2]);
 
                 let sc = n.baseScale * (isSubjectMatch ? 1 : 0.45);
+                let haloSc = n.baseScale * (isSubjectMatch ? 1.15 : 0.35);
+
+                if (n.chapter.status === 'completed') {
+                  haloSc *= 1.45;
+                } else if (n.chapter.status === 'notStarted') {
+                  haloSc *= 0.45;
+                }
+
                 if (n.isDue && isSubjectMatch) {
-                  sc *= 1 + Math.sin(elapsed * 3.8 + i) * 0.22;
+                  const duePulse = 1 + Math.sin(elapsed * 4.2 + i) * 0.26;
+                  sc *= duePulse;
+                  haloSc *= duePulse * 1.25;
                 }
                 if (activeIdx === i) {
-                  sc *= 1.35;
+                  sc *= 1.38;
+                  haloSc *= 1.5;
                 }
+
                 dummyScale.setScalar(sc);
-                dummyMat.compose(dummyPos, dummyQuat, dummyScale);
+                dummyMat.compose(dummyPos, dummyQuat.set(0, 0, 0, 1), dummyScale);
                 instancedStars.setMatrixAt(i, dummyMat);
 
+                dummyScale.setScalar(haloSc);
+                dummyMat.compose(dummyPos, billboardQuat, dummyScale);
+                instancedHalos.setMatrixAt(i, dummyMat);
+
                 cColor.set(n.subject.color || '#F5C451');
+                haloColor.copy(cColor);
+
                 if (!isSubjectMatch) {
                   cColor.lerp(dimBg, 0.86);
+                  haloColor.lerp(dimBg, 0.9);
                 } else if (n.chapter.status === 'notStarted') {
                   cColor.lerp(dimBg, 0.68);
+                  haloColor.lerp(dimBg, 0.8);
                 } else if (n.chapter.status === 'inProgress') {
-                  cColor.lerp(dimBg, 0.28);
+                  cColor.lerp(dimBg, 0.25);
+                  haloColor.lerp(dimBg, 0.32);
+                }
+                if (n.isDue && isSubjectMatch) {
+                  const pulseMix = 0.45 + 0.35 * Math.sin(elapsed * 4.2 + i);
+                  cColor.lerp(warmDueAmber, pulseMix);
+                  haloColor.lerp(warmDueAmber, pulseMix);
                 }
                 if (activeIdx === i && isSubjectMatch) {
                   cColor.lerp(lumenHighlight, 0.45);
+                  haloColor.lerp(lumenHighlight, 0.45);
                 }
+
                 instancedStars.setColorAt(i, cColor);
+                instancedHalos.setColorAt(i, haloColor);
               }
+
               instancedStars.instanceMatrix.needsUpdate = true;
-              if (instancedStars.instanceColor) {
-                instancedStars.instanceColor.needsUpdate = true;
+              instancedHalos.instanceMatrix.needsUpdate = true;
+              if (instancedStars.instanceColor) instancedStars.instanceColor.needsUpdate = true;
+              if (instancedHalos.instanceColor) instancedHalos.instanceColor.needsUpdate = true;
+
+              // Update constellation line segments
+              const linkCount = Math.min(MAX_LINKS_HIGH, links.length);
+              for (let i = 0; i < linkCount; i++) {
+                const lk = links[i];
+                const vIdx = i * 6;
+                linkPositions[vIdx] = lk.from[0];
+                linkPositions[vIdx + 1] = lk.from[1];
+                linkPositions[vIdx + 2] = lk.from[2];
+                linkPositions[vIdx + 3] = lk.to[0];
+                linkPositions[vIdx + 4] = lk.to[1];
+                linkPositions[vIdx + 5] = lk.to[2];
+
+                const isSubMatch = subFilter === 'all' || lk.subjectId === subFilter;
+                cColor.set(lk.color || '#F5C451');
+                if (!isSubMatch) {
+                  cColor.lerp(dimBg, 0.9);
+                } else if (lk.bothCompleted) {
+                  cColor.lerp(lumenHighlight, 0.25);
+                } else if (lk.oneCompleted) {
+                  cColor.lerp(dimBg, 0.48);
+                } else {
+                  cColor.lerp(dimBg, 0.8);
+                }
+
+                linkColors[vIdx] = cColor.r;
+                linkColors[vIdx + 1] = cColor.g;
+                linkColors[vIdx + 2] = cColor.b;
+                linkColors[vIdx + 3] = cColor.r;
+                linkColors[vIdx + 4] = cColor.g;
+                linkColors[vIdx + 5] = cColor.b;
               }
-              instancedStars.computeBoundingSphere();
+              linkGeo.setDrawRange(0, linkCount * 2);
+              linkPosAttr.needsUpdate = true;
+              linkColAttr.needsUpdate = true;
             };
 
-            syncStarInstances(0, selectedStarIdx);
-            galaxyGroup.add(instancedStars);
+            // Camera orbit, two-finger pinch zoom, and smooth subject-arm fly-to
+            let azimuth = 0;
+            let targetAzimuth = 0;
+            let radius = 7.4;
+            let targetRadius = 7.4;
+            let polar = 1.1;
+            let targetPolar = 1.1;
+            const lookTarget = new THREE.Vector3(0, 0, 0);
+            const desiredLookTarget = new THREE.Vector3(0, 0, 0);
 
-            // Drag rotation & Raycaster selection
-            let azimuth = 0.0;
-            let targetAzimuth = 0.0;
+            flyToArmRef.current = (subId: string) => {
+              if (subId === 'all') {
+                desiredLookTarget.set(0, 0, 0);
+                targetRadius = 7.4;
+              } else {
+                const center = layoutRef.current.armCenters.get(subId);
+                if (center) {
+                  desiredLookTarget.set(center[0] * 0.65, center[1], center[2] * 0.65);
+                  targetRadius = 5.6;
+                }
+              }
+            };
+
+            resetCameraRef.current = () => {
+              desiredLookTarget.set(0, 0, 0);
+              targetRadius = 7.4;
+              targetPolar = 1.1;
+              targetAzimuth = 0;
+              ctx.requestRender();
+            };
+
+            syncGalaxy(0, selectedStarIdx);
+
+            const activePointers = new Map<number, { x: number; y: number }>();
+            let prevPinchDist: number | null = null;
             let isDragging = false;
             let dragMoved = false;
             let downX = 0;
+            let downY = 0;
             let currentSelectedIdx = selectedStarIdx;
 
             const raycaster = new THREE.Raycaster();
             const pointerNdc = new THREE.Vector2();
 
             const pickStar = (clientX: number, clientY: number): number | null => {
+              if (instancedStars.count === 0) return null;
               const rect = canvas.getBoundingClientRect();
               if (rect.width <= 0 || rect.height <= 0) return null;
               pointerNdc.x = ((clientX - rect.left) / rect.width) * 2 - 1;
@@ -307,20 +576,49 @@ export const SyllabusGalaxyScene: React.FC<SyllabusGalaxySceneProps> = ({
             };
 
             const onPointerDown = (e: PointerEvent) => {
+              activePointers.set(e.pointerId, { x: e.clientX, y: e.clientY });
+              if (activePointers.size === 2) {
+                const pts = Array.from(activePointers.values());
+                prevPinchDist = Math.hypot(pts[0].x - pts[1].x, pts[0].y - pts[1].y);
+                isDragging = false;
+                return;
+              }
               isDragging = true;
               dragMoved = false;
               downX = e.clientX;
+              downY = e.clientY;
             };
 
             let lastHoverTs = 0;
             const onPointerMove = (e: PointerEvent) => {
-              if (isDragging) {
-                const dx = e.clientX - downX;
-                if (Math.abs(dx) > 3) dragMoved = true;
-                downX = e.clientX;
-                targetAzimuth += dx * 0.007;
+              if (activePointers.has(e.pointerId)) {
+                activePointers.set(e.pointerId, { x: e.clientX, y: e.clientY });
+              }
+              if (activePointers.size === 2) {
+                e.preventDefault();
+                const pts = Array.from(activePointers.values());
+                const dist = Math.hypot(pts[0].x - pts[1].x, pts[0].y - pts[1].y);
+                if (prevPinchDist !== null) {
+                  const delta = prevPinchDist - dist;
+                  targetRadius = Math.max(4.0, Math.min(11.5, targetRadius + delta * 0.02));
+                  ctx.requestRender();
+                }
+                prevPinchDist = dist;
                 return;
               }
+
+              if (isDragging) {
+                const dx = e.clientX - downX;
+                const dy = e.clientY - downY;
+                if (Math.abs(dx) > 3 || Math.abs(dy) > 3) dragMoved = true;
+                downX = e.clientX;
+                downY = e.clientY;
+                targetAzimuth += dx * 0.007;
+                targetPolar = Math.max(0.55, Math.min(1.45, targetPolar - dy * 0.005));
+                ctx.requestRender();
+                return;
+              }
+
               const now = performance.now();
               if (now - lastHoverTs < 50) return;
               lastHoverTs = now;
@@ -328,41 +626,127 @@ export const SyllabusGalaxyScene: React.FC<SyllabusGalaxySceneProps> = ({
               if (idx !== null && idx !== currentSelectedIdx) {
                 currentSelectedIdx = idx;
                 setSelectedStarIdx(idx);
+                ctx.requestRender();
               }
             };
 
             const onPointerUp = (e: PointerEvent) => {
-              if (!dragMoved) {
+              activePointers.delete(e.pointerId);
+              if (activePointers.size < 2) {
+                prevPinchDist = null;
+              }
+              if (isDragging && !dragMoved) {
                 const idx = pickStar(e.clientX, e.clientY);
                 if (idx !== null) {
                   currentSelectedIdx = idx;
                   setSelectedStarIdx(idx);
+                  ctx.requestRender();
                 }
               }
               isDragging = false;
             };
 
             canvas.addEventListener('pointerdown', onPointerDown);
-            window.addEventListener('pointermove', onPointerMove, { passive: true });
+            window.addEventListener('pointermove', onPointerMove);
             window.addEventListener('pointerup', onPointerUp, { passive: true });
+            window.addEventListener('pointercancel', onPointerUp, { passive: true });
 
             return {
               onTick: (dt, elapsed) => {
-                if (!isDragging && !resolution.isSoftwareGl) {
-                  targetAzimuth += dt * 0.09;
+                if (!isDragging && !resolution.isSoftwareGl && !ambientPausedRef.current) {
+                  targetAzimuth += dt * 0.075;
                 }
-                azimuth += (targetAzimuth - azimuth) * (1 - Math.exp(-5 * dt));
+                const damp = 1 - Math.exp(-5 * dt);
+                azimuth += (targetAzimuth - azimuth) * damp;
+                polar += (targetPolar - polar) * damp;
+                radius += (targetRadius - radius) * damp;
+                lookTarget.lerp(desiredLookTarget, damp);
+
                 galaxyGroup.rotation.y = azimuth;
-                syncStarInstances(elapsed, currentSelectedIdx);
+                dustPoints.rotation.y = -elapsed * 0.03;
+
+                camera.position.set(
+                  lookTarget.x,
+                  lookTarget.y + radius * Math.cos(polar),
+                  lookTarget.z + radius * Math.sin(polar)
+                );
+                camera.lookAt(lookTarget);
+
+                // Shooting-star animation
+                if (shootingStar) {
+                  shootingStar.progress += dt * 1.45;
+                  const t = Math.min(1, shootingStar.progress);
+                  streakMesh.position.lerpVectors(shootingStar.from, shootingStar.to, t);
+                  streakMesh.lookAt(shootingStar.to);
+                  streakMat.opacity = t < 0.2 ? t / 0.2 : Math.max(0, 1 - (t - 0.2) / 0.8);
+                  if (t >= 1) {
+                    shootingStar = null;
+                    streakMesh.visible = false;
+                  } else {
+                    ctx.requestRender();
+                  }
+                }
+
+                syncGalaxy(elapsed, currentSelectedIdx);
+
+                if (
+                  lookTarget.distanceTo(desiredLookTarget) > 0.01 ||
+                  Math.abs(targetRadius - radius) > 0.01 ||
+                  Math.abs(targetAzimuth - azimuth) > 0.002
+                ) {
+                  ctx.requestRender();
+                }
               },
               onDispose: () => {
+                sceneCtxRef.current = null;
+                flyToArmRef.current = null;
+                shootingStarTriggerRef.current = null;
                 canvas.removeEventListener('pointerdown', onPointerDown);
                 window.removeEventListener('pointermove', onPointerMove);
                 window.removeEventListener('pointerup', onPointerUp);
+                window.removeEventListener('pointercancel', onPointerUp);
+                starGlowTex.dispose();
+                nebulaTex.dispose();
               },
             };
           }}
         />
+
+        {/* Ambient Nebula Empty-State Overlay CTA when 0 chapters exist */}
+        {chapters.length === 0 && (
+          <div className="pointer-events-none absolute inset-0 flex flex-col items-center justify-center p-4 text-center">
+            <div className="pointer-events-auto max-w-xs space-y-2.5 rounded-2xl border border-[var(--line)] bg-[color-mix(in_srgb,var(--sf-1)_88%,transparent)] p-4">
+              <p className="text-[14px] font-semibold text-[var(--tx)]">
+                Add chapters to ignite your syllabus galaxy
+              </p>
+              <p className="text-[13px] text-[var(--tx-2)]">
+                Each chapter becomes a glowing star along its subject spiral arm.
+              </p>
+              <div className="flex flex-wrap items-center justify-center gap-2 pt-1">
+                {onOpenAddChapter && (
+                  <Button
+                    variant="primary"
+                    size="sm"
+                    icon={<Plus size={14} />}
+                    onClick={onOpenAddChapter}
+                  >
+                    Add chapter
+                  </Button>
+                )}
+                {onOpenBulkPaste && (
+                  <Button
+                    variant="secondary"
+                    size="sm"
+                    icon={<FileSpreadsheet size={14} />}
+                    onClick={onOpenBulkPaste}
+                  >
+                    Bulk paste
+                  </Button>
+                )}
+              </div>
+            </div>
+          </div>
+        )}
       </div>
 
       {/* Accessible DOM Tooltip & Action Row for Selected Chapter Star */}

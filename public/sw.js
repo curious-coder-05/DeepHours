@@ -1,8 +1,10 @@
-const CACHE_NAME = 'deep-hours-v9';
+const CACHE_NAME = 'deep-hours-v11';
 const ASSETS = [
   '/',
   '/index.html',
   '/manifest.webmanifest',
+  '/icon-512.png',
+  '/icon-192.png',
   '/icon.svg',
   '/icon-maskable.svg'
 ];

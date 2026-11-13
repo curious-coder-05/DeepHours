@@ -1425,11 +1425,11 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
 
           {currentUi3d !== 'off' && (
             <Field
-              label="3D detail quality"
-              hint="Auto uses High on modern GPUs and Lite on software or low-power devices."
+              label="3D quality"
+              hint="Auto runs High on fast GPUs and switches to Lite automatically if frame pacing dips to save battery."
             >
               <Segmented<'auto' | 'high' | 'lite'>
-                aria-label="3D detail quality"
+                aria-label="3D quality"
                 value={set.ui3dQuality || 'auto'}
                 options={[
                   { value: 'auto', label: 'Auto' },
