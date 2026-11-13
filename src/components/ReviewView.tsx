@@ -257,7 +257,7 @@ export const ReviewView: React.FC<ReviewViewProps> = ({
       {/* Sleep vs Focus Insight */}
       <Card>
         <div className="flex items-center gap-2.5">
-          <Moon size={18} className="shrink-0 text-[var(--ac)]" />
+          <Moon size={18} className="shrink-0 text-[var(--ac-ink)]" aria-hidden="true" />
           <div>
             <h4 className="text-[14px] font-semibold text-[var(--tx)]">
               Sleep &amp; focus correlation

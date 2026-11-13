@@ -1,4 +1,4 @@
-import React from 'react';
+import React, { useId } from 'react';
 
 export interface FieldProps {
   label: string;
@@ -14,36 +14,52 @@ export const Field: React.FC<FieldProps> = ({
   hint,
   error,
   children,
-}) => (
-  <div style={{ display: 'grid', gap: '6px', minWidth: 0 }}>
-    <label
-      htmlFor={htmlFor}
-      style={{
-        fontSize: '13px',
-        fontWeight: 500,
-        color: 'var(--tx-2)',
-      }}
-    >
-      {label}
-    </label>
-    {children}
-    {hint && !error && (
-      <span style={{ fontSize: '12px', color: 'var(--tx-3)', lineHeight: 1.35 }}>
-        {hint}
-      </span>
-    )}
-    {error && (
-      <span
-        role="alert"
+}) => {
+  const autoId = useId();
+  const isIntrinsicControl =
+    React.isValidElement<{ id?: string }>(children) &&
+    (children.type === 'input' ||
+      children.type === 'textarea' ||
+      children.type === 'select');
+  const existingChildId = isIntrinsicControl ? children.props.id : undefined;
+  const resolvedHtmlFor =
+    htmlFor || existingChildId || (isIntrinsicControl ? autoId : undefined);
+  const renderedChildren =
+    isIntrinsicControl && !existingChildId && resolvedHtmlFor
+      ? React.cloneElement(children, { id: resolvedHtmlFor })
+      : children;
+
+  return (
+    <div style={{ display: 'grid', gap: '6px', minWidth: 0 }}>
+      <label
+        htmlFor={resolvedHtmlFor}
         style={{
-          fontSize: '12px',
-          color: 'var(--err-ink)',
-          fontWeight: 600,
-          lineHeight: 1.35,
+          fontSize: '13px',
+          fontWeight: 500,
+          color: 'var(--tx-2)',
         }}
       >
-        {error}
-      </span>
-    )}
-  </div>
-);
+        {label}
+      </label>
+      {renderedChildren}
+      {hint && !error && (
+        <span style={{ fontSize: '12px', color: 'var(--tx-3)', lineHeight: 1.35 }}>
+          {hint}
+        </span>
+      )}
+      {error && (
+        <span
+          role="alert"
+          style={{
+            fontSize: '12px',
+            color: 'var(--err-ink)',
+            fontWeight: 600,
+            lineHeight: 1.35,
+          }}
+        >
+          {error}
+        </span>
+      )}
+    </div>
+  );
+};

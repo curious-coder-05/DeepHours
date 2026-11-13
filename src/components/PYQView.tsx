@@ -13,6 +13,7 @@ import { SectionHeader } from './ui/SectionHeader';
 import { Select } from './ui/Select';
 import { Sheet } from './ui/Sheet';
 import { Stat } from './ui/Stat';
+import { WindowedList } from './ui/WindowedList';
 
 export interface PYQViewProps {
   state: PulseHabitState;
@@ -231,8 +232,14 @@ export const PYQView: React.FC<PYQViewProps> = ({
               title="Chapter-wise PYQ coverage"
               subtitle="Tap + Log on any chapter to record a new PYQ batch"
             />
-            <div className="mt-2 divide-y divide-[var(--line)]">
-              {pyqStats.chapterSummaries.slice(0, 25).map(({ chapter, subject, summary }) => {
+            <WindowedList
+              items={pyqStats.chapterSummaries}
+              threshold={100}
+              estimatedRowHeight={74}
+              itemLabel="chapters"
+              className="mt-2 divide-y divide-[var(--line)]"
+              getKey={({ chapter }) => chapter.id}
+              renderItem={({ chapter, subject, summary }) => {
                 const accColor =
                   summary.accuracyPct === null
                     ? 'var(--tx-3)'
@@ -240,12 +247,9 @@ export const PYQView: React.FC<PYQViewProps> = ({
                       ? 'var(--ok)'
                       : summary.accuracyPct >= 60
                         ? 'var(--warn)'
-                        : 'var(--bad)';
+                        : 'var(--err)';
                 return (
-                  <div
-                    key={chapter.id}
-                    className="flex flex-wrap items-center justify-between gap-3 py-2.5"
-                  >
+                  <div className="flex flex-wrap items-center justify-between gap-3 py-2.5">
                     <div className="min-w-0 flex-1">
                       <div className="flex items-center gap-2">
                         <span
@@ -284,8 +288,8 @@ export const PYQView: React.FC<PYQViewProps> = ({
                     </Button>
                   </div>
                 );
-              })}
-            </div>
+              }}
+            />
           </Card>
 
           {/* Recent PYQ Logs */}
@@ -299,8 +303,14 @@ export const PYQView: React.FC<PYQViewProps> = ({
                 No PYQ batches logged for this filter yet.
               </div>
             ) : (
-              <div className="mt-2 divide-y divide-[var(--line)]">
-                {pyqStats.filteredEntries.map((entry) => {
+              <WindowedList
+                items={pyqStats.filteredEntries}
+                threshold={100}
+                estimatedRowHeight={62}
+                itemLabel="PYQ logs"
+                className="mt-2 divide-y divide-[var(--line)]"
+                getKey={(entry) => entry.id}
+                renderItem={(entry) => {
                   const ch = state.chapters.find((c) => c.id === entry.chapterId);
                   const sub = getSubject(state, ch?.subjectId || defaultSubjectId);
                   const acc =
@@ -308,10 +318,7 @@ export const PYQView: React.FC<PYQViewProps> = ({
                       ? Math.round((entry.correct / entry.attempted) * 100)
                       : 0;
                   return (
-                    <div
-                      key={entry.id}
-                      className="flex items-center justify-between gap-3 py-2.5"
-                    >
+                    <div className="flex items-center justify-between gap-3 py-2.5">
                       <div className="min-w-0 flex-1">
                         <div className="flex flex-wrap items-center gap-2">
                           <span
@@ -321,7 +328,7 @@ export const PYQView: React.FC<PYQViewProps> = ({
                           <span className="text-[13.5px] font-medium text-[var(--tx)]">
                             {ch ? ch.name : 'Chapter'}
                           </span>
-                          <span className="tnum rounded-md bg-[var(--sf-2)] px-2 py-0.5 text-[12px] font-medium text-[var(--ac)]">
+                          <span className="tnum rounded-md bg-[var(--sf-2)] px-2 py-0.5 text-[12px] font-medium text-[var(--ac-ink)]">
                             {entry.correct}/{entry.attempted} ({acc}%)
                           </span>
                           <span className="tnum text-[12px] text-[var(--tx-3)]">
@@ -337,8 +344,8 @@ export const PYQView: React.FC<PYQViewProps> = ({
                       </IconButton>
                     </div>
                   );
-                })}
-              </div>
+                }}
+              />
             )}
           </Card>
         </>

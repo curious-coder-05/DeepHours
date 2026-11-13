@@ -152,4 +152,15 @@ All old `MoreView` controls map into a grouped navigation stack in `SettingsView
 | `SyllabusGalaxyScene.tsx` | `src/components/three/SyllabusGalaxyScene.tsx` in `PrepView.tsx` (`Prep > Syllabus`) · Spatial star clusters per active NEET subject (`THREE.InstancedMesh`, up to 600 stars), tinted by subject color, visual encoding (`completed` = lit, `inProgress` = half-lit, `notStarted` = dim ember, confidence `1–5` scale, due/overdue revision pulse), raycaster hover/tap DOM tooltip with `"Focus chapter"` action | `[x]` |
 | `Settings > Appearance > 3D scenes` | `src/components/SettingsView.tsx` · `Auto \| On \| Off` `Segmented` control bound to `state.set.ui3d` with battery/performance note | `[x]` |
 
+---
+
+## 8. Offline Precaching, Performance & Accessibility (Milestone 6)
+
+| Capability | Implementation & Location | Status |
+| --- | --- | --- |
+| Build-time precache manifest | `vite.config.ts` (`precacheManifestPlugin`) emits `precache-manifest.json` on build listing all generated JS, CSS, and self-hosted Geist font assets | `[x]` |
+| Service worker offline precaching & reload prompt | `public/sw.js` (`CACHE_NAME = 'deep-hours-v8'`) precaches `precache-manifest.json` entries on `install`, keeps network-first navigation, and applies `SKIP_WAITING` only via user-tapped reload toast | `[x]` |
+| Lazy chunk isolation | `vite.config.ts` (`manualChunks`) + dynamic `import()` / `React.lazy` in `App.tsx`, `FocusView.tsx`, `Scene3D.tsx`, `SettingsView.tsx` keep Firebase, `recharts`, and `three` out of the entry bundle | `[x]` |
+| Lightweight list windowing (>100 rows) | `src/components/ui/WindowedList.tsx` & `computeWindowRange` (`src/utils/uiHelpers.ts`) active on `PrepView` chapters & mocks, `PYQView` summaries & logs, `MistakesView`, `DoubtsView`, `StatsView` session log, `DayHistoryView` sessions, `TodayView` tasks & sessions, and `FocusView` expanded sessions | `[x]` |
+| WCAG AA contrast & keyboard focus | `--tx-3` darkened/lightened (`#8E97A6` / `#565E6B`), `-ink` semantic color tokens across Dark, AMOLED, and Light, `:focus-visible` focus rings on all interactive elements, `Field.tsx` auto-`htmlFor` / `aria-label` coverage, 200% text scaling reflow without clipping, and `prefers-reduced-motion` support | `[x]` |
 

@@ -341,7 +341,7 @@ export const PlannerView: React.FC<PlannerViewProps> = ({
                 {inspectedSlot.subjectEmoji} {inspectedSlot.subjectName} ·{' '}
                 {inspectedSlot.heading}
               </span>
-              <span className="tnum rounded-md bg-[var(--sf-2)] px-2 py-0.5 text-[12px] font-medium text-[var(--ok)]">
+              <span className="tnum rounded-md bg-[var(--sf-2)] px-2 py-0.5 text-[12px] font-medium text-[var(--ok-ink)]">
                 {inspectedSlot.mins} / 10 min active
                 {inspectedSlot.isLive ? ' · LIVE' : ''}
               </span>
@@ -358,7 +358,7 @@ export const PlannerView: React.FC<PlannerViewProps> = ({
         ) : (
           <div className="split flex-wrap gap-2 text-[12.5px] text-[var(--tx-2)]">
             <span className="flex items-center gap-2">
-              <Clock size={15} className="text-[var(--ac)]" />
+              <Clock size={15} className="text-[var(--ac-ink)]" aria-hidden="true" />
               Tap any colored 10-minute block below to inspect its exact window and active
               minutes.
             </span>

@@ -1359,6 +1359,7 @@ export const Modals: React.FC<ModalsProps> = ({
               <div style={{ display: 'flex', gap: '8px', alignItems: 'center' }}>
                 <input
                   type="text"
+                  aria-label="Short mistake note"
                   placeholder="Short mistake note (optional)..."
                   value={mkMisNote}
                   onChange={(e) => setMkMisNote(e.target.value)}

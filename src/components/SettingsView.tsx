@@ -14,7 +14,6 @@ import {
   User,
 } from 'lucide-react';
 import type { AppSettings, PulseHabitState, SubjectTargets, SyncStatus } from '../types';
-import { DAILY_WRITE_CAP } from '../utils/cloudSync';
 import { usePWAInstall } from '../hooks/usePWAInstall';
 import { ACS, SUB_COLORS, logicalKey, pad, parseKey } from '../utils/studyLogic';
 import { UI_ACCENT_SWATCHES, getTimerStyleDisplayLabel, resolveUiExam } from '../utils/uiHelpers';
@@ -82,6 +81,7 @@ export interface SettingsViewProps {
   syncErrorMsg?: string | null;
   lastSyncedAt?: number;
   dailyWritesUsed?: number;
+  dailyWriteCap?: number;
   syncWritesToday?: number;
   isOnline?: boolean;
   onSignInGoogle?: () => void;
@@ -215,6 +215,7 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
   syncErrorMsg,
   lastSyncedAt,
   dailyWritesUsed: dailyWritesUsedProp,
+  dailyWriteCap = 150,
   syncWritesToday,
   isOnline = true,
   onSignInGoogle,
@@ -338,7 +339,7 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
             title="Account and cloud sync"
             subtitle={
               cloudUser
-                ? `${cloudUser.email || cloudUser.displayName || 'Google Account'} · ${dailyWritesUsed}/${DAILY_WRITE_CAP} writes`
+                ? `${cloudUser.email || cloudUser.displayName || 'Google Account'} · ${dailyWritesUsed}/${dailyWriteCap} writes`
                 : 'Local-only mode · Sign in to sync across devices'
             }
             trailing={syncStatusLabel}
@@ -684,7 +685,7 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
                 />
                 <Stat
                   label="Daily writes"
-                  value={`${dailyWritesUsed} / ${DAILY_WRITE_CAP}`}
+                  value={`${dailyWritesUsed} / ${dailyWriteCap}`}
                   tone="ok"
                 />
               </div>

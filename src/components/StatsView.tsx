@@ -43,6 +43,7 @@ import { SectionHeader } from './ui/SectionHeader';
 import { Segmented } from './ui/Segmented';
 import { Sparkline } from './ui/Sparkline';
 import { Stat } from './ui/Stat';
+import { WindowedList } from './ui/WindowedList';
 import { resolveRuntimeUi3d } from './three/Scene3D';
 import { StudySkylineScene } from './three/StudySkylineScene';
 
@@ -89,6 +90,7 @@ export const StatsView: React.FC<StatsViewProps> = ({
   const [showConsistencyDetails, setShowConsistencyDetails] = useState<boolean>(true);
   const [selectedCalDayKey, setSelectedCalDayKey] = useState<string | null>(todayKey);
   const [historyDateKey, setHistoryDateKey] = useState<string>(todayKey);
+  const [showAllSessionsLog, setShowAllSessionsLog] = useState<boolean>(false);
 
   // Default to Flat view when in Lite mode, 'off', or prefers-reduced-motion
   const runtime3d = useMemo(
@@ -303,7 +305,7 @@ export const StatsView: React.FC<StatsViewProps> = ({
                     </div>
                     <span
                       className={`text-[12px] font-medium ${
-                        isToday ? 'text-[var(--ac)]' : 'text-[var(--tx-2)]'
+                        isToday ? 'text-[var(--ac-ink)]' : 'text-[var(--tx-2)]'
                       }`}
                     >
                       {d.dayName}
@@ -423,7 +425,7 @@ export const StatsView: React.FC<StatsViewProps> = ({
                 </h3>
                 <p className="text-[12px] text-[var(--tx-2)]">
                   24-hour concentration rhythm · Peak 2h window:{' '}
-                  <strong className="tnum text-[var(--ac)]">
+                  <strong className="tnum text-[var(--ac-ink)]">
                     {summary.peakHourWindowLabel}
                   </strong>{' '}
                   ({summary.peakPeriodLabel})
@@ -444,7 +446,7 @@ export const StatsView: React.FC<StatsViewProps> = ({
                 </span>
                 <span>
                   Purity:{' '}
-                  <strong className="tnum text-[var(--ok)]">
+                  <strong className="tnum text-[var(--ok-ink)]">
                     {summary.avgPurity}%
                   </strong>
                 </span>
@@ -503,7 +505,7 @@ export const StatsView: React.FC<StatsViewProps> = ({
               </div>
 
               <div className="flex items-center gap-2">
-                <span className="tnum rounded-lg border border-[var(--ac-line)] bg-[var(--ac-soft)] px-2.5 py-1 text-[13px] font-semibold text-[var(--ac)]">
+                <span className="tnum rounded-lg border border-[var(--ac-line)] bg-[var(--ac-soft)] px-2.5 py-1 text-[13px] font-semibold text-[var(--ac-ink)]">
                   Score {consistencyScore.displayLabel}
                   {consistencyScore.total !== null ? '/100' : ''}
                 </span>
@@ -564,7 +566,7 @@ export const StatsView: React.FC<StatsViewProps> = ({
                       </strong>{' '}
                       · Active: <strong className="tnum">{consistencyCal.activeDays}/90</strong>
                     </span>
-                    <span className="tnum font-semibold text-[var(--ok)]">
+                    <span className="tnum font-semibold text-[var(--ok-ink)]">
                       {consistencyCal.avgPct}% avg
                     </span>
                   </div>
@@ -840,7 +842,7 @@ export const StatsView: React.FC<StatsViewProps> = ({
                           ({item.count}s)
                         </span>
                       </span>
-                      <span className="tnum font-medium text-[var(--ok)]">
+                      <span className="tnum font-medium text-[var(--ok-ink)]">
                         {fmtHMShort(item.ms)}
                       </span>
                     </div>
@@ -854,24 +856,43 @@ export const StatsView: React.FC<StatsViewProps> = ({
               </p>
             )}
 
-            {state.sessions.length > 0 && (
-              <div className="border-t border-[var(--line)] pt-3">
-                <h4 className="mb-2 text-[12.5px] font-semibold text-[var(--tx-2)]">
-                  Recent sessions
-                </h4>
-                <div className="divide-y divide-[var(--line)]">
-                  {state.sessions
-                    .slice()
-                    .sort((a, b) => b.startTs - a.startTs)
-                    .slice(0, 6)
-                    .map((s) => {
+            {state.sessions.length > 0 && (() => {
+              const sortedSessions = state.sessions
+                .slice()
+                .sort((a, b) => b.startTs - a.startTs);
+              const displayedSessions = showAllSessionsLog
+                ? sortedSessions
+                : sortedSessions.slice(0, 6);
+              return (
+                <div className="border-t border-[var(--line)] pt-3">
+                  <div className="split mb-2 flex-wrap gap-2">
+                    <h4 className="text-[12.5px] font-semibold text-[var(--tx-2)]">
+                      Recent sessions ({sortedSessions.length})
+                    </h4>
+                    {sortedSessions.length > 6 && (
+                      <Button
+                        variant="ghost"
+                        size="sm"
+                        onClick={() => setShowAllSessionsLog((v) => !v)}
+                      >
+                        {showAllSessionsLog
+                          ? 'Show recent 6'
+                          : `View all ${sortedSessions.length}`}
+                      </Button>
+                    )}
+                  </div>
+                  <WindowedList
+                    items={displayedSessions}
+                    threshold={100}
+                    estimatedRowHeight={72}
+                    itemLabel="sessions"
+                    className="divide-y divide-[var(--line)]"
+                    getKey={(s) => s.id}
+                    renderItem={(s) => {
                       const sub = getSubject(state, s.subjectId);
                       const heading = getSessionHeading(state, s);
                       return (
-                        <div
-                          key={s.id}
-                          className="flex items-center justify-between gap-3 py-2.5"
-                        >
+                        <div className="flex items-center justify-between gap-3 py-2.5">
                           <div className="min-w-0 flex-1">
                             <div className="flex items-center gap-2 text-[13.5px] font-medium text-[var(--tx)]">
                               <span
@@ -893,7 +914,7 @@ export const StatsView: React.FC<StatsViewProps> = ({
                             )}
                           </div>
                           <div className="flex shrink-0 items-center gap-2">
-                            <strong className="tnum text-[13.5px] text-[var(--ok)]">
+                            <strong className="tnum text-[13.5px] text-[var(--ok-ink)]">
                               {fmtHMShort(s.activeMs)}
                             </strong>
                             {onEditSession && (
@@ -908,10 +929,11 @@ export const StatsView: React.FC<StatsViewProps> = ({
                           </div>
                         </div>
                       );
-                    })}
+                    }}
+                  />
                 </div>
-              </div>
-            )}
+              );
+            })()}
           </Card>
 
           {/* Level, Badges & Habit Streaks */}
@@ -919,7 +941,7 @@ export const StatsView: React.FC<StatsViewProps> = ({
             <Card className="space-y-3">
               <div className="split">
                 <div className="flex items-center gap-2">
-                  <Award size={18} className="text-[var(--ac)]" />
+                  <Award size={18} className="text-[var(--ac-ink)]" aria-hidden="true" />
                   <h3 className="text-[15px] font-semibold text-[var(--tx)]">
                     Level {level} · {totalXp.toLocaleString()} XP
                   </h3>
@@ -950,7 +972,7 @@ export const StatsView: React.FC<StatsViewProps> = ({
 
             <Card className="space-y-2.5">
               <div className="flex items-center gap-2">
-                <Flame size={18} className="text-[var(--ac)]" />
+                <Flame size={18} className="text-[var(--ac-ink)]" aria-hidden="true" />
                 <h3 className="text-[15px] font-semibold text-[var(--tx)]">
                   Habit streaks
                 </h3>

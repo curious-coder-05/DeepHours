@@ -4,6 +4,7 @@ import {
   LUMEN_ACCENT,
   LUMEN_ACCENT_ON,
   computeUiPaceReport,
+  computeWindowRange,
   contrastRatio,
   evaluateUi3dEligibility,
   getReadableAccentText,
@@ -178,5 +179,51 @@ describe('UI Helpers — contrast, D-Day pace fallback, display labels', () => {
       }).enabled,
       false
     );
+  });
+
+  it('computes deterministic WindowedList ranges with overscan clamping and measured heights', () => {
+    const empty = computeWindowRange({
+      totalCount: 0,
+      containerTopPx: 0,
+      viewportHeightPx: 600,
+      estimatedRowHeightPx: 60,
+    });
+    assert.deepEqual(empty, {
+      startIndex: 0,
+      endIndex: -1,
+      topSpacerPx: 0,
+      bottomSpacerPx: 0,
+    });
+
+    // Top of a 250-item uniform 60px list inside a 600px viewport with 4-row overscan
+    const atTop = computeWindowRange({
+      totalCount: 250,
+      containerTopPx: 0,
+      viewportHeightPx: 600,
+      estimatedRowHeightPx: 60,
+      overscan: 4,
+    });
+    assert.equal(atTop.startIndex, 0);
+    assert.equal(atTop.endIndex, 14);
+    assert.equal(atTop.topSpacerPx, 0);
+    assert.equal(atTop.bottomSpacerPx, (250 - 15) * 60);
+
+    // Mid-scroll with variable measured row heights (container scrolled 1200px above viewport top)
+    const measuredHeights = new Map<number, number>([
+      [0, 100],
+      [1, 100],
+    ]);
+    const mid = computeWindowRange({
+      totalCount: 150,
+      containerTopPx: -1200,
+      viewportHeightPx: 400,
+      estimatedRowHeightPx: 50,
+      measuredHeights,
+      overscan: 2,
+    });
+    assert.ok(mid.startIndex > 0);
+    assert.ok(mid.endIndex < 149);
+    assert.ok(mid.topSpacerPx > 0);
+    assert.ok(mid.bottomSpacerPx > 0);
   });
 });

@@ -1,4 +1,4 @@
-const CACHE_NAME = 'deep-hours-v7';
+const CACHE_NAME = 'deep-hours-v8';
 const ASSETS = [
   '/',
   '/index.html',
@@ -27,6 +27,26 @@ self.addEventListener('install', event => {
   event.waitUntil(
     caches.open(CACHE_NAME).then(async cache => {
       const urlsToCache = new Set(ASSETS);
+
+      try {
+        const manifestRes = await fetch('/precache-manifest.json', { cache: 'no-cache' });
+        if (manifestRes && manifestRes.ok) {
+          const manifestJson = await manifestRes.json();
+          const list = Array.isArray(manifestJson)
+            ? manifestJson
+            : Array.isArray(manifestJson?.assets)
+              ? manifestJson.assets
+              : [];
+          for (const entry of list) {
+            if (typeof entry === 'string' && entry.startsWith('/')) {
+              urlsToCache.add(entry);
+            }
+          }
+        }
+      } catch {
+        // Manifest may not exist in Vite dev server; fall back to HTML asset discovery
+      }
+
       try {
         const res = await fetch('/index.html', { cache: 'no-cache' });
         if (res && res.ok) {
@@ -43,6 +63,7 @@ self.addEventListener('install', event => {
       } catch {
         // Fallback to caching base ASSETS if offline during install
       }
+
       await Promise.all(
         Array.from(urlsToCache).map(url => cache.add(url).catch(() => {}))
       );
@@ -77,6 +98,11 @@ self.addEventListener('fetch', event => {
     url.pathname.startsWith('/@') ||
     url.pathname.startsWith('/node_modules/')
   ) {
+    return;
+  }
+
+  if (url.pathname === '/precache-manifest.json') {
+    event.respondWith(fetch(event.request, { cache: 'no-cache' }));
     return;
   }
 

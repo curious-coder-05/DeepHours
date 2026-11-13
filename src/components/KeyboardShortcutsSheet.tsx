@@ -37,7 +37,7 @@ export const KeyboardShortcutsSheet: React.FC<KeyboardShortcutsSheetProps> = ({
             >
               <span className="text-[var(--tx)]">{row.description}</span>
               <kbd
-                className="shrink-0 rounded-lg border border-[var(--line)] bg-[var(--sf-1)] px-2.5 py-1 text-[12px] font-semibold text-[var(--ac)]"
+                className="shrink-0 rounded-lg border border-[var(--line)] bg-[var(--sf-1)] px-2.5 py-1 text-[12px] font-semibold text-[var(--ac-ink)]"
                 style={{ fontFamily: 'var(--font-mono)' }}
               >
                 {row.keys}

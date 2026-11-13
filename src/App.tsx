@@ -65,6 +65,11 @@ import {
   updateChapterRevisionDate,
 } from './utils/studyLogic';
 import { toggleRestDay } from './utils/insights';
+import type {
+  GroupLiveStatus,
+  GroupPublishBudgetController,
+} from './utils/groups';
+import type { SyncBudgetController } from './utils/cloudSync';
 import {
   loadInitialState,
   persistState,
@@ -73,38 +78,12 @@ import {
   writeSafetyBackupSnapshot,
 } from './utils/storage';
 import {
-  SyncBudgetController,
-  addDirtyDocsToOutbox,
-  checkRedirectSignInResult,
-  deleteAllUserCloudData,
-  detectDirtyDocKeys,
-  getSyncTodayWrites,
-  loadSyncOutboxMeta,
-  performCloudSyncCycle,
-  saveSyncOutboxMeta,
-  signInWithGoogleAccount,
-  signOutGoogleAccount,
-  subscribeToAuthChanges,
-  testFirestoreConnection,
-} from './utils/cloudSync';
-import {
   beep,
   ensureAudioEngine,
   setSoundscapeVolume,
   updateSoundscape,
 } from './utils/audioEngine';
 import { useFloatingTimerPiP } from './hooks/useFloatingTimerPiP';
-import {
-  GROUP_LIVE_DURATION_MS,
-  GROUP_LIVE_PAUSE_CLEAR_MS,
-  GROUP_LIVE_REFRESH_MS,
-  type GroupLiveStatus,
-  GroupPublishBudgetController,
-  buildMyMemberEntry,
-  cleanupUserGroupsOnCloudDelete,
-  publishMyEntryToGroup,
-  recordWeekStandingInHistory,
-} from './utils/groups';
 import {
   LUMEN_ACCENT,
   getAmoledPref,
@@ -116,13 +95,43 @@ import { AppShell } from './components/AppShell';
 import { QuickActionsSheet, type QuickActionKind } from './components/QuickActionsSheet';
 import { Skeleton, Toast } from './components/ui';
 import { TodayView } from './components/TodayView';
-import { FocusView } from './components/FocusView';
 import { Modals, type ModalState } from './components/Modals';
-import { ProfileModal } from './components/ProfileModal';
 import { CommandPalette } from './components/CommandPalette';
 import { KeyboardShortcutsSheet } from './components/KeyboardShortcutsSheet';
 import type { SettingsSection } from './components/SettingsView';
 
+let cloudSyncCache: typeof import('./utils/cloudSync') | null = null;
+let cloudSyncPromise: Promise<typeof import('./utils/cloudSync')> | null = null;
+function getCloudSyncMod() {
+  if (cloudSyncCache) return Promise.resolve(cloudSyncCache);
+  if (!cloudSyncPromise) {
+    cloudSyncPromise = import('./utils/cloudSync').then((mod) => {
+      cloudSyncCache = mod;
+      return mod;
+    });
+  }
+  return cloudSyncPromise;
+}
+
+let groupsCache: typeof import('./utils/groups') | null = null;
+let groupsPromise: Promise<typeof import('./utils/groups')> | null = null;
+function getGroupsMod() {
+  if (groupsCache) return Promise.resolve(groupsCache);
+  if (!groupsPromise) {
+    groupsPromise = import('./utils/groups').then((mod) => {
+      groupsCache = mod;
+      return mod;
+    });
+  }
+  return groupsPromise;
+}
+
+const FocusView = React.lazy(() =>
+  import('./components/FocusView').then((m) => ({ default: m.FocusView }))
+);
+const ProfileModal = React.lazy(() =>
+  import('./components/ProfileModal').then((m) => ({ default: m.ProfileModal }))
+);
 const PrepView = React.lazy(() =>
   import('./components/PrepView').then((m) => ({ default: m.PrepView }))
 );
@@ -223,9 +232,8 @@ export default function App() {
   const [syncStatus, setSyncStatus] = useState<SyncStatus>('off');
   const [syncErrorMsg, setSyncErrorMsg] = useState<string | null>(null);
   const [lastSyncedAt, setLastSyncedAt] = useState<number | undefined>(undefined);
-  const [syncWritesToday, setSyncWritesToday] = useState<number>(() =>
-    getSyncTodayWrites()
-  );
+  const [syncWritesToday, setSyncWritesToday] = useState<number>(0);
+  const [groupBudgetReady, setGroupBudgetReady] = useState<boolean>(false);
   const [isOnline, setIsOnline] = useState<boolean>(() =>
     typeof navigator !== 'undefined' && 'onLine' in navigator ? navigator.onLine : true
   );
@@ -276,25 +284,32 @@ export default function App() {
   const syncControllerRef = useRef<SyncBudgetController | null>(null);
   const liveStatusRef = useRef<GroupLiveStatus | null>(null);
   const groupBudgetRef = useRef<GroupPublishBudgetController | null>(null);
-  if (!groupBudgetRef.current) {
-    groupBudgetRef.current = new GroupPublishBudgetController(async (groupId) => {
-      if (!authUserRef.current || !readyRef.current || !groupBudgetRef.current) return;
-      const curState = stateRef.current;
-      const joined = curState.groupsConfig?.joined?.find((j) => j.groupId === groupId);
-      if (!joined) return;
-      const curToday = logicalKey(new Date(), curState.set.dayResetHour ?? 0);
-      await publishMyEntryToGroup({
-        groupId,
-        state: curState,
-        todayKey: curToday,
-        joinedAt: joined.joinedAt,
-        sh: joined.sh,
-        paused: joined.paused,
-        live: liveStatusRef.current,
-        budget: groupBudgetRef.current,
+
+  const ensureGroupBudget = useCallback(async (): Promise<GroupPublishBudgetController> => {
+    if (groupBudgetRef.current) return groupBudgetRef.current;
+    const gm = await getGroupsMod();
+    if (!groupBudgetRef.current) {
+      groupBudgetRef.current = new gm.GroupPublishBudgetController(async (groupId) => {
+        if (!authUserRef.current || !readyRef.current || !groupBudgetRef.current) return;
+        const curState = stateRef.current;
+        const joined = curState.groupsConfig?.joined?.find((j) => j.groupId === groupId);
+        if (!joined) return;
+        const curToday = logicalKey(new Date(), curState.set.dayResetHour ?? 0);
+        await gm.publishMyEntryToGroup({
+          groupId,
+          state: curState,
+          todayKey: curToday,
+          joinedAt: joined.joinedAt,
+          sh: joined.sh,
+          paused: joined.paused,
+          live: liveStatusRef.current,
+          budget: groupBudgetRef.current,
+        });
       });
-    });
-  }
+      setGroupBudgetReady(true);
+    }
+    return groupBudgetRef.current;
+  }, []);
 
   const toastTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const perfectDayTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
@@ -332,7 +347,6 @@ export default function App() {
   // A3 & A4: Never persist before initial IndexedDB load completes, and never run side effects inside setState
   const saveNextState = useCallback((next: PulseHabitState) => {
     const prev = stateRef.current;
-    const dirtyKeys = readyRef.current ? detectDirtyDocKeys(prev, next) : [];
     const stamped: PulseHabitState = {
       ...next,
       savedAt: Date.now(),
@@ -341,31 +355,59 @@ export default function App() {
     setState(stamped);
     if (readyRef.current) {
       persistState(stamped);
-      if (dirtyKeys.length > 0) {
-        addDirtyDocsToOutbox(dirtyKeys);
-        if (authUserRef.current && syncControllerRef.current) {
-          syncControllerRef.current.markDirty(dirtyKeys);
+      if (cloudSyncCache) {
+        const dirtyKeys = cloudSyncCache.detectDirtyDocKeys(prev, next);
+        if (dirtyKeys.length > 0) {
+          cloudSyncCache.addDirtyDocsToOutbox(dirtyKeys);
+          if (authUserRef.current && syncControllerRef.current) {
+            syncControllerRef.current.markDirty(dirtyKeys);
+          }
         }
+      } else {
+        void getCloudSyncMod().then((cs) => {
+          const dirtyKeys = cs.detectDirtyDocKeys(prev, next);
+          if (dirtyKeys.length > 0) {
+            cs.addDirtyDocsToOutbox(dirtyKeys);
+            if (authUserRef.current && syncControllerRef.current) {
+              syncControllerRef.current.markDirty(dirtyKeys);
+            }
+          }
+        });
       }
       // Queue debounced group stats publish for joined groups when relevant state changes
-      if (authUserRef.current && groupBudgetRef.current) {
+      if (authUserRef.current) {
         const joinedList = stamped.groupsConfig?.joined || [];
         if (joinedList.length > 0) {
           const curToday = logicalKey(new Date(), stamped.set.dayResetHour ?? 0);
-          for (const g of joinedList) {
-            const entry = buildMyMemberEntry(stamped, curToday, {
-              joinedAt: g.joinedAt,
-              sh: g.sh,
-              paused: g.paused,
-              live: liveStatusRef.current,
-              groupId: g.groupId,
+          if (groupsCache && groupBudgetRef.current) {
+            for (const g of joinedList) {
+              const entry = groupsCache.buildMyMemberEntry(stamped, curToday, {
+                joinedAt: g.joinedAt,
+                sh: g.sh,
+                paused: g.paused,
+                live: liveStatusRef.current,
+                groupId: g.groupId,
+              });
+              groupBudgetRef.current.markGroupDirty(g.groupId, entry);
+            }
+          } else {
+            void Promise.all([getGroupsMod(), ensureGroupBudget()]).then(([gm, budget]) => {
+              for (const g of joinedList) {
+                const entry = gm.buildMyMemberEntry(stamped, curToday, {
+                  joinedAt: g.joinedAt,
+                  sh: g.sh,
+                  paused: g.paused,
+                  live: liveStatusRef.current,
+                  groupId: g.groupId,
+                });
+                budget.markGroupDirty(g.groupId, entry);
+              }
             });
-            groupBudgetRef.current.markGroupDirty(g.groupId, entry);
           }
         }
       }
     }
-  }, []);
+  }, [ensureGroupBudget]);
 
   const updateAndSave = useCallback(
     (updater: (prev: PulseHabitState) => PulseHabitState) => {
@@ -683,18 +725,19 @@ export default function App() {
       setSyncErrorMsg(null);
 
       try {
+        const cs = await getCloudSyncMod();
         // 2.4: On first sign-in on a device that already has local data, write a safety snapshot first
         if (opts?.isFirstSignIn && stateRef.current.syncMeta?.uid !== user.uid) {
           await writeSafetyBackupSnapshot(stateRef.current);
         }
 
-        const res = await performCloudSyncCycle(
+        const res = await cs.performCloudSyncCycle(
           user.uid,
           stateRef.current,
           controller,
           { forcePull: opts?.forcePull, dirtyDocKeys: opts?.dirtyDocKeys }
         );
-        setSyncWritesToday(getSyncTodayWrites());
+        setSyncWritesToday(cs.getSyncTodayWrites());
         setSyncStatus(res.status);
         if (res.errorMessage) {
           setSyncErrorMsg(res.errorMessage);
@@ -737,50 +780,66 @@ export default function App() {
     }
   }, [ready, authUser, runCloudSync]);
 
+  // Pre-load Groups chunk cleanly when Communities tab opens
   useEffect(() => {
-    const controller = new SyncBudgetController({
-      initialMeta: loadSyncOutboxMeta(),
-      onFlushDocs: async (dirtyDocKeys) => {
-        await runCloudSync({ forcePull: false, dirtyDocKeys });
-        return { writesUsed: 0 };
-      },
-      onMetaChanged: (m) => {
-        const stored = loadSyncOutboxMeta();
-        saveSyncOutboxMeta({
-          ...stored,
-          dirtyDocs: m.dirtyDocs,
-          lastPushTs: m.lastPushTs,
-          dailyWritesDayKey: m.dailyWritesDayKey,
-          dailyWritesCount: m.dailyWritesCount,
-          quotaPausedUntilDayKey: m.quotaPausedUntilDayKey,
-        });
-      },
-    });
-    syncControllerRef.current = controller;
+    if (tab === 'groups' && !groupBudgetRef.current) {
+      void ensureGroupBudget();
+    }
+  }, [tab, ensureGroupBudget]);
 
-    checkRedirectSignInResult().catch(() => {});
+  useEffect(() => {
+    let disposed = false;
+    let unsubAuth: (() => void) | null = null;
+    let controller: SyncBudgetController | null = null;
 
-    const unsubAuth = subscribeToAuthChanges((user) => {
-      if (user) {
-        const u = {
-          uid: user.uid,
-          email: user.email,
-          displayName: user.displayName,
-        };
-        authUserRef.current = u;
-        setAuthUser(u);
-        setLastSyncedAt(stateRef.current.syncMeta?.lastSyncedAt);
-        testFirestoreConnection().catch(() => {});
-      } else {
-        authUserRef.current = null;
-        setAuthUser(null);
-        setSyncStatus('off');
-      }
+    void getCloudSyncMod().then((cs) => {
+      if (disposed) return;
+      setSyncWritesToday(cs.getSyncTodayWrites());
+      controller = new cs.SyncBudgetController({
+        initialMeta: cs.loadSyncOutboxMeta(),
+        onFlushDocs: async (dirtyDocKeys) => {
+          await runCloudSync({ forcePull: false, dirtyDocKeys });
+          return { writesUsed: 0 };
+        },
+        onMetaChanged: (m) => {
+          const stored = cs.loadSyncOutboxMeta();
+          cs.saveSyncOutboxMeta({
+            ...stored,
+            dirtyDocs: m.dirtyDocs,
+            lastPushTs: m.lastPushTs,
+            dailyWritesDayKey: m.dailyWritesDayKey,
+            dailyWritesCount: m.dailyWritesCount,
+            quotaPausedUntilDayKey: m.quotaPausedUntilDayKey,
+          });
+        },
+      });
+      syncControllerRef.current = controller;
+
+      cs.checkRedirectSignInResult().catch(() => {});
+
+      unsubAuth = cs.subscribeToAuthChanges((user) => {
+        if (user) {
+          const u = {
+            uid: user.uid,
+            email: user.email,
+            displayName: user.displayName,
+          };
+          authUserRef.current = u;
+          setAuthUser(u);
+          setLastSyncedAt(stateRef.current.syncMeta?.lastSyncedAt);
+          cs.testFirestoreConnection().catch(() => {});
+          void ensureGroupBudget();
+        } else {
+          authUserRef.current = null;
+          setAuthUser(null);
+          setSyncStatus('off');
+        }
+      });
     });
 
     const onVisHide = () => {
       if (document.visibilityState === 'hidden' && authUserRef.current) {
-        controller.flushOnBackground();
+        syncControllerRef.current?.flushOnBackground();
         void groupBudgetRef.current?.flushOnBackground();
       } else if (document.visibilityState === 'visible' && authUserRef.current) {
         void runCloudSync({ forcePull: false });
@@ -788,7 +847,7 @@ export default function App() {
     };
     const onPageHide = () => {
       if (authUserRef.current) {
-        controller.flushOnBackground();
+        syncControllerRef.current?.flushOnBackground();
         void groupBudgetRef.current?.flushOnBackground();
       }
     };
@@ -821,15 +880,16 @@ export default function App() {
     window.addEventListener('offline', onOffline);
 
     return () => {
-      unsubAuth();
-      controller.dispose();
+      disposed = true;
+      unsubAuth?.();
+      controller?.dispose();
       clearInterval(autoSyncInterval);
       document.removeEventListener('visibilitychange', onVisHide);
       window.removeEventListener('pagehide', onPageHide);
       window.removeEventListener('online', onOnline);
       window.removeEventListener('offline', onOffline);
     };
-  }, [runCloudSync]);
+  }, [ensureGroupBudget, runCloudSync]);
 
   // Milestone 2.1: Studying Now live status publishing (when sh.l is ON)
   useEffect(() => {
@@ -842,65 +902,80 @@ export default function App() {
       return;
     }
 
-    const pushLiveToGroups = () => {
-      if (!groupBudgetRef.current || !authUserRef.current) return;
-      const curState = stateRef.current;
-      const curToday = logicalKey(new Date(), curState.set.dayResetHour ?? 0);
-      for (const g of curState.groupsConfig?.joined || []) {
-        if (!g.sh.l || g.paused) continue;
-        void publishMyEntryToGroup({
-          groupId: g.groupId,
-          state: curState,
-          todayKey: curToday,
-          joinedAt: g.joinedAt,
-          sh: g.sh,
-          paused: g.paused,
-          live: liveStatusRef.current,
-          budget: groupBudgetRef.current,
-        }).catch(() => {});
-      }
-    };
+    let cancelled = false;
+    let refreshIv: ReturnType<typeof setInterval> | null = null;
+    let pauseClearTimer: ReturnType<typeof setTimeout> | null = null;
 
-    const t = state.activeTimer;
-    if (t && t.status === 'running' && t.phase !== 'break') {
-      const now = Date.now();
-      liveStatusRef.current = {
-        since: t.startTs,
-        until: now + GROUP_LIVE_DURATION_MS,
+    void Promise.all([getGroupsMod(), ensureGroupBudget()]).then(([gm, budget]) => {
+      if (cancelled) return;
+      const pushLiveToGroups = () => {
+        if (!authUserRef.current) return;
+        const curState = stateRef.current;
+        const curToday = logicalKey(new Date(), curState.set.dayResetHour ?? 0);
+        for (const g of curState.groupsConfig?.joined || []) {
+          if (!g.sh.l || g.paused) continue;
+          void gm
+            .publishMyEntryToGroup({
+              groupId: g.groupId,
+              state: curState,
+              todayKey: curToday,
+              joinedAt: g.joinedAt,
+              sh: g.sh,
+              paused: g.paused,
+              live: liveStatusRef.current,
+              budget,
+            })
+            .catch(() => {});
+        }
       };
-      pushLiveToGroups();
 
-      const refreshIv = setInterval(() => {
-        const curTimer = stateRef.current.activeTimer;
-        if (curTimer && curTimer.status === 'running' && curTimer.phase !== 'break') {
-          liveStatusRef.current = {
-            since: curTimer.startTs,
-            until: Date.now() + GROUP_LIVE_DURATION_MS,
-          };
-          pushLiveToGroups();
-        }
-      }, GROUP_LIVE_REFRESH_MS);
+      const t = state.activeTimer;
+      if (t && t.status === 'running' && t.phase !== 'break') {
+        const now = Date.now();
+        liveStatusRef.current = {
+          since: t.startTs,
+          until: now + gm.GROUP_LIVE_DURATION_MS,
+        };
+        pushLiveToGroups();
 
-      return () => clearInterval(refreshIv);
-    }
+        refreshIv = setInterval(() => {
+          const curTimer = stateRef.current.activeTimer;
+          if (curTimer && curTimer.status === 'running' && curTimer.phase !== 'break') {
+            liveStatusRef.current = {
+              since: curTimer.startTs,
+              until: Date.now() + gm.GROUP_LIVE_DURATION_MS,
+            };
+            pushLiveToGroups();
+          }
+        }, gm.GROUP_LIVE_REFRESH_MS);
+        return;
+      }
 
-    if (t && t.status === 'paused' && t.phase !== 'break') {
-      const pauseClearTimer = setTimeout(() => {
-        if (liveStatusRef.current) {
-          liveStatusRef.current = null;
-          pushLiveToGroups();
-        }
-      }, GROUP_LIVE_PAUSE_CLEAR_MS);
-      return () => clearTimeout(pauseClearTimer);
-    }
+      if (t && t.status === 'paused' && t.phase !== 'break') {
+        pauseClearTimer = setTimeout(() => {
+          if (liveStatusRef.current) {
+            liveStatusRef.current = null;
+            pushLiveToGroups();
+          }
+        }, gm.GROUP_LIVE_PAUSE_CLEAR_MS);
+        return;
+      }
 
-    if (liveStatusRef.current) {
-      liveStatusRef.current = null;
-      pushLiveToGroups();
-    }
+      if (liveStatusRef.current) {
+        liveStatusRef.current = null;
+        pushLiveToGroups();
+      }
+    });
+
+    return () => {
+      cancelled = true;
+      if (refreshIv) clearInterval(refreshIv);
+      if (pauseClearTimer) clearTimeout(pauseClearTimer);
+    };
   }, [
     ready,
     authUser,
+    ensureGroupBudget,
     state.activeTimer?.status,
     state.activeTimer?.phase,
     state.activeTimer?.startTs,
@@ -2654,149 +2729,158 @@ export default function App() {
         )}
 
         {!isSettingsOpen && tab === 'focus' && (
-          <FocusView
-            state={state}
-            sel={sel}
-            todayKey={todayKey}
-            deskMode={deskMode}
-            onToggleDeskMode={() => setDeskMode((d) => !d)}
-            onOpenPiP={() => togglePiP()}
-            onSwitchTopic={(newSubId, newHeading, newChapId) => {
-              if (state.activeTimer) {
-                switchTopicMidSession(newSubId, newHeading, newChapId);
-              }
-            }}
-            onSetMode={(m) => {
-              updateAndSave((prev) => {
-                const targetMins =
-                  m === 'pomo'
-                    ? prev.set.pomoWork || 25
-                    : m === 'countdown'
-                      ? prev.set.countdownMins || 45
-                      : m === 'fullMock'
-                        ? prev.set.fullMockMins || 180
-                        : 0;
-                return {
-                  ...prev,
-                  set: {
-                    ...prev.set,
-                    defaultMode: m,
-                  },
-                  activeTimer: prev.activeTimer
-                    ? {
-                        ...prev.activeTimer,
-                        mode: m,
-                        targetMs: targetMins * 60000,
-                        chimeFired: false,
-                        mockSections:
-                          m === 'fullMock'
-                            ? prev.activeTimer.mockSections || []
-                            : undefined,
-                        sectionStartActiveMs:
-                          m === 'fullMock'
-                            ? prev.activeTimer.sectionStartActiveMs || 0
-                            : undefined,
-                      }
-                    : null,
-                };
-              });
-            }}
-            onStartTimer={(subjectId, heading, mode, customTargetMins, chapterId) =>
-              startTimer(subjectId, heading, mode, customTargetMins, chapterId)
-            }
-            onNextMockSection={handleNextMockSection}
-            onExtendTarget={extendTimerTarget}
-            onTogglePause={toggleTimerPause}
-            onTogglePomoPhase={togglePomoPhase}
-            onStopAndReflect={stopTimerAndReflect}
-            onOpenTimerConfig={() => setModal({ type: 'timerConfig' })}
-            onSetSoundscape={(mode: SoundscapeMode) => {
-              ensureAudioEngine();
-              updateAndSave((prev) => ({
-                ...prev,
-                set: { ...prev.set, soundscape: mode },
-              }));
-            }}
-            onSetSoundVolume={(vol: number) => {
-              setSoundscapeVolume(vol);
-              updateAndSave((prev) => ({
-                ...prev,
-                set: { ...prev.set, soundVol: vol },
-              }));
-            }}
-            onAddTodo={(text) => {
-              updateAndSave((prev) => ({
-                ...prev,
-                todos: [...(prev.todos || []), { id: uid('td'), text, done: false }],
-              }));
-            }}
-            onToggleTodo={(todoId) => {
-              updateAndSave((prev) => ({
-                ...prev,
-                todos: (prev.todos || []).map((td) =>
-                  td.id === todoId ? { ...td, done: !td.done } : td
-                ),
-              }));
-            }}
-            onDeleteTodo={(todoId) => {
-              updateAndSave((prev) => ({
-                ...prev,
-                todos: (prev.todos || []).filter((td) => td.id !== todoId),
-              }));
-            }}
-            onOpenManualSession={(defaultSubjectId, defaultChapterId) =>
-              setModal({ type: 'manualSession', defaultSubjectId, defaultChapterId })
-            }
-            onEditSession={(sesId) => setModal({ type: 'manualSession', id: sesId })}
-          />
-        )}
-
-        {!isSettingsOpen && tab === 'groups' && groupBudgetRef.current && (
           <Suspense fallback={lazyFallback}>
-            <GroupsView
+            <FocusView
               state={state}
+              sel={sel}
               todayKey={todayKey}
-              myUid={authUser?.uid || null}
-              isOnline={isOnline}
-              groupBudget={groupBudgetRef.current}
-              onSignIn={async () => {
-                try {
-                  await signInWithGoogleAccount();
-                } catch (err) {
-                  showToast(
-                    err instanceof Error ? err.message : 'Google sign-in could not start'
-                  );
+              deskMode={deskMode}
+              onToggleDeskMode={() => setDeskMode((d) => !d)}
+              onOpenPiP={() => togglePiP()}
+              onSwitchTopic={(newSubId, newHeading, newChapId) => {
+                if (state.activeTimer) {
+                  switchTopicMidSession(newSubId, newHeading, newChapId);
                 }
               }}
-              onOpenProfileModal={(reason) => {
-                setProfilePromptReason(reason);
-                setShowProfileModal(true);
+              onSetMode={(m) => {
+                updateAndSave((prev) => {
+                  const targetMins =
+                    m === 'pomo'
+                      ? prev.set.pomoWork || 25
+                      : m === 'countdown'
+                        ? prev.set.countdownMins || 45
+                        : m === 'fullMock'
+                          ? prev.set.fullMockMins || 180
+                          : 0;
+                  return {
+                    ...prev,
+                    set: {
+                      ...prev.set,
+                      defaultMode: m,
+                    },
+                    activeTimer: prev.activeTimer
+                      ? {
+                          ...prev.activeTimer,
+                          mode: m,
+                          targetMs: targetMins * 60000,
+                          chimeFired: false,
+                          mockSections:
+                            m === 'fullMock'
+                              ? prev.activeTimer.mockSections || []
+                              : undefined,
+                          sectionStartActiveMs:
+                            m === 'fullMock'
+                              ? prev.activeTimer.sectionStartActiveMs || 0
+                              : undefined,
+                        }
+                      : null,
+                  };
+                });
               }}
-              onUpdateGroupsConfig={(updater) => {
+              onStartTimer={(subjectId, heading, mode, customTargetMins, chapterId) =>
+                startTimer(subjectId, heading, mode, customTargetMins, chapterId)
+              }
+              onNextMockSection={handleNextMockSection}
+              onExtendTarget={extendTimerTarget}
+              onTogglePause={toggleTimerPause}
+              onTogglePomoPhase={togglePomoPhase}
+              onStopAndReflect={stopTimerAndReflect}
+              onOpenTimerConfig={() => setModal({ type: 'timerConfig' })}
+              onSetSoundscape={(mode: SoundscapeMode) => {
+                ensureAudioEngine();
                 updateAndSave((prev) => ({
                   ...prev,
-                  groupsConfig: updater(
-                    prev.groupsConfig || { consentAccepted: false, joined: [] }
+                  set: { ...prev.set, soundscape: mode },
+                }));
+              }}
+              onSetSoundVolume={(vol: number) => {
+                setSoundscapeVolume(vol);
+                updateAndSave((prev) => ({
+                  ...prev,
+                  set: { ...prev.set, soundVol: vol },
+                }));
+              }}
+              onAddTodo={(text) => {
+                updateAndSave((prev) => ({
+                  ...prev,
+                  todos: [...(prev.todos || []), { id: uid('td'), text, done: false }],
+                }));
+              }}
+              onToggleTodo={(todoId) => {
+                updateAndSave((prev) => ({
+                  ...prev,
+                  todos: (prev.todos || []).map((td) =>
+                    td.id === todoId ? { ...td, done: !td.done } : td
                   ),
                 }));
               }}
-              onRecordWeekHistory={(groupId, weekKey, standing) => {
+              onDeleteTodo={(todoId) => {
                 updateAndSave((prev) => ({
                   ...prev,
-                  groupHistory: recordWeekStandingInHistory(
-                    prev.groupHistory || {},
-                    groupId,
-                    weekKey,
-                    standing
-                  ),
+                  todos: (prev.todos || []).filter((td) => td.id !== todoId),
                 }));
               }}
-              onGoToFocus={() => {
-                setTab('focus');
-                window.scrollTo(0, 0);
-              }}
-              showToast={showToast}
+              onOpenManualSession={(defaultSubjectId, defaultChapterId) =>
+                setModal({ type: 'manualSession', defaultSubjectId, defaultChapterId })
+              }
+              onEditSession={(sesId) => setModal({ type: 'manualSession', id: sesId })}
             />
+          </Suspense>
+        )}
+
+        {!isSettingsOpen && tab === 'groups' && (
+          <Suspense fallback={lazyFallback}>
+            {groupBudgetReady && groupBudgetRef.current ? (
+              <GroupsView
+                state={state}
+                todayKey={todayKey}
+                myUid={authUser?.uid || null}
+                isOnline={isOnline}
+                groupBudget={groupBudgetRef.current}
+                onSignIn={async () => {
+                  try {
+                    const cs = await getCloudSyncMod();
+                    await cs.signInWithGoogleAccount();
+                  } catch (err) {
+                    showToast(
+                      err instanceof Error ? err.message : 'Google sign-in could not start'
+                    );
+                  }
+                }}
+                onOpenProfileModal={(reason) => {
+                  setProfilePromptReason(reason);
+                  setShowProfileModal(true);
+                }}
+                onUpdateGroupsConfig={(updater) => {
+                  updateAndSave((prev) => ({
+                    ...prev,
+                    groupsConfig: updater(
+                      prev.groupsConfig || { consentAccepted: false, joined: [] }
+                    ),
+                  }));
+                }}
+                onRecordWeekHistory={(groupId, weekKey, standing) => {
+                  if (!groupsCache) return;
+                  const recordFn = groupsCache.recordWeekStandingInHistory;
+                  updateAndSave((prev) => ({
+                    ...prev,
+                    groupHistory: recordFn(
+                      prev.groupHistory || {},
+                      groupId,
+                      weekKey,
+                      standing
+                    ),
+                  }));
+                }}
+                onGoToFocus={() => {
+                  setTab('focus');
+                  window.scrollTo(0, 0);
+                }}
+                showToast={showToast}
+              />
+            ) : (
+              lazyFallback
+            )}
           </Suspense>
         )}
 
@@ -2834,6 +2918,7 @@ export default function App() {
               syncStatus={syncStatus}
               syncErrorMsg={syncErrorMsg}
               lastSyncedAt={lastSyncedAt ?? state.syncMeta?.lastSyncedAt}
+              dailyWriteCap={cloudSyncCache?.DAILY_WRITE_CAP ?? 150}
               syncWritesToday={syncWritesToday}
               onNewDDay={() => setModal({ type: 'dday' })}
               onEditDDay={(id) => setModal({ type: 'dday', id })}
@@ -2843,7 +2928,8 @@ export default function App() {
             }}
             onSignInGoogle={async () => {
               try {
-                await signInWithGoogleAccount();
+                const cs = await getCloudSyncMod();
+                await cs.signInWithGoogleAccount();
               } catch (err) {
                 showToast(
                   err instanceof Error ? err.message : 'Google sign-in could not start'
@@ -2851,7 +2937,8 @@ export default function App() {
               }
             }}
             onSignOutGoogle={async () => {
-              await signOutGoogleAccount();
+              const cs = await getCloudSyncMod();
+              await cs.signOutGoogleAccount();
               showToast('Signed out of Cloud Sync');
             }}
             onSyncNow={async () => {
@@ -2870,11 +2957,12 @@ export default function App() {
               if (!authUser) return;
               try {
                 setSyncStatus('syncing');
-                await cleanupUserGroupsOnCloudDelete(
+                const [cs, gm] = await Promise.all([getCloudSyncMod(), getGroupsMod()]);
+                await gm.cleanupUserGroupsOnCloudDelete(
                   stateRef.current,
                   groupBudgetRef.current || undefined
                 );
-                await deleteAllUserCloudData(authUser.uid);
+                await cs.deleteAllUserCloudData(authUser.uid);
                 syncControllerRef.current?.resetOutbox();
                 const prev = stateRef.current;
                 const cleanedState: PulseHabitState = {
@@ -2892,7 +2980,7 @@ export default function App() {
                 setState(cleanedState);
                 persistState(cleanedState);
                 setLastSyncedAt(undefined);
-                setSyncWritesToday(getSyncTodayWrites());
+                setSyncWritesToday(cs.getSyncTodayWrites());
                 setSyncStatus('synced');
                 showToast('Deleted all your cloud data and study group entries');
               } catch (err) {
@@ -3406,28 +3494,30 @@ export default function App() {
       />
 
       {showProfileModal && (
-        <ProfileModal
-          profile={state.profile || { nick: '', emoji: state.set.avatarEmoji || '🩺' }}
-          promptReason={profilePromptReason}
-          onClose={() => {
-            setShowProfileModal(false);
-            setProfilePromptReason(undefined);
-          }}
-          onSave={(nextProfile: UserProfile) => {
-            updateAndSave((prev) => ({
-              ...prev,
-              profile: nextProfile,
-              set: {
-                ...prev.set,
-                avatarEmoji: nextProfile.emoji,
-                updatedAt: nextProfile.updatedAt || Date.now(),
-              },
-            }));
-            setShowProfileModal(false);
-            setProfilePromptReason(undefined);
-            showToast(`Saved profile: ${nextProfile.emoji} ${nextProfile.nick}`);
-          }}
-        />
+        <Suspense fallback={null}>
+          <ProfileModal
+            profile={state.profile || { nick: '', emoji: state.set.avatarEmoji || '🩺' }}
+            promptReason={profilePromptReason}
+            onClose={() => {
+              setShowProfileModal(false);
+              setProfilePromptReason(undefined);
+            }}
+            onSave={(nextProfile: UserProfile) => {
+              updateAndSave((prev) => ({
+                ...prev,
+                profile: nextProfile,
+                set: {
+                  ...prev.set,
+                  avatarEmoji: nextProfile.emoji,
+                  updatedAt: nextProfile.updatedAt || Date.now(),
+                },
+              }));
+              setShowProfileModal(false);
+              setProfilePromptReason(undefined);
+              showToast(`Saved profile: ${nextProfile.emoji} ${nextProfile.nick}`);
+            }}
+          />
+        </Suspense>
       )}
 
       {/* Lightweight SVG Perfect Day Celebration Overlay */}

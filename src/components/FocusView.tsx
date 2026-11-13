@@ -1,4 +1,4 @@
-import React, { useEffect, useMemo, useState } from 'react';
+import React, { Suspense, useEffect, useMemo, useState } from 'react';
 import {
   Play,
   Pause,
@@ -20,16 +20,6 @@ import {
   BookOpen,
   ListChecks,
 } from 'lucide-react';
-import {
-  ResponsiveContainer,
-  BarChart,
-  Bar,
-  XAxis,
-  YAxis,
-  ReferenceLine,
-  Tooltip,
-  Cell,
-} from 'recharts';
 import type {
   ActiveTimerMode,
   PulseHabitState,
@@ -49,7 +39,6 @@ import {
   getTimerMetrics,
   getTodaySubjectMs,
 } from '../utils/studyLogic';
-import { CHART_THEME } from '../utils/uiHelpers';
 import {
   Button,
   Card,
@@ -57,8 +46,13 @@ import {
   Segmented,
   Select,
   Meter,
+  WindowedList,
 } from './ui';
 import { FocusOrbitScene } from './three/FocusOrbitScene';
+
+const FocusSessionChart = React.lazy(() =>
+  import('./FocusSessionChart').then((m) => ({ default: m.FocusSessionChart }))
+);
 
 export interface FocusViewProps {
   state: PulseHabitState;
@@ -150,6 +144,7 @@ export const FocusView: React.FC<FocusViewProps> = ({
   const [headingInput, setHeadingInput] = useState<string>(t?.heading || '');
   const [newTodoText, setNewTodoText] = useState<string>('');
   const [quoteOffset, setQuoteOffset] = useState<number>(0);
+  const [showAllTodaySessions, setShowAllTodaySessions] = useState<boolean>(false);
 
   // Sync local inputs when activeTimer changes
   useEffect(() => {
@@ -790,47 +785,20 @@ export const FocusView: React.FC<FocusViewProps> = ({
             </span>
           </div>
           <div style={{ width: '100%', height: 48 }}>
-            <ResponsiveContainer width="100%" height="100%">
-              <BarChart
+            <Suspense fallback={<div style={{ width: '100%', height: 48 }} />}>
+              <FocusSessionChart
                 data={sessionProgressData}
-                layout="vertical"
-                margin={{ top: 4, right: 10, left: 4, bottom: 4 }}
-              >
-                <XAxis type="number" domain={[0, chartDomainMax]} hide />
-                <YAxis type="category" dataKey="name" hide />
-                <Tooltip
-                  cursor={{ fill: 'transparent' }}
-                  contentStyle={CHART_THEME.tooltipStyle}
-                  formatter={(value) => [`${Number(value ?? 0)} min`, 'Elapsed']}
-                  labelFormatter={() => `Target: ${targetMins} min`}
-                />
-                <Bar
-                  dataKey="minutes"
-                  background={{ fill: 'var(--sf-3)', radius: 6 }}
-                  radius={[6, 6, 6, 6]}
-                  barSize={14}
-                  isAnimationActive={false}
-                >
-                  <Cell
-                    fill={
-                      m?.phase === 'break'
-                        ? 'var(--info)'
-                        : m && m.overtimeMs > 0
-                          ? 'var(--ok)'
-                          : curSubject.color || 'var(--ac)'
-                    }
-                  />
-                </Bar>
-                {targetMins > 0 && (
-                  <ReferenceLine
-                    x={targetMins}
-                    stroke="var(--ok)"
-                    strokeWidth={2}
-                    strokeDasharray="3 3"
-                  />
-                )}
-              </BarChart>
-            </ResponsiveContainer>
+                chartDomainMax={chartDomainMax}
+                targetMins={targetMins}
+                fillColor={
+                  m?.phase === 'break'
+                    ? 'var(--info)'
+                    : m && m.overtimeMs > 0
+                      ? 'var(--ok)'
+                      : curSubject.color || 'var(--ac)'
+                }
+              />
+            </Suspense>
           </div>
         </div>
 
@@ -1157,6 +1125,7 @@ export const FocusView: React.FC<FocusViewProps> = ({
         >
           <input
             type="text"
+            aria-label="New session checklist micro-goal"
             placeholder="Add micro-goal (e.g., 30 rotational mechanics MCQs)..."
             value={newTodoText}
             onChange={(e) => setNewTodoText(e.target.value)}
@@ -1273,70 +1242,92 @@ export const FocusView: React.FC<FocusViewProps> = ({
           </div>
         ) : (
           <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
-            {todaySessions.slice(0, 10).map((ses: StudySession) => {
-              const sSub = getSubject(state, ses.subjectId);
-              const heading = getSessionHeading(state, ses);
-              return (
-                <div
-                  key={ses.id}
-                  className="split"
-                  style={{
-                    background: 'var(--sf-2)',
-                    padding: '10px 12px',
-                    borderRadius: 12,
-                    borderLeft: `3px solid ${sSub.color}`,
-                    gap: 10,
-                  }}
-                >
-                  <div style={{ minWidth: 0, flex: 1 }}>
-                    <div className="row" style={{ gap: 6, flexWrap: 'wrap' }}>
-                      <b
+            <WindowedList
+              items={
+                showAllTodaySessions || todaySessions.length <= 10
+                  ? todaySessions
+                  : todaySessions.slice(0, 10)
+              }
+              threshold={100}
+              estimatedRowHeight={72}
+              itemLabel="sessions"
+              style={{ display: 'flex', flexDirection: 'column', gap: 8 }}
+              getKey={(ses: StudySession) => ses.id}
+              renderItem={(ses: StudySession) => {
+                const sSub = getSubject(state, ses.subjectId);
+                const heading = getSessionHeading(state, ses);
+                return (
+                  <div
+                    className="split"
+                    style={{
+                      background: 'var(--sf-2)',
+                      padding: '10px 12px',
+                      borderRadius: 12,
+                      borderLeft: `3px solid ${sSub.color}`,
+                      gap: 10,
+                    }}
+                  >
+                    <div style={{ minWidth: 0, flex: 1 }}>
+                      <div className="row" style={{ gap: 6, flexWrap: 'wrap' }}>
+                        <b
+                          style={{
+                            fontSize: 14,
+                            whiteSpace: 'nowrap',
+                            overflow: 'hidden',
+                            textOverflow: 'ellipsis',
+                          }}
+                        >
+                          {sSub.e} {heading}
+                        </b>
+                        <span
+                          className="pill"
+                          style={{
+                            fontSize: 12,
+                            padding: '1px 8px',
+                            background: 'var(--sf-3)',
+                            color: 'var(--tx)',
+                            fontVariantNumeric: 'tabular-nums',
+                          }}
+                        >
+                          {fmtHMShort(ses.activeMs)}
+                        </span>
+                      </div>
+                      <small
                         style={{
-                          fontSize: 14,
-                          whiteSpace: 'nowrap',
-                          overflow: 'hidden',
-                          textOverflow: 'ellipsis',
-                        }}
-                      >
-                        {sSub.e} {heading}
-                      </b>
-                      <span
-                        className="pill"
-                        style={{
+                          display: 'block',
+                          marginTop: 3,
                           fontSize: 12,
-                          padding: '1px 8px',
-                          background: 'var(--sf-3)',
-                          color: 'var(--tx)',
                           fontVariantNumeric: 'tabular-nums',
                         }}
                       >
-                        {fmtHMShort(ses.activeMs)}
-                      </span>
+                        {sSub.name} · {fmtClockTime(ses.startTs)} –{' '}
+                        {fmtClockTime(ses.endTs)} · {ses.purity || 100}% purity
+                        {ses.note ? ` · "${ses.note}"` : ''}
+                      </small>
                     </div>
-                    <small
-                      style={{
-                        display: 'block',
-                        marginTop: 3,
-                        fontSize: 12,
-                        fontVariantNumeric: 'tabular-nums',
-                      }}
+                    <Button
+                      variant="secondary"
+                      size="sm"
+                      icon={<Edit3 size={13} strokeWidth={1.75} />}
+                      onClick={() => onEditSession(ses.id)}
                     >
-                      {sSub.name} · {fmtClockTime(ses.startTs)} –{' '}
-                      {fmtClockTime(ses.endTs)} · {ses.purity || 100}% purity
-                      {ses.note ? ` · "${ses.note}"` : ''}
-                    </small>
+                      Edit
+                    </Button>
                   </div>
-                  <Button
-                    variant="secondary"
-                    size="sm"
-                    icon={<Edit3 size={13} strokeWidth={1.75} />}
-                    onClick={() => onEditSession(ses.id)}
-                  >
-                    Edit
-                  </Button>
-                </div>
-              );
-            })}
+                );
+              }}
+            />
+            {todaySessions.length > 10 && (
+              <Button
+                variant="ghost"
+                size="sm"
+                onClick={() => setShowAllTodaySessions((v) => !v)}
+              >
+                {showAllTodaySessions
+                  ? 'Show recent 10 sessions'
+                  : `Show all ${todaySessions.length} sessions`}
+              </Button>
+            )}
           </div>
         )}
       </Card>

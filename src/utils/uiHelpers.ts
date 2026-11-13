@@ -334,3 +334,77 @@ export function evaluateUi3dEligibility(probe: Ui3dEnvironmentProbe): Ui3dResolu
   };
 }
 
+export interface WindowRangeResult {
+  startIndex: number;
+  endIndex: number;
+  topSpacerPx: number;
+  bottomSpacerPx: number;
+}
+
+/**
+ * Pure sliding-window index and spacer calculator for lists exceeding 100 rows.
+ */
+export function computeWindowRange(params: {
+  totalCount: number;
+  containerTopPx: number;
+  viewportHeightPx: number;
+  estimatedRowHeightPx: number;
+  measuredHeights?: ReadonlyMap<number, number>;
+  overscan?: number;
+}): WindowRangeResult {
+  const {
+    totalCount,
+    containerTopPx,
+    viewportHeightPx,
+    estimatedRowHeightPx,
+    measuredHeights,
+    overscan = 16,
+  } = params;
+
+  if (totalCount <= 0) {
+    return { startIndex: 0, endIndex: -1, topSpacerPx: 0, bottomSpacerPx: 0 };
+  }
+
+  const rowH = Math.max(24, estimatedRowHeightPx);
+  const getH = (idx: number) => measuredHeights?.get(idx) ?? rowH;
+
+  const visibleTopOffset = Math.max(0, -containerTopPx);
+  const visibleBottomOffset = Math.max(0, viewportHeightPx - containerTopPx);
+
+  let acc = 0;
+  let firstVisible = 0;
+  let lastVisible = totalCount - 1;
+  let foundFirst = false;
+
+  for (let i = 0; i < totalCount; i++) {
+    const h = getH(i);
+    if (!foundFirst && acc + h >= visibleTopOffset) {
+      firstVisible = i;
+      foundFirst = true;
+    }
+    if (acc <= visibleBottomOffset) {
+      lastVisible = i;
+    }
+    acc += h;
+  }
+
+  const startIndex = Math.max(0, firstVisible - overscan);
+  const endIndex = Math.min(totalCount - 1, Math.max(startIndex, lastVisible + overscan));
+
+  let topSpacerPx = 0;
+  for (let i = 0; i < startIndex; i++) {
+    topSpacerPx += getH(i);
+  }
+  let bottomSpacerPx = 0;
+  for (let i = endIndex + 1; i < totalCount; i++) {
+    bottomSpacerPx += getH(i);
+  }
+
+  return {
+    startIndex,
+    endIndex,
+    topSpacerPx,
+    bottomSpacerPx,
+  };
+}
+

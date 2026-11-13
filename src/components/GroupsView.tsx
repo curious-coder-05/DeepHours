@@ -571,13 +571,13 @@ export const Leaderboard: React.FC<LeaderboardProps> = ({
                           }
                           aria-expanded={isExpanded}
                           title="Click to view 7-day study consistency chart"
-                          className="inline-flex items-center gap-1 text-left text-[14px] font-semibold text-[var(--tx)] hover:text-[var(--ac)]"
+                          className="inline-flex items-center gap-1 text-left text-[14px] font-semibold text-[var(--tx)] hover:text-[var(--ac-ink)]"
                         >
                           <span className="truncate">
                             {row.entry.nick}
                             {isMe ? ' (You)' : ''}
                           </span>
-                          <span className="text-[12px] text-[var(--ac)]" aria-hidden="true">
+                          <span className="text-[12px] text-[var(--ac-ink)]" aria-hidden="true">
                             {isExpanded ? '▴' : '▾'}
                           </span>
                         </button>
@@ -601,7 +601,7 @@ export const Leaderboard: React.FC<LeaderboardProps> = ({
                             onMouseLeave={() => {
                               if (hoveredLiveKey === badgeHoverKey) setHoveredLiveKey(null);
                             }}
-                            className="inline-flex items-center gap-1.5 rounded-md bg-[var(--sf-2)] px-2 py-0.5 text-[12px] font-medium text-[var(--ok)]"
+                            className="inline-flex items-center gap-1.5 rounded-md bg-[var(--sf-2)] px-2 py-0.5 text-[12px] font-medium text-[var(--ok-ink)]"
                           >
                             <span className="h-1.5 w-1.5 rounded-full bg-[var(--ok)]" />
                             Studying now
@@ -1746,7 +1746,7 @@ export const GroupsView: React.FC<GroupsViewProps> = ({
       {/* Pull-to-refresh visual indicator */}
       {pullOffsetY > 0 && (
         <div
-          className="flex items-center justify-center gap-2 rounded-xl border border-[var(--line)] bg-[var(--sf-1)] py-2 text-[12.5px] font-medium text-[var(--ac)] transition-all"
+          className="flex items-center justify-center gap-2 rounded-xl border border-[var(--line)] bg-[var(--sf-1)] py-2 text-[12.5px] font-medium text-[var(--ac-ink)] transition-all"
           style={{ height: `${Math.max(36, pullOffsetY)}px` }}
         >
           <RefreshCw
@@ -1874,7 +1874,7 @@ export const GroupsView: React.FC<GroupsViewProps> = ({
               <strong className="text-[var(--tx)]">
                 Today&apos;s XP v2 breakdown ({todayKey})
               </strong>
-              <span className="tnum font-semibold text-[var(--ok)]">
+              <span className="tnum font-semibold text-[var(--ok-ink)]">
                 Total: +{myPersonalStats.todayBreakdown.total} XP
               </span>
             </div>
@@ -1934,7 +1934,7 @@ export const GroupsView: React.FC<GroupsViewProps> = ({
                   <strong
                     className="tnum"
                     style={{
-                      color: item.val > 0 ? 'var(--ok)' : 'var(--tx-2)',
+                      color: item.val > 0 ? 'var(--ok-ink)' : 'var(--tx-2)',
                     }}
                   >
                     +{item.val}
@@ -1962,8 +1962,8 @@ export const GroupsView: React.FC<GroupsViewProps> = ({
       {!myUid ? (
         <Card className="space-y-4 p-6">
           <div className="flex items-start gap-3">
-            <div className="flex h-11 w-11 shrink-0 items-center justify-center rounded-xl border border-[var(--ac-line)] bg-[var(--ac-soft)] text-[var(--ac)]">
-              <Users size={22} />
+            <div className="flex h-11 w-11 shrink-0 items-center justify-center rounded-xl border border-[var(--ac-line)] bg-[var(--ac-soft)] text-[var(--ac-ink)]">
+              <Users size={22} aria-hidden="true" />
             </div>
             <div>
               <h3 className="text-[17px] font-semibold text-[var(--tx)]">
@@ -1980,7 +1980,7 @@ export const GroupsView: React.FC<GroupsViewProps> = ({
           <div className="grid grid-cols-1 gap-2.5 sm:grid-cols-3">
             <div className="rounded-xl border border-[var(--line)] bg-[var(--sf-2)] p-3">
               <div className="flex items-center gap-2 text-[13px] font-semibold text-[var(--tx)]">
-                <ShieldCheck size={16} className="text-[var(--ok)]" />
+                <ShieldCheck size={16} className="text-[var(--ok-ink)]" aria-hidden="true" />
                 Anonymous identity
               </div>
               <p className="mt-1 text-[12px] text-[var(--tx-2)]">
@@ -1990,7 +1990,7 @@ export const GroupsView: React.FC<GroupsViewProps> = ({
             </div>
             <div className="rounded-xl border border-[var(--line)] bg-[var(--sf-2)] p-3">
               <div className="flex items-center gap-2 text-[13px] font-semibold text-[var(--tx)]">
-                <Timer size={16} className="text-[var(--ac)]" />
+                <Timer size={16} className="text-[var(--ac-ink)]" aria-hidden="true" />
                 Timer-verified hours
               </div>
               <p className="mt-1 text-[12px] text-[var(--tx-2)]">
@@ -1999,7 +1999,7 @@ export const GroupsView: React.FC<GroupsViewProps> = ({
             </div>
             <div className="rounded-xl border border-[var(--line)] bg-[var(--sf-2)] p-3">
               <div className="flex items-center gap-2 text-[13px] font-semibold text-[var(--tx)]">
-                <Lock size={16} className="text-[var(--info)]" />
+                <Lock size={16} className="text-[var(--info-ink)]" aria-hidden="true" />
                 Granular sharing
               </div>
               <p className="mt-1 text-[12px] text-[var(--tx-2)]">
@@ -2163,7 +2163,7 @@ export const GroupsView: React.FC<GroupsViewProps> = ({
                 </div>
               </Field>
               {actionError && (
-                <p className="text-[12.5px] text-[var(--bad)]">{actionError}</p>
+                <p className="text-[12.5px] text-[var(--err-ink)]">{actionError}</p>
               )}
               <div className="flex justify-end gap-2">
                 <Button
@@ -2200,7 +2200,7 @@ export const GroupsView: React.FC<GroupsViewProps> = ({
                 />
               </Field>
               {actionError && (
-                <p className="text-[12.5px] text-[var(--bad)]">{actionError}</p>
+                <p className="text-[12.5px] text-[var(--err-ink)]">{actionError}</p>
               )}
               <div className="flex justify-end gap-2">
                 <Button
@@ -2349,7 +2349,7 @@ export const GroupsView: React.FC<GroupsViewProps> = ({
                 {/* Studying Now Strip */}
                 {studyingNowList.length > 0 && (
                   <div className="rounded-xl border border-[var(--line)] bg-[var(--sf-2)] px-3.5 py-2.5 text-[13px]">
-                    <strong className="text-[var(--ok)]">
+                    <strong className="text-[var(--ok-ink)]">
                       Studying right now ({studyingNowList.length}):
                     </strong>{' '}
                     {studyingNowList.map((m, idx) => (
@@ -2391,8 +2391,8 @@ export const GroupsView: React.FC<GroupsViewProps> = ({
                           style={{
                             color:
                               paceComparison.diffTodayMins >= 0
-                                ? 'var(--ok)'
-                                : 'var(--warn)',
+                                ? 'var(--ok-ink)'
+                                : 'var(--warn-ink)',
                           }}
                         >
                           {paceComparison.diffTodayMins >= 0
@@ -2404,8 +2404,8 @@ export const GroupsView: React.FC<GroupsViewProps> = ({
                           style={{
                             color:
                               paceComparison.diffWeekMins >= 0
-                                ? 'var(--ok)'
-                                : 'var(--warn)',
+                                ? 'var(--ok-ink)'
+                                : 'var(--warn-ink)',
                           }}
                         >
                           {paceComparison.diffWeekMins >= 0
@@ -2441,7 +2441,7 @@ export const GroupsView: React.FC<GroupsViewProps> = ({
                         / {formatMinutesAsHoursMins(weeklyGoalProg.targetMinutes)}
                       </span>
                       <div className="flex items-center gap-2">
-                        <strong className="tnum text-[var(--ac)]">
+                        <strong className="tnum text-[var(--ac-ink)]">
                           {weeklyGoalProg.pct}%
                         </strong>
                         {weeklyMemberContributions.length > 0 && (
@@ -2624,7 +2624,7 @@ export const GroupsView: React.FC<GroupsViewProps> = ({
                                   : 'min-h-[106px] border-[var(--line)] bg-[var(--sf-2)]'
                             }`}
                           >
-                            <span className="tnum text-[12px] font-bold text-[var(--ac)]">
+                            <span className="tnum text-[12px] font-bold text-[var(--ac-ink)]">
                               #{targetRank}
                             </span>
                             <span className="text-[22px]">{pRow.entry.emoji}</span>
@@ -2632,7 +2632,7 @@ export const GroupsView: React.FC<GroupsViewProps> = ({
                               {pRow.entry.nick}
                               {isMe ? ' (You)' : ''}
                             </strong>
-                            <span className="tnum text-[12.5px] font-semibold text-[var(--ac)]">
+                            <span className="tnum text-[12.5px] font-semibold text-[var(--ac-ink)]">
                               {pRow.displayLabel}
                             </span>
                           </button>
@@ -2768,49 +2768,49 @@ export const GroupsView: React.FC<GroupsViewProps> = ({
                                         <span>{memberTimeBadge.label}</span>
                                       </span>
                                     )}
-                                    {isLiveNow && (
-                                      <span
-                                        title={liveTooltipText}
-                                        className="inline-flex items-center gap-1.5 rounded-md bg-[var(--sf-2)] px-2 py-0.5 text-[12px] font-medium text-[var(--ok)]"
-                                      >
-                                        <span className="h-1.5 w-1.5 rounded-full bg-[var(--ok)]" />
-                                        Studying now
+                                      {isLiveNow && (
+                                        <span
+                                          title={liveTooltipText}
+                                          className="inline-flex items-center gap-1.5 rounded-md bg-[var(--sf-2)] px-2 py-0.5 text-[12px] font-medium text-[var(--ok-ink)]"
+                                        >
+                                          <span className="h-1.5 w-1.5 rounded-full bg-[var(--ok)]" />
+                                          Studying now
+                                        </span>
+                                      )}
+                                      {isPaceTarget && (
+                                        <span className="rounded-md bg-[var(--sf-2)] px-2 py-0.5 text-[12px] font-medium text-[var(--ac-ink)]">
+                                          Target
+                                        </span>
+                                      )}
+                                    </div>
+                                    <div className="text-[12px] text-[var(--tx-2)]">
+                                      Updated{' '}
+                                      {formatRelativeAgo(row.entry.updatedAt, nowTick)}
+                                      {row.subLabel ? ` · ${row.subLabel}` : ''} ·{' '}
+                                      <span className="text-[var(--ac-ink)]">
+                                        {isExpanded ? 'Hide ▴' : 'Compare ▾'}
                                       </span>
-                                    )}
-                                    {isPaceTarget && (
-                                      <span className="rounded-md bg-[var(--sf-2)] px-2 py-0.5 text-[12px] font-medium text-[var(--ac)]">
-                                        Target
-                                      </span>
-                                    )}
-                                  </div>
-                                  <div className="text-[12px] text-[var(--tx-2)]">
-                                    Updated{' '}
-                                    {formatRelativeAgo(row.entry.updatedAt, nowTick)}
-                                    {row.subLabel ? ` · ${row.subLabel}` : ''} ·{' '}
-                                    <span className="text-[var(--ac)]">
-                                      {isExpanded ? 'Hide ▴' : 'Compare ▾'}
-                                    </span>
+                                    </div>
                                   </div>
                                 </div>
-                              </div>
 
-                              <div
-                                className="flex items-center gap-2"
-                                onClick={(e) => e.stopPropagation()}
-                              >
-                                <div className="text-right">
-                                  <div className="flex items-center justify-end gap-1.5">
-                                    {(rowRankTrend.direction === 'up' ||
-                                      rowRankTrend.direction === 'down') && (
-                                      <span
-                                        className="tnum rounded bg-[var(--sf-2)] px-1.5 py-0.5 text-[12px] font-semibold"
-                                        style={{
-                                          color:
-                                            rowRankTrend.direction === 'up'
-                                              ? 'var(--ok)'
-                                              : 'var(--bad)',
-                                        }}
-                                      >
+                                <div
+                                  className="flex items-center gap-2"
+                                  onClick={(e) => e.stopPropagation()}
+                                >
+                                  <div className="text-right">
+                                    <div className="flex items-center justify-end gap-1.5">
+                                      {(rowRankTrend.direction === 'up' ||
+                                        rowRankTrend.direction === 'down') && (
+                                        <span
+                                          className="tnum rounded bg-[var(--sf-2)] px-1.5 py-0.5 text-[12px] font-semibold"
+                                          style={{
+                                            color:
+                                              rowRankTrend.direction === 'up'
+                                                ? 'var(--ok-ink)'
+                                                : 'var(--err-ink)',
+                                          }}
+                                        >
                                         {rowRankTrend.direction === 'up' ? '▲' : '▼'}
                                         {rowRankTrend.delta > 1
                                           ? rowRankTrend.delta
@@ -3187,7 +3187,7 @@ export const GroupsView: React.FC<GroupsViewProps> = ({
                 <Card className="space-y-3">
                   <div className="split">
                     <div className="flex items-center gap-2">
-                      <Crown size={17} className="text-[var(--ac)]" />
+                      <Crown size={17} className="text-[var(--ac-ink)]" aria-hidden="true" />
                       <strong className="text-[14.5px] text-[var(--tx)]">
                         Group owner tools
                       </strong>
@@ -3304,7 +3304,7 @@ export const GroupsView: React.FC<GroupsViewProps> = ({
                       <div className="border-t border-[var(--line)] pt-3">
                         {confirmCloseGroupId === activeGroupId ? (
                           <div className="split flex-wrap gap-2">
-                            <span className="text-[12.5px] text-[var(--bad)]">
+                            <span className="text-[12.5px] text-[var(--err-ink)]">
                               Permanently delete this group for all members?
                             </span>
                             <div className="flex items-center gap-2">

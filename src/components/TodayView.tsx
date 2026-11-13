@@ -81,6 +81,7 @@ import {
   Select,
   SectionHeader,
   SwipeableRow,
+  WindowedList,
 } from './ui';
 
 export interface TodayViewProps {
@@ -988,6 +989,7 @@ export const TodayView: React.FC<TodayViewProps> = ({
                     )}
                     <input
                       type="text"
+                      aria-label="Session topic or goal"
                       placeholder="Session topic or goal (optional)"
                       value={quickHeading}
                       onChange={(e) => setQuickHeading(e.target.value)}
@@ -1280,6 +1282,7 @@ export const TodayView: React.FC<TodayViewProps> = ({
               <input
                 id="dailyTaskTitleInput"
                 type="text"
+                aria-label="New daily task title"
                 placeholder="Add a task for this day..."
                 value={newTaskTitle}
                 onChange={(e) => setNewTaskTitle(e.target.value)}
@@ -1310,8 +1313,14 @@ export const TodayView: React.FC<TodayViewProps> = ({
                 No tasks scheduled for this day yet.
               </div>
             ) : (
-              <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
-                {dayTasks.map((task: DailyTask) => {
+              <WindowedList
+                items={dayTasks}
+                threshold={100}
+                estimatedRowHeight={62}
+                itemLabel="tasks"
+                style={{ display: 'flex', flexDirection: 'column', gap: 6 }}
+                getKey={(task: DailyTask) => task.id}
+                renderItem={(task: DailyTask) => {
                   const sub = task.subjectId
                     ? state.subjects.find((s) => s.id === task.subjectId)
                     : undefined;
@@ -1382,6 +1391,7 @@ export const TodayView: React.FC<TodayViewProps> = ({
                             >
                               <input
                                 type="text"
+                                aria-label={`Edit task title for ${task.title}`}
                                 value={editingTaskTitle}
                                 onChange={(e) => setEditingTaskTitle(e.target.value)}
                                 autoFocus
@@ -1527,6 +1537,7 @@ export const TodayView: React.FC<TodayViewProps> = ({
                         <div className="row" style={{ gap: 6, marginTop: 8 }}>
                           <input
                             type="date"
+                            aria-label={`New date for task ${task.title}`}
                             defaultValue={task.dayKey}
                             onChange={(e) => {
                               if (/^\d{4}-\d{2}-\d{2}$/.test(e.target.value)) {
@@ -1548,8 +1559,8 @@ export const TodayView: React.FC<TodayViewProps> = ({
                       </div>
                     </SwipeableRow>
                   );
-                })}
-              </div>
+                }}
+              />
             )}
 
             {/* Unfinished from earlier days */}
@@ -1565,6 +1576,7 @@ export const TodayView: React.FC<TodayViewProps> = ({
                   <button
                     type="button"
                     className="s"
+                    aria-expanded={unfinishedExpanded}
                     style={{
                       background: 'transparent',
                       border: 'none',
@@ -1844,6 +1856,7 @@ export const TodayView: React.FC<TodayViewProps> = ({
                               <div className="row" style={{ gap: 6, marginTop: 8 }}>
                                 <input
                                   type="date"
+                                  aria-label={`Reschedule overdue revision for ${item.chapterName}`}
                                   value={rescheduleTarget.date}
                                   onChange={(e) =>
                                     setRescheduleTarget({
@@ -1969,6 +1982,7 @@ export const TodayView: React.FC<TodayViewProps> = ({
                               <div className="row" style={{ gap: 6, marginTop: 8 }}>
                                 <input
                                   type="date"
+                                  aria-label={`Reschedule revision for ${item.chapterName}`}
                                   value={rescheduleTarget.date}
                                   onChange={(e) =>
                                     setRescheduleTarget({
@@ -2095,6 +2109,7 @@ export const TodayView: React.FC<TodayViewProps> = ({
                     <button
                       type="button"
                       className="s"
+                      aria-expanded={showUnscheduled}
                       style={{
                         width: '100%',
                         display: 'flex',
@@ -2211,13 +2226,18 @@ export const TodayView: React.FC<TodayViewProps> = ({
                 No study sessions logged on this day yet.
               </div>
             ) : (
-              <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
-                {selectedDaySessions.map((ses: StudySession) => {
+              <WindowedList
+                items={selectedDaySessions}
+                threshold={100}
+                estimatedRowHeight={76}
+                itemLabel="sessions"
+                style={{ display: 'flex', flexDirection: 'column', gap: 8 }}
+                getKey={(ses: StudySession) => ses.id}
+                renderItem={(ses: StudySession) => {
                   const sub = getSubject(state, ses.subjectId);
                   const heading = getSessionHeading(state, ses);
                   return (
                     <div
-                      key={ses.id}
                       className="split"
                       style={{
                         background: 'var(--sf-2)',
@@ -2287,8 +2307,8 @@ export const TodayView: React.FC<TodayViewProps> = ({
                       </button>
                     </div>
                   );
-                })}
-              </div>
+                }}
+              />
             )}
           </Card>
 
@@ -2310,6 +2330,8 @@ export const TodayView: React.FC<TodayViewProps> = ({
                     <button
                       key={val}
                       type="button"
+                      aria-label={`Set study mood: ${label}`}
+                      aria-pressed={isSel}
                       onClick={() => onSetMood(val)}
                       style={{
                         flex: 1,
@@ -2426,6 +2448,8 @@ export const TodayView: React.FC<TodayViewProps> = ({
                       <button
                         key={lvl}
                         type="button"
+                        aria-label={`Set energy level ${lvl} of 5`}
+                        aria-pressed={isLit}
                         onClick={() => onUpdateWellbeing(sel, { energy: lvl })}
                         style={{
                           flex: 1,
@@ -2451,6 +2475,7 @@ export const TodayView: React.FC<TodayViewProps> = ({
             <textarea
               id="note"
               rows={3}
+              aria-label="Daily study reflection note"
               placeholder="Wins, distractions, or tomorrow's #1 priority..."
               value={state.notes[sel] || ''}
               onChange={(e) => onSetNote(e.target.value)}

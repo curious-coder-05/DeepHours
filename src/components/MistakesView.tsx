@@ -20,6 +20,7 @@ import { SectionHeader } from './ui/SectionHeader';
 import { Segmented } from './ui/Segmented';
 import { Select } from './ui/Select';
 import { Sheet } from './ui/Sheet';
+import { WindowedList } from './ui/WindowedList';
 
 interface MistakesViewProps {
   state: PulseHabitState;
@@ -219,7 +220,7 @@ export const MistakesView: React.FC<MistakesViewProps> = ({
                     >
                       <span>{wc.subjectEmoji}</span>
                       <span>{wc.chapterName}</span>
-                      <span className="text-[var(--bad)] font-semibold">{wc.count}</span>
+                      <span className="text-[var(--err-ink)] font-semibold">{wc.count}</span>
                     </span>
                   ))}
                 </div>
@@ -302,8 +303,14 @@ export const MistakesView: React.FC<MistakesViewProps> = ({
             />
           </div>
         ) : (
-          <div className="mt-2 divide-y divide-[var(--line)]">
-            {filteredMistakes.map((m) => {
+          <WindowedList
+            items={filteredMistakes}
+            threshold={100}
+            estimatedRowHeight={88}
+            itemLabel="mistakes"
+            className="mt-2 divide-y divide-[var(--line)]"
+            getKey={(m) => m.id}
+            renderItem={(m) => {
               const sub = getSubject(state, m.subjectId);
               const ch = m.chapterId
                 ? state.chapters.find((c) => c.id === m.chapterId)
@@ -313,7 +320,6 @@ export const MistakesView: React.FC<MistakesViewProps> = ({
 
               return (
                 <div
-                  key={m.id}
                   className={`py-3 transition-opacity ${m.resolved ? 'opacity-65' : ''}`}
                 >
                   <div className="flex flex-wrap items-start justify-between gap-2">
@@ -391,8 +397,8 @@ export const MistakesView: React.FC<MistakesViewProps> = ({
                   </div>
                 </div>
               );
-            })}
-          </div>
+            }}
+          />
         )}
       </Card>
 

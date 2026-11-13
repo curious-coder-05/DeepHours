@@ -12,6 +12,7 @@ import { SectionHeader } from './ui/SectionHeader';
 import { Segmented } from './ui/Segmented';
 import { Select } from './ui/Select';
 import { Sheet } from './ui/Sheet';
+import { WindowedList } from './ui/WindowedList';
 
 interface DoubtsViewProps {
   state: PulseHabitState;
@@ -181,15 +182,20 @@ export const DoubtsView: React.FC<DoubtsViewProps> = ({
             title="Saved doubts"
             subtitle={`${filteredDoubts.length} items`}
           />
-          <div className="mt-2 divide-y divide-[var(--line)]">
-            {filteredDoubts.map((d) => {
+          <WindowedList
+            items={filteredDoubts}
+            threshold={100}
+            estimatedRowHeight={76}
+            itemLabel="doubts"
+            className="mt-2 divide-y divide-[var(--line)]"
+            getKey={(d) => d.id}
+            renderItem={(d) => {
               const sub = getSubject(state, d.subjectId);
               const ch = d.chapterId
                 ? state.chapters.find((c) => c.id === d.chapterId)
                 : null;
               return (
                 <div
-                  key={d.id}
                   className={`flex flex-col gap-2 py-3 sm:flex-row sm:items-center sm:justify-between ${
                     d.resolved ? 'opacity-65' : ''
                   }`}
@@ -239,8 +245,8 @@ export const DoubtsView: React.FC<DoubtsViewProps> = ({
                   </div>
                 </div>
               );
-            })}
-          </div>
+            }}
+          />
         </Card>
       )}
 

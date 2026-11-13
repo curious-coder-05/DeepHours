@@ -90,7 +90,7 @@ export const SyllabusGalaxyScene: React.FC<SyllabusGalaxySceneProps> = ({
     <Card className="space-y-3">
       <div className="split flex-wrap gap-2">
         <div className="flex items-center gap-2">
-          <Sparkles size={17} className="text-[var(--ac)]" />
+          <Sparkles size={17} className="text-[var(--ac-ink)]" aria-hidden="true" />
           <div>
             <h3 className="text-[15px] font-semibold text-[var(--tx)]">
               Syllabus constellation

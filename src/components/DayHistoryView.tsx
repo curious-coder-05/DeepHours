@@ -48,6 +48,7 @@ import { IconButton } from './ui/IconButton';
 import { SectionHeader } from './ui/SectionHeader';
 import { Segmented } from './ui/Segmented';
 import { Stat } from './ui/Stat';
+import { WindowedList } from './ui/WindowedList';
 
 export interface DayHistoryViewProps {
   state: PulseHabitState;
@@ -384,7 +385,7 @@ export const DayHistoryView: React.FC<DayHistoryViewProps> = ({
       <Card>
         <div className="split flex-wrap gap-3">
           <div>
-            <span className="text-[12px] font-medium text-[var(--ac)]">
+            <span className="text-[12px] font-medium text-[var(--ac-ink)]">
               Daily activity history
             </span>
             <h3 className="text-[17px] font-semibold text-[var(--tx)]">
@@ -525,11 +526,11 @@ export const DayHistoryView: React.FC<DayHistoryViewProps> = ({
                     title={`${cell.dayKey}: Studied ${fmtHMShort(cell.studyMs)} · ${cell.doneCount}/${cell.totalCount} (${cell.pct}%)`}
                     className={`tnum flex min-h-[38px] flex-col items-center justify-center gap-0.5 rounded-lg border text-[12px] transition-colors ${
                       cell.isSelected
-                        ? 'border-[var(--ac)] bg-[var(--ac-soft)] font-bold text-[var(--ac)]'
+                        ? 'border-[var(--ac)] bg-[var(--ac-soft)] font-bold text-[var(--ac-ink)]'
                         : cell.isToday
                           ? 'border-[var(--ok)] bg-[var(--sf-1)] font-semibold text-[var(--tx)]'
                           : allDone && !cell.isFuture
-                            ? 'border-[var(--line)] bg-[var(--sf-1)] font-medium text-[var(--ok)]'
+                            ? 'border-[var(--line)] bg-[var(--sf-1)] font-medium text-[var(--ok-ink)]'
                             : hasActivity
                               ? 'border-[var(--line)] bg-[var(--sf-1)] text-[var(--tx)]'
                               : 'border-transparent bg-[var(--sf-1)] text-[var(--tx-2)]'
@@ -617,7 +618,7 @@ export const DayHistoryView: React.FC<DayHistoryViewProps> = ({
             title={`Did on ${selectedDayKey}`}
             subtitle="Completed habits, tasks, study sessions, chapters, revisions, and logs"
             action={
-              <span className="tnum rounded-md bg-[var(--sf-2)] px-2.5 py-1 text-[12px] font-medium text-[var(--ok)]">
+              <span className="tnum rounded-md bg-[var(--sf-2)] px-2.5 py-1 text-[12px] font-medium text-[var(--ok-ink)]">
                 {totalDidCount} completed
               </span>
             }
@@ -643,7 +644,7 @@ export const DayHistoryView: React.FC<DayHistoryViewProps> = ({
                         className="flex items-center justify-between gap-2 py-2.5 text-[13.5px]"
                       >
                         <span className="flex items-center gap-2 font-medium text-[var(--tx)]">
-                          <CheckCircle2 size={16} className="shrink-0 text-[var(--ok)]" />
+                          <CheckCircle2 size={16} className="shrink-0 text-[var(--ok-ink)]" aria-hidden="true" />
                           {habit.e} {habit.name}
                           <span
                             className="rounded-md bg-[var(--sf-1)] px-2 py-0.5 text-[12px]"
@@ -652,7 +653,7 @@ export const DayHistoryView: React.FC<DayHistoryViewProps> = ({
                             {habit.c}
                           </span>
                         </span>
-                        <span className="tnum text-[12.5px] font-semibold text-[var(--ok)]">
+                        <span className="tnum text-[12.5px] font-semibold text-[var(--ok-ink)]">
                           {value}/{target} {unit}
                         </span>
                       </div>
@@ -678,7 +679,7 @@ export const DayHistoryView: React.FC<DayHistoryViewProps> = ({
                           className="flex items-center justify-between gap-2 py-2.5 text-[13.5px]"
                         >
                           <span className="flex items-center gap-2 font-medium text-[var(--tx)]">
-                            <CheckCircle2 size={16} className="shrink-0 text-[var(--ok)]" />
+                            <CheckCircle2 size={16} className="shrink-0 text-[var(--ok-ink)]" aria-hidden="true" />
                             {task.title}
                           </span>
                           {sub && (
@@ -712,15 +713,18 @@ export const DayHistoryView: React.FC<DayHistoryViewProps> = ({
                       </Button>
                     )}
                   </div>
-                  <div className="divide-y divide-[var(--line)] rounded-xl border border-[var(--line)] bg-[var(--sf-2)] px-3">
-                    {record.sessions.map((ses) => {
+                  <WindowedList
+                    items={record.sessions}
+                    threshold={100}
+                    estimatedRowHeight={72}
+                    itemLabel="sessions"
+                    className="divide-y divide-[var(--line)] rounded-xl border border-[var(--line)] bg-[var(--sf-2)] px-3"
+                    getKey={(ses) => ses.id}
+                    renderItem={(ses) => {
                       const sub = getSubject(state, ses.subjectId);
                       const heading = getSessionHeading(state, ses);
                       return (
-                        <div
-                          key={ses.id}
-                          className="flex items-center justify-between gap-3 py-2.5"
-                        >
+                        <div className="flex items-center justify-between gap-3 py-2.5">
                           <div className="min-w-0 flex-1">
                             <div className="flex items-center gap-2 text-[13.5px] font-medium text-[var(--tx)]">
                               <span
@@ -742,7 +746,7 @@ export const DayHistoryView: React.FC<DayHistoryViewProps> = ({
                             )}
                           </div>
                           <div className="flex shrink-0 items-center gap-2">
-                            <strong className="tnum text-[13.5px] text-[var(--ok)]">
+                            <strong className="tnum text-[13.5px] text-[var(--ok-ink)]">
                               {fmtHMShort(ses.activeMs)}
                             </strong>
                             {onEditSession && (
@@ -757,8 +761,8 @@ export const DayHistoryView: React.FC<DayHistoryViewProps> = ({
                           </div>
                         </div>
                       );
-                    })}
-                  </div>
+                    }}
+                  />
                 </div>
               )}
 
@@ -781,7 +785,7 @@ export const DayHistoryView: React.FC<DayHistoryViewProps> = ({
                             Completed chapter: <strong>{ch.name}</strong> ({sub.e}{' '}
                             {sub.name})
                           </span>
-                          <span className="tnum text-[12px] font-semibold text-[var(--ac)]">
+                          <span className="tnum text-[12px] font-semibold text-[var(--ac-ink)]">
                             +25 XP
                           </span>
                         </div>
@@ -798,7 +802,7 @@ export const DayHistoryView: React.FC<DayHistoryViewProps> = ({
                             Revision {rev.label}: <strong>{rev.chapter.name}</strong> (
                             {sub.e} {sub.name})
                           </span>
-                          <span className="text-[12px] font-semibold text-[var(--ok)]">
+                          <span className="text-[12px] font-semibold text-[var(--ok-ink)]">
                             Done
                           </span>
                         </div>
@@ -828,7 +832,7 @@ export const DayHistoryView: React.FC<DayHistoryViewProps> = ({
                           <span className="text-[var(--tx)]">
                             Mock test: <strong>{mk.name}</strong>
                           </span>
-                          <strong className="tnum text-[13px] text-[var(--ac)]">
+                          <strong className="tnum text-[13px] text-[var(--ac-ink)]">
                             {sc.totalScore}/{sc.maxMarks} ({sc.accuracyPct}%)
                           </strong>
                         </div>
@@ -936,14 +940,14 @@ export const DayHistoryView: React.FC<DayHistoryViewProps> = ({
             title={`Didn't do on ${selectedDayKey}`}
             subtitle="Unfinished habits, pending tasks, and missed revisions"
             action={
-              <span className="tnum rounded-md bg-[var(--sf-2)] px-2.5 py-1 text-[12px] font-medium text-[var(--bad)]">
+              <span className="tnum rounded-md bg-[var(--sf-2)] px-2.5 py-1 text-[12px] font-medium text-[var(--err-ink)]">
                 {totalMissedCount} missed
               </span>
             }
           />
 
           {totalMissedCount === 0 ? (
-            <div className="rounded-xl border border-[var(--line)] bg-[var(--sf-2)] p-4 text-center text-[13px] font-medium text-[var(--ok)]">
+            <div className="rounded-xl border border-[var(--line)] bg-[var(--sf-2)] p-4 text-center text-[13px] font-medium text-[var(--ok-ink)]">
               Nothing missed on {selectedDayKey}. All due habits, tasks, and targets were
               completed.
             </div>
@@ -954,10 +958,10 @@ export const DayHistoryView: React.FC<DayHistoryViewProps> = ({
                 !record.metMinStudyTarget && (
                   <div className="flex items-center justify-between gap-2 rounded-xl border border-[var(--line)] bg-[var(--sf-2)] px-3 py-2.5 text-[13px]">
                     <span className="flex items-center gap-2 font-medium text-[var(--tx)]">
-                      <XCircle size={16} className="shrink-0 text-[var(--bad)]" />
+                      <XCircle size={16} className="shrink-0 text-[var(--err-ink)]" aria-hidden="true" />
                       Daily study minimum not reached
                     </span>
-                    <span className="tnum text-[12px] text-[var(--bad)]">
+                    <span className="tnum text-[12px] text-[var(--err-ink)]">
                       {fmtHMShort(record.studyMs)} / {fmtHMShort(record.minTargetMs)}
                     </span>
                   </div>
@@ -975,10 +979,10 @@ export const DayHistoryView: React.FC<DayHistoryViewProps> = ({
                         className="flex items-center justify-between gap-2 py-2.5 text-[13.5px]"
                       >
                         <span className="flex items-center gap-2 font-medium text-[var(--tx)]">
-                          <XCircle size={16} className="shrink-0 text-[var(--bad)]" />
+                          <XCircle size={16} className="shrink-0 text-[var(--err-ink)]" aria-hidden="true" />
                           {habit.e} {habit.name}
                         </span>
-                        <span className="tnum text-[12px] text-[var(--bad)]">
+                        <span className="tnum text-[12px] text-[var(--err-ink)]">
                           {value}/{target} {unit}
                         </span>
                       </div>
@@ -1003,7 +1007,7 @@ export const DayHistoryView: React.FC<DayHistoryViewProps> = ({
                           className="flex items-center justify-between gap-2 py-2.5 text-[13.5px]"
                         >
                           <span className="flex items-center gap-2 font-medium text-[var(--tx)]">
-                            <XCircle size={16} className="shrink-0 text-[var(--bad)]" />
+                            <XCircle size={16} className="shrink-0 text-[var(--err-ink)]" aria-hidden="true" />
                             {task.title}
                           </span>
                           {sub && (
@@ -1035,7 +1039,7 @@ export const DayHistoryView: React.FC<DayHistoryViewProps> = ({
                             {rev.label}: <strong>{rev.chapter.name}</strong> ({sub.e}{' '}
                             {sub.name})
                           </span>
-                          <span className="tnum text-[12px] text-[var(--bad)]">
+                          <span className="tnum text-[12px] text-[var(--err-ink)]">
                             Due {rev.scheduledDate}
                           </span>
                         </div>

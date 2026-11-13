@@ -19,3 +19,4 @@ export { TopBar, type TopBarProps } from './TopBar';
 export { SectionHeader, type SectionHeaderProps } from './SectionHeader';
 export { Sparkline, type SparklineProps } from './Sparkline';
 export { SwipeableRow, type SwipeableRowProps } from './SwipeableRow';
+export { WindowedList, type WindowedListProps } from './WindowedList';

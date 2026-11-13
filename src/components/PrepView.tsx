@@ -48,6 +48,7 @@ import { Segmented } from './ui/Segmented';
 import { Select } from './ui/Select';
 import { Sheet } from './ui/Sheet';
 import { Stat } from './ui/Stat';
+import { WindowedList } from './ui/WindowedList';
 
 interface PrepViewProps {
   state: PulseHabitState;
@@ -298,7 +299,7 @@ export const PrepView: React.FC<PrepViewProps> = ({
           <Card>
             <div className="split mb-3 flex-wrap gap-2">
               <div className="flex items-center gap-2">
-                <Compass size={18} className="text-[var(--ac)]" />
+                <Compass size={18} className="text-[var(--ac-ink)]" aria-hidden="true" />
                 <div>
                   <h3 className="text-[15px] font-semibold text-[var(--tx)]">
                     Syllabus pace calculator
@@ -327,10 +328,10 @@ export const PrepView: React.FC<PrepViewProps> = ({
                       color:
                         paceReport.overall.status === 'ahead' ||
                         paceReport.overall.status === 'completed'
-                          ? 'var(--ok)'
+                          ? 'var(--ok-ink)'
                           : paceReport.overall.status === 'on track'
-                            ? 'var(--ac)'
-                            : 'var(--warn)',
+                            ? 'var(--ac-ink)'
+                            : 'var(--warn-ink)',
                     }}
                   >
                     {paceReport.overall.status === 'completed'
@@ -397,7 +398,7 @@ export const PrepView: React.FC<PrepViewProps> = ({
                   {syllabusMetrics.inProgress} in progress
                 </p>
               </div>
-              <span className="tnum rounded-lg bg-[var(--ac-soft)] px-2.5 py-1 text-[13px] font-semibold text-[var(--ac)]">
+              <span className="tnum rounded-lg bg-[var(--ac-soft)] px-2.5 py-1 text-[13px] font-semibold text-[var(--ac-ink)]">
                 {syllabusMetrics.pct}%
               </span>
             </div>
@@ -640,40 +641,47 @@ export const PrepView: React.FC<PrepViewProps> = ({
                     </button>
 
                     {!isCollapsed && (
-                      <div className="mt-3 divide-y divide-[var(--line)]">
+                      <div className="mt-3">
                         {chapters.length === 0 ? (
                           <div className="py-4 text-center text-[13px] text-[var(--tx-2)]">
                             No chapters match the current filter in {subject.name}.
                           </div>
                         ) : (
-                          chapters.map((ch) => {
-                            const revs = getSortedChapterRevisions(ch);
-                            const pyqSummary = getChapterPYQStats(state, ch.id);
-                            const suggestedDraft = suggestedRevDrafts[ch.id];
-                            const isPyqOpen = openPyqChapterId === ch.id;
-                            const isConfPrompt = confidencePromptChapterId === ch.id;
+                          <WindowedList
+                            items={chapters}
+                            threshold={100}
+                            estimatedRowHeight={148}
+                            itemLabel="chapters"
+                            className="divide-y divide-[var(--line)]"
+                            getKey={(ch) => ch.id}
+                            renderItem={(ch) => {
+                              const revs = getSortedChapterRevisions(ch);
+                              const pyqSummary = getChapterPYQStats(state, ch.id);
+                              const suggestedDraft = suggestedRevDrafts[ch.id];
+                              const isPyqOpen = openPyqChapterId === ch.id;
+                              const isConfPrompt = confidencePromptChapterId === ch.id;
 
-                            return (
-                              <div key={ch.id} className="space-y-2.5 py-3">
-                                <div className="flex flex-wrap items-start justify-between gap-2">
-                                  <div className="min-w-0 flex-1">
-                                    <div className="flex flex-wrap items-center gap-2">
-                                      <span className="text-[14.5px] font-semibold text-[var(--tx)]">
-                                        {ch.name}
-                                      </span>
-                                      {ch.completedOn && ch.status === 'completed' && (
-                                        <span className="tnum rounded-md bg-[var(--sf-2)] px-2 py-0.5 text-[12px] text-[var(--ok)]">
-                                          Done {ch.completedOn}
+                              return (
+                                <div className="space-y-2.5 py-3">
+                                  <div className="flex flex-wrap items-start justify-between gap-2">
+                                    <div className="min-w-0 flex-1">
+                                      <div className="flex flex-wrap items-center gap-2">
+                                        <span className="text-[14.5px] font-semibold text-[var(--tx)]">
+                                          {ch.name}
                                         </span>
-                                      )}
-                                      {pyqSummary.attempted > 0 && (
-                                        <span className="tnum rounded-md bg-[var(--sf-2)] px-2 py-0.5 text-[12px] text-[var(--ac)]">
-                                          PYQ {pyqSummary.correct}/{pyqSummary.attempted} (
-                                          {pyqSummary.accuracyPct}%)
-                                        </span>
-                                      )}
+                                        {ch.completedOn && ch.status === 'completed' && (
+                                          <span className="tnum rounded-md bg-[var(--sf-2)] px-2 py-0.5 text-[12px] text-[var(--ok-ink)]">
+                                            Done {ch.completedOn}
+                                          </span>
+                                        )}
+                                        {pyqSummary.attempted > 0 && (
+                                          <span className="tnum rounded-md bg-[var(--sf-2)] px-2 py-0.5 text-[12px] text-[var(--ac-ink)]">
+                                            PYQ {pyqSummary.correct}/{pyqSummary.attempted} (
+                                            {pyqSummary.accuracyPct}%)
+                                          </span>
+                                        )}
+                                      </div>
                                     </div>
-                                  </div>
 
                                   <div className="flex flex-wrap items-center gap-1.5">
                                     <div className="w-36">
@@ -750,7 +758,7 @@ export const PrepView: React.FC<PrepViewProps> = ({
                                           aria-label={`Set confidence ${lvl} of 5 for ${ch.name}`}
                                           className={`tnum h-6 w-6 rounded-md border text-[12px] font-semibold transition-colors ${
                                             active
-                                              ? 'border-[var(--ac)] bg-[var(--ac-soft)] text-[var(--ac)]'
+                                              ? 'border-[var(--ac)] bg-[var(--ac-soft)] text-[var(--ac-ink)]'
                                               : 'border-[var(--line)] bg-[var(--sf-2)] text-[var(--tx-3)]'
                                           }`}
                                         >
@@ -759,7 +767,7 @@ export const PrepView: React.FC<PrepViewProps> = ({
                                       );
                                     })}
                                     {isConfPrompt && (
-                                      <span className="text-[12px] text-[var(--ac)]">
+                                      <span className="text-[12px] text-[var(--ac-ink)]">
                                         Rate your confidence!
                                       </span>
                                     )}
@@ -797,8 +805,8 @@ export const PrepView: React.FC<PrepViewProps> = ({
                                 {suggestedDraft && (
                                   <div className="rounded-xl border border-[var(--ac-line)] bg-[var(--ac-soft)] p-3">
                                     <div className="split mb-2 flex-wrap gap-2">
-                                      <span className="flex items-center gap-1.5 text-[12px] font-semibold text-[var(--ac)]">
-                                        <Sparkles size={14} /> Suggested spaced revisions (+1, +3, +7, +21d)
+                                      <span className="flex items-center gap-1.5 text-[12px] font-semibold text-[var(--ac-ink)]">
+                                        <Sparkles size={14} aria-hidden="true" /> Suggested spaced revisions (+1, +3, +7, +21d)
                                       </span>
                                       <div className="flex gap-1.5">
                                         <Button
@@ -837,6 +845,7 @@ export const PrepView: React.FC<PrepViewProps> = ({
                                         <input
                                           key={idx}
                                           type="date"
+                                          aria-label={`Suggested revision ${idx + 1} date for ${ch.name}`}
                                           value={dVal}
                                           onChange={(e) => {
                                             const copy: [string, string, string, string] = [
@@ -920,9 +929,9 @@ export const PrepView: React.FC<PrepViewProps> = ({
                                           key={rev.id}
                                           className={`inline-flex items-center gap-1.5 rounded-lg border px-2 py-1 text-[12px] ${
                                             rev.done
-                                              ? 'border-[var(--ok)]/30 bg-[var(--ok)]/10 text-[var(--ok)]'
+                                              ? 'border-[var(--ok)]/30 bg-[var(--ok)]/10 text-[var(--ok-ink)]'
                                               : isOverdue
-                                                ? 'border-[var(--bad)]/40 bg-[var(--bad)]/10 text-[var(--bad)]'
+                                                ? 'border-[var(--err)]/40 bg-[var(--err)]/10 text-[var(--err-ink)]'
                                                 : 'border-[var(--line)] bg-[var(--sf-2)] text-[var(--tx-2)]'
                                           }`}
                                         >
@@ -931,7 +940,7 @@ export const PrepView: React.FC<PrepViewProps> = ({
                                             onClick={() => onToggleRevision(ch.id, rev.id)}
                                             className="flex items-center gap-1 font-semibold"
                                           >
-                                            <Check size={12} />
+                                            <Check size={12} aria-hidden="true" />
                                             <span>{rev.label}</span>
                                           </button>
                                           <input
@@ -951,7 +960,7 @@ export const PrepView: React.FC<PrepViewProps> = ({
                                             type="button"
                                             onClick={() => onDeleteRevision(ch.id, rev.id)}
                                             aria-label={`Delete ${rev.label}`}
-                                            className="text-[var(--tx-3)] hover:text-[var(--bad)]"
+                                            className="text-[var(--tx-3)] hover:text-[var(--err-ink)]"
                                           >
                                             ×
                                           </button>
@@ -962,7 +971,8 @@ export const PrepView: React.FC<PrepViewProps> = ({
                                 )}
                               </div>
                             );
-                          })
+                          }}
+                        />
                         )}
                       </div>
                     )}
@@ -1081,14 +1091,14 @@ export const PrepView: React.FC<PrepViewProps> = ({
                       )
                     }
                     aria-label="Target mock score"
-                    className="tnum h-8 w-full rounded-lg border border-[var(--line)] bg-[var(--sf-1)] px-2 text-[14px] font-semibold text-[var(--ac)]"
+                    className="tnum h-8 w-full rounded-lg border border-[var(--line)] bg-[var(--sf-1)] px-2 text-[14px] font-semibold text-[var(--ac-ink)]"
                   />
                 </Field>
               </div>
             </div>
 
             {mocksOverview.lowestAccuracySubject && (
-              <div className="mt-3 flex items-center gap-2 rounded-xl border border-[var(--warn)]/30 bg-[var(--warn)]/10 px-3 py-2 text-[12.5px] text-[var(--warn)]">
+              <div className="mt-3 flex items-center gap-2 rounded-xl border border-[var(--warn)]/30 bg-[var(--warn)]/10 px-3 py-2 text-[12.5px] text-[var(--warn-ink)]">
                 <AlertTriangle size={15} />
                 <span>
                   Focus area: <strong>{mocksOverview.lowestAccuracySubject.e} {mocksOverview.lowestAccuracySubject.name}</strong> has the lowest accuracy ({mocksOverview.lowestAccuracySubject.accuracyPct}%) across recent mocks.
@@ -1115,16 +1125,22 @@ export const PrepView: React.FC<PrepViewProps> = ({
               }
             />
           ) : (
-            <div className="space-y-3">
-              {mocksOverview.newestFirst.map(({ mock, report }) => (
-                <Card key={mock.id}>
+            <WindowedList
+              items={mocksOverview.newestFirst}
+              threshold={100}
+              estimatedRowHeight={180}
+              itemLabel="mocks"
+              className="space-y-3"
+              getKey={({ mock }) => mock.id}
+              renderItem={({ mock, report }) => (
+                <Card>
                   <div className="flex flex-wrap items-start justify-between gap-2">
                     <div>
                       <div className="flex items-center gap-2">
                         <h4 className="text-[15px] font-semibold text-[var(--tx)]">
                           {mock.name}
                         </h4>
-                        <span className="tnum rounded-lg bg-[var(--ac-soft)] px-2.5 py-0.5 text-[13px] font-bold text-[var(--ac)]">
+                        <span className="tnum rounded-lg bg-[var(--ac-soft)] px-2.5 py-0.5 text-[13px] font-bold text-[var(--ac-ink)]">
                           {report.totalScore} / {mock.maxMarks} ({report.pct}%)
                         </span>
                       </div>
@@ -1174,8 +1190,8 @@ export const PrepView: React.FC<PrepViewProps> = ({
                       ))}
                   </div>
                 </Card>
-              ))}
-            </div>
+              )}
+            />
           )}
         </div>
       )}
