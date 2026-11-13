@@ -1,40 +1,89 @@
-import React, { useEffect, useMemo, useRef, useState } from 'react';
-import type { ActiveTimerMode, AppTab, DailyTask, Habit, HabitCategory, PulseHabitState } from '../types';
+import React, { useMemo, useState } from 'react';
+import {
+  Plus,
+  Check,
+  Flame,
+  SkipForward,
+  MoreHorizontal,
+  Calendar,
+  Trash2,
+  ArrowRight,
+  Timer,
+  Hourglass,
+  Clock,
+  Play,
+  Lightbulb,
+  RotateCw,
+  HeartHandshake,
+  Sparkles,
+  Moon,
+  Zap,
+  BookOpen,
+  Target,
+  Compass,
+  Repeat,
+  AlertCircle,
+  ChevronDown,
+  ChevronUp,
+  Edit3,
+  CornerDownRight,
+} from 'lucide-react';
+import type {
+  ActiveTimerMode,
+  AppTab,
+  DailyTask,
+  Habit,
+  HabitCategory,
+  PulseHabitState,
+  StudySession,
+} from '../types';
 import {
   CATS,
-  CC,
   DN,
   STARTERS,
   addD,
   done,
-  dueOn,
+  due,
   ent,
   fmtClockTime,
+  fmtDuration,
   fmtHMShort,
-  fmtMS,
   getDailyFocusTip,
+  getDailyStudyGoalProgress,
   getDayProgress,
+  getDayTotalStudyMs,
   getDueAndOverdueRevisions,
   getSessionHeading,
   getSubject,
-  getTimerMetrics,
-  getTodaySubjectMs,
-  pad,
-  parseKey,
+  isAutoStudyHabit,
+  live,
+  parseD,
+  rate,
   skip,
   streak,
   wkC,
 } from '../utils/studyLogic';
-import { computePaceReport, computeStudyNext } from '../utils/pace';
 import {
   checkBurnoutStatus,
   computeConsistencyScore,
   computeMinDayStreak,
   getSubjectTargetProgress,
 } from '../utils/insights';
-import { computeLevelInfo, computeTotalXp } from '../utils/xp';
+import { computeStudyNext } from '../utils/pace';
+import { computeUiPaceReport } from '../utils/uiHelpers';
+import { StatusRow, ExamCountdownCard } from './StatusRow';
+import {
+  Button,
+  Card,
+  Chip,
+  ProgressRing,
+  Meter,
+  Select,
+  SectionHeader,
+  SwipeableRow,
+} from './ui';
 
-interface TodayViewProps {
+export interface TodayViewProps {
   state: PulseHabitState;
   sel: string;
   todayKey: string;
@@ -42,9 +91,11 @@ interface TodayViewProps {
   onSelectDay: (dayKey: string) => void;
   onSelectCat: (cat: 'All' | HabitCategory) => void;
   onSwitchTab: (tab: AppTab) => void;
-  onToggleHabit: (id: string) => void;
+  onManageExams?: () => void;
+  onToggleHabit: (id: string, dayKey: string) => void;
   onIncrementHabit: (id: string, delta: number) => void;
-  onSkipHabit: (id: string) => void;
+  onSkipHabit: (id: string, dayKey: string) => void;
+  onDeleteHabit?: (id: string) => void;
   onAddStarter: (index: number) => void;
   onNewHabit: () => void;
   onEditHabit: (id: string) => void;
@@ -67,15 +118,23 @@ interface TodayViewProps {
   onDeleteTask: (taskId: string) => void;
   onMoveTaskToToday: (taskId: string) => void;
   onMoveAllUnfinishedToToday: () => void;
-  onSetMood: (val: number) => void;
-  onSetNote: (txt: string) => void;
-  onToggleRestDay?: (dayKey: string) => void;
-  onUpdateWellbeing?: (
+  onToggleRestDay: (dayKey: string) => void;
+  onDismissBurnout: () => void;
+  onUpdateWellbeing: (
     dayKey: string,
     patch: { sleep?: number; energy?: 1 | 2 | 3 | 4 | 5 }
   ) => void;
-  onDismissBurnout?: () => void;
+  onSetMood: (val: number) => void;
+  onSetNote: (txt: string) => void;
 }
+
+const MOOD_ITEMS: Array<[number, string, string]> = [
+  [1, '😞', 'Rough'],
+  [2, '😕', 'Low'],
+  [3, '😐', 'Okay'],
+  [4, '🙂', 'Good'],
+  [5, '🤩', 'Great'],
+];
 
 export const TodayView: React.FC<TodayViewProps> = ({
   state,
@@ -85,15 +144,16 @@ export const TodayView: React.FC<TodayViewProps> = ({
   onSelectDay,
   onSelectCat,
   onSwitchTab,
+  onManageExams,
   onToggleHabit,
   onIncrementHabit,
   onSkipHabit,
+  onDeleteHabit,
   onAddStarter,
   onNewHabit,
   onEditHabit,
   onQuickStartSession,
   onNewDDay,
-  onEditDDay,
   onOpenManualSession,
   onDeleteSession,
   onCompleteRevision,
@@ -105,28 +165,139 @@ export const TodayView: React.FC<TodayViewProps> = ({
   onDeleteTask,
   onMoveTaskToToday,
   onMoveAllUnfinishedToToday,
+  onToggleRestDay,
+  onDismissBurnout,
+  onUpdateWellbeing,
   onSetMood,
   onSetNote,
-  onToggleRestDay,
-  onUpdateWellbeing,
-  onDismissBurnout,
 }) => {
-  const subjects = state.subjects.filter((s) => !s.arch);
-  const [tipOffset, setTipOffset] = useState(0);
   const [quickSubjectId, setQuickSubjectId] = useState<string>(
-    subjects[0]?.id || 'sub_phy'
+    () => state.subjects.find((s) => !s.arch)?.id || 'sub_phy'
   );
   const [quickChapterId, setQuickChapterId] = useState<string>('');
-  const [quickHeading, setQuickHeading] = useState('');
-  const [reschedulingRevId, setReschedulingRevId] = useState<string | null>(null);
-  const [rescheduleDateDraft, setRescheduleDateDraft] = useState<string>(
-    addD(todayKey, 1)
+  const [quickHeading, setQuickHeading] = useState<string>('');
+  const [tipOffset, setTipOffset] = useState<number>(0);
+
+  // Daily Tasks local UI state
+  const [newTaskTitle, setNewTaskTitle] = useState<string>('');
+  const [newTaskSubjectId, setNewTaskSubjectId] = useState<string>('');
+  const [openTaskMenuId, setOpenTaskMenuId] = useState<string | null>(null);
+  const [editingTaskId, setEditingTaskId] = useState<string | null>(null);
+  const [editingTaskTitle, setEditingTaskTitle] = useState<string>('');
+  const [changingDateTaskId, setChangingDateTaskId] = useState<string | null>(null);
+  const [unfinishedExpanded, setUnfinishedExpanded] = useState<boolean>(false);
+
+  // Revisions Due local UI state
+  const [revSubjectFilter, setRevSubjectFilter] = useState<string>('all');
+  const [rescheduleTarget, setRescheduleTarget] = useState<{
+    chapterId: string;
+    revId: string;
+    date: string;
+  } | null>(null);
+  const [showUnscheduled, setShowUnscheduled] = useState<boolean>(false);
+
+  const isTodaySelected = sel === todayKey;
+  const selDate = parseD(sel);
+
+  // 7-day rolling week strip ending on todayKey
+  const days = useMemo(
+    () => Array.from({ length: 7 }, (_, i) => addD(todayKey, i - 6)),
+    [todayKey]
   );
 
-  // Coaching calculations (1.2, 1.7, 1.8, 1.9, 1.10, 1.12)
-  const paceReport = useMemo(() => computePaceReport(state, todayKey), [state, todayKey]);
-  const studyNextTop3 = useMemo(() => computeStudyNext(state, todayKey, 3), [state, todayKey]);
-  const minStreakInfo = useMemo(() => computeMinDayStreak(state, todayKey), [state, todayKey]);
+  const dayProg = useMemo(() => getDayProgress(state, sel), [state, sel]);
+  const p = Math.round(dayProg.pct * 100);
+
+  const allLiveHabits = useMemo(() => live(state), [state]);
+  const filteredHabits = useMemo(
+    () =>
+      allLiveHabits.filter((h) => (cat === 'All' ? true : h.c === cat)),
+    [allLiveHabits, cat]
+  );
+  const dueList = useMemo(
+    () => filteredHabits.filter((h) => due(state, h, sel)),
+    [filteredHabits, state, sel]
+  );
+  const otherList = useMemo(
+    () => filteredHabits.filter((h) => !due(state, h, sel)),
+    [filteredHabits, state, sel]
+  );
+
+  // Tasks for selected day + unfinished earlier tasks
+  const dayTasks = useMemo(
+    () =>
+      (state.tasks || [])
+        .filter((t) => t.dayKey === sel)
+        .sort((a, b) => Number(a.done) - Number(b.done) || a.createdAt - b.createdAt),
+    [state.tasks, sel]
+  );
+
+  const unfinishedEarlierTasks = useMemo(
+    () =>
+      (state.tasks || [])
+        .filter((t) => !t.done && t.dayKey < todayKey)
+        .sort((a, b) => b.dayKey.localeCompare(a.dayKey) || a.createdAt - b.createdAt),
+    [state.tasks, todayKey]
+  );
+
+  // Selected day study sessions & metrics
+  const selectedDaySessions = useMemo(
+    () =>
+      [...state.sessions.filter((s) => s.dayKey === sel)].sort(
+        (a, b) => b.startTs - a.startTs
+      ),
+    [state.sessions, sel]
+  );
+  const selectedDayTotalMs = useMemo(
+    () => getDayTotalStudyMs(state, sel, todayKey),
+    [state, sel, todayKey]
+  );
+  const selectedDayAvgPurity = useMemo(
+    () =>
+      selectedDaySessions.length > 0
+        ? Math.round(
+            selectedDaySessions.reduce((acc, s) => acc + (s.purity || 100), 0) /
+              selectedDaySessions.length
+          )
+        : 100,
+    [selectedDaySessions]
+  );
+
+  const studyProg = useMemo(
+    () => getDailyStudyGoalProgress(state, sel, todayKey),
+    [state, sel, todayKey]
+  );
+  const dailyTip = useMemo(
+    () => getDailyFocusTip(sel, tipOffset),
+    [sel, tipOffset]
+  );
+
+  const revisionsBundle = useMemo(
+    () => getDueAndOverdueRevisions(state, sel, todayKey),
+    [state, sel, todayKey]
+  );
+  const allRevisionsCount =
+    revisionsBundle.overdue.length + revisionsBundle.dueOnSel.length;
+  const overdueRevisions = useMemo(
+    () =>
+      revisionsBundle.overdue.filter((r) =>
+        revSubjectFilter === 'all' ? true : r.subject.id === revSubjectFilter
+      ),
+    [revisionsBundle.overdue, revSubjectFilter]
+  );
+  const dueTodayRevisions = useMemo(
+    () =>
+      revisionsBundle.dueOnSel.filter((r) =>
+        revSubjectFilter === 'all' ? true : r.subject.id === revSubjectFilter
+      ),
+    [revisionsBundle.dueOnSel, revSubjectFilter]
+  );
+
+  // Insights & Pace
+  const minStreakInfo = useMemo(
+    () => computeMinDayStreak(state, todayKey),
+    [state, todayKey]
+  );
   const consistencyInfo = useMemo(
     () => computeConsistencyScore(state, todayKey),
     [state, todayKey]
@@ -136,181 +307,221 @@ export const TodayView: React.FC<TodayViewProps> = ({
     [state, todayKey]
   );
   const subjectTargets = useMemo(
-    () => getSubjectTargetProgress(state, sel),
+    () =>
+      getSubjectTargetProgress(state, sel).filter(
+        (r) => r.dailyTargetMins > 0 || r.weeklyTargetMins > 0
+      ),
     [state, sel]
   );
-  const quickSubjectChapters = useMemo(
-    () => state.chapters.filter((ch) => ch.subjectId === quickSubjectId),
-    [state.chapters, quickSubjectId]
+  const paceReport = useMemo(
+    () => computeUiPaceReport(state, todayKey),
+    [state, todayKey]
+  );
+  const studyNextItems = useMemo(
+    () => computeStudyNext(state, todayKey, 3),
+    [state, todayKey]
   );
 
-  // Daily Tasks UI state
-  const [taskTitleDraft, setTaskTitleDraft] = useState('');
-  const [taskSubjectId, setTaskSubjectId] = useState<string>('');
-  const lastTaskSubmitRef = useRef<{ title: string; ts: number }>({ title: '', ts: 0 });
+  const activeSubjects = useMemo(
+    () => state.subjects.filter((s) => !s.arch),
+    [state.subjects]
+  );
+  const effectiveQuickSubId = activeSubjects.some((s) => s.id === quickSubjectId)
+    ? quickSubjectId
+    : activeSubjects[0]?.id || 'sub_phy';
+  const quickSubjectChapters = useMemo(
+    () => state.chapters.filter((ch) => ch.subjectId === effectiveQuickSubId),
+    [state.chapters, effectiveQuickSubId]
+  );
+  const effectiveQuickChapId = quickSubjectChapters.some(
+    (ch) => ch.id === quickChapterId
+  )
+    ? quickChapterId
+    : '';
 
-  useEffect(() => {
-    if (subjects.length > 0 && !subjects.some((s) => s.id === quickSubjectId)) {
-      setQuickSubjectId(subjects[0].id);
-      setQuickChapterId('');
-    }
-  }, [subjects, quickSubjectId]);
+  const selWellbeing = state.wellbeing?.[sel] || {};
+  const sleepHours = selWellbeing.sleep;
+  const energyLevel = selWellbeing.energy;
 
-  useEffect(() => {
-    if (taskSubjectId && !subjects.some((s) => s.id === taskSubjectId)) {
-      setTaskSubjectId('');
-    }
-  }, [subjects, taskSubjectId]);
-  const [openMenuTaskId, setOpenMenuTaskId] = useState<string | null>(null);
-  const [editingTaskId, setEditingTaskId] = useState<string | null>(null);
-  const [editingTitleDraft, setEditingTitleDraft] = useState('');
-  const [changingDateTaskId, setChangingDateTaskId] = useState<string | null>(null);
-  const [changingDateDraft, setChangingDateDraft] = useState('');
-  const [earlierOpen, setEarlierOpen] = useState(true);
+  const taskSubjectOptions = useMemo(
+    () => [
+      { value: '', label: 'General (no subject)' },
+      ...activeSubjects.map((s) => ({
+        value: s.id,
+        label: `${s.e} ${s.name}`,
+        swatchColor: s.color,
+      })),
+    ],
+    [activeSubjects]
+  );
 
-  const allDue = dueOn(state, sel);
-  const hs = allDue.filter((h) => cat === 'All' || h.c === cat);
-  const dayProg = getDayProgress(state, sel);
-  const p = Math.round(dayProg.pct * 100);
-  const totalXp = computeTotalXp(state, todayKey);
-  const level = computeLevelInfo(totalXp).level;
-  const currentMood = state.mood[sel] || 0;
-  const dayStudyMs = getTodaySubjectMs(state, 'any', sel, todayKey);
-  const daySessions = state.sessions
-    .filter((s) => s.dayKey === sel)
-    .sort((a, b) => b.startTs - a.startTs);
-  const avgPurity = daySessions.length
-    ? Math.round(daySessions.reduce((a, s) => a + (s.purity ?? 100), 0) / daySessions.length)
-    : 100;
-  const activeMetrics = getTimerMetrics(state);
-  const focusTip = getDailyFocusTip(sel, tipOffset);
+  const quickChapterOptions = useMemo(
+    () => [
+      { value: '', label: 'General subject study (no specific chapter)' },
+      ...quickSubjectChapters.map((ch) => ({
+        value: ch.id,
+        label: `${ch.name} (${
+          ch.status === 'completed'
+            ? 'Done'
+            : ch.status === 'inProgress'
+              ? 'In progress'
+              : 'Not started'
+        })`,
+      })),
+    ],
+    [quickSubjectChapters]
+  );
 
-  const { dueOnSel, overdue } = getDueAndOverdueRevisions(state, sel, todayKey);
-  // Deduplicate if sel < todayKey so an overdue revision on sel isn't shown twice
-  const overdueIds = new Set(overdue.map((r) => r.revisionId));
-  const dueFiltered = dueOnSel.filter((r) => !overdueIds.has(r.revisionId));
-
-  // Selected day tasks: pending (oldest createdAt first) then completed
-  const allTasks = state.tasks || [];
-  const dayTasks: DailyTask[] = allTasks
-    .filter((t) => t.dayKey === sel)
-    .slice()
-    .sort((a, b) => {
-      if (a.done !== b.done) return a.done ? 1 : -1;
-      return (a.createdAt || 0) - (b.createdAt || 0);
-    });
-
-  // Unfinished tasks from earlier days (dayKey < todayKey)
-  const unfinishedEarlier: DailyTask[] = allTasks
-    .filter((t) => !t.done && t.dayKey < todayKey)
-    .slice()
-    .sort((a, b) => a.dayKey.localeCompare(b.dayKey) || (a.createdAt || 0) - (b.createdAt || 0));
-
-  const isFutureDay = sel > todayKey;
-
-  const renderHabitCard = (h: Habit) => {
+  const renderHabitRow = (h: Habit) => {
+    const isD = done(state, h, sel);
+    const isSk = skip(state, h, sel);
     const e = ent(state, h, sel);
-    const d = done(state, h, sel);
-    const sk = skip(state, h, sel);
+    const cur = e ? e.v : 0;
     const s = streak(state, h, todayKey);
-    const u = h.sch === 'week' ? 'w' : 'd';
-    const isAutoStudy = Boolean(h.subjectId || h.autoMins);
+    const r = rate(state, h, 30, todayKey);
+    const w = wkC(state, h, sel);
+    const autoStudy = isAutoStudyHabit(h);
     const linkedSub =
-      h.subjectId && h.subjectId !== 'any' ? getSubject(state, h.subjectId) : null;
+      h.subjectId && h.subjectId !== 'any'
+        ? getSubject(state, h.subjectId)
+        : null;
+
+    const metaParts: string[] = [];
+    if (h.sch === 'week') metaParts.push(`${w}/${h.n} wk`);
+    if (h.tn > 1) metaParts.push(`${cur}/${h.tn} ${h.tu || ''}`.trim());
+    metaParts.push(`${r}% 30d`);
+    if (isSk) metaParts.push('Skipped');
 
     return (
-      <div
+      <SwipeableRow
         key={h.id}
-        className={`c ${d ? 'dn' : ''} ${sk ? 'sk' : ''}`}
-        style={
-          {
-            '--hc': CC[h.c] || CC.Other,
-            cursor: isAutoStudy ? 'default' : 'pointer',
-          } as React.CSSProperties
-        }
-        onClick={() => {
-          if (!isAutoStudy) {
-            onToggleHabit(h.id);
-          }
-        }}
+        onSwipeRight={autoStudy ? undefined : () => onToggleHabit(h.id, sel)}
+        onSwipeLeft={onDeleteHabit ? () => onDeleteHabit(h.id) : undefined}
+        rightLabel={isD ? 'Undo' : 'Complete'}
+        leftLabel="Delete"
       >
+        <div
+          className={`c ${isD ? 'dn' : ''} ${isSk ? 'sk' : ''}`}
+          onClick={() => onToggleHabit(h.id, sel)}
+        >
         <button
           type="button"
           className="ck"
-          aria-pressed={d}
-          aria-label={`Mark ${h.name}`}
-          disabled={isAutoStudy}
+          aria-label={`Mark ${h.name} complete`}
           onClick={(ev) => {
             ev.stopPropagation();
-            if (!isAutoStudy) {
-              onToggleHabit(h.id);
-            }
+            onToggleHabit(h.id, sel);
           }}
         >
-          {d ? (
-            <svg
-              width="22"
-              height="22"
-              viewBox="0 0 24 24"
-              fill="none"
-              stroke="currentColor"
-              strokeWidth="3.2"
-              strokeLinecap="round"
-              strokeLinejoin="round"
-              style={{ margin: 'auto', display: 'block' }}
-              aria-hidden="true"
-            >
-              <polyline points="20 6 9 17 4 12" />
-            </svg>
-          ) : sk ? (
-            '⏭'
-          ) : (
-            h.e
-          )}
+          {isD ? <Check size={20} strokeWidth={2.25} /> : h.e || '✨'}
         </button>
+
         <div
-          className="g"
-          style={{ cursor: 'pointer' }}
+          style={{ flex: 1, minWidth: 0, cursor: 'pointer' }}
           onClick={(ev) => {
-            if (isAutoStudy) {
-              ev.stopPropagation();
-              onEditHabit(h.id);
-            }
+            ev.stopPropagation();
+            onEditHabit(h.id);
           }}
         >
-          <b>{h.name}</b>
-          <small>
-            🔥 {s.cur}
-            {u}
-            {h.sch === 'week' ? ` · ${wkC(state, h, sel)}/${h.n} wk` : ''}
-            {h.tn > 1 ? ` · ${e?.v || 0}/${h.tn} ${h.tu}` : ''}
-            {linkedSub ? ` · ${linkedSub.e} ${linkedSub.name}` : ''}
-          </small>
+          <div className="row" style={{ gap: 6, flexWrap: 'wrap' }}>
+            <b
+              style={{
+                fontSize: 15,
+                whiteSpace: 'nowrap',
+                overflow: 'hidden',
+                textOverflow: 'ellipsis',
+              }}
+            >
+              {h.name}
+            </b>
+            {autoStudy && (
+              <span
+                className="pill"
+                style={{
+                  fontSize: 12,
+                  padding: '2px 8px',
+                  background: 'var(--ac-soft)',
+                  color: 'var(--ac-ink)',
+                  border: '1px solid var(--ac-line)',
+                }}
+              >
+                Auto from timer
+              </span>
+            )}
+            {linkedSub && (
+              <span
+                className="pill"
+                style={{
+                  fontSize: 12,
+                  padding: '2px 8px',
+                  background: 'var(--sf-2)',
+                  color: 'var(--tx-2)',
+                  border: '1px solid var(--line)',
+                  display: 'inline-flex',
+                  alignItems: 'center',
+                  gap: 5,
+                }}
+              >
+                <span
+                  style={{
+                    width: 7,
+                    height: 7,
+                    borderRadius: '50%',
+                    background: linkedSub.color,
+                  }}
+                />
+                {linkedSub.e} {linkedSub.name}
+              </span>
+            )}
+          </div>
+
+          <div className="row" style={{ gap: 8, marginTop: 4, flexWrap: 'wrap' }}>
+            <small style={{ fontSize: 12, fontVariantNumeric: 'tabular-nums' }}>
+              {metaParts.join(' · ')}
+            </small>
+            {s.cur > 0 && (
+              <span
+                className="pill"
+                style={{
+                  fontSize: 12,
+                  padding: '2px 8px',
+                  background: 'color-mix(in srgb, var(--warn) 14%, transparent)',
+                  color: 'var(--warn-ink)',
+                  display: 'inline-flex',
+                  alignItems: 'center',
+                  gap: 4,
+                }}
+              >
+                <Flame size={12} strokeWidth={2} />
+                <span style={{ fontVariantNumeric: 'tabular-nums' }}>{s.cur}d</span>
+              </span>
+            )}
+          </div>
+
+          {h.tn > 1 && (
+            <div style={{ marginTop: 6 }}>
+              <Meter
+                value={Math.min(100, (cur / h.tn) * 100)}
+                color={isD ? 'var(--ok)' : 'var(--ac)'}
+                height={6}
+                label={`${h.name} progress`}
+              />
+            </div>
+          )}
         </div>
-        {isAutoStudy ? (
-          <span
-            className="pill"
-            style={{
-              fontSize: '11px',
-              padding: '4px 9px',
-              color: 'var(--em)',
-              borderColor: 'color-mix(in srgb, var(--em) 40%, var(--bd))',
-            }}
-            title="Automatically updated from your study timers & sessions"
-          >
-            Auto from timer
-          </span>
-        ) : (
-          h.tn > 1 && (
+
+        <div
+          className="row"
+          style={{ gap: 4, flexShrink: 0 }}
+          onClick={(ev) => ev.stopPropagation()}
+        >
+          {h.tn > 1 && (
             <>
               <button
                 type="button"
                 className="s"
                 aria-label={`Decrease ${h.name}`}
-                onClick={(ev) => {
-                  ev.stopPropagation();
-                  onIncrementHabit(h.id, -1);
-                }}
+                onClick={() => onIncrementHabit(h.id, -1)}
               >
                 −
               </button>
@@ -318,1475 +529,1934 @@ export const TodayView: React.FC<TodayViewProps> = ({
                 type="button"
                 className="s"
                 aria-label={`Increase ${h.name}`}
-                onClick={(ev) => {
-                  ev.stopPropagation();
-                  onIncrementHabit(h.id, 1);
-                }}
+                onClick={() => onIncrementHabit(h.id, 1)}
               >
                 +
               </button>
             </>
-          )
-        )}
-        <button
-          type="button"
-          className="s"
-          aria-label={`Skip ${h.name} today`}
-          title="Skip day (keeps streak)"
-          onClick={(ev) => {
-            ev.stopPropagation();
-            onSkipHabit(h.id);
-          }}
-        >
-          ⏭
-        </button>
-      </div>
+          )}
+          <button
+            type="button"
+            className="s"
+            title="Skip today (preserves streak)"
+            aria-label={`Skip ${h.name} today`}
+            style={{ padding: '6px 10px' }}
+            onClick={() => onSkipHabit(h.id, sel)}
+          >
+            <SkipForward size={15} strokeWidth={1.75} />
+          </button>
+        </div>
+        </div>
+      </SwipeableRow>
     );
   };
 
   return (
     <div>
-      <header className="top">
-        <div>
-          <small>
-            {parseKey(sel).toLocaleDateString(undefined, {
-              weekday: 'long',
-              month: 'short',
-              day: 'numeric',
-            })}{' '}
-            · Reset {pad(state.set.dayResetHour)}:00
-          </small>
-          <h1>Deep Hours</h1>
-        </div>
-        <div className="row" style={{ flexWrap: 'wrap', justifyContent: 'flex-end' }}>
-          {activeMetrics && (
-            <button
-              type="button"
-              className="pill em-btn"
-              onClick={() => onSwitchTab('focus')}
-            >
-              ⏱️ {fmtMS(activeMetrics.totalActiveMs)}
-            </button>
-          )}
-          {/* 1.9 Minimum-day streak chip */}
-          <span
-            className="pill mono"
-            style={{
-              borderColor: minStreakInfo.todayMetMinimum || minStreakInfo.todayIsRestDay
-                ? '#10b981'
-                : 'var(--bd)',
-              color: minStreakInfo.todayMetMinimum || minStreakInfo.todayIsRestDay
-                ? '#10b981'
-                : 'var(--tx)',
-            }}
-            title={`Minimum study day streak (≥${minStreakInfo.minDayMinutes}m/day or Rest Pass)`}
-          >
-            🔥 {minStreakInfo.streak}d min-streak
-          </span>
-          {consistencyInfo.total !== null && (
-            <span
-              className="pill mono"
-              title="14-day Consistency Score (0-100)"
-            >
-              ⚡ {consistencyInfo.displayLabel}
-            </span>
-          )}
-          <span className="pill">
-            Lv {level} · {totalXp} XP
-          </span>
-        </div>
-      </header>
+      {/* 1. Status Row (Streak, Consistency, Level, Rest Day) */}
+      <StatusRow
+        state={state}
+        sel={sel}
+        todayKey={todayKey}
+        minStreakInfo={minStreakInfo}
+        consistencyInfo={consistencyInfo}
+        onToggleRestDay={onToggleRestDay}
+      />
 
-      {/* D-Day Strip (A15: show "Add your NEET exam date" prompt when empty) */}
-      <div className="dday-strip">
-        {state.ddays.length === 0 ? (
-          <button
-            type="button"
-            className="dday-card"
-            style={
-              {
-                '--dc': '#10b981',
-                textAlign: 'left',
-                borderStyle: 'dashed',
-              } as React.CSSProperties
-            }
-            onClick={onNewDDay}
-          >
-            <span className="dday-badge">NEET</span>
-            <div className="g">
-              <b style={{ fontSize: '13px' }}>🎯 Add your NEET exam date</b>
-              <small style={{ fontSize: '11px' }}>Tap to set your D-Day countdown</small>
-            </div>
-          </button>
-        ) : (
-          state.ddays.map((d) => {
-            const diff = Math.round(
-              (parseKey(d.date).getTime() - parseKey(todayKey).getTime()) / 86400000
-            );
-            const badge =
-              diff === 0 ? 'D-Day' : diff > 0 ? `D-${diff}` : `D+${Math.abs(diff)}`;
-            return (
-              <button
-                type="button"
-                key={d.id}
-                className="dday-card"
-                style={{ '--dc': d.color || '#6366f1', textAlign: 'left' } as React.CSSProperties}
-                onClick={() => onEditDDay(d.id)}
-                aria-label={`Edit D-Day ${d.title}`}
-              >
-                <span className="dday-badge">{badge}</span>
-                <div className="g">
-                  <b style={{ fontSize: '13px' }}>
-                    {d.e || '🎯'} {d.title}{d.primary ? ' ★' : ''}
-                  </b>
-                  <small style={{ fontSize: '11px' }}>{d.date}</small>
-                </div>
-              </button>
-            );
-          })
-        )}
-        <button
-          type="button"
-          className="pill"
-          style={{ borderStyle: 'dashed' }}
-          onClick={onNewDDay}
-        >
-          + D-Day
-        </button>
-      </div>
-
-      {/* 1.2 Compact Pace Line + 1.9 Rest Day Pass Button */}
+      {/* 2. Exam Countdown + Syllabus Pace Row */}
       <div
-        className="row sp wrap"
+        className="row"
         style={{
-          padding: '6px 11px',
-          marginBottom: '8px',
-          borderRadius: '12px',
-          background: 'var(--c1)',
-          border: '1px solid var(--bd)',
-          gap: '8px',
+          gap: 10,
+          flexWrap: 'wrap',
+          marginBottom: 10,
+          alignItems: 'stretch',
         }}
       >
-        <small
-          style={{
-            fontWeight: 700,
-            color:
-              paceReport.status === 'behind'
-                ? '#fca5a5'
-                : paceReport.status === 'ahead' || paceReport.status === 'completed'
-                  ? '#6ee7b7'
-                  : 'var(--tx)',
-          }}
-        >
-          🧭 {paceReport.compactSummary}
-        </small>
-        {onToggleRestDay && (
+        <div style={{ flex: '1 1 250px', minWidth: 0 }}>
+          <ExamCountdownCard
+            state={state}
+            todayKey={todayKey}
+            onManageExams={onManageExams || (() => onSwitchTab('more'))}
+            onAddExam={onNewDDay}
+          />
+        </div>
+
+        {paceReport.exam && !paceReport.pastExam && paceReport.totalChapters > 0 && (
           <button
             type="button"
-            className="s"
+            onClick={() => onSwitchTab('prep')}
             style={{
-              padding: '3px 9px',
-              fontSize: '11px',
-              borderColor: (state.restDays || []).includes(sel) ? '#10b981' : 'var(--bd)',
-              color: (state.restDays || []).includes(sel) ? '#10b981' : 'var(--mu)',
+              flex: '1 1 220px',
+              margin: '6px 0 10px',
+              padding: '12px 14px',
+              borderRadius: 14,
+              background: 'var(--sf-1)',
+              border: '1px solid var(--line)',
+              display: 'flex',
+              alignItems: 'center',
+              justifyContent: 'space-between',
+              gap: 10,
+              textAlign: 'left',
+              minHeight: 52,
+              cursor: 'pointer',
             }}
-            onClick={() => onToggleRestDay(sel)}
-            title="Mark as a Rest Day so your minimum-day streak stays protected"
           >
-            {(state.restDays || []).includes(sel)
-              ? '🛌 Rest Day Active'
-              : `🛌 Rest Pass (${minStreakInfo.restPassesRemaining}/${minStreakInfo.restPassesPerMonth} left)`}
+            <div style={{ minWidth: 0 }}>
+              <span
+                style={{
+                  display: 'block',
+                  fontSize: 12,
+                  color: 'var(--tx-2)',
+                  fontWeight: 500,
+                }}
+              >
+                Syllabus pace
+              </span>
+              <span
+                style={{
+                  display: 'block',
+                  fontSize: 13,
+                  fontWeight: 600,
+                  color:
+                    paceReport.status === 'ahead'
+                      ? 'var(--ok-ink)'
+                      : paceReport.status === 'behind'
+                        ? 'var(--warn-ink)'
+                        : 'var(--ac-ink)',
+                  overflow: 'hidden',
+                  textOverflow: 'ellipsis',
+                  whiteSpace: 'nowrap',
+                }}
+              >
+                {paceReport.compactSummary}
+              </span>
+            </div>
+            <ArrowRight
+              size={16}
+              strokeWidth={1.75}
+              style={{ color: 'var(--tx-3)', flexShrink: 0 }}
+            />
           </button>
         )}
       </div>
 
-      {/* 1.12 Gentle Dismissible Burnout Check Card */}
+      {/* 3. Gentle Pace & Wellbeing Check-In (when visible) */}
       {burnoutStatus.visible && (
-        <div
-          className="card"
+        <Card
           style={{
-            borderLeft: '4px solid #f59e0b',
-            background: 'color-mix(in srgb, #f59e0b 10%, var(--c1))',
-            padding: '10px 14px',
+            marginBottom: 12,
+            borderLeft: '3px solid var(--info)',
           }}
         >
-          <div className="row sp" style={{ alignItems: 'flex-start', gap: '8px' }}>
-            <div>
-              <b style={{ fontSize: '13.5px', color: '#fde68a' }}>
-                🌿 Gentle Pace &amp; Wellbeing Check-In
-              </b>
-              <small style={{ display: 'block', marginTop: '3px', color: 'var(--tx)', lineHeight: 1.4 }}>
-                {burnoutStatus.message}
-              </small>
-              <small style={{ display: 'block', marginTop: '4px', color: 'var(--mu)', fontSize: '11px' }}>
-                {burnoutStatus.supportNote}
-              </small>
-            </div>
-            {onDismissBurnout && (
-              <button
-                type="button"
-                className="s"
-                style={{ padding: '4px 9px', fontSize: '11px', whiteSpace: 'nowrap' }}
-                onClick={onDismissBurnout}
+          <div className="split" style={{ alignItems: 'flex-start', gap: 10 }}>
+            <div style={{ flex: 1, minWidth: 0 }}>
+              <div className="row" style={{ gap: 8, marginBottom: 4 }}>
+                <HeartHandshake
+                  size={18}
+                  strokeWidth={1.75}
+                  style={{ color: 'var(--info-ink)', flexShrink: 0 }}
+                />
+                <b style={{ fontSize: 15 }}>Gentle pace & wellbeing check-in</b>
+              </div>
+              <p
+                style={{
+                  margin: 0,
+                  fontSize: 13,
+                  color: 'var(--tx-2)',
+                  lineHeight: 1.5,
+                }}
               >
-                Dismiss (3d)
-              </button>
-            )}
+                {burnoutStatus.message || burnoutStatus.supportNote}
+              </p>
+            </div>
           </div>
-        </div>
+          <div className="row" style={{ gap: 8, marginTop: 10, flexWrap: 'wrap' }}>
+            {!minStreakInfo.todayIsRestDay &&
+              minStreakInfo.restPassesRemaining > 0 && (
+                <Button
+                  variant="secondary"
+                  size="sm"
+                  onClick={() => onToggleRestDay(todayKey)}
+                >
+                  Take rest day pass ({minStreakInfo.restPassesRemaining} left)
+                </Button>
+              )}
+            <Button variant="ghost" size="sm" onClick={onDismissBurnout}>
+              Dismiss (3d)
+            </Button>
+            <Button
+              variant="ghost"
+              size="sm"
+              onClick={() => {
+                const el = document.getElementById('wellbeingReflectionCard');
+                if (el) el.scrollIntoView({ behavior: 'smooth' });
+              }}
+            >
+              Log sleep & energy
+            </Button>
+          </div>
+        </Card>
       )}
 
-      {/* 7-Day Week Strip */}
-      <div className="wk">
-        {[...Array(7)].map((_, i) => {
-          const k = addD(todayKey, i - 6);
-          const dayPct = Math.round(getDayProgress(state, k).pct * 100);
+      {/* 4. 7-Day Rolling Week Strip */}
+      <div className="wk" role="group" aria-label="7-day date selector">
+        {days.map((k) => {
+          const d = parseD(k);
+          const dp = Math.round(getDayProgress(state, k).pct * 100);
           return (
             <button
-              type="button"
               key={k}
+              type="button"
               className={k === sel ? 'on' : ''}
               onClick={() => onSelectDay(k)}
-              aria-label={`Select date ${k}`}
             >
-              <small>{DN[parseKey(k).getDay()]}</small>
-              <b>{parseKey(k).getDate()}</b>
-              <i style={{ '--p': dayPct } as React.CSSProperties} />
+              <small style={{ fontSize: 12 }}>{DN[d.getDay()]}</small>
+              <b>{d.getDate()}</b>
+              <i style={{ '--p': dp } as React.CSSProperties} />
             </button>
           );
         })}
       </div>
 
-      {/* Hero Ring & Flexible Study Metrics */}
-      <div className="card hero-grid">
+      {!isTodaySelected && (
         <div
-          className="ring"
-          style={
-            {
-              '--p': p,
-              boxShadow:
-                p === 100 && dayProg.total > 0
-                  ? '0 0 42px color-mix(in srgb, var(--em) 48%, transparent)'
-                  : undefined,
-            } as React.CSSProperties
-          }
+          className="split"
+          style={{
+            background: 'var(--sf-1)',
+            border: '1px solid var(--ac-line)',
+            borderRadius: 'var(--r-card)',
+            padding: '10px 14px',
+            marginBottom: 12,
+          }}
         >
-          <svg
-            viewBox="0 0 126 126"
-            width="126"
-            height="126"
-            style={{
-              position: 'absolute',
-              inset: 0,
-              transform: 'rotate(-90deg)',
-              pointerEvents: 'none',
-            }}
-            aria-hidden="true"
+          <div className="row" style={{ gap: 8 }}>
+            <Calendar size={16} strokeWidth={1.75} style={{ color: 'var(--ac-ink)' }} />
+            <span style={{ fontSize: 13 }}>
+              Viewing{' '}
+              <b>
+                {selDate.toLocaleDateString('en-US', {
+                  weekday: 'short',
+                  month: 'short',
+                  day: 'numeric',
+                })}
+              </b>
+            </span>
+          </div>
+          <Button
+            variant="secondary"
+            size="sm"
+            onClick={() => onSelectDay(todayKey)}
           >
-            <defs>
-              <linearGradient id="heroRingGrad" x1="0%" y1="0%" x2="100%" y2="100%">
-                <stop offset="0%" stopColor="var(--ac)" />
-                <stop offset="100%" stopColor="var(--em)" />
-              </linearGradient>
-            </defs>
-            <circle
-              cx="63"
-              cy="63"
-              r="55"
-              fill="none"
-              stroke="var(--c2)"
-              strokeWidth="12"
-            />
-            <circle
-              cx="63"
-              cy="63"
-              r="55"
-              fill="none"
-              stroke="url(#heroRingGrad)"
-              strokeWidth="12"
-              strokeLinecap="round"
-              strokeDasharray={345.6}
-              strokeDashoffset={345.6 - (345.6 * p) / 100}
-              style={{ transition: 'stroke-dashoffset 0.55s cubic-bezier(0.16, 1, 0.3, 1)' }}
-            />
-          </svg>
-          <i>
-            <div>
-              {dayProg.total === 0 ? (
-                <>
-                  <b>
-                    {p}
-                    <small style={{ fontSize: '14px' }}>%</small>
-                  </b>
-                  <small style={{ display: 'block', fontSize: '11px' }}>
-                    {dayProg.habitsDone}/{dayProg.habitsTotal} habits
-                  </small>
-                </>
+            Return to today
+          </Button>
+        </div>
+      )}
+
+      {/* Desktop 1100px+ Two-Column Workspace */}
+      <div className="today-desktop-layout">
+        <div className="today-main-col">
+          {/* 5. Top Hero Progress + Primary Focus Session Starter */}
+          <Card style={{ marginTop: 4 }}>
+            <div className="hero-grid">
+              <div style={{ display: 'flex', justifyContent: 'center' }}>
+                <ProgressRing
+                  pct={p}
+                  size={116}
+                  strokeWidth={10}
+                  color={p === 100 && dayProg.total > 0 ? 'var(--ok)' : 'var(--ac)'}
+                >
+                  <div>
+                    <b
+                      style={{
+                        fontSize: 24,
+                        fontWeight: 700,
+                        lineHeight: 1.05,
+                        display: 'block',
+                        fontVariantNumeric: 'tabular-nums',
+                      }}
+                    >
+                      {p}%
+                    </b>
+                    <small style={{ fontSize: 12, color: 'var(--tx-2)' }}>
+                      {dayProg.habitsTotal > 0 || dayProg.tasksTotal > 0
+                        ? `${dayProg.habitsDone}/${dayProg.habitsTotal}h · ${dayProg.tasksDone}/${dayProg.tasksTotal}t`
+                        : 'Daily goal'}
+                    </small>
+                  </div>
+                </ProgressRing>
+              </div>
+
+              <div style={{ minWidth: 0 }}>
+                <div className="stat-mini">
+                  <div className="stat-box">
+                    <small style={{ fontSize: 12 }}>Studied</small>
+                    <b style={{ color: 'var(--ac-ink)' }}>
+                      {fmtHMShort(selectedDayTotalMs)}
+                    </b>
+                    <small style={{ fontSize: 12 }}>
+                      {studyProg.goalMs > 0
+                        ? `${studyProg.pct}% of ${fmtDuration(studyProg.goalMs)} goal`
+                        : `${selectedDaySessions.length} session${
+                            selectedDaySessions.length === 1 ? '' : 's'
+                          }`}
+                    </small>
+                  </div>
+                  <div className="stat-box">
+                    <small style={{ fontSize: 12 }}>Focus purity</small>
+                    <b
+                      style={{
+                        color:
+                          selectedDayAvgPurity >= 85
+                            ? 'var(--ok-ink)'
+                            : selectedDayAvgPurity >= 65
+                              ? 'var(--warn-ink)'
+                              : 'var(--tx)',
+                      }}
+                    >
+                      {selectedDaySessions.length
+                        ? `${selectedDayAvgPurity}%`
+                        : '—'}
+                    </b>
+                    <small style={{ fontSize: 12 }}>
+                      {selectedDaySessions.length} session
+                      {selectedDaySessions.length === 1 ? '' : 's'}
+                    </small>
+                  </div>
+                </div>
+
+                {studyProg.goalMs > 0 && (
+                  <div style={{ marginTop: 10 }}>
+                    <div className="split" style={{ marginBottom: 4 }}>
+                      <span style={{ fontSize: 12, color: 'var(--tx-2)' }}>
+                        Daily study target
+                      </span>
+                      <span
+                        style={{
+                          fontSize: 12,
+                          fontWeight: 600,
+                          color:
+                            studyProg.pct >= 100 ? 'var(--ok-ink)' : 'var(--tx)',
+                          fontVariantNumeric: 'tabular-nums',
+                        }}
+                      >
+                        {fmtDuration(studyProg.studiedMs)} /{' '}
+                        {fmtDuration(studyProg.goalMs)}
+                      </span>
+                    </div>
+                    <Meter
+                      value={studyProg.pct}
+                      color={studyProg.pct >= 100 ? 'var(--ok)' : 'var(--ac)'}
+                      label="Daily study target progress"
+                    />
+                  </div>
+                )}
+              </div>
+            </div>
+
+            {/* Primary Focus Starter embedded directly in top Hero card */}
+            <div
+              style={{
+                marginTop: 16,
+                paddingTop: 14,
+                borderTop: '1px solid var(--line)',
+              }}
+            >
+              {state.activeTimer ? (
+                <div
+                  className="split"
+                  style={{
+                    padding: '10px 12px',
+                    borderRadius: 12,
+                    background: 'var(--ac-soft)',
+                    border: '1px solid var(--ac-line)',
+                    gap: 10,
+                    flexWrap: 'wrap',
+                  }}
+                >
+                  <div className="row" style={{ gap: 10 }}>
+                    <span
+                      style={{
+                        width: 10,
+                        height: 10,
+                        borderRadius: '50%',
+                        background:
+                          state.activeTimer.status === 'running'
+                            ? 'var(--ok)'
+                            : 'var(--warn)',
+                      }}
+                    />
+                    <div>
+                      <b style={{ fontSize: 14, display: 'block' }}>
+                        {state.activeTimer.status === 'running'
+                          ? 'Focus session running'
+                          : 'Focus session paused'}
+                      </b>
+                      <span style={{ fontSize: 12, color: 'var(--tx-2)' }}>
+                        {getSubject(state, state.activeTimer.subjectId).name} ·{' '}
+                        {state.activeTimer.heading || 'Deep study'}
+                      </span>
+                    </div>
+                  </div>
+                  <Button
+                    variant="primary"
+                    size="sm"
+                    icon={<Play size={14} strokeWidth={2} />}
+                    onClick={() => onSwitchTab('focus')}
+                  >
+                    Open timer
+                  </Button>
+                </div>
               ) : (
-                <>
-                  <b style={{ fontSize: '17px', lineHeight: 1.15 }}>
-                    {dayProg.done}/{dayProg.total} done
-                  </b>
-                  <small
+                <div>
+                  <div className="split" style={{ marginBottom: 8 }}>
+                    <div className="row" style={{ gap: 6 }}>
+                      <Timer
+                        size={16}
+                        strokeWidth={1.75}
+                        style={{ color: 'var(--ac-ink)' }}
+                      />
+                      <b style={{ fontSize: 14 }}>Start a focus session</b>
+                    </div>
+                    <Button
+                      variant="ghost"
+                      size="sm"
+                      icon={<Plus size={14} strokeWidth={2} />}
+                      onClick={() =>
+                        onOpenManualSession(
+                          effectiveQuickSubId,
+                          effectiveQuickChapId || undefined
+                        )
+                      }
+                    >
+                      Log hours
+                    </Button>
+                  </div>
+
+                  {/* Subject Selector Chips */}
+                  <div
+                    className="row"
                     style={{
-                      display: 'block',
-                      fontSize: '10px',
-                      lineHeight: 1.25,
-                      marginTop: '3px',
+                      gap: 6,
+                      overflowX: 'auto',
+                      paddingBottom: 6,
+                      scrollbarWidth: 'none',
                     }}
                   >
-                    {dayProg.habitsDone}/{dayProg.habitsTotal} habits · {dayProg.tasksDone}/{dayProg.tasksTotal} tasks
-                  </small>
-                </>
+                    {activeSubjects.map((s) => (
+                      <Chip
+                        key={s.id}
+                        selected={effectiveQuickSubId === s.id}
+                        colorDot={s.color}
+                        onClick={() => {
+                          setQuickSubjectId(s.id);
+                          setQuickChapterId('');
+                        }}
+                      >
+                        {s.e} {s.name}
+                      </Chip>
+                    ))}
+                  </div>
+
+                  {/* Chapter Sheet Picker + Session Heading Input */}
+                  <div
+                    className="row"
+                    style={{
+                      gap: 8,
+                      marginTop: 6,
+                      flexWrap: 'wrap',
+                      alignItems: 'stretch',
+                    }}
+                  >
+                    {quickSubjectChapters.length > 0 && (
+                      <div style={{ flex: '1 1 200px', minWidth: 0 }}>
+                        <Select
+                          aria-label="Link syllabus chapter"
+                          title="Link syllabus chapter"
+                          value={effectiveQuickChapId}
+                          options={quickChapterOptions}
+                          onChange={(val) => {
+                            setQuickChapterId(val);
+                            const ch = quickSubjectChapters.find((c) => c.id === val);
+                            if (ch && !quickHeading.trim()) {
+                              setQuickHeading(ch.name);
+                            }
+                          }}
+                          placeholder="Link chapter (optional)"
+                        />
+                      </div>
+                    )}
+                    <input
+                      type="text"
+                      placeholder="Session topic or goal (optional)"
+                      value={quickHeading}
+                      onChange={(e) => setQuickHeading(e.target.value)}
+                      style={{ flex: '1 1 200px', minHeight: 44, fontSize: 14 }}
+                    />
+                  </div>
+
+                  {/* Mode Launch Buttons */}
+                  <div
+                    style={{
+                      display: 'grid',
+                      gridTemplateColumns: 'repeat(auto-fit, minmax(128px, 1fr))',
+                      gap: 8,
+                      marginTop: 10,
+                    }}
+                  >
+                    <Button
+                      variant="primary"
+                      size="sm"
+                      icon={<Timer size={15} strokeWidth={1.75} />}
+                      onClick={() =>
+                        onQuickStartSession(
+                          effectiveQuickSubId,
+                          quickHeading,
+                          'pomo',
+                          effectiveQuickChapId || undefined
+                        )
+                      }
+                    >
+                      Pomodoro ({state.set.pomoWork || 25}m)
+                    </Button>
+                    <Button
+                      variant="secondary"
+                      size="sm"
+                      icon={<Hourglass size={15} strokeWidth={1.75} />}
+                      onClick={() =>
+                        onQuickStartSession(
+                          effectiveQuickSubId,
+                          quickHeading,
+                          'countdown',
+                          effectiveQuickChapId || undefined
+                        )
+                      }
+                    >
+                      Countdown ({state.set.countdownMins || 45}m)
+                    </Button>
+                    <Button
+                      variant="secondary"
+                      size="sm"
+                      icon={<Clock size={15} strokeWidth={1.75} />}
+                      onClick={() =>
+                        onQuickStartSession(
+                          effectiveQuickSubId,
+                          quickHeading,
+                          'stopwatch',
+                          effectiveQuickChapId || undefined
+                        )
+                      }
+                    >
+                      Stopwatch
+                    </Button>
+                  </div>
+                </div>
               )}
             </div>
-          </i>
-        </div>
-        <div className="stat-mini">
-          <div className="stat-box">
-            <small>Studied ({sel === todayKey ? 'Today' : sel.slice(5)})</small>
-            <b className="mono" style={{ color: 'var(--em)' }}>
-              {fmtHMShort(dayStudyMs)}
-            </b>
-          </div>
-          <div className="stat-box">
-            <small>Focus Purity</small>
-            <b className="mono">{avgPurity}%</b>
-          </div>
-          <div className="stat-box">
-            <small>Sessions</small>
-            <b className="mono">{daySessions.length}</b>
-          </div>
-          <button
-            type="button"
-            className="stat-box"
-            style={{ cursor: 'pointer', textAlign: 'left' }}
-            onClick={() => onOpenManualSession(quickSubjectId, quickChapterId || undefined)}
-          >
-            <small>+ Log Hours</small>
-            <b style={{ color: 'var(--ac)', fontSize: '13px' }}>Manual +</b>
-          </button>
-        </div>
-      </div>
+          </Card>
 
-      {/* 1.8 Subject Daily Target-vs-Actual Bars (Compact) & 1.7 Study Next Top 3 */}
-      {(subjectTargets.some((r) => r.dailyTargetMins > 0 || r.dailyActualMins > 0) ||
-        studyNextTop3.length > 0) && (
-        <div className="card" style={{ padding: '12px 14px' }}>
-          {subjectTargets.some((r) => r.dailyTargetMins > 0 || r.dailyActualMins > 0) && (
-            <div style={{ marginBottom: studyNextTop3.length > 0 ? '12px' : 0 }}>
-              <div className="row sp" style={{ marginBottom: '6px' }}>
-                <small style={{ fontWeight: 800, textTransform: 'uppercase', letterSpacing: '0.04em' }}>
-                  🎯 Subject Targets ({sel === todayKey ? 'Today' : sel})
-                </small>
-                <small className="mono">
-                  Min Day: {minStreakInfo.todayStudiedMins}/{minStreakInfo.minDayMinutes}m
-                </small>
+          {/* 6. Subject Daily Targets (when configured) */}
+          {subjectTargets.length > 0 && (
+            <Card>
+              <div className="split" style={{ marginBottom: 10 }}>
+                <div className="row" style={{ gap: 8 }}>
+                  <Target
+                    size={18}
+                    strokeWidth={1.75}
+                    style={{ color: 'var(--ac-ink)' }}
+                  />
+                  <h3 style={{ margin: 0, fontSize: 16 }}>Subject targets</h3>
+                </div>
+                <Button
+                  variant="ghost"
+                  size="sm"
+                  onClick={() => onSwitchTab('more')}
+                >
+                  Edit targets
+                </Button>
               </div>
-              <div
-                style={{
-                  display: 'grid',
-                  gridTemplateColumns: 'repeat(auto-fit, minmax(125px, 1fr))',
-                  gap: '8px',
-                }}
-              >
+              <div style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
                 {subjectTargets.map((row) => (
                   <div
                     key={row.subjectId}
                     style={{
-                      background: 'var(--c2)',
-                      padding: '6px 9px',
-                      borderRadius: '10px',
-                      borderLeft: `3px solid ${row.color}`,
+                      background: 'var(--sf-2)',
+                      borderRadius: 12,
+                      padding: '10px 12px',
+                      border: '1px solid var(--line)',
                     }}
                   >
-                    <div className="row sp" style={{ fontSize: '11.5px' }}>
-                      <b>
-                        {row.subjectEmoji} {row.subjectName}
-                      </b>
-                      <span className="mono" style={{ fontSize: '11px' }}>
-                        {row.dailyActualMins}m
-                        {row.dailyTargetMins > 0 ? `/${row.dailyTargetMins}m` : ''}
+                    <div className="split" style={{ marginBottom: 6, gap: 8 }}>
+                      <div className="row" style={{ gap: 8 }}>
+                        <span
+                          style={{
+                            width: 8,
+                            height: 8,
+                            borderRadius: '50%',
+                            background: row.color,
+                          }}
+                        />
+                        <b style={{ fontSize: 13 }}>
+                          {row.subjectEmoji} {row.subjectName}
+                        </b>
+                      </div>
+                      <span
+                        style={{
+                          fontSize: 12,
+                          color: 'var(--tx-2)',
+                          fontVariantNumeric: 'tabular-nums',
+                        }}
+                      >
+                        {row.dailyTargetMins > 0 && (
+                          <>
+                            Today{' '}
+                            <b
+                              style={{
+                                color:
+                                  row.dailyPct >= 100
+                                    ? 'var(--ok-ink)'
+                                    : 'var(--tx)',
+                              }}
+                            >
+                              {fmtDuration(row.dailyActualMins * 60000)}
+                            </b>{' '}
+                            / {fmtDuration(row.dailyTargetMins * 60000)}
+                          </>
+                        )}
                       </span>
                     </div>
                     {row.dailyTargetMins > 0 && (
-                      <div className="pbar" style={{ height: '4px', marginTop: '4px' }}>
-                        <i style={{ width: `${row.dailyPct}%`, background: row.color }} />
-                      </div>
+                      <Meter
+                        value={row.dailyPct}
+                        color={row.dailyPct >= 100 ? 'var(--ok)' : row.color}
+                        height={6}
+                        label={`${row.subjectName} daily target`}
+                      />
                     )}
                   </div>
                 ))}
               </div>
-            </div>
+            </Card>
           )}
 
-          {studyNextTop3.length > 0 && (
-            <div>
-              <div className="row sp" style={{ marginBottom: '6px' }}>
-                <small style={{ fontWeight: 800, textTransform: 'uppercase', letterSpacing: '0.04em' }}>
-                  🧭 Study Next (Top 3 Chapters)
-                </small>
-                <button
-                  type="button"
-                  className="s"
-                  style={{ padding: '2px 8px', fontSize: '11px' }}
+          {/* 7. Study Next — Top 3 Recommended Chapters */}
+          {studyNextItems.length > 0 && (
+            <Card>
+              <div className="split" style={{ marginBottom: 10 }}>
+                <div className="row" style={{ gap: 8 }}>
+                  <Compass
+                    size={18}
+                    strokeWidth={1.75}
+                    style={{ color: 'var(--ac-ink)' }}
+                  />
+                  <div>
+                    <h3 style={{ margin: 0, fontSize: 16 }}>Study next</h3>
+                    <small style={{ fontSize: 12 }}>
+                      Ranked by revisions due, mistakes & low confidence
+                    </small>
+                  </div>
+                </div>
+                <Button
+                  variant="ghost"
+                  size="sm"
                   onClick={() => onSwitchTab('prep')}
                 >
-                  Syllabus →
-                </button>
+                  Syllabus
+                </Button>
               </div>
-              <div style={{ display: 'grid', gap: '6px' }}>
-                {studyNextTop3.map((item, idx) => (
+              <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
+                {studyNextItems.map((item) => (
                   <div
                     key={item.chapter.id}
-                    className="row sp"
+                    className="split"
                     style={{
-                      padding: '6px 9px',
-                      borderRadius: '10px',
-                      background: 'var(--c2)',
+                      padding: '10px 12px',
+                      borderRadius: 12,
+                      background: 'var(--sf-2)',
+                      border: '1px solid var(--line)',
                       borderLeft: `3px solid ${item.subjectColor}`,
-                      gap: '8px',
+                      gap: 10,
                     }}
                   >
                     <div style={{ minWidth: 0, flex: 1 }}>
-                      <b style={{ fontSize: '12.5px', display: 'block' }}>
-                        {idx + 1}. {item.subjectEmoji} {item.chapter.name}
-                      </b>
-                      <small style={{ fontSize: '11px', color: 'var(--mu)' }}>
-                        {item.reasons.join(' • ')}
+                      <div className="row" style={{ gap: 6, flexWrap: 'wrap' }}>
+                        <b
+                          style={{
+                            fontSize: 14,
+                            whiteSpace: 'nowrap',
+                            overflow: 'hidden',
+                            textOverflow: 'ellipsis',
+                          }}
+                        >
+                          {item.subjectEmoji} {item.chapter.name}
+                        </b>
+                        {item.chapter.confidence && (
+                          <span
+                            className="pill"
+                            style={{
+                              fontSize: 12,
+                              padding: '1px 7px',
+                              background: 'var(--sf-3)',
+                              color: 'var(--tx-2)',
+                            }}
+                          >
+                            {'★'.repeat(item.chapter.confidence)}
+                          </span>
+                        )}
+                      </div>
+                      <small
+                        style={{
+                          display: 'block',
+                          marginTop: 3,
+                          fontSize: 12,
+                          color: 'var(--tx-2)',
+                        }}
+                      >
+                        {item.reasons.join(' · ')}
                       </small>
                     </div>
-                    <button
-                      type="button"
-                      className="s pri"
-                      style={{ padding: '4px 9px', fontSize: '11px', whiteSpace: 'nowrap' }}
+                    <Button
+                      variant="primary"
+                      size="sm"
+                      icon={<Play size={13} strokeWidth={2} />}
                       onClick={() =>
                         onQuickStartSession(
                           item.chapter.subjectId,
                           item.chapter.name,
-                          'pomo',
+                          state.set.defaultMode || 'pomo',
                           item.chapter.id
                         )
                       }
                     >
-                      ▶ Focus
-                    </button>
+                      Focus
+                    </Button>
                   </div>
                 ))}
               </div>
-            </div>
+            </Card>
           )}
-        </div>
-      )}
 
-      {/* Daily Tasks Card (directly under Ring card and above Revisions Due) */}
-      <div className="card" id="dailyTasksCard">
-        <div className="row sp" style={{ marginBottom: '8px' }}>
-          <div>
-            <h3>
-              Tasks {dayProg.tasksDone}/{dayProg.tasksTotal}
-            </h3>
-            <small>
-              One-off tasks for {sel === todayKey ? 'today' : sel}
-            </small>
-          </div>
-        </div>
-
-        {!isFutureDay ? (
-          <form
-            onSubmit={(e) => {
-              e.preventDefault();
-              const clean = taskTitleDraft.trim().slice(0, 140);
-              if (!clean) return;
-              const now = Date.now();
-              if (
-                lastTaskSubmitRef.current.title === clean &&
-                now - lastTaskSubmitRef.current.ts < 400
-              ) {
-                return;
-              }
-              lastTaskSubmitRef.current = { title: clean, ts: now };
-              setTaskTitleDraft('');
-              onAddTask(clean, sel, taskSubjectId || undefined);
-            }}
-            style={{
-              display: 'grid',
-              gridTemplateColumns: '1fr auto auto',
-              gap: '6px',
-              alignItems: 'center',
-              marginBottom: '10px',
-            }}
-          >
-            <input
-              type="text"
-              value={taskTitleDraft}
-              maxLength={140}
-              placeholder={`Add a task for ${sel === todayKey ? 'today' : sel}...`}
-              aria-label="New task title"
-              onChange={(e) => setTaskTitleDraft(e.target.value)}
-              style={{ margin: 0, minHeight: '44px' }}
-            />
-            <select
-              value={taskSubjectId}
-              aria-label="Task subject (optional)"
-              onChange={(e) => setTaskSubjectId(e.target.value)}
-              style={{
-                margin: 0,
-                width: 'auto',
-                maxWidth: '126px',
-                minHeight: '44px',
-                padding: '0 8px',
-                fontSize: '12px',
-              }}
-            >
-              <option value="">No subject</option>
-              {subjects.map((s) => (
-                <option key={s.id} value={s.id}>
-                  {s.e} {s.name}
-                </option>
-              ))}
-            </select>
-            <button
-              type="submit"
-              className="pri"
-              aria-label="Add task"
-              style={{
-                minWidth: '44px',
-                minHeight: '44px',
-                padding: '0 14px',
-                fontWeight: 800,
-                fontSize: '18px',
-              }}
-            >
-              +
-            </button>
-          </form>
-        ) : (
-          <small className="mu" style={{ display: 'block', marginBottom: '10px' }}>
-            Future days only get tasks via &ldquo;Move to tomorrow&rdquo; or &ldquo;Change date&rdquo;.
-          </small>
-        )}
-
-        {dayTasks.length === 0 ? (
-          <small className="mu" style={{ display: 'block' }}>
-            No tasks for {sel === todayKey ? 'today' : sel} yet.
-          </small>
-        ) : (
-          <div style={{ display: 'grid', gap: '6px' }}>
-            {dayTasks.map((t) => {
-              const sub = t.subjectId ? getSubject(state, t.subjectId) : null;
-              const isMenuOpen = openMenuTaskId === t.id;
-              const isEditing = editingTaskId === t.id;
-              const isChangingDate = changingDateTaskId === t.id;
-
-              return (
-                <div
-                  key={t.id}
-                  className="stat-box"
+          {/* 8. Daily Tasks Card (Compact when empty) */}
+          <Card id="dailyTasksCard">
+            <div className="split" style={{ marginBottom: 10 }}>
+              <div className="row" style={{ gap: 8 }}>
+                <h3 style={{ margin: 0, fontSize: 16 }}>Daily tasks</h3>
+                <span
+                  className="pill"
                   style={{
-                    padding: '8px 10px',
-                    borderLeft: sub ? `3px solid ${sub.color}` : '3px solid var(--ac)',
+                    fontSize: 12,
+                    padding: '2px 8px',
+                    background:
+                      dayTasks.length > 0 && dayProg.tasksDone === dayTasks.length
+                        ? 'color-mix(in srgb, var(--ok) 16%, transparent)'
+                        : 'var(--sf-2)',
+                    color:
+                      dayTasks.length > 0 && dayProg.tasksDone === dayTasks.length
+                        ? 'var(--ok-ink)'
+                        : 'var(--tx-2)',
+                    fontVariantNumeric: 'tabular-nums',
                   }}
                 >
-                  <div className="row sp" style={{ gap: '8px', flexWrap: 'nowrap' }}>
-                    <button
-                      type="button"
-                      className={`ck ${t.done ? 'on' : ''}`}
-                      aria-pressed={t.done}
-                      aria-label={`Mark task "${t.title}" as ${t.done ? 'incomplete' : 'complete'}`}
-                      onClick={() => onToggleTask(t.id)}
-                      style={{
-                        minWidth: '44px',
-                        minHeight: '44px',
-                        width: '44px',
-                        height: '44px',
-                        flexShrink: 0,
-                      }}
-                    >
-                      {t.done ? '✓' : ''}
-                    </button>
-
-                    <div style={{ flex: 1, minWidth: 0 }}>
-                      {isEditing ? (
-                        <form
-                          onSubmit={(e) => {
-                            e.preventDefault();
-                            const clean = editingTitleDraft.trim().slice(0, 140);
-                            if (!clean) return;
-                            onEditTaskTitle(t.id, clean);
-                            setEditingTaskId(null);
-                            setOpenMenuTaskId(null);
-                          }}
-                          style={{ display: 'flex', gap: '6px', alignItems: 'center' }}
-                        >
-                          <input
-                            type="text"
-                            value={editingTitleDraft}
-                            maxLength={140}
-                            aria-label="Edit task title"
-                            onChange={(e) => setEditingTitleDraft(e.target.value)}
-                            style={{ margin: 0, flex: 1, minHeight: '38px' }}
-                            autoFocus
-                          />
-                          <button type="submit" className="s pri">
-                            Save
-                          </button>
-                          <button
-                            type="button"
-                            className="s"
-                            onClick={() => setEditingTaskId(null)}
-                          >
-                            Cancel
-                          </button>
-                        </form>
-                      ) : (
-                        <>
-                          <b
-                            style={{
-                              display: 'block',
-                              fontSize: '14px',
-                              textDecoration: t.done ? 'line-through' : 'none',
-                              opacity: t.done ? 0.6 : 1,
-                              wordBreak: 'break-word',
-                            }}
-                          >
-                            {t.title}
-                          </b>
-                          {sub && (
-                            <span
-                              className="pill"
-                              style={{
-                                marginTop: '4px',
-                                padding: '1px 7px',
-                                fontSize: '10.5px',
-                                borderColor: sub.color,
-                                color: sub.color,
-                              }}
-                            >
-                              {sub.e} {sub.name}
-                            </span>
-                          )}
-                        </>
-                      )}
-                    </div>
-
-                    <button
-                      type="button"
-                      className="ic"
-                      aria-label={`Task actions for ${t.title}`}
-                      aria-expanded={isMenuOpen}
-                      onClick={() => {
-                        setOpenMenuTaskId(isMenuOpen ? null : t.id);
-                        setEditingTaskId(null);
-                        setChangingDateTaskId(null);
-                      }}
-                      style={{
-                        minWidth: '44px',
-                        minHeight: '44px',
-                        width: '44px',
-                        height: '44px',
-                        flexShrink: 0,
-                      }}
-                    >
-                      ⋯
-                    </button>
-                  </div>
-
-                  {isMenuOpen && (
-                    <div
-                      className="row"
-                      style={{
-                        marginTop: '8px',
-                        paddingTop: '8px',
-                        borderTop: '1px solid var(--bd)',
-                        gap: '6px',
-                      }}
-                    >
-                      <button
-                        type="button"
-                        className="s"
-                        onClick={() => {
-                          setEditingTaskId(t.id);
-                          setEditingTitleDraft(t.title);
-                          setChangingDateTaskId(null);
-                        }}
-                      >
-                        Edit title
-                      </button>
-                      <button
-                        type="button"
-                        className="s"
-                        onClick={() => {
-                          const targetTomorrow =
-                            t.dayKey < todayKey ? addD(todayKey, 1) : addD(t.dayKey, 1);
-                          onChangeTaskDate(t.id, targetTomorrow);
-                          setOpenMenuTaskId(null);
-                        }}
-                      >
-                        Move to tomorrow
-                      </button>
-                      <button
-                        type="button"
-                        className="s"
-                        onClick={() => {
-                          setChangingDateTaskId(isChangingDate ? null : t.id);
-                          setChangingDateDraft(t.dayKey);
-                          setEditingTaskId(null);
-                        }}
-                      >
-                        Change date
-                      </button>
-                      <button
-                        type="button"
-                        className="s dg"
-                        onClick={() => {
-                          setOpenMenuTaskId(null);
-                          onDeleteTask(t.id);
-                        }}
-                      >
-                        Delete
-                      </button>
-                    </div>
-                  )}
-
-                  {isChangingDate && (
-                    <div
-                      className="row"
-                      style={{
-                        marginTop: '8px',
-                        paddingTop: '8px',
-                        borderTop: '1px solid var(--bd)',
-                        gap: '6px',
-                      }}
-                    >
-                      <input
-                        type="date"
-                        value={changingDateDraft}
-                        aria-label="New task date"
-                        onChange={(e) => setChangingDateDraft(e.target.value)}
-                        style={{ margin: 0, width: 'auto', flex: 1, minHeight: '38px' }}
-                      />
-                      <button
-                        type="button"
-                        className="s pri"
-                        onClick={() => {
-                          if (/^\d{4}-\d{2}-\d{2}$/.test(changingDateDraft)) {
-                            onChangeTaskDate(t.id, changingDateDraft);
-                            setChangingDateTaskId(null);
-                            setOpenMenuTaskId(null);
-                          }
-                        }}
-                      >
-                        Apply Date
-                      </button>
-                      <button
-                        type="button"
-                        className="s"
-                        onClick={() => setChangingDateTaskId(null)}
-                      >
-                        Cancel
-                      </button>
-                    </div>
-                  )}
-                </div>
-              );
-            })}
-          </div>
-        )}
-
-        {unfinishedEarlier.length > 0 && (
-          <div
-            style={{
-              marginTop: '12px',
-              paddingTop: '10px',
-              borderTop: '1px solid var(--bd)',
-            }}
-          >
-            <div className="row sp" style={{ gap: '8px' }}>
-              <button
-                type="button"
-                className="s"
-                aria-expanded={earlierOpen}
-                onClick={() => setEarlierOpen((o) => !o)}
-                style={{ fontWeight: 700 }}
-              >
-                {earlierOpen ? '▾' : '▸'} Unfinished from earlier days ({unfinishedEarlier.length})
-              </button>
-              <button
-                type="button"
-                className="s pri"
-                onClick={onMoveAllUnfinishedToToday}
-              >
-                Move all to today
-              </button>
+                  {dayProg.tasksDone}/{dayProg.tasksTotal}
+                </span>
+              </div>
             </div>
 
-            {earlierOpen && (
-              <div style={{ display: 'grid', gap: '6px', marginTop: '8px' }}>
-                {unfinishedEarlier.map((t) => {
-                  const sub = t.subjectId ? getSubject(state, t.subjectId) : null;
+            <form
+              className="row"
+              style={{
+                gap: 8,
+                marginBottom: dayTasks.length > 0 ? 10 : 4,
+                flexWrap: 'wrap',
+              }}
+              onSubmit={(e) => {
+                e.preventDefault();
+                const clean = newTaskTitle.trim();
+                if (!clean) return;
+                onAddTask(clean, sel, newTaskSubjectId || undefined);
+                setNewTaskTitle('');
+              }}
+            >
+              <input
+                id="dailyTaskTitleInput"
+                type="text"
+                placeholder="Add a task for this day..."
+                value={newTaskTitle}
+                onChange={(e) => setNewTaskTitle(e.target.value)}
+                style={{ flex: '2 1 180px', minHeight: 44, fontSize: 14 }}
+              />
+              <div style={{ flex: '1 1 150px', minWidth: 140 }}>
+                <Select
+                  aria-label="Task subject"
+                  title="Task subject"
+                  value={newTaskSubjectId}
+                  options={taskSubjectOptions}
+                  onChange={setNewTaskSubjectId}
+                  placeholder="General"
+                />
+              </div>
+              <Button
+                type="submit"
+                variant="primary"
+                size="md"
+                icon={<Plus size={16} strokeWidth={2} />}
+              >
+                Add
+              </Button>
+            </form>
+
+            {dayTasks.length === 0 ? (
+              <div style={{ fontSize: 13, color: 'var(--tx-3)', padding: '2px 0' }}>
+                No tasks scheduled for this day yet.
+              </div>
+            ) : (
+              <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
+                {dayTasks.map((task: DailyTask) => {
+                  const sub = task.subjectId
+                    ? state.subjects.find((s) => s.id === task.subjectId)
+                    : undefined;
+                  const isEditing = editingTaskId === task.id;
+                  const isChangingDate = changingDateTaskId === task.id;
+                  const isMenuOpen = openTaskMenuId === task.id;
+
                   return (
+                    <SwipeableRow
+                      key={task.id}
+                      disabled={isEditing || isChangingDate}
+                      onSwipeRight={() => onToggleTask(task.id)}
+                      onSwipeLeft={() => onDeleteTask(task.id)}
+                      rightLabel={task.done ? 'Reopen' : 'Done'}
+                      leftLabel="Delete"
+                    >
+                      <div
+                        style={{
+                          padding: '8px 12px',
+                          borderRadius: 12,
+                          background: 'var(--sf-2)',
+                          border: task.done
+                            ? '1px solid color-mix(in srgb, var(--ok) 40%, var(--line))'
+                            : '1px solid var(--line)',
+                          minHeight: 56,
+                          display: 'flex',
+                          flexDirection: 'column',
+                          justifyContent: 'center',
+                        }}
+                      >
+                      <div className="row" style={{ gap: 10 }}>
+                        <button
+                          type="button"
+                          aria-label={
+                            task.done
+                              ? `Mark "${task.title}" incomplete`
+                              : `Complete "${task.title}"`
+                          }
+                          onClick={() => onToggleTask(task.id)}
+                          style={{
+                            width: 36,
+                            height: 36,
+                            minHeight: 36,
+                            padding: 0,
+                            borderRadius: 10,
+                            display: 'grid',
+                            placeItems: 'center',
+                            background: task.done ? 'var(--ok)' : 'var(--sf-1)',
+                            color: task.done ? 'var(--ok-on)' : 'var(--tx-2)',
+                            border: task.done ? 'none' : '1px solid var(--line)',
+                            flexShrink: 0,
+                          }}
+                        >
+                          {task.done ? <Check size={18} strokeWidth={2.25} /> : null}
+                        </button>
+
+                        <div style={{ flex: 1, minWidth: 0 }}>
+                          {isEditing ? (
+                            <form
+                              className="row"
+                              style={{ gap: 6 }}
+                              onSubmit={(e) => {
+                                e.preventDefault();
+                                const clean = editingTaskTitle.trim();
+                                if (clean) onEditTaskTitle(task.id, clean);
+                                setEditingTaskId(null);
+                              }}
+                            >
+                              <input
+                                type="text"
+                                value={editingTaskTitle}
+                                onChange={(e) => setEditingTaskTitle(e.target.value)}
+                                autoFocus
+                                style={{
+                                  flex: 1,
+                                  minHeight: 34,
+                                  padding: '4px 8px',
+                                  fontSize: 13,
+                                }}
+                              />
+                              <Button type="submit" variant="primary" size="sm">
+                                Save
+                              </Button>
+                              <Button
+                                variant="ghost"
+                                size="sm"
+                                onClick={() => setEditingTaskId(null)}
+                              >
+                                Cancel
+                              </Button>
+                            </form>
+                          ) : (
+                            <div
+                              className="row"
+                              style={{ gap: 8, flexWrap: 'wrap', cursor: 'pointer' }}
+                              onClick={() => onToggleTask(task.id)}
+                            >
+                              <span
+                                style={{
+                                  fontSize: 14,
+                                  fontWeight: 500,
+                                  textDecoration: task.done ? 'line-through' : 'none',
+                                  color: task.done ? 'var(--tx-2)' : 'var(--tx)',
+                                  wordBreak: 'break-word',
+                                }}
+                              >
+                                {task.title}
+                              </span>
+                              {sub && (
+                                <span
+                                  className="pill"
+                                  style={{
+                                    fontSize: 12,
+                                    padding: '2px 8px',
+                                    background: 'var(--sf-1)',
+                                    color: 'var(--tx-2)',
+                                    border: '1px solid var(--line)',
+                                    display: 'inline-flex',
+                                    alignItems: 'center',
+                                    gap: 5,
+                                  }}
+                                >
+                                  <span
+                                    style={{
+                                      width: 7,
+                                      height: 7,
+                                      borderRadius: '50%',
+                                      background: sub.color,
+                                    }}
+                                  />
+                                  {sub.e} {sub.name}
+                                </span>
+                              )}
+                            </div>
+                          )}
+                        </div>
+
+                        <button
+                          type="button"
+                          className="s"
+                          aria-label={`Actions for ${task.title}`}
+                          style={{ padding: '6px 10px', minHeight: 36 }}
+                          onClick={() =>
+                            setOpenTaskMenuId((cur) =>
+                              cur === task.id ? null : task.id
+                            )
+                          }
+                        >
+                          <MoreHorizontal size={16} strokeWidth={1.75} />
+                        </button>
+                      </div>
+
+                      {isMenuOpen && (
+                        <div
+                          className="row"
+                          style={{
+                            gap: 6,
+                            marginTop: 8,
+                            paddingTop: 8,
+                            borderTop: '1px solid var(--line)',
+                            flexWrap: 'wrap',
+                          }}
+                        >
+                          <Button
+                            variant="secondary"
+                            size="sm"
+                            icon={<Edit3 size={13} strokeWidth={1.75} />}
+                            onClick={() => {
+                              setEditingTaskId(task.id);
+                              setEditingTaskTitle(task.title);
+                              setOpenTaskMenuId(null);
+                            }}
+                          >
+                            Edit title
+                          </Button>
+                          <Button
+                            variant="secondary"
+                            size="sm"
+                            icon={<CornerDownRight size={13} strokeWidth={1.75} />}
+                            onClick={() => {
+                              onChangeTaskDate(task.id, addD(task.dayKey, 1));
+                              setOpenTaskMenuId(null);
+                            }}
+                          >
+                            Move to tomorrow
+                          </Button>
+                          <Button
+                            variant="secondary"
+                            size="sm"
+                            icon={<Calendar size={13} strokeWidth={1.75} />}
+                            onClick={() => {
+                              setChangingDateTaskId(task.id);
+                              setOpenTaskMenuId(null);
+                            }}
+                          >
+                            Change date
+                          </Button>
+                          <Button
+                            variant="danger"
+                            size="sm"
+                            icon={<Trash2 size={13} strokeWidth={1.75} />}
+                            onClick={() => {
+                              onDeleteTask(task.id);
+                              setOpenTaskMenuId(null);
+                            }}
+                          >
+                            Delete
+                          </Button>
+                        </div>
+                      )}
+
+                      {isChangingDate && (
+                        <div className="row" style={{ gap: 6, marginTop: 8 }}>
+                          <input
+                            type="date"
+                            defaultValue={task.dayKey}
+                            onChange={(e) => {
+                              if (/^\d{4}-\d{2}-\d{2}$/.test(e.target.value)) {
+                                onChangeTaskDate(task.id, e.target.value);
+                                setChangingDateTaskId(null);
+                              }
+                            }}
+                            style={{ minHeight: 34, padding: '4px 8px', fontSize: 13 }}
+                          />
+                          <Button
+                            variant="ghost"
+                            size="sm"
+                            onClick={() => setChangingDateTaskId(null)}
+                          >
+                            Cancel
+                          </Button>
+                        </div>
+                      )}
+                      </div>
+                    </SwipeableRow>
+                  );
+                })}
+              </div>
+            )}
+
+            {/* Unfinished from earlier days */}
+            {unfinishedEarlierTasks.length > 0 && (
+              <div
+                style={{
+                  marginTop: 10,
+                  paddingTop: 10,
+                  borderTop: '1px solid var(--line)',
+                }}
+              >
+                <div className="split" style={{ gap: 8 }}>
+                  <button
+                    type="button"
+                    className="s"
+                    style={{
+                      background: 'transparent',
+                      border: 'none',
+                      padding: '4px 0',
+                      color: 'var(--warn-ink)',
+                      fontSize: 13,
+                      fontWeight: 600,
+                      display: 'inline-flex',
+                      alignItems: 'center',
+                      gap: 6,
+                    }}
+                    onClick={() => setUnfinishedExpanded((v) => !v)}
+                  >
+                    {unfinishedExpanded ? (
+                      <ChevronUp size={15} strokeWidth={1.75} />
+                    ) : (
+                      <ChevronDown size={15} strokeWidth={1.75} />
+                    )}
+                    Unfinished from earlier days ({unfinishedEarlierTasks.length})
+                  </button>
+                  <Button
+                    variant="secondary"
+                    size="sm"
+                    onClick={onMoveAllUnfinishedToToday}
+                  >
+                    Move all to today
+                  </Button>
+                </div>
+
+                {unfinishedExpanded && (
+                  <div
+                    style={{
+                      display: 'flex',
+                      flexDirection: 'column',
+                      gap: 6,
+                      marginTop: 8,
+                    }}
+                  >
+                    {unfinishedEarlierTasks.map((t) => {
+                      const sub = t.subjectId
+                        ? state.subjects.find((s) => s.id === t.subjectId)
+                        : undefined;
+                      return (
+                        <div
+                          key={t.id}
+                          className="split"
+                          style={{
+                            padding: '8px 10px',
+                            borderRadius: 10,
+                            background: 'var(--sf-2)',
+                            border: '1px solid var(--line)',
+                            gap: 8,
+                          }}
+                        >
+                          <div style={{ minWidth: 0, flex: 1 }}>
+                            <div
+                              style={{
+                                fontSize: 13,
+                                fontWeight: 500,
+                                whiteSpace: 'nowrap',
+                                overflow: 'hidden',
+                                textOverflow: 'ellipsis',
+                              }}
+                            >
+                              {t.title}
+                            </div>
+                            <small style={{ fontSize: 12 }}>
+                              From {t.dayKey} {sub ? `· ${sub.e} ${sub.name}` : ''}
+                            </small>
+                          </div>
+                          <div className="row" style={{ gap: 6 }}>
+                            <Button
+                              variant="primary"
+                              size="sm"
+                              onClick={() => onMoveTaskToToday(t.id)}
+                            >
+                              Today
+                            </Button>
+                            <Button
+                              variant="danger"
+                              size="sm"
+                              onClick={() => onDeleteTask(t.id)}
+                            >
+                              Delete
+                            </Button>
+                          </div>
+                        </div>
+                      );
+                    })}
+                  </div>
+                )}
+              </div>
+            )}
+          </Card>
+
+          {/* 9. Revisions Due Card (Compact when empty) */}
+          <Card id="revisionsDueCard">
+            <div
+              className="split"
+              style={{
+                marginBottom: allRevisionsCount > 0 ? 10 : 4,
+              }}
+            >
+              <div className="row" style={{ gap: 8 }}>
+                <Repeat
+                  size={18}
+                  strokeWidth={1.75}
+                  style={{ color: 'var(--ac-ink)' }}
+                />
+                <h3 style={{ margin: 0, fontSize: 16 }}>Revisions due</h3>
+                <span
+                  className="pill"
+                  style={{
+                    fontSize: 12,
+                    padding: '2px 8px',
+                    background:
+                      revisionsBundle.overdue.length > 0
+                        ? 'color-mix(in srgb, var(--err) 16%, transparent)'
+                        : allRevisionsCount > 0
+                          ? 'var(--ac-soft)'
+                          : 'var(--sf-2)',
+                    color:
+                      revisionsBundle.overdue.length > 0
+                        ? 'var(--err-ink)'
+                        : allRevisionsCount > 0
+                          ? 'var(--ac-ink)'
+                          : 'var(--tx-2)',
+                    fontVariantNumeric: 'tabular-nums',
+                  }}
+                >
+                  {allRevisionsCount}
+                </span>
+              </div>
+              <Button
+                variant="ghost"
+                size="sm"
+                onClick={() => onSwitchTab('prep')}
+              >
+                Syllabus
+              </Button>
+            </div>
+
+            {allRevisionsCount > 0 && (
+              <div
+                className="row"
+                style={{
+                  gap: 6,
+                  overflowX: 'auto',
+                  paddingBottom: 8,
+                  marginBottom: 8,
+                  scrollbarWidth: 'none',
+                }}
+              >
+                <Chip
+                  selected={revSubjectFilter === 'all'}
+                  onClick={() => setRevSubjectFilter('all')}
+                >
+                  All ({allRevisionsCount})
+                </Chip>
+                {activeSubjects.map((s) => {
+                  const count =
+                    revisionsBundle.overdue.filter((r) => r.subject.id === s.id)
+                      .length +
+                    revisionsBundle.dueOnSel.filter((r) => r.subject.id === s.id)
+                      .length;
+                  if (count === 0 && revSubjectFilter !== s.id) return null;
+                  return (
+                    <Chip
+                      key={s.id}
+                      selected={revSubjectFilter === s.id}
+                      colorDot={s.color}
+                      onClick={() => setRevSubjectFilter(s.id)}
+                    >
+                      {s.e} {s.name} ({count})
+                    </Chip>
+                  );
+                })}
+              </div>
+            )}
+
+            {overdueRevisions.length === 0 && dueTodayRevisions.length === 0 ? (
+              <div style={{ fontSize: 13, color: 'var(--tx-3)', padding: '2px 0' }}>
+                All caught up — no spaced revisions due today.
+              </div>
+            ) : (
+              <div style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
+                {overdueRevisions.length > 0 && (
+                  <div>
                     <div
-                      key={t.id}
-                      className="stat-box row sp"
+                      className="row"
                       style={{
-                        padding: '8px 10px',
-                        borderLeft: '3px solid var(--wa)',
+                        gap: 6,
+                        fontSize: 12,
+                        fontWeight: 600,
+                        color: 'var(--err-ink)',
+                        marginBottom: 6,
                       }}
                     >
-                      <div style={{ flex: 1, minWidth: 0, paddingRight: '8px' }}>
-                        <b style={{ display: 'block', fontSize: '13px', wordBreak: 'break-word' }}>
-                          {t.title}
-                        </b>
-                        <small className="mu">
-                          From {t.dayKey}
-                          {sub ? ` · ${sub.e} ${sub.name}` : ''}
+                      <AlertCircle size={14} strokeWidth={2} />
+                      <span>Overdue ({overdueRevisions.length})</span>
+                    </div>
+                    <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
+                      {overdueRevisions.map((item) => {
+                        const isRescheduling =
+                          rescheduleTarget?.chapterId === item.chapterId &&
+                          rescheduleTarget?.revId === item.revisionId;
+                        return (
+                          <div
+                            key={`${item.chapterId}_${item.revisionId}`}
+                            style={{
+                              padding: '10px 12px',
+                              borderRadius: 12,
+                              background: 'var(--sf-2)',
+                              border:
+                                '1px solid color-mix(in srgb, var(--err) 38%, var(--line))',
+                            }}
+                          >
+                            <div className="split" style={{ gap: 10 }}>
+                              <div className="row" style={{ gap: 10, minWidth: 0, flex: 1 }}>
+                                <button
+                                  type="button"
+                                  className="ck"
+                                  aria-label={`Complete ${item.label} for ${item.chapterName}`}
+                                  style={{
+                                    width: 36,
+                                    height: 36,
+                                    minWidth: 36,
+                                    minHeight: 36,
+                                  }}
+                                  onClick={() =>
+                                    onCompleteRevision(
+                                      item.chapterId,
+                                      item.revisionId
+                                    )
+                                  }
+                                >
+                                  <Check size={16} strokeWidth={2} />
+                                </button>
+                                <div style={{ minWidth: 0 }}>
+                                  <b
+                                    style={{
+                                      fontSize: 14,
+                                      display: 'block',
+                                      whiteSpace: 'nowrap',
+                                      overflow: 'hidden',
+                                      textOverflow: 'ellipsis',
+                                    }}
+                                  >
+                                    {item.subject.e} {item.chapterName}
+                                  </b>
+                                  <small style={{ fontSize: 12, color: 'var(--err-ink)' }}>
+                                    {item.label} · {item.daysLate}d overdue ({item.date})
+                                  </small>
+                                </div>
+                              </div>
+                              <Button
+                                variant="secondary"
+                                size="sm"
+                                icon={<Calendar size={13} strokeWidth={1.75} />}
+                                onClick={() =>
+                                  setRescheduleTarget(
+                                    isRescheduling
+                                      ? null
+                                      : {
+                                          chapterId: item.chapterId,
+                                          revId: item.revisionId,
+                                          date: todayKey,
+                                        }
+                                  )
+                                }
+                              >
+                                Reschedule
+                              </Button>
+                            </div>
+
+                            {isRescheduling && rescheduleTarget && (
+                              <div className="row" style={{ gap: 6, marginTop: 8 }}>
+                                <input
+                                  type="date"
+                                  value={rescheduleTarget.date}
+                                  onChange={(e) =>
+                                    setRescheduleTarget({
+                                      ...rescheduleTarget,
+                                      date: e.target.value,
+                                    })
+                                  }
+                                  style={{
+                                    minHeight: 34,
+                                    padding: '4px 8px',
+                                    fontSize: 13,
+                                  }}
+                                />
+                                <Button
+                                  variant="primary"
+                                  size="sm"
+                                  onClick={() => {
+                                    onRescheduleRevision(
+                                      rescheduleTarget.chapterId,
+                                      rescheduleTarget.revId,
+                                      rescheduleTarget.date
+                                    );
+                                    setRescheduleTarget(null);
+                                  }}
+                                >
+                                  Save
+                                </Button>
+                              </div>
+                            )}
+                          </div>
+                        );
+                      })}
+                    </div>
+                  </div>
+                )}
+
+                {dueTodayRevisions.length > 0 && (
+                  <div>
+                    <div
+                      style={{
+                        fontSize: 12,
+                        fontWeight: 600,
+                        color: 'var(--ac-ink)',
+                        marginBottom: 6,
+                      }}
+                    >
+                      Due on {isTodaySelected ? 'today' : sel} ({dueTodayRevisions.length})
+                    </div>
+                    <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
+                      {dueTodayRevisions.map((item) => {
+                        const isRescheduling =
+                          rescheduleTarget?.chapterId === item.chapterId &&
+                          rescheduleTarget?.revId === item.revisionId;
+                        return (
+                          <div
+                            key={`${item.chapterId}_${item.revisionId}`}
+                            style={{
+                              padding: '10px 12px',
+                              borderRadius: 12,
+                              background: 'var(--sf-2)',
+                              border: '1px solid var(--line)',
+                            }}
+                          >
+                            <div className="split" style={{ gap: 10 }}>
+                              <div className="row" style={{ gap: 10, minWidth: 0, flex: 1 }}>
+                                <button
+                                  type="button"
+                                  className="ck"
+                                  aria-label={`Complete ${item.label} for ${item.chapterName}`}
+                                  style={{
+                                    width: 36,
+                                    height: 36,
+                                    minWidth: 36,
+                                    minHeight: 36,
+                                  }}
+                                  onClick={() =>
+                                    onCompleteRevision(
+                                      item.chapterId,
+                                      item.revisionId
+                                    )
+                                  }
+                                >
+                                  <Check size={16} strokeWidth={2} />
+                                </button>
+                                <div style={{ minWidth: 0 }}>
+                                  <b
+                                    style={{
+                                      fontSize: 14,
+                                      display: 'block',
+                                      whiteSpace: 'nowrap',
+                                      overflow: 'hidden',
+                                      textOverflow: 'ellipsis',
+                                    }}
+                                  >
+                                    {item.subject.e} {item.chapterName}
+                                  </b>
+                                  <small style={{ fontSize: 12 }}>
+                                    {item.subject.name} · {item.label} due
+                                  </small>
+                                </div>
+                              </div>
+                              <Button
+                                variant="secondary"
+                                size="sm"
+                                icon={<Calendar size={13} strokeWidth={1.75} />}
+                                onClick={() =>
+                                  setRescheduleTarget(
+                                    isRescheduling
+                                      ? null
+                                      : {
+                                          chapterId: item.chapterId,
+                                          revId: item.revisionId,
+                                          date: addD(todayKey, 1),
+                                        }
+                                  )
+                                }
+                              >
+                                Reschedule
+                              </Button>
+                            </div>
+
+                            {isRescheduling && rescheduleTarget && (
+                              <div className="row" style={{ gap: 6, marginTop: 8 }}>
+                                <input
+                                  type="date"
+                                  value={rescheduleTarget.date}
+                                  onChange={(e) =>
+                                    setRescheduleTarget({
+                                      ...rescheduleTarget,
+                                      date: e.target.value,
+                                    })
+                                  }
+                                  style={{
+                                    minHeight: 34,
+                                    padding: '4px 8px',
+                                    fontSize: 13,
+                                  }}
+                                />
+                                <Button
+                                  variant="primary"
+                                  size="sm"
+                                  onClick={() => {
+                                    onRescheduleRevision(
+                                      rescheduleTarget.chapterId,
+                                      rescheduleTarget.revId,
+                                      rescheduleTarget.date
+                                    );
+                                    setRescheduleTarget(null);
+                                  }}
+                                >
+                                  Save
+                                </Button>
+                              </div>
+                            )}
+                          </div>
+                        );
+                      })}
+                    </div>
+                  </div>
+                )}
+              </div>
+            )}
+          </Card>
+
+          {/* 10. Habits Section */}
+          <div style={{ marginTop: 18 }}>
+            <SectionHeader
+              title={`Habits (${dayProg.habitsDone}/${dayProg.habitsTotal})`}
+              action={
+                <Button
+                  variant="secondary"
+                  size="sm"
+                  icon={<Plus size={15} strokeWidth={2} />}
+                  onClick={onNewHabit}
+                >
+                  Habit
+                </Button>
+              }
+            />
+
+            {allLiveHabits.length > 0 && (
+              <div
+                className="row"
+                style={{
+                  gap: 6,
+                  overflowX: 'auto',
+                  paddingBottom: 6,
+                  marginBottom: 6,
+                  scrollbarWidth: 'none',
+                }}
+              >
+                <Chip selected={cat === 'All'} onClick={() => onSelectCat('All')}>
+                  All
+                </Chip>
+                {CATS.map((c) => (
+                  <Chip key={c} selected={cat === c} onClick={() => onSelectCat(c)}>
+                    {c}
+                  </Chip>
+                ))}
+              </div>
+            )}
+
+            {allLiveHabits.length === 0 ? (
+              <Card style={{ textAlign: 'center', padding: '20px 16px' }}>
+                <Sparkles
+                  size={24}
+                  strokeWidth={1.75}
+                  style={{ color: 'var(--ac-ink)', margin: '0 auto 6px' }}
+                />
+                <b style={{ fontSize: 16, display: 'block' }}>
+                  Start with a proven study habit
+                </b>
+                <small style={{ display: 'block', margin: '4px 0 12px', fontSize: 13 }}>
+                  Tap a starter preset below or create your own custom habit.
+                </small>
+                <div
+                  className="row"
+                  style={{
+                    gap: 6,
+                    flexWrap: 'wrap',
+                    justifyContent: 'center',
+                    marginBottom: 12,
+                  }}
+                >
+                  {STARTERS.map((s, i) => (
+                    <Chip key={i} onClick={() => onAddStarter(i)}>
+                      + {s.e} {s.name}
+                    </Chip>
+                  ))}
+                </div>
+                <Button variant="primary" size="sm" onClick={onNewHabit}>
+                  Create custom habit
+                </Button>
+              </Card>
+            ) : (
+              <>
+                {dueList.length > 0 ? (
+                  dueList.map(renderHabitRow)
+                ) : (
+                  <Card style={{ textAlign: 'center', padding: 14 }}>
+                    <small style={{ fontSize: 13 }}>
+                      No habits scheduled in this category today.
+                    </small>
+                  </Card>
+                )}
+
+                {otherList.length > 0 && (
+                  <div style={{ marginTop: 8 }}>
+                    <button
+                      type="button"
+                      className="s"
+                      style={{
+                        width: '100%',
+                        display: 'flex',
+                        alignItems: 'center',
+                        justifyContent: 'center',
+                        gap: 6,
+                      }}
+                      onClick={() => setShowUnscheduled((v) => !v)}
+                    >
+                      {showUnscheduled ? (
+                        <ChevronUp size={15} strokeWidth={1.75} />
+                      ) : (
+                        <ChevronDown size={15} strokeWidth={1.75} />
+                      )}
+                      <span>Not scheduled today ({otherList.length})</span>
+                    </button>
+                    {showUnscheduled && (
+                      <div style={{ marginTop: 6, opacity: 0.8 }}>
+                        {otherList.map(renderHabitRow)}
+                      </div>
+                    )}
+                  </div>
+                )}
+              </>
+            )}
+          </div>
+
+          {/* 11. Flat Focus Tip Card */}
+          <Card style={{ marginTop: 14 }}>
+            <div className="split" style={{ alignItems: 'flex-start', gap: 12 }}>
+              <div className="row" style={{ gap: 10, alignItems: 'flex-start', flex: 1 }}>
+                <Lightbulb
+                  size={18}
+                  strokeWidth={1.75}
+                  style={{ color: 'var(--ac-ink)', flexShrink: 0, marginTop: 2 }}
+                />
+                <div style={{ minWidth: 0 }}>
+                  <div className="row" style={{ gap: 8, marginBottom: 4 }}>
+                    <span
+                      style={{
+                        fontSize: 12,
+                        fontWeight: 600,
+                        color: 'var(--ac-ink)',
+                      }}
+                    >
+                      Focus tip
+                    </span>
+                    <span
+                      className="pill"
+                      style={{
+                        fontSize: 12,
+                        padding: '1px 7px',
+                        background: 'var(--sf-2)',
+                        color: 'var(--tx-2)',
+                      }}
+                    >
+                      {dailyTip.tag}
+                    </span>
+                  </div>
+                  <b style={{ fontSize: 14, display: 'block', marginBottom: 3 }}>
+                    {dailyTip.title}
+                  </b>
+                  <p
+                    style={{
+                      margin: 0,
+                      fontSize: 13,
+                      lineHeight: 1.45,
+                      color: 'var(--tx-2)',
+                    }}
+                  >
+                    {dailyTip.tip}
+                  </p>
+                </div>
+              </div>
+              <Button
+                variant="ghost"
+                size="sm"
+                icon={<RotateCw size={14} strokeWidth={1.75} />}
+                onClick={() => setTipOffset((n) => n + 1)}
+              >
+                Next tip
+              </Button>
+            </div>
+          </Card>
+        </div>
+
+        {/* Right Rail on Desktop >=1100px: Today's Timeline + Daily Reflection */}
+        <aside className="today-rail-col">
+          {/* Today's Study Sessions Timeline */}
+          <Card style={{ marginTop: 4 }}>
+            <div className="split" style={{ marginBottom: 10 }}>
+              <div className="row" style={{ gap: 8 }}>
+                <BookOpen
+                  size={18}
+                  strokeWidth={1.75}
+                  style={{ color: 'var(--ac-ink)' }}
+                />
+                <h3 style={{ margin: 0, fontSize: 16 }}>
+                  {isTodaySelected ? "Today's timeline" : `Sessions (${sel})`}
+                </h3>
+              </div>
+              <Button
+                variant="secondary"
+                size="sm"
+                icon={<Plus size={14} strokeWidth={2} />}
+                onClick={() => onOpenManualSession(effectiveQuickSubId)}
+              >
+                Log hours
+              </Button>
+            </div>
+
+            {selectedDaySessions.length === 0 ? (
+              <div style={{ fontSize: 13, color: 'var(--tx-3)', padding: '6px 0' }}>
+                No study sessions logged on this day yet.
+              </div>
+            ) : (
+              <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
+                {selectedDaySessions.map((ses: StudySession) => {
+                  const sub = getSubject(state, ses.subjectId);
+                  const heading = getSessionHeading(state, ses);
+                  return (
+                    <div
+                      key={ses.id}
+                      className="split"
+                      style={{
+                        background: 'var(--sf-2)',
+                        padding: '10px 12px',
+                        borderRadius: 12,
+                        borderLeft: `3px solid ${sub.color}`,
+                        gap: 10,
+                      }}
+                    >
+                      <div style={{ minWidth: 0, flex: 1 }}>
+                        <div className="row" style={{ gap: 6, flexWrap: 'wrap' }}>
+                          <b
+                            style={{
+                              fontSize: 13,
+                              whiteSpace: 'nowrap',
+                              overflow: 'hidden',
+                              textOverflow: 'ellipsis',
+                            }}
+                          >
+                            {sub.e} {heading}
+                          </b>
+                          <span
+                            className="pill"
+                            style={{
+                              fontSize: 12,
+                              padding: '1px 7px',
+                              background: 'var(--sf-3)',
+                              color: 'var(--tx)',
+                              fontVariantNumeric: 'tabular-nums',
+                            }}
+                          >
+                            {fmtHMShort(ses.activeMs)}
+                          </span>
+                        </div>
+                        <small
+                          style={{
+                            display: 'block',
+                            marginTop: 3,
+                            fontSize: 12,
+                            fontVariantNumeric: 'tabular-nums',
+                          }}
+                        >
+                          {sub.name} · {fmtClockTime(ses.startTs)} –{' '}
+                          {fmtClockTime(ses.endTs)} · {ses.purity || 100}% purity
                         </small>
+                        {ses.note && (
+                          <small
+                            style={{
+                              display: 'block',
+                              marginTop: 2,
+                              fontSize: 12,
+                              color: 'var(--tx-2)',
+                            }}
+                          >
+                            "{ses.note}"
+                          </small>
+                        )}
                       </div>
                       <button
                         type="button"
-                        className="s pri"
-                        onClick={() => onMoveTaskToToday(t.id)}
+                        className="s"
+                        aria-label={`Delete session ${heading}`}
+                        style={{ color: 'var(--err-ink)', padding: '6px 8px' }}
+                        onClick={() => onDeleteSession(ses.id)}
                       >
-                        Move to today
+                        <Trash2 size={14} strokeWidth={1.75} />
                       </button>
                     </div>
                   );
                 })}
               </div>
             )}
-          </div>
-        )}
-      </div>
+          </Card>
 
-      {/* Revisions Due Card (Part B2 Today Integration) */}
-      <div className="card" id="revisionsDueCard">
-        <div className="row sp" style={{ marginBottom: '6px' }}>
-          <div>
-            <h3>🔁 Revisions Due ({sel})</h3>
-            <small>
-              Due on {sel}: <b>{dueFiltered.length}</b> · Overdue: <b>{overdue.length}</b>
-            </small>
-          </div>
-          <button
-            type="button"
-            className="s"
-            onClick={() => onSwitchTab('prep')}
-          >
-            Syllabus →
-          </button>
-        </div>
+          {/* Daily Reflection & Wellbeing */}
+          <Card id="wellbeingReflectionCard">
+            <h3 style={{ margin: '0 0 10px', fontSize: 16 }}>
+              Reflection & wellbeing
+            </h3>
 
-        {overdue.length === 0 && dueFiltered.length === 0 ? (
-          <small className="mu">
-            No chapter revisions due on {sel} or overdue. Schedule manual revision dates in Prep → Syllabus.
-          </small>
-        ) : (
-          <div style={{ display: 'grid', gap: '8px', marginTop: '6px' }}>
-            {overdue.length > 0 && (
-              <div>
-                <small
-                  style={{
-                    display: 'block',
-                    color: 'var(--dg)',
-                    fontWeight: 800,
-                    textTransform: 'uppercase',
-                    letterSpacing: '0.04em',
-                    marginBottom: '4px',
-                  }}
-                >
-                  ⚠️ Overdue ({overdue.length})
-                </small>
-                {overdue.map((item) => (
-                  <div
-                    key={item.revisionId}
-                    style={{
-                      padding: '8px 10px',
-                      borderRadius: '12px',
-                      background: 'color-mix(in srgb, var(--dg) 12%, var(--c2))',
-                      border: '1px solid color-mix(in srgb, var(--dg) 35%, var(--bd))',
-                      marginBottom: '6px',
-                    }}
-                  >
-                    <div className="row sp" style={{ gap: '8px' }}>
-                      <label
-                        className="row g"
-                        style={{ cursor: 'pointer', gap: '8px' }}
-                      >
-                        <input
-                          type="checkbox"
-                          style={{ width: '18px', height: '18px' }}
-                          checked={false}
-                          onChange={() =>
-                            onCompleteRevision(item.chapterId, item.revisionId)
-                          }
-                        />
-                        <i
-                          className="dot"
-                          style={{ '--sc': item.subject.color } as React.CSSProperties}
-                        />
-                        <div className="g">
-                          <b>
-                            {item.subject.e} {item.chapterName}
-                          </b>
-                          <small style={{ color: '#fca5a5' }}>
-                            {item.subject.name} · Scheduled {item.date} ({item.daysLate}d late)
-                          </small>
-                        </div>
-                      </label>
-                      <span
-                        className="pill mono"
-                        style={{
-                          padding: '2px 8px',
-                          fontSize: '11px',
-                          borderColor: item.subject.color,
-                        }}
-                      >
-                        {item.label}
-                      </span>
-                      <button
-                        type="button"
-                        className="s"
-                        style={{ padding: '4px 8px', fontSize: '11px' }}
-                        onClick={() => {
-                          setReschedulingRevId((prev) =>
-                            prev === item.revisionId ? null : item.revisionId
-                          );
-                          setRescheduleDateDraft(todayKey);
-                        }}
-                      >
-                        📅 Reschedule
-                      </button>
-                    </div>
-                    {reschedulingRevId === item.revisionId && (
-                      <div className="row" style={{ marginTop: '6px', gap: '6px' }}>
-                        <input
-                          type="date"
-                          value={rescheduleDateDraft}
-                          aria-label={`New date for ${item.chapterName} ${item.label}`}
-                          onChange={(e) => setRescheduleDateDraft(e.target.value)}
-                        />
-                        <button
-                          type="button"
-                          className="s pri"
-                          onClick={() => {
-                            if (rescheduleDateDraft) {
-                              onRescheduleRevision(
-                                item.chapterId,
-                                item.revisionId,
-                                rescheduleDateDraft
-                              );
-                              setReschedulingRevId(null);
-                            }
-                          }}
-                        >
-                          Save Date
-                        </button>
-                      </div>
-                    )}
-                  </div>
-                ))}
-              </div>
-            )}
-
-            {dueFiltered.length > 0 && (
-              <div>
-                <small
-                  style={{
-                    display: 'block',
-                    color: 'var(--em)',
-                    fontWeight: 800,
-                    textTransform: 'uppercase',
-                    letterSpacing: '0.04em',
-                    marginBottom: '4px',
-                  }}
-                >
-                  Due on {sel} ({dueFiltered.length})
-                </small>
-                {dueFiltered.map((item) => (
-                  <div
-                    key={item.revisionId}
-                    style={{
-                      padding: '8px 10px',
-                      borderRadius: '12px',
-                      background: 'var(--c2)',
-                      border: '1px solid var(--bd)',
-                      marginBottom: '6px',
-                    }}
-                  >
-                    <div className="row sp" style={{ gap: '8px' }}>
-                      <label
-                        className="row g"
-                        style={{ cursor: 'pointer', gap: '8px' }}
-                      >
-                        <input
-                          type="checkbox"
-                          style={{ width: '18px', height: '18px' }}
-                          checked={false}
-                          onChange={() =>
-                            onCompleteRevision(item.chapterId, item.revisionId)
-                          }
-                        />
-                        <i
-                          className="dot"
-                          style={{ '--sc': item.subject.color } as React.CSSProperties}
-                        />
-                        <div className="g">
-                          <b>
-                            {item.subject.e} {item.chapterName}
-                          </b>
-                          <small>
-                            {item.subject.name} · Due {item.date}
-                          </small>
-                        </div>
-                      </label>
-                      <span
-                        className="pill mono"
-                        style={{
-                          padding: '2px 8px',
-                          fontSize: '11px',
-                          borderColor: item.subject.color,
-                        }}
-                      >
-                        {item.label}
-                      </span>
-                      <button
-                        type="button"
-                        className="s"
-                        style={{ padding: '4px 8px', fontSize: '11px' }}
-                        onClick={() => {
-                          setReschedulingRevId((prev) =>
-                            prev === item.revisionId ? null : item.revisionId
-                          );
-                          setRescheduleDateDraft(
-                            sel < todayKey ? addD(todayKey, 1) : addD(sel, 1)
-                          );
-                        }}
-                      >
-                        📅 Reschedule
-                      </button>
-                    </div>
-                    {reschedulingRevId === item.revisionId && (
-                      <div className="row" style={{ marginTop: '6px', gap: '6px' }}>
-                        <input
-                          type="date"
-                          value={rescheduleDateDraft}
-                          aria-label={`New date for ${item.chapterName} ${item.label}`}
-                          onChange={(e) => setRescheduleDateDraft(e.target.value)}
-                        />
-                        <button
-                          type="button"
-                          className="s pri"
-                          onClick={() => {
-                            if (rescheduleDateDraft) {
-                              onRescheduleRevision(
-                                item.chapterId,
-                                item.revisionId,
-                                rescheduleDateDraft
-                              );
-                              setReschedulingRevId(null);
-                            }
-                          }}
-                        >
-                          Save Date
-                        </button>
-                      </div>
-                    )}
-                  </div>
-                ))}
-              </div>
-            )}
-          </div>
-        )}
-      </div>
-
-      {/* Daily Focus Tip Card */}
-      <div
-        className="card"
-        style={{
-          borderLeft: '4px solid var(--ac)',
-          background: 'linear-gradient(135deg, var(--c1) 0%, var(--c2) 100%)',
-        }}
-      >
-        <div className="row sp" style={{ marginBottom: '6px' }}>
-          <div className="row" style={{ gap: '8px' }}>
-            <span
-              className="pill"
-              style={{
-                padding: '3px 9px',
-                fontSize: '11px',
-                background: 'color-mix(in srgb, var(--ac) 20%, transparent)',
-                color: 'var(--tx)',
-                borderColor: 'var(--ac)',
-              }}
-            >
-              💡 Daily Focus Tip · {focusTip.tag}
-            </span>
-          </div>
-          <button
-            type="button"
-            className="s"
-            onClick={() => setTipOffset((prev) => prev + 1)}
-            aria-label="Next daily focus tip"
-          >
-            Next Tip ↻
-          </button>
-        </div>
-        <b style={{ display: 'block', fontSize: '14px', marginBottom: '4px' }}>
-          {focusTip.title}
-        </b>
-        <small style={{ display: 'block', lineHeight: 1.45, fontSize: '12.5px' }}>
-          {focusTip.tip}
-        </small>
-      </div>
-
-      {/* Quick Session Subject Picker + Heading & Timer / Manual Logger Card */}
-      <div className="card">
-        <div className="row sp" style={{ marginBottom: '8px' }}>
-          <div>
-            <h3 style={{ marginBottom: '2px' }}>Start or Log Study Session</h3>
-            <small>Pick a subject, type a heading &amp; start any timer</small>
-          </div>
-          <button
-            type="button"
-            className="s pri"
-            onClick={() => onOpenManualSession(quickSubjectId)}
-          >
-            + Log Hours
-          </button>
-        </div>
-
-        {/* Subject Picker Chips (A10) */}
-        <div className="chips wrap" style={{ marginBottom: '8px', paddingBottom: 0 }}>
-          {subjects.map((sub) => (
-            <button
-              type="button"
-              key={sub.id}
-              className={`sub-chip ${quickSubjectId === sub.id ? 'active' : ''}`}
-              style={{ '--sc': sub.color } as React.CSSProperties}
-              onClick={() => {
-                setQuickSubjectId(sub.id);
-                setQuickChapterId('');
-              }}
-            >
-              <i className="dot" style={{ '--sc': sub.color } as React.CSSProperties} />
-              {sub.e} {sub.name}
-            </button>
-          ))}
-        </div>
-
-        {/* 1.1 Optional Chapter Dropdown Filtered by Selected Subject */}
-        {quickSubjectChapters.length > 0 && (
-          <select
-            value={quickChapterId}
-            onChange={(e) => setQuickChapterId(e.target.value)}
-            aria-label="Link session to syllabus chapter"
-            style={{ marginBottom: '8px' }}
-          >
-            <option value="">📖 Link Chapter (Optional) — General {getSubject(state, quickSubjectId).name}</option>
-            {quickSubjectChapters.map((ch) => (
-              <option key={ch.id} value={ch.id}>
-                {ch.name}
-              </option>
-            ))}
-          </select>
-        )}
-
-        <input
-          type="text"
-          value={quickHeading}
-          onChange={(e) => setQuickHeading(e.target.value)}
-          placeholder="Session heading (leave blank to use chapter or subject name)"
-          style={{ marginBottom: '8px' }}
-        />
-        <div className="row" style={{ gap: '6px', flexWrap: 'wrap' }}>
-          <button
-            type="button"
-            className="s em-btn"
-            style={{ flex: 1 }}
-            onClick={() => {
-              const sub = getSubject(state, quickSubjectId);
-              const linkedChap = quickChapterId
-                ? state.chapters.find((c) => c.id === quickChapterId)
-                : undefined;
-              onQuickStartSession(
-                sub.id,
-                quickHeading.trim() || linkedChap?.name || `${sub.name} Study Session`,
-                'pomo',
-                quickChapterId || undefined
-              );
-            }}
-          >
-            🍅 Start Pomodoro
-          </button>
-          <button
-            type="button"
-            className="s"
-            style={{ flex: 1, borderColor: 'var(--em)', color: 'var(--em)' }}
-            onClick={() => {
-              const sub = getSubject(state, quickSubjectId);
-              const linkedChap = quickChapterId
-                ? state.chapters.find((c) => c.id === quickChapterId)
-                : undefined;
-              onQuickStartSession(
-                sub.id,
-                quickHeading.trim() || linkedChap?.name || `${sub.name} Study Session`,
-                'stopwatch',
-                quickChapterId || undefined
-              );
-            }}
-          >
-            ⏱️ Start Stopwatch
-          </button>
-          <button
-            type="button"
-            className="s"
-            style={{ flex: 1 }}
-            onClick={() => {
-              const sub = getSubject(state, quickSubjectId);
-              const linkedChap = quickChapterId
-                ? state.chapters.find((c) => c.id === quickChapterId)
-                : undefined;
-              onQuickStartSession(
-                sub.id,
-                quickHeading.trim() || linkedChap?.name || `${sub.name} Study Session`,
-                'countdown',
-                quickChapterId || undefined
-              );
-            }}
-          >
-            ⏳ Countdown
-          </button>
-        </div>
-
-        {daySessions.length > 0 && (
-          <div style={{ marginTop: '12px', borderTop: '1px solid var(--bd)', paddingTop: '10px' }}>
-            <div className="row sp" style={{ marginBottom: '6px' }}>
-              <small style={{ fontWeight: 700, textTransform: 'uppercase', letterSpacing: '0.04em' }}>
-                Completed Sessions ({daySessions.length})
+            {/* Mood Selector */}
+            <div style={{ marginBottom: 12 }}>
+              <small style={{ display: 'block', marginBottom: 6, fontSize: 12 }}>
+                How did your study feel?
               </small>
-              <button
-                type="button"
-                className="s"
-                style={{ padding: '3px 8px', fontSize: '11px' }}
-                onClick={() => onSwitchTab('stats')}
-              >
-                Full Summary →
-              </button>
-            </div>
-            {daySessions.slice(0, 4).map((s) => {
-              const sub = getSubject(state, s.subjectId);
-              const heading = getSessionHeading(state, s);
-              return (
-                <div
-                  key={s.id}
-                  className="row"
-                  style={{
-                    padding: '8px 0',
-                    borderBottom: '1px solid var(--bd)',
-                    alignItems: 'flex-start',
-                  }}
-                >
-                  <span
-                    style={{
-                      width: '10px',
-                      height: '10px',
-                      borderRadius: '50%',
-                      background: sub.color,
-                      marginTop: '5px',
-                      flexShrink: 0,
-                    }}
-                  />
-                  <div className="g">
-                    <div className="row sp">
-                      <b style={{ fontSize: '13.5px' }}>
-                        {sub.e} {sub.name} · {heading}
-                      </b>
+              <div className="row" style={{ gap: 6 }}>
+                {MOOD_ITEMS.map(([val, emoji, label]) => {
+                  const isSel = state.mood[sel] === val;
+                  return (
+                    <button
+                      key={val}
+                      type="button"
+                      onClick={() => onSetMood(val)}
+                      style={{
+                        flex: 1,
+                        fontSize: 18,
+                        padding: '8px 0',
+                        borderRadius: 12,
+                        background: isSel ? 'var(--ac-soft)' : 'var(--sf-2)',
+                        border: isSel
+                          ? '1px solid var(--ac)'
+                          : '1px solid var(--line)',
+                        display: 'flex',
+                        flexDirection: 'column',
+                        alignItems: 'center',
+                        gap: 2,
+                      }}
+                    >
+                      <span>{emoji}</span>
                       <span
-                        className="mono"
-                        style={{ color: 'var(--em)', fontWeight: 700, fontSize: '12.5px' }}
+                        style={{
+                          fontSize: 12,
+                          color: isSel ? 'var(--ac-ink)' : 'var(--tx-2)',
+                          fontWeight: isSel ? 600 : 500,
+                        }}
                       >
-                        {fmtHMShort(s.activeMs)}
+                        {label}
                       </span>
-                    </div>
-                    <small>
-                      {fmtClockTime(s.startTs)} – {fmtClockTime(s.endTs)} · {s.mode.toUpperCase()}
-                      {s.overtimeMs ? ` · +${fmtHMShort(s.overtimeMs)} OT` : ''}
-                    </small>
-                    {s.note && (
-                      <small style={{ display: 'block', color: 'var(--tx)', marginTop: '3px' }}>
-                        “{s.note}”
-                      </small>
-                    )}
+                    </button>
+                  );
+                })}
+              </div>
+            </div>
+
+            {/* Sleep & Energy Row */}
+            <div
+              className="row"
+              style={{
+                gap: 10,
+                marginBottom: 12,
+                flexWrap: 'wrap',
+                background: 'var(--sf-2)',
+                padding: '10px 12px',
+                borderRadius: 12,
+                border: '1px solid var(--line)',
+              }}
+            >
+              <div
+                style={{
+                  flex: '1 1 130px',
+                  display: 'flex',
+                  alignItems: 'center',
+                  justifyContent: 'space-between',
+                  gap: 6,
+                }}
+              >
+                <div>
+                  <div
+                    className="row"
+                    style={{ gap: 4, fontSize: 12, color: 'var(--tx-2)' }}
+                  >
+                    <Moon size={13} strokeWidth={1.75} />
+                    <span>Sleep</span>
                   </div>
+                  <b style={{ fontSize: 14, fontVariantNumeric: 'tabular-nums' }}>
+                    {typeof sleepHours === 'number' ? `${sleepHours}h` : '—'}
+                  </b>
+                </div>
+                <div className="row" style={{ gap: 4 }}>
                   <button
                     type="button"
-                    className="s del"
-                    style={{ padding: '4px 8px' }}
-                    aria-label="Delete session"
-                    onClick={() => onDeleteSession(s.id)}
+                    className="s"
+                    aria-label="Decrease sleep hours"
+                    onClick={() => {
+                      const base = typeof sleepHours === 'number' ? sleepHours : 7;
+                      onUpdateWellbeing(sel, {
+                        sleep: Math.max(0, +(base - 0.5).toFixed(1)),
+                      });
+                    }}
                   >
-                    ×
+                    −
+                  </button>
+                  <button
+                    type="button"
+                    className="s"
+                    aria-label="Increase sleep hours"
+                    onClick={() => {
+                      const base = typeof sleepHours === 'number' ? sleepHours : 7;
+                      onUpdateWellbeing(sel, {
+                        sleep: Math.min(14, +(base + 0.5).toFixed(1)),
+                      });
+                    }}
+                  >
+                    +
                   </button>
                 </div>
-              );
-            })}
-          </div>
-        )}
-      </div>
+              </div>
 
-      {/* Habits Section */}
-      {!state.habits.length ? (
-        <div className="card">
-          <h3>Starter Habits (Auto-Sync Ready)</h3>
-          <small>Tap to add.</small>
-          <div className="chips wrap" style={{ marginTop: '8px' }}>
-            {STARTERS.map((s, i) => (
-              <button
-                type="button"
-                key={s.name}
-                onClick={() => onAddStarter(i)}
-              >
-                {s.e} {s.name}
-              </button>
-            ))}
-          </div>
-          <button
-            type="button"
-            className="pri"
-            style={{ marginTop: '10px' }}
-            onClick={onNewHabit}
-          >
-            + Custom Habit
-          </button>
-        </div>
-      ) : (
-        <>
-          <div className="row sp" style={{ margin: '12px 0 6px' }}>
-            <div className="chips" style={{ paddingBottom: 0 }}>
-              {(['All', ...CATS] as const).map((c) => (
-                <button
-                  type="button"
-                  key={c}
-                  className={c === cat ? 'on' : ''}
-                  onClick={() => onSelectCat(c)}
+              <div style={{ flex: '1 1 150px' }}>
+                <div
+                  className="row"
+                  style={{
+                    gap: 4,
+                    fontSize: 12,
+                    color: 'var(--tx-2)',
+                    marginBottom: 4,
+                  }}
                 >
-                  {c}
-                </button>
-              ))}
-            </div>
-            <button type="button" className="s pri" onClick={onNewHabit}>
-              + Habit
-            </button>
-          </div>
-          {hs.length ? (
-            hs.map(renderHabitCard)
-          ) : (
-            <div className="card mu">No habits scheduled in {cat}.</div>
-          )}
-        </>
-      )}
-
-      {/* Daily Reflection, Mood, Sleep & Energy (1.11) */}
-      <div className="card mood">
-        <h3>Daily Reflection, Mood &amp; Wellbeing</h3>
-        <div className="row">
-          {['😞', '😕', '😐', '🙂', '😄'].map((m, i) => (
-            <button
-              type="button"
-              key={m}
-              className={currentMood === i + 1 ? 'on' : ''}
-              onClick={() => onSetMood(i + 1)}
-              style={{ fontSize: '22px', flex: 1 }}
-              aria-label={`Mood ${i + 1} of 5`}
-            >
-              {m}
-            </button>
-          ))}
-        </div>
-
-        {/* 1.11 Compact Sleep Stepper (0-14h, step 0.5) & Energy Chips (1-5) */}
-        {onUpdateWellbeing && (
-          <div
-            className="row sp wrap"
-            style={{
-              marginTop: '10px',
-              padding: '8px 10px',
-              borderRadius: '12px',
-              background: 'var(--c2)',
-              gap: '10px',
-            }}
-          >
-            <div className="row" style={{ gap: '6px', alignItems: 'center' }}>
-              <small style={{ fontWeight: 700 }}>😴 Sleep:</small>
-              <button
-                type="button"
-                className="s"
-                style={{ padding: '3px 9px' }}
-                aria-label="Decrease sleep hours"
-                onClick={() => {
-                  const cur = state.wellbeing?.[sel]?.sleep ?? 7;
-                  onUpdateWellbeing(sel, { sleep: Math.max(0, cur - 0.5) });
-                }}
-              >
-                −
-              </button>
-              <b className="mono" style={{ fontSize: '13px', minWidth: '42px', textAlign: 'center' }}>
-                {state.wellbeing?.[sel]?.sleep !== undefined
-                  ? `${state.wellbeing[sel].sleep}h`
-                  : '—'}
-              </b>
-              <button
-                type="button"
-                className="s"
-                style={{ padding: '3px 9px' }}
-                aria-label="Increase sleep hours"
-                onClick={() => {
-                  const cur = state.wellbeing?.[sel]?.sleep ?? 6.5;
-                  onUpdateWellbeing(sel, { sleep: Math.min(14, cur + 0.5) });
-                }}
-              >
-                +
-              </button>
+                  <Zap size={13} strokeWidth={1.75} />
+                  <span>Energy (1–5)</span>
+                </div>
+                <div className="row" style={{ gap: 4 }}>
+                  {([1, 2, 3, 4, 5] as const).map((lvl) => {
+                    const isLit = energyLevel === lvl;
+                    return (
+                      <button
+                        key={lvl}
+                        type="button"
+                        onClick={() => onUpdateWellbeing(sel, { energy: lvl })}
+                        style={{
+                          flex: 1,
+                          padding: '5px 0',
+                          minHeight: 32,
+                          fontSize: 12,
+                          fontWeight: 600,
+                          borderRadius: 8,
+                          background: isLit ? 'var(--ac)' : 'var(--sf-1)',
+                          color: isLit ? 'var(--ac-on)' : 'var(--tx-2)',
+                          border: isLit ? 'none' : '1px solid var(--line)',
+                          fontVariantNumeric: 'tabular-nums',
+                        }}
+                      >
+                        {lvl}
+                      </button>
+                    );
+                  })}
+                </div>
+              </div>
             </div>
 
-            <div className="row" style={{ gap: '4px', alignItems: 'center' }}>
-              <small style={{ fontWeight: 700, marginRight: '2px' }}>⚡ Energy:</small>
-              {([1, 2, 3, 4, 5] as const).map((eVal) => {
-                const isSelected = state.wellbeing?.[sel]?.energy === eVal;
-                return (
-                  <button
-                    key={eVal}
-                    type="button"
-                    className={isSelected ? 'on' : 's'}
-                    style={{
-                      width: '28px',
-                      height: '28px',
-                      padding: 0,
-                      borderRadius: '8px',
-                      fontSize: '12px',
-                      fontWeight: 800,
-                    }}
-                    onClick={() => onUpdateWellbeing(sel, { energy: eVal })}
-                    aria-label={`Energy ${eVal} of 5`}
-                  >
-                    {eVal}
-                  </button>
-                );
-              })}
-            </div>
-          </div>
-        )}
-
-        <textarea
-          id="note"
-          rows={2}
-          maxLength={500}
-          placeholder="Key takeaways, lecture notes, blockers..."
-          style={{ marginTop: '8px' }}
-          value={state.notes[sel] || ''}
-          onChange={(e) => onSetNote(e.target.value)}
-        />
+            <textarea
+              id="note"
+              rows={3}
+              placeholder="Wins, distractions, or tomorrow's #1 priority..."
+              value={state.notes[sel] || ''}
+              onChange={(e) => onSetNote(e.target.value)}
+            />
+          </Card>
+        </aside>
       </div>
     </div>
   );

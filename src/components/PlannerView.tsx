@@ -1,4 +1,5 @@
-import React, { useState } from 'react';
+import React, { useMemo, useState } from 'react';
+import { Clock, Plus, X } from 'lucide-react';
 import type { PulseHabitState } from '../types';
 import {
   fmtClockTime,
@@ -9,6 +10,12 @@ import {
   getTodaySubjectMs,
   pad,
 } from '../utils/studyLogic';
+import { Button } from './ui/Button';
+import { Card } from './ui/Card';
+import { Chip } from './ui/Chip';
+import { SectionHeader } from './ui/SectionHeader';
+import { Stat } from './ui/Stat';
+import { Switch } from './ui/Switch';
 
 interface PlannerViewProps {
   state: PulseHabitState;
@@ -48,13 +55,22 @@ export const PlannerView: React.FC<PlannerViewProps> = ({
 }) => {
   const [selectedSlot, setSelectedSlot] = useState<number | null>(null);
   const [filterHeading, setFilterHeading] = useState<string | null>(null);
+  const [showFull24h, setShowFull24h] = useState<boolean>(false);
 
   const resetHr = state.set.dayResetHour ?? 0;
-  const hours = [...Array(24)].map((_, i) => (resetHr + i) % 24);
-  const daySessions = state.sessions
-    .filter((s) => s.dayKey === sel)
-    .slice()
-    .sort((a, b) => a.startTs - b.startTs);
+  const allHours = useMemo(
+    () => [...Array(24)].map((_, i) => (resetHr + i) % 24),
+    [resetHr]
+  );
+
+  const daySessions = useMemo(
+    () =>
+      state.sessions
+        .filter((s) => s.dayKey === sel)
+        .slice()
+        .sort((a, b) => a.startTs - b.startTs),
+    [state.sessions, sel]
+  );
 
   const now = Date.now();
   const isLiveToday =
@@ -66,7 +82,14 @@ export const PlannerView: React.FC<PlannerViewProps> = ({
   const actualSlots: Record<number, SlotData> = {};
   const topicTotals: Record<
     string,
-    { key: string; subjectEmoji: string; subjectName: string; heading: string; color: string; activeMs: number }
+    {
+      key: string;
+      subjectEmoji: string;
+      subjectName: string;
+      heading: string;
+      color: string;
+      activeMs: number;
+    }
   > = {};
 
   const getSlotWindowLabel = (slotIdx: number) => {
@@ -88,7 +111,7 @@ export const PlannerView: React.FC<PlannerViewProps> = ({
   ) => {
     const sub = getSubject(state, subjectId);
     const cleanHeading = (heading || sub.name || 'Deep Study Session').trim();
-    const color = sub.color || '#3b82f6';
+    const color = sub.color || '#F5C451';
     const topicKey = `${sub.id}::${cleanHeading}`;
 
     if (!topicTotals[topicKey]) {
@@ -105,7 +128,6 @@ export const PlannerView: React.FC<PlannerViewProps> = ({
 
     if (activeMs <= 0) return;
 
-    // Distribute only active minutes across the session window so long pauses never inflate slots.
     const totalActiveMins = Math.max(1, Math.min(1440, Math.round(activeMs / 60000)));
     const safeEnd = Math.max(startTs + 60000, endTs);
     const stepMs = (safeEnd - startTs) / totalActiveMins;
@@ -200,6 +222,20 @@ export const PlannerView: React.FC<PlannerViewProps> = ({
   const topicList = Object.values(topicTotals).sort((a, b) => b.activeMs - a.activeMs);
   const inspectedSlot = selectedSlot !== null ? actualSlots[selectedSlot] || null : null;
 
+  // Compute active window ±1h around logged slots when showFull24h is false
+  const visibleHours = useMemo(() => {
+    if (showFull24h) return allHours;
+    const filledSlotIndices = Object.keys(actualSlots).map(Number);
+    if (filledSlotIndices.length === 0) {
+      // Default daytime window 06:00–22:00 when empty
+      return allHours.filter((h) => h >= 6 && h <= 22);
+    }
+    const filledHours = filledSlotIndices.map((idx) => Math.floor(idx / 6));
+    const minH = Math.max(0, Math.min(...filledHours) - 1);
+    const maxH = Math.min(23, Math.max(...filledHours) + 1);
+    return allHours.filter((h) => h >= minH && h <= maxH);
+  }, [showFull24h, allHours, actualSlots]);
+
   const handleSlotTap = (slotIdx: number) => {
     const data = actualSlots[slotIdx];
     if (!data) {
@@ -213,179 +249,146 @@ export const PlannerView: React.FC<PlannerViewProps> = ({
   };
 
   return (
-    <div>
-      {/* Header & Summary Pills */}
-      <div className="row sp" style={{ marginBottom: '8px' }}>
-        <div>
-          <h2>24h 10-Minute Study Timeline ({sel})</h2>
-          <small>100% automatic 10-minute resolution log from your timers &amp; sessions</small>
+    <div className="space-y-4">
+      <Card>
+        <div className="split mb-3 flex-wrap gap-2">
+          <div>
+            <h3 className="text-[16px] font-semibold text-[var(--tx)]">
+              10-minute study timeline ({sel})
+            </h3>
+            <p className="text-[12px] text-[var(--tx-2)]">
+              Automatic 10-minute resolution log from your focus timers and sessions
+            </p>
+          </div>
+          <Button
+            variant="primary"
+            size="sm"
+            icon={<Plus size={16} />}
+            onClick={() => onOpenManualSession()}
+          >
+            Log session
+          </Button>
         </div>
-        <button type="button" className="s pri" onClick={() => onOpenManualSession()}>
-          + Log Session
-        </button>
-      </div>
 
-      {/* Summary Pills: Total Studied, Sessions Count, First Start -> Last Wrap-up Time */}
-      <div className="chips wrap" style={{ marginBottom: '10px', gap: '8px' }}>
-        <span className="pill" id="gridTotalStudiedPill">
-          ⏱️ Total Studied: <b className="mono">{fmtHMShort(totalStudiedMs)}</b>
-        </span>
-        <span className="pill" id="gridSessionsCountPill">
-          📚 Sessions: <b className="mono">{sessionsCount}</b>
-        </span>
-        <span className="pill" id="gridTimeSpanPill">
-          🌅 First → Last: <b className="mono">{spanText}</b>
-        </span>
-      </div>
+        <div className="grid grid-cols-3 gap-2.5">
+          <div id="gridTotalStudiedPill">
+            <Stat label="Total studied" value={fmtHMShort(totalStudiedMs)} />
+          </div>
+          <div id="gridSessionsCountPill">
+            <Stat label="Sessions" value={String(sessionsCount)} />
+          </div>
+          <div id="gridTimeSpanPill">
+            <Stat label="First → last" value={spanText} />
+          </div>
+        </div>
+      </Card>
 
-      {/* Automatic Today's Topics Legend */}
-      <div className="card" style={{ padding: '12px 14px' }}>
-        <div className="row sp" style={{ marginBottom: '6px' }}>
-          <b style={{ fontSize: '13px' }}>Today&apos;s Topics Legend</b>
+      {/* Topics Legend */}
+      <Card>
+        <div className="split mb-2">
+          <span className="text-[13.5px] font-semibold text-[var(--tx)]">
+            Topics logged on {sel}
+          </span>
           {filterHeading && (
-            <button
-              type="button"
-              className="s"
-              style={{ padding: '3px 8px', fontSize: '11px' }}
+            <Button
+              variant="ghost"
+              size="sm"
               onClick={() => setFilterHeading(null)}
             >
-              Show All Topics
-            </button>
+              Show all topics
+            </Button>
           )}
         </div>
         {topicList.length > 0 ? (
-          <div className="sub-legend" id="todayTopicsLegend">
-            {topicList.map((topic) => {
-              const isSelected = filterHeading === topic.heading;
-              return (
-                <button
-                  type="button"
-                  key={topic.key}
-                  className={`sub-chip ${isSelected ? 'active' : ''}`}
-                  style={{ '--sc': topic.color } as React.CSSProperties}
-                  onClick={() =>
-                    setFilterHeading((prev) =>
-                      prev === topic.heading ? null : topic.heading
-                    )
-                  }
-                  title="Tap to highlight this topic on the 24h grid"
-                >
-                  <i
-                    className="dot"
-                    style={{ '--sc': topic.color } as React.CSSProperties}
-                  />
-                  <span>
-                    {topic.subjectEmoji} {topic.subjectName}: {topic.heading}
-                  </span>
-                  <b className="mono" style={{ color: 'var(--em)', marginLeft: '2px' }}>
-                    {fmtHMShort(topic.activeMs)}
-                  </b>
-                </button>
-              );
-            })}
+          <div id="todayTopicsLegend" className="flex flex-wrap gap-2">
+            {topicList.map((topic) => (
+              <Chip
+                key={topic.key}
+                selected={filterHeading === topic.heading}
+                colorDot={topic.color}
+                onClick={() =>
+                  setFilterHeading((prev) =>
+                    prev === topic.heading ? null : topic.heading
+                  )
+                }
+              >
+                {topic.subjectEmoji} {topic.subjectName}: {topic.heading} ·{' '}
+                <strong className="tnum">{fmtHMShort(topic.activeMs)}</strong>
+              </Chip>
+            ))}
           </div>
         ) : (
-          <small className="mu">
-            No study topics logged for {sel} yet. Start the Focus timer or tap &ldquo;+ Log
-            Session&rdquo; to automatically populate your 10-minute timeline.
-          </small>
+          <p className="text-[13px] text-[var(--tx-2)]">
+            No study topics logged for {sel} yet. Start a Focus session or tap + Log
+            session to populate your timeline.
+          </p>
         )}
-      </div>
+      </Card>
 
-      {/* Tap-to-Inspect Slot Details Bar */}
-      <div
-        className="card"
-        id="slotInspectorBar"
-        style={{
-          padding: '10px 14px',
-          borderColor: inspectedSlot ? inspectedSlot.color : 'var(--bd)',
-          background: inspectedSlot
-            ? 'linear-gradient(145deg, var(--c2), var(--c))'
-            : 'var(--c)',
-        }}
-      >
+      {/* Tap-to-inspect slot inspector */}
+      <Card id="slotInspectorBar">
         {inspectedSlot ? (
-          <div className="row sp">
-            <div className="row" style={{ gap: '8px', flexWrap: 'wrap' }}>
-              <span
-                className="pill mono"
-                style={{
-                  borderColor: inspectedSlot.color,
-                  color: 'var(--tx)',
-                  fontWeight: 700,
-                }}
-              >
-                🕒 {inspectedSlot.windowLabel}
+          <div className="split flex-wrap gap-2">
+            <div className="flex flex-wrap items-center gap-2 text-[13px]">
+              <span className="mono rounded-lg border border-[var(--line)] bg-[var(--sf-2)] px-2.5 py-1 font-semibold text-[var(--tx)]">
+                {inspectedSlot.windowLabel}
               </span>
-              <b>
-                <i
-                  className="dot"
-                  style={{ '--sc': inspectedSlot.color } as React.CSSProperties}
-                />{' '}
-                {inspectedSlot.subjectEmoji} {inspectedSlot.subjectName} · {inspectedSlot.heading}
-              </b>
-              {inspectedSlot.entries.length > 1 && (
-                <small className="mu">
-                  (
-                  {inspectedSlot.entries
-                    .map((e) => `${e.subjectEmoji} ${e.heading} ${e.mins}m`)
-                    .join(' + ')}
-                  )
-                </small>
-              )}
-              <span className="pill mono" style={{ color: 'var(--em)' }}>
+              <span className="flex items-center gap-1.5 font-semibold text-[var(--tx)]">
+                <span
+                  className="h-2.5 w-2.5 rounded-full"
+                  style={{ background: inspectedSlot.color }}
+                />
+                {inspectedSlot.subjectEmoji} {inspectedSlot.subjectName} ·{' '}
+                {inspectedSlot.heading}
+              </span>
+              <span className="tnum rounded-md bg-[var(--sf-2)] px-2 py-0.5 text-[12px] font-medium text-[var(--ok)]">
                 {inspectedSlot.mins} / 10 min active
-                {inspectedSlot.isLive ? ' · ● LIVE' : ''}
+                {inspectedSlot.isLive ? ' · LIVE' : ''}
               </span>
             </div>
-            <button
-              type="button"
-              className="s"
-              style={{ padding: '4px 8px', fontSize: '11px' }}
+            <Button
+              variant="secondary"
+              size="sm"
+              icon={<X size={14} />}
               onClick={() => setSelectedSlot(null)}
             >
               Clear
-            </button>
+            </Button>
           </div>
         ) : (
-          <div className="row sp">
-            <small className="mu">
-              💡 <b>Tap any colored 10-minute slot</b> below to inspect the exact time window,
-              subject, session heading, and active minutes.
-            </small>
-            <small className="mono" style={{ fontSize: '11px' }}>
-              6 slots / hr
-            </small>
-          </div>
-        )}
-      </div>
-
-      {/* Single Full-Width 24-Hour Automatic 10-Minute Grid */}
-      <div className="card" style={{ padding: '12px' }}>
-        <div className="grid-wrap single" style={{ marginBottom: '6px' }}>
-          <div className="grid-hdr">Hr</div>
-          <div className="grid-hdr">
-            <div className="row sp" style={{ fontSize: '11px' }}>
-              <span>Actual (Auto-Logged 10m Blocks)</span>
-              <span className="mono" style={{ opacity: 0.75 }}>
-                :00 · :10 · :20 · :30 · :40 · :50
-              </span>
+          <div className="split flex-wrap gap-2 text-[12.5px] text-[var(--tx-2)]">
+            <span className="flex items-center gap-2">
+              <Clock size={15} className="text-[var(--ac)]" />
+              Tap any colored 10-minute block below to inspect its exact window and active
+              minutes.
+            </span>
+            <div className="flex items-center gap-2">
+              <span className="text-[12px] text-[var(--tx-2)]">Show full 24h</span>
+              <Switch
+                checked={showFull24h}
+                onChange={setShowFull24h}
+                label="Show full 24-hour timeline"
+              />
             </div>
           </div>
-        </div>
+        )}
+      </Card>
 
-        <div className="grid-wrap single" id="tenMinGrid">
-          <div className="hr-col">
-            {hours.map((h) => (
-              <div key={h} className="hr-lbl">
-                {pad(h)}:00
-              </div>
-            ))}
-          </div>
+      {/* 10-Minute Grid */}
+      <Card>
+        <SectionHeader
+          title={showFull24h ? 'Full 24-hour grid' : 'Active window (±1h)'}
+          subtitle="Each row is 1 hour split into six 10-minute blocks (:00 to :50)"
+        />
 
-          <div className="slots-col">
-            {hours.map((h) => (
-              <div key={h} className="hr-row">
+        <div id="tenMinGrid" className="mt-3 space-y-1.5">
+          {visibleHours.map((h) => (
+            <div
+              key={h}
+              className="grid grid-cols-[54px_1fr] items-center gap-2"
+            >
+              <div className="mono text-[12px] text-[var(--tx-2)]">{pad(h)}:00</div>
+              <div className="grid grid-cols-6 gap-1.5">
                 {[0, 1, 2, 3, 4, 5].map((idx) => {
                   const slot = h * 6 + idx;
                   const act = actualSlots[slot];
@@ -401,17 +404,8 @@ export const PlannerView: React.FC<PlannerViewProps> = ({
                     <button
                       type="button"
                       key={slot}
-                      className={`slot ${act ? 'filled' : ''} ${isInspected ? 'inspected' : ''}`}
-                      style={{
-                        padding: 0,
-                        cursor: act ? 'pointer' : 'default',
-                        opacity: isDimmed ? 0.22 : 1,
-                        outline: isInspected
-                          ? `2px solid ${act?.color || 'var(--ac)'}`
-                          : 'none',
-                        outlineOffset: '-1px',
-                      }}
                       data-slot={slot}
+                      onClick={() => handleSlotTap(slot)}
                       aria-label={
                         act
                           ? `${windowLbl}: ${act.subjectName} — ${act.heading} (${act.mins}m active)`
@@ -422,13 +416,22 @@ export const PlannerView: React.FC<PlannerViewProps> = ({
                           ? `${windowLbl} · ${act.subjectName}: ${act.heading} (${act.mins}m active)`
                           : `${windowLbl} · 0m`
                       }
-                      onClick={() => handleSlotTap(slot)}
+                      className={`relative h-6 overflow-hidden rounded-md border transition-opacity ${
+                        isInspected
+                          ? 'border-[var(--ac)] ring-1 ring-[var(--ac)]'
+                          : 'border-[var(--line)]'
+                      } bg-[var(--sf-2)]`}
+                      style={{
+                        opacity: isDimmed ? 0.25 : 1,
+                        cursor: act ? 'pointer' : 'default',
+                      }}
                     >
                       {act && (
-                        <i
+                        <span
+                          className="block h-full rounded-sm"
                           style={{
-                            background: act.color,
                             width: `${fillPct}%`,
+                            background: act.color,
                           }}
                         />
                       )}
@@ -436,10 +439,10 @@ export const PlannerView: React.FC<PlannerViewProps> = ({
                   );
                 })}
               </div>
-            ))}
-          </div>
+            </div>
+          ))}
         </div>
-      </div>
+      </Card>
     </div>
   );
 };

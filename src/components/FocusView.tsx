@@ -1,15 +1,44 @@
 import React, { useEffect, useMemo, useState } from 'react';
 import {
-  Bar,
-  BarChart,
-  ReferenceLine,
+  Play,
+  Pause,
+  Square,
+  Coffee,
+  Zap,
+  SkipForward,
+  Maximize2,
+  Minimize2,
+  PictureInPicture2,
+  SlidersHorizontal,
+  Volume2,
+  VolumeX,
+  Plus,
+  Check,
+  Trash2,
+  RotateCw,
+  Edit3,
+  BookOpen,
+  ListChecks,
+} from 'lucide-react';
+import {
   ResponsiveContainer,
-  Tooltip,
+  BarChart,
+  Bar,
   XAxis,
   YAxis,
+  ReferenceLine,
+  Tooltip,
+  Cell,
 } from 'recharts';
-import type { ActiveTimerMode, PulseHabitState, SoundscapeMode } from '../types';
+import type {
+  ActiveTimerMode,
+  PulseHabitState,
+  SoundscapeMode,
+  StudySession,
+  TimerAesthetic,
+} from '../types';
 import {
+  computeStudySummary,
   fmtClockTime,
   fmtHMS,
   fmtHMShort,
@@ -20,8 +49,18 @@ import {
   getTimerMetrics,
   getTodaySubjectMs,
 } from '../utils/studyLogic';
+import { CHART_THEME } from '../utils/uiHelpers';
+import {
+  Button,
+  Card,
+  Chip,
+  Segmented,
+  Select,
+  Meter,
+} from './ui';
+import { FocusOrbitScene } from './three/FocusOrbitScene';
 
-interface FocusViewProps {
+export interface FocusViewProps {
   state: PulseHabitState;
   sel: string;
   todayKey: string;
@@ -33,14 +72,14 @@ interface FocusViewProps {
   onStartTimer: (
     subjectId: string,
     heading: string,
-    mode: ActiveTimerMode,
+    mode?: ActiveTimerMode,
     customTargetMins?: number,
     chapterId?: string
   ) => void;
-  onExtendTarget?: (extraMins: number) => void;
+  onNextMockSection?: () => void;
+  onExtendTarget: (extraMins: number) => void;
   onTogglePause: () => void;
   onTogglePomoPhase: () => void;
-  onNextMockSection?: () => void;
   onStopAndReflect: () => void;
   onOpenTimerConfig: () => void;
   onSetSoundscape: (mode: SoundscapeMode) => void;
@@ -49,8 +88,28 @@ interface FocusViewProps {
   onToggleTodo: (todoId: string) => void;
   onDeleteTodo: (todoId: string) => void;
   onOpenManualSession: (defaultSubjectId?: string, defaultChapterId?: string) => void;
-  onEditSession: (sessionId: string) => void;
+  onEditSession: (sesId: string) => void;
 }
+
+const TIMER_MODES: Array<{ value: ActiveTimerMode; label: string }> = [
+  { value: 'pomo', label: 'Pomodoro' },
+  { value: 'countdown', label: 'Countdown' },
+  { value: 'stopwatch', label: 'Stopwatch' },
+  { value: 'fullMock', label: 'Full mock' },
+];
+
+const TIMER_STYLE_LABELS: Record<TimerAesthetic, string> = {
+  neon: 'Digital',
+  minimal: 'Mono',
+  retro: 'Analog',
+};
+
+const SOUNDSCAPE_ITEMS: Array<[SoundscapeMode, string]> = [
+  ['off', 'Off'],
+  ['brown', 'Brown noise'],
+  ['pink', 'Pink noise'],
+  ['rain', 'Soft rain'],
+];
 
 export const FocusView: React.FC<FocusViewProps> = ({
   state,
@@ -62,10 +121,10 @@ export const FocusView: React.FC<FocusViewProps> = ({
   onSwitchTopic,
   onSetMode,
   onStartTimer,
+  onNextMockSection,
   onExtendTarget,
   onTogglePause,
   onTogglePomoPhase,
-  onNextMockSection,
   onStopAndReflect,
   onOpenTimerConfig,
   onSetSoundscape,
@@ -77,1097 +136,1210 @@ export const FocusView: React.FC<FocusViewProps> = ({
   onEditSession,
 }) => {
   const t = state.activeTimer;
-  const m = getTimerMetrics(state);
-  const subjects = state.subjects.filter((s) => !s.arch);
-  const defaultSubId = subjects[0]?.id || 'sub_phy';
+  const activeSubjects = useMemo(
+    () => state.subjects.filter((s) => !s.arch),
+    [state.subjects]
+  );
 
   const [selectedSubjectId, setSelectedSubjectId] = useState<string>(
-    t?.subjectId || defaultSubId
+    t?.subjectId || activeSubjects[0]?.id || 'sub_phy'
   );
   const [selectedChapterId, setSelectedChapterId] = useState<string>(
     t?.chapterId || ''
   );
-  const [sessionHeading, setSessionHeading] = useState<string>(
-    t?.heading || ''
-  );
-  const [todoInput, setTodoInput] = useState('');
-  const [selectedMode, setSelectedMode] = useState<ActiveTimerMode>(
-    t?.mode || state.set.defaultMode || 'pomo'
-  );
-  const [customCountdownMins, setCustomCountdownMins] = useState<number>(
-    state.set.countdownMins || 45
-  );
+  const [headingInput, setHeadingInput] = useState<string>(t?.heading || '');
+  const [newTodoText, setNewTodoText] = useState<string>('');
   const [quoteOffset, setQuoteOffset] = useState<number>(0);
 
+  // Sync local inputs when activeTimer changes
   useEffect(() => {
-    if (t?.subjectId) {
-      setSelectedSubjectId(t.subjectId);
-    }
-  }, [t?.subjectId]);
+    if (t?.subjectId) setSelectedSubjectId(t.subjectId);
+    if (t?.chapterId !== undefined) setSelectedChapterId(t.chapterId || '');
+    if (t?.heading) setHeadingInput(t.heading);
+  }, [t?.subjectId, t?.chapterId, t?.heading]);
 
-  useEffect(() => {
-    if (t?.chapterId !== undefined) {
-      setSelectedChapterId(t.chapterId || '');
-    }
-  }, [t?.chapterId]);
+  const effectiveSubId = activeSubjects.some((s) => s.id === selectedSubjectId)
+    ? selectedSubjectId
+    : activeSubjects[0]?.id || 'sub_phy';
+  const curSubject = getSubject(state, effectiveSubId);
 
-  useEffect(() => {
-    if (t?.heading) {
-      setSessionHeading(t.heading);
-    }
-  }, [t?.heading]);
-
-  useEffect(() => {
-    if (t?.mode) {
-      setSelectedMode(t.mode);
-    } else if (state.set.defaultMode) {
-      setSelectedMode(state.set.defaultMode);
-    }
-  }, [t?.mode, state.set.defaultMode]);
-
-  useEffect(() => {
-    if (state.set.countdownMins) {
-      setCustomCountdownMins(state.set.countdownMins);
-    }
-  }, [state.set.countdownMins]);
-
-  const mode: ActiveTimerMode = t ? t.mode : selectedMode;
-  const activeSubject = getSubject(state, t ? t.subjectId : selectedSubjectId);
-  const subjectChapters = state.chapters.filter(
-    (ch) => ch.subjectId === (t ? t.subjectId : selectedSubjectId)
+  const subjectChapters = useMemo(
+    () => state.chapters.filter((ch) => ch.subjectId === effectiveSubId),
+    [state.chapters, effectiveSubId]
   );
-  const selectedChapterObj = state.chapters.find(
-    (ch) => ch.id === (t ? t.chapterId : selectedChapterId)
-  );
-  const activeHeading = (
-    t?.heading ||
-    sessionHeading ||
-    (mode === 'fullMock' ? 'Full Mock' : selectedChapterObj?.name) ||
-    `${activeSubject.name} Study Session`
-  ).trim();
-  const accentColor = activeSubject.color || '#3b82f6';
+  const effectiveChapId = subjectChapters.some(
+    (ch) => ch.id === selectedChapterId
+  )
+    ? selectedChapterId
+    : '';
+  const curChapter = subjectChapters.find((ch) => ch.id === effectiveChapId);
 
-  // Keyboard shortcut: Space to pause/resume when not typing in an input
-  useEffect(() => {
-    const onKeyDown = (e: KeyboardEvent) => {
-      if (e.code !== 'Space') return;
-      const tag = (e.target as HTMLElement)?.tagName;
-      if (tag === 'INPUT' || tag === 'TEXTAREA' || tag === 'SELECT' || tag === 'BUTTON') {
-        return;
-      }
-      e.preventDefault();
-      if (t) {
-        onTogglePause();
-      } else {
-        onStartTimer(
-          selectedSubjectId,
-          mode === 'fullMock'
-            ? 'Full Mock'
-            : sessionHeading.trim() ||
-                selectedChapterObj?.name ||
-                `${activeSubject.name} Study Session`,
-          mode,
-          mode === 'countdown'
-            ? customCountdownMins
-            : mode === 'fullMock'
-              ? state.set.fullMockMins || 180
-              : undefined,
-          selectedChapterId || undefined
-        );
-      }
-    };
-    window.addEventListener('keydown', onKeyDown);
-    return () => window.removeEventListener('keydown', onKeyDown);
-  }, [
-    activeSubject.name,
-    customCountdownMins,
-    mode,
-    onStartTimer,
-    onTogglePause,
-    selectedChapterId,
-    selectedChapterObj?.name,
-    selectedSubjectId,
-    sessionHeading,
-    state.set.fullMockMins,
-    t,
-  ]);
+  const curMode: ActiveTimerMode = t?.mode || state.set.defaultMode || 'pomo';
+  const aesthetic: TimerAesthetic = state.set.timerAesthetic || 'neon';
+  const m = getTimerMetrics(state);
 
-  const clockMs = m
-    ? m.overtimeMs > 0
-      ? m.totalActiveMs
-      : m.displayMs
-    : mode === 'pomo'
+  const defaultIdleMs =
+    curMode === 'pomo'
       ? (state.set.pomoWork || 25) * 60000
-      : mode === 'countdown'
-        ? customCountdownMins * 60000
-        : mode === 'fullMock'
+      : curMode === 'countdown'
+        ? (state.set.countdownMins || 45) * 60000
+        : curMode === 'fullMock'
           ? (state.set.fullMockMins || 180) * 60000
           : 0;
-  const clockVal = fmtHMS(clockMs);
-  const aesthetic = state.set.timerAesthetic || 'neon';
-  const totalSec = Math.max(0, Math.floor(clockMs / 1000));
-  const secAngle = (totalSec % 60) * 6;
-  const minAngle = ((totalSec / 60) % 60) * 6;
-  const hrAngle = ((totalSec / 3600) % 12) * 30;
 
-  // Unique recent sessions for quick reuse
-  const recentTopics = Array.from(
-    new Map(
-      state.sessions
-        .slice()
-        .reverse()
-        .map((s) => {
-          const h = getSessionHeading(state, s);
-          return [`${s.subjectId}::${h.toLowerCase()}`, { subjectId: s.subjectId, heading: h }];
-        })
-    ).values()
-  ).slice(0, 6);
+  const displayMs = m ? m.displayMs : defaultIdleMs;
+  const clockStr =
+    curMode === 'stopwatch' || displayMs >= 3600000
+      ? fmtHMS(displayMs)
+      : fmtMS(displayMs);
 
-  const todos = state.todos || [];
-
-  const handleTodoSubmit = (e: React.FormEvent) => {
-    e.preventDefault();
-    const trimmed = todoInput.trim();
-    if (!trimmed) return;
-    onAddTodo(trimmed);
-    setTodoInput('');
-  };
-
-  const handleHeadingApply = (e: React.FormEvent) => {
-    e.preventDefault();
-    const sub = getSubject(state, selectedSubjectId);
-    const chap = selectedChapterId
-      ? state.chapters.find((c) => c.id === selectedChapterId)
-      : undefined;
-    const clean =
-      sessionHeading.trim() || chap?.name || `${sub.name} Study Session`;
-    setSessionHeading(clean);
-    if (t) {
-      onSwitchTopic(selectedSubjectId, clean, selectedChapterId || undefined);
+  const todaySubMs = getTodaySubjectMs(state, curSubject.id, todayKey, true);
+  const todaySessions = useMemo(
+    () =>
+      [...state.sessions.filter((s) => s.dayKey === todayKey)].sort(
+        (a, b) => b.startTs - a.startTs
+      ),
+    [state.sessions, todayKey]
+  );
+  const recentHeadings = useMemo(() => {
+    const seen = new Set<string>();
+    const list: Array<{ subjectId: string; heading: string }> = [];
+    const sorted = [...state.sessions].sort((a, b) => b.startTs - a.startTs);
+    for (const ses of sorted) {
+      const h = (ses.heading || '').trim();
+      if (!h) continue;
+      const key = `${ses.subjectId}::${h}`;
+      if (!seen.has(key)) {
+        seen.add(key);
+        list.push({ subjectId: ses.subjectId, heading: h });
+        if (list.length >= 6) break;
+      }
     }
-  };
+    return list;
+  }, [state.sessions]);
 
-  const progressPct = m ? Math.min(100, Math.max(2, m.progressPct)) : 0;
+  // Analog Retro clock angles
+  const totalElapsedSec = Math.floor((m ? m.totalActiveMs : 0) / 1000);
+  const secAngle = (totalElapsedSec % 60) * 6;
+  const minAngle = (((m ? m.totalActiveMs : 0) / 60000) % 60) * 6;
+  const targetMinAngle =
+    t && t.targetMs ? ((t.targetMs / 60000) % 60) * 6 : null;
 
-  // Current study session duration vs target data for the Recharts visualization
-  const sessionChartMetrics = useMemo(() => {
-    const activeMs = m ? m.totalActiveMs : 0;
-    const elapsedMins = Math.round((activeMs / 60000) * 10) / 10;
+  const activeHeadingDisplay = t
+    ? t.heading || `${curSubject.name} Study`
+    : headingInput.trim() || curChapter?.name || `${curSubject.name} Study`;
 
-    let rawTargetMs = 0;
-    if (t && t.mode !== 'stopwatch' && (t.targetMs || 0) > 0) {
-      rawTargetMs = t.targetMs;
-    } else if (mode === 'pomo') {
-      rawTargetMs = (state.set.pomoWork || 25) * 60000;
-    } else if (mode === 'countdown') {
-      rawTargetMs = (customCountdownMins || state.set.countdownMins || 45) * 60000;
-    } else if (mode === 'fullMock') {
-      rawTargetMs = (state.set.fullMockMins || 180) * 60000;
-    } else {
-      // Stopwatch pace reference (next 30m/60m milestone)
-      const baseMins = Math.max(60, Math.ceil((elapsedMins + 0.1) / 30) * 30);
-      rawTargetMs = baseMins * 60000;
-    }
+  // Session progress vs Target chart data (in minutes)
+  const targetMins = t
+    ? t.targetMs > 0
+      ? +(t.targetMs / 60000).toFixed(1)
+      : 60
+    : +(defaultIdleMs / 60000).toFixed(1) || 60;
+  const elapsedMins = m ? +(m.totalActiveMs / 60000).toFixed(1) : 0;
+  const chartDomainMax = Math.max(targetMins, elapsedMins, 10);
+  const sessionProgressData = [
+    {
+      name: 'Elapsed',
+      minutes: elapsedMins,
+      target: targetMins,
+    },
+  ];
+  const progressRatio =
+    targetMins > 0 ? Math.min(100, Math.round((elapsedMins / targetMins) * 100)) : 0;
 
-    const targetMins = Math.max(1, Math.round((rawTargetMs / 60000) * 10) / 10);
-    const remainingMins = Math.max(
-      0,
-      Math.round((targetMins - elapsedMins) * 10) / 10
-    );
-    const overtimeMins = Math.max(
-      0,
-      Math.round((elapsedMins - targetMins) * 10) / 10
-    );
-    const domainMax = Math.max(targetMins, elapsedMins, 1);
-    const pctOfTarget = Math.min(
-      999,
-      Math.round((activeMs / Math.max(60000, rawTargetMs)) * 100)
-    );
+  const chapterOptions = useMemo(
+    () => [
+      { value: '', label: 'General subject study (no specific chapter)' },
+      ...subjectChapters.map((ch) => ({
+        value: ch.id,
+        label: `${ch.name} (${
+          ch.status === 'completed'
+            ? 'Done'
+            : ch.status === 'inProgress'
+              ? 'In progress'
+              : 'Not started'
+        })`,
+      })),
+    ],
+    [subjectChapters]
+  );
 
-    return {
-      activeMs,
-      elapsedMins,
-      targetMins,
-      remainingMins,
-      overtimeMins,
-      domainMax,
-      pctOfTarget,
-      data: [
-        {
-          name: 'Session',
-          elapsed: elapsedMins,
-          remaining: remainingMins,
-          target: targetMins,
-        },
-      ],
-    };
-  }, [
-    m,
-    t,
-    mode,
-    state.set.pomoWork,
-    state.set.countdownMins,
-    state.set.fullMockMins,
-    customCountdownMins,
-  ]);
+  const globalTodos = state.todos || [];
+
+  const statusText = m
+    ? m.phase === 'break'
+      ? 'Break'
+      : m.status === 'running'
+        ? 'Studying'
+        : 'Paused'
+    : 'Ready';
 
   return (
     <div>
-      <div className="row sp hide-desk" style={{ marginBottom: '6px' }}>
-        <h2>Study Timer &amp; Lecture PiP</h2>
-        <div className="row">
-          <button
-            type="button"
-            className="s"
-            onClick={onToggleDeskMode}
-            title="Fullscreen Flip-Clock + Wake Lock"
-          >
-            🖥️ Desk Mode
-          </button>
-          <button
-            type="button"
-            className="s pri"
-            onClick={onOpenPiP}
-            title="Launch Floating PiP Overlay"
-          >
-            🖼️ Float PiP
-          </button>
-        </div>
-      </div>
-
-      {/* Subject Picker + Chapter Dropdown + Manual Session Heading Input + Mid-Session Slice Switcher */}
-      <div className="card hide-desk" style={{ padding: '12px 14px' }}>
-        <small style={{ display: 'block', marginBottom: '6px', fontWeight: 700 }}>
-          Subject {t ? '(tap another subject to slice & switch)' : ''}:
-        </small>
-        <div className="chips wrap" style={{ marginBottom: '10px', paddingBottom: 0 }}>
-          {subjects.map((sub) => {
-            const isActive = (t ? t.subjectId : selectedSubjectId) === sub.id;
-            return (
-              <button
-                type="button"
-                key={sub.id}
-                className={`sub-chip ${isActive ? 'active' : ''}`}
-                style={{ '--sc': sub.color } as React.CSSProperties}
-                onClick={() => {
-                  setSelectedSubjectId(sub.id);
-                  setSelectedChapterId('');
-                  if (t && t.subjectId !== sub.id) {
-                    const nextHeading =
-                      sessionHeading.trim() &&
-                      sessionHeading.trim() !== `${activeSubject.name} Study Session`
-                        ? sessionHeading.trim()
-                        : `${sub.name} Study Session`;
-                    setSessionHeading(nextHeading);
-                    onSwitchTopic(sub.id, nextHeading, undefined);
-                  }
-                }}
-              >
-                <i className="dot" style={{ '--sc': sub.color } as React.CSSProperties} />
-                {sub.e} {sub.name}
-              </button>
-            );
-          })}
-        </div>
-
-        {/* 1.1 Optional Chapter Dropdown Filtered by Selected Subject */}
-        {subjectChapters.length > 0 && (
-          <div style={{ marginBottom: '10px' }}>
-            <label style={{ marginTop: 0, fontSize: '12px' }}>
-              Link Syllabus Chapter (Optional)
-              <select
-                value={selectedChapterId}
-                onChange={(e) => {
-                  const nextChapId = e.target.value;
-                  setSelectedChapterId(nextChapId);
-                  const chap = state.chapters.find((c) => c.id === nextChapId);
-                  if (chap && !sessionHeading.trim()) {
-                    setSessionHeading(chap.name);
-                  }
-                  if (t) {
-                    onSwitchTopic(
-                      selectedSubjectId,
-                      sessionHeading.trim() || chap?.name || `${activeSubject.name} Study Session`,
-                      nextChapId || undefined
-                    );
-                  }
-                }}
-                style={{ marginTop: '4px' }}
-              >
-                <option value="">— None / General {activeSubject.name} —</option>
-                {subjectChapters.map((ch) => (
-                  <option key={ch.id} value={ch.id}>
-                    {ch.name}
-                  </option>
-                ))}
-              </select>
-            </label>
-          </div>
-        )}
-
-        <form onSubmit={handleHeadingApply}>
-          <label style={{ marginTop: 0 }}>
-            Session Heading (What are you studying right now?)
-            <div className="row" style={{ marginTop: '6px', gap: '8px' }}>
-              <input
-                type="text"
-                id="sessionHeadingInput"
-                value={sessionHeading}
-                onChange={(e) => setSessionHeading(e.target.value)}
-                placeholder={`e.g., ${selectedChapterObj?.name || `${activeSubject.name} — NCERT & PYQs...`}`}
-                maxLength={90}
-              />
-              {t &&
-                ((sessionHeading.trim() && sessionHeading.trim() !== t.heading) ||
-                  selectedSubjectId !== t.subjectId ||
-                  (selectedChapterId || undefined) !== t.chapterId) && (
-                  <button type="submit" className="s pri" style={{ whiteSpace: 'nowrap' }}>
-                    Switch Topic
-                  </button>
-                )}
-            </div>
-          </label>
-        </form>
-
-        {recentTopics.length > 0 && (
-          <div style={{ marginTop: '8px' }}>
-            <small style={{ display: 'block', marginBottom: '5px', fontSize: '11px' }}>
-              Recent session topics (tap to use{t ? ' & slice' : ''}):
-            </small>
-            <div className="chips wrap" style={{ paddingBottom: 0 }}>
-              {recentTopics.map((item) => {
-                const sub = getSubject(state, item.subjectId);
-                const isCur =
-                  activeHeading.toLowerCase() === item.heading.toLowerCase() &&
-                  activeSubject.id === sub.id;
-                return (
-                  <button
-                    type="button"
-                    key={`${item.subjectId}::${item.heading}`}
-                    className={`sub-chip ${isCur ? 'active' : ''}`}
-                    style={
-                      {
-                        '--sc': sub.color,
-                        padding: '5px 10px',
-                        fontSize: '12px',
-                      } as React.CSSProperties
-                    }
-                    onClick={() => {
-                      setSelectedSubjectId(sub.id);
-                      setSessionHeading(item.heading);
-                      if (t) onSwitchTopic(sub.id, item.heading);
-                    }}
-                  >
-                    <i className="dot" style={{ '--sc': sub.color } as React.CSSProperties} />
-                    {sub.e} {item.heading}
-                  </button>
-                );
-              })}
-            </div>
-          </div>
-        )}
-      </div>
-
+      {/* 1. Top Mode Selector & Studio Controls */}
       <div
-        className={`card timer-shell aesthetic-${aesthetic} ${m ? m.status : ''}`}
-        style={{ '--sc': accentColor } as React.CSSProperties}
+        className="split hide-desk"
+        style={{
+          gap: 10,
+          flexWrap: 'wrap',
+          marginBottom: 14,
+        }}
       >
-        <div className="row sp" style={{ marginBottom: '6px' }}>
-          <span className="pill" style={{ borderColor: accentColor }}>
-            <i className="dot" style={{ '--sc': accentColor } as React.CSSProperties} />
-            {activeSubject.e} {activeSubject.name} · {activeHeading.slice(0, 26)}
-          </span>
-          <span
-            className={`status-pill ${
-              m?.status === 'running' ? 'run' : m?.status === 'paused' ? 'pau' : 'idle'
-            }`}
-          >
-            {m?.status === 'running'
-              ? m.phase === 'break'
-                ? '☕ BREAK'
-                : '● STUDYING'
-              : m?.status === 'paused'
-                ? '⏸ PAUSED'
-                : 'READY'}
-          </span>
+        <div style={{ flex: '1 1 320px', minWidth: 0 }}>
+          <Segmented
+            aria-label="Timer mode"
+            value={curMode}
+            onChange={onSetMode}
+            options={TIMER_MODES}
+          />
         </div>
 
-        {/* Mode Tabs: Pomodoro, Countdown, Stopwatch, Full Mock (1.14) */}
-        <div className="chips wrap" style={{ justifyContent: 'center', margin: '6px 0' }}>
-          {(
-            [
-              ['pomo', '🍅 Pomodoro'],
-              ['countdown', '⏳ Countdown'],
-              ['stopwatch', '⏱️ Stopwatch'],
-              ['fullMock', '📝 Full Mock'],
-            ] as const
-          ).map(([k, lbl]) => (
-            <button
-              type="button"
-              key={k}
-              className={mode === k ? 'on' : ''}
-              onClick={() => {
-                setSelectedMode(k);
-                onSetMode(k);
+        <div className="row" style={{ gap: 8 }}>
+          <Button
+            variant="secondary"
+            size="sm"
+            icon={<SlidersHorizontal size={15} strokeWidth={1.75} />}
+            onClick={onOpenTimerConfig}
+          >
+            Durations
+          </Button>
+          <Button
+            variant="secondary"
+            size="sm"
+            icon={<Maximize2 size={15} strokeWidth={1.75} />}
+            onClick={onToggleDeskMode}
+          >
+            {deskMode ? 'Exit desk' : 'Desk mode'}
+          </Button>
+          <Button
+            variant="secondary"
+            size="sm"
+            icon={<PictureInPicture2 size={15} strokeWidth={1.75} />}
+            onClick={onOpenPiP}
+          >
+            Float PiP
+          </Button>
+        </div>
+      </div>
+
+      {/* 2. Primary Timer Stage Card */}
+      <div
+        className={`card timer-shell aesthetic-${aesthetic} ${
+          m ? (m.status === 'running' ? 'running' : 'paused') : ''
+        }`}
+      >
+        {/* Top Row inside Stage: Status Pill + Active Subject/Chapter + Clock Style */}
+        <div
+          className="split"
+          style={{
+            gap: 8,
+            flexWrap: 'wrap',
+            marginBottom: 8,
+          }}
+        >
+          <div className="row" style={{ gap: 8, flexWrap: 'wrap' }}>
+            <span
+              className={`status-pill ${
+                m ? (m.status === 'running' ? 'run' : 'pau') : 'idle'
+              }`}
+            >
+              <span
+                style={{
+                  width: 7,
+                  height: 7,
+                  borderRadius: '50%',
+                  background: m
+                    ? m.status === 'running'
+                      ? 'var(--ok)'
+                      : 'var(--warn)'
+                    : 'var(--tx-3)',
+                }}
+              />
+              {statusText}
+            </span>
+
+            <span
+              className="pill"
+              style={{
+                background: 'var(--sf-2)',
+                color: 'var(--tx)',
+                border: '1px solid var(--line)',
+                fontSize: 12,
+                padding: '4px 10px',
+                display: 'inline-flex',
+                alignItems: 'center',
+                gap: 6,
+                maxWidth: '100%',
               }}
             >
-              {lbl}
-            </button>
-          ))}
-        </div>
+              <span
+                style={{
+                  width: 8,
+                  height: 8,
+                  borderRadius: '50%',
+                  background: curSubject.color,
+                  flexShrink: 0,
+                }}
+              />
+              <span
+                style={{
+                  overflow: 'hidden',
+                  textOverflow: 'ellipsis',
+                  whiteSpace: 'nowrap',
+                }}
+              >
+                {curSubject.e} {curSubject.name}
+                {curChapter ? ` · ${curChapter.name}` : ''}
+                {activeHeadingDisplay ? ` · "${activeHeadingDisplay}"` : ''}
+              </span>
+            </span>
+          </div>
 
-        {!t && mode === 'fullMock' && (
-          <small
+          <span
+            className="pill hide-desk"
             style={{
-              display: 'block',
-              textAlign: 'center',
-              color: '#a5b4fc',
-              fontWeight: 700,
-              marginBottom: '4px',
+              background: 'var(--sf-2)',
+              color: 'var(--tx-2)',
+              fontSize: 12,
+              padding: '4px 10px',
             }}
           >
-            NEET Full Mock Exam Mode ({state.set.fullMockMins || 180}m countdown + section split tracker)
-          </small>
-        )}
+            {TIMER_STYLE_LABELS[aesthetic]} clock
+          </span>
+        </div>
 
-        {!t && mode === 'countdown' && (
+        {/* Countdown Presets when idle */}
+        {curMode === 'countdown' && !t && (
           <div
-            className="chips wrap"
-            style={{ justifyContent: 'center', margin: '2px 0 4px', gap: '6px' }}
+            className="row hide-desk"
+            style={{
+              justifyContent: 'center',
+              gap: 6,
+              marginTop: 8,
+              flexWrap: 'wrap',
+            }}
           >
             {[25, 45, 60, 90, 120].map((mins) => (
-              <button
-                type="button"
+              <Chip
                 key={mins}
-                className={customCountdownMins === mins ? 'on' : ''}
-                style={{ padding: '4px 10px', fontSize: '12px' }}
-                onClick={() => setCustomCountdownMins(mins)}
+                selected={(state.set.countdownMins || 45) === mins}
+                onClick={() =>
+                  onStartTimer(
+                    effectiveSubId,
+                    headingInput,
+                    'countdown',
+                    mins,
+                    effectiveChapId || undefined
+                  )
+                }
               >
                 {mins}m
-              </button>
+              </Chip>
             ))}
           </div>
         )}
 
-        {aesthetic === 'retro' ? (
-          <div className="retro-clock-wrap" aria-label="Analog Retro Clock Face">
-            <svg
-              className="retro-dial-svg"
-              viewBox="0 0 180 180"
-              role="img"
-              aria-label={`Analog Retro Timer ${clockVal}`}
-            >
-              <defs>
-                <radialGradient id="retroFaceGrad" cx="50%" cy="45%" r="55%">
-                  <stop offset="0%" stopColor="#261f16" />
-                  <stop offset="100%" stopColor="#120e0a" />
-                </radialGradient>
-              </defs>
-              {/* Outer Gold/Amber Chronometer Bezel */}
-              <circle
-                cx="90"
-                cy="90"
-                r="84"
-                fill="url(#retroFaceGrad)"
-                stroke="#d97706"
-                strokeWidth="3.5"
-              />
-              <circle
-                cx="90"
-                cy="90"
-                r="78"
-                fill="none"
-                stroke="rgba(251, 191, 36, 0.25)"
-                strokeWidth="1"
-              />
-              {/* 60 Minute/Second Ticks */}
-              {Array.from({ length: 60 }, (_, idx) => {
-                const isMajor = idx % 5 === 0;
-                const deg = idx * 6;
-                return (
-                  <line
-                    key={idx}
-                    x1="90"
-                    y1={isMajor ? '15' : '18'}
-                    x2="90"
-                    y2={isMajor ? '24' : '22'}
-                    stroke={isMajor ? '#fbbf24' : 'rgba(251, 191, 36, 0.42)'}
-                    strokeWidth={isMajor ? '2.2' : '1'}
-                    strokeLinecap="round"
-                    transform={`rotate(${deg} 90 90)`}
-                  />
-                );
-              })}
-              {/* Sub-label on dial */}
-              <text
-                x="90"
-                y="62"
-                textAnchor="middle"
-                fill="rgba(251, 191, 36, 0.7)"
-                fontSize="8.5"
-                fontWeight="700"
-                letterSpacing="1.4"
-              >
-                CHRONO · DEEP HOURS
-              </text>
-              {/* Hour Hand */}
-              <line
-                x1="90"
-                y1="94"
-                x2="90"
-                y2="54"
-                stroke="#f59e0b"
-                strokeWidth="4"
-                strokeLinecap="round"
-                transform={`rotate(${hrAngle} 90 90)`}
-              />
-              {/* Minute Hand */}
-              <line
-                x1="90"
-                y1="98"
-                x2="90"
-                y2="34"
-                stroke="#fef3c7"
-                strokeWidth="3"
-                strokeLinecap="round"
-                transform={`rotate(${minAngle} 90 90)`}
-              />
-              {/* Sweeping Second Hand */}
-              <line
-                x1="90"
-                y1="104"
-                x2="90"
-                y2="26"
-                stroke="#34d399"
-                strokeWidth="1.6"
-                strokeLinecap="round"
-                transform={`rotate(${secAngle} 90 90)`}
-              />
-              {/* Center Cap */}
-              <circle cx="90" cy="90" r="5" fill="#fbbf24" />
-              <circle cx="90" cy="90" r="2" fill="#120e0a" />
-            </svg>
-            <div className="retro-sub-readout" id="liveClock">
-              {clockVal}
-            </div>
-          </div>
-        ) : (
-          <div className="big-clock" id="liveClock">
-            {clockVal}
+        {/* Full Mock Exam Info when in fullMock mode */}
+        {curMode === 'fullMock' && !t && (
+          <div style={{ marginTop: 6, fontSize: 12, color: 'var(--tx-2)' }}>
+            NEET 3-hour exam simulation ({state.set.fullMockMins || 180} mins) · Record
+            section splits as you complete each section
           </div>
         )}
 
-        {m && (
-          <div style={{ width: '100%', maxWidth: '340px', margin: '2px auto 6px' }}>
+        {/* Clock Display + Centered 3D Focus Orbit Scene Behind Readout */}
+        <div
+          style={{
+            position: 'relative',
+            minHeight: !deskMode && state.set.ui3d !== 'off' ? 210 : undefined,
+            display: 'flex',
+            flexDirection: 'column',
+            alignItems: 'center',
+            justifyContent: 'center',
+            margin: '4px 0',
+          }}
+        >
+          {!deskMode && state.set.ui3d !== 'off' && (
             <div
+              aria-hidden="true"
               style={{
-                height: '7px',
-                background: 'var(--c2)',
-                borderRadius: '99px',
-                overflow: 'hidden',
+                position: 'absolute',
+                inset: 0,
+                display: 'flex',
+                alignItems: 'center',
+                justifyContent: 'center',
+                pointerEvents: 'none',
+                zIndex: 0,
+                opacity: aesthetic === 'retro' ? 0.45 : 0.88,
               }}
             >
-              <div
-                style={{
-                  height: '100%',
-                  width: `${progressPct}%`,
-                  background:
-                    m.status === 'paused'
-                      ? 'var(--am)'
-                      : m.overtimeMs > 0
-                        ? 'var(--em)'
-                        : accentColor,
-                }}
+              <FocusOrbitScene
+                ui3dSetting={state.set.ui3d || 'auto'}
+                deskMode={deskMode}
+                status={m ? m.status : 'idle'}
+                mode={curMode}
+                phase={m ? m.phase : 'work'}
+                subjectColor={curSubject.color}
+                progressPct={m ? m.progressPct : 0}
+                totalActiveMs={m ? m.totalActiveMs : 0}
+                overtimeMs={m ? m.overtimeMs : 0}
               />
             </div>
-          </div>
-        )}
+          )}
 
-        {m && m.overtimeMs > 0 && (
-          <div id="liveOvertime" className="overtime-tag">
-            FLOW OVERTIME +{fmtMS(m.overtimeMs)}
+          <div style={{ position: 'relative', zIndex: 1 }}>
+            {aesthetic === 'retro' ? (
+              <div className="retro-clock-wrap">
+                <svg
+                  viewBox="0 0 220 220"
+                  className="retro-dial-svg"
+                  aria-label="Analog study timer"
+                >
+                  <circle
+                    cx="110"
+                    cy="110"
+                    r="98"
+                    fill="var(--sf-2)"
+                    stroke="var(--line-strong)"
+                    strokeWidth="3"
+                  />
+                  <circle
+                    cx="110"
+                    cy="110"
+                    r="90"
+                    fill="none"
+                    stroke="var(--line)"
+                    strokeWidth="1"
+                  />
+                  {Array.from({ length: 60 }).map((_, i) => {
+                    const isMajor = i % 5 === 0;
+                    return (
+                      <line
+                        key={i}
+                        x1="110"
+                        y1={isMajor ? '18' : '22'}
+                        x2="110"
+                        y2={isMajor ? '30' : '27'}
+                        stroke={isMajor ? 'var(--tx)' : 'var(--tx-3)'}
+                        strokeWidth={isMajor ? '2' : '1'}
+                        strokeLinecap="round"
+                        transform={`rotate(${i * 6} 110 110)`}
+                      />
+                    );
+                  })}
+                  {[
+                    { label: '60', x: 110, y: 44 },
+                    { label: '15', x: 176, y: 114 },
+                    { label: '30', x: 110, y: 182 },
+                    { label: '45', x: 44, y: 114 },
+                  ].map((n) => (
+                    <text
+                      key={n.label}
+                      x={n.x}
+                      y={n.y}
+                      textAnchor="middle"
+                      fill="var(--tx-2)"
+                      fontSize="12"
+                      fontWeight="700"
+                      fontFamily="var(--font-mono)"
+                    >
+                      {n.label}
+                    </text>
+                  ))}
+                  {targetMinAngle !== null && (
+                    <line
+                      x1="110"
+                      y1="110"
+                      x2="110"
+                      y2="34"
+                      stroke="var(--ok)"
+                      strokeWidth="2"
+                      strokeDasharray="4 3"
+                      transform={`rotate(${targetMinAngle} 110 110)`}
+                    />
+                  )}
+                  <line
+                    x1="110"
+                    y1="120"
+                    x2="110"
+                    y2="46"
+                    stroke="var(--tx)"
+                    strokeWidth="4"
+                    strokeLinecap="round"
+                    transform={`rotate(${minAngle} 110 110)`}
+                  />
+                  <line
+                    x1="110"
+                    y1="126"
+                    x2="110"
+                    y2="30"
+                    stroke="var(--ac)"
+                    strokeWidth="2"
+                    strokeLinecap="round"
+                    transform={`rotate(${secAngle} 110 110)`}
+                  />
+                  <circle cx="110" cy="110" r="6" fill="var(--ac)" />
+                  <circle cx="110" cy="110" r="2.5" fill="var(--bg)" />
+                </svg>
+                <div className="retro-sub-readout" id="liveClock">
+                  {clockStr}
+                </div>
+              </div>
+            ) : (
+              <div className="big-clock" id="liveClock">
+                {clockStr}
+              </div>
+            )}
           </div>
-        )}
+        </div>
 
-        {/* Recharts Current Study Session Duration vs Target Progress Chart */}
+        {/* Overtime indicator */}
+        <div
+          id="liveOvertime"
+          style={{ display: m && m.overtimeMs > 0 ? 'block' : 'none' }}
+        >
+          <span className="overtime-tag">
+            Overtime +{m ? fmtMS(m.overtimeMs) : '00:00'}
+          </span>
+        </div>
+
+        {/* Progress Meter & Quick Target Extension */}
+        <div style={{ maxWidth: 360, margin: '8px auto 12px' }}>
+          <Meter
+            value={m ? m.progressPct : 0}
+            color={
+              m?.phase === 'break'
+                ? 'var(--info)'
+                : m && m.overtimeMs > 0
+                  ? 'var(--ok)'
+                  : 'var(--ac)'
+            }
+            label="Session progress"
+          />
+          {t && t.mode !== 'stopwatch' && (
+            <div
+              className="row"
+              style={{ justifyContent: 'center', gap: 8, marginTop: 8 }}
+            >
+              <Button
+                variant="secondary"
+                size="sm"
+                onClick={() => onExtendTarget(5)}
+              >
+                +5m target
+              </Button>
+              <Button
+                variant="secondary"
+                size="sm"
+                onClick={() => onExtendTarget(15)}
+              >
+                +15m target
+              </Button>
+            </div>
+          )}
+        </div>
+
+        {/* Full Mock Section Splits List */}
+        {t?.mode === 'fullMock' &&
+          t.mockSections &&
+          t.mockSections.length > 0 && (
+            <div
+              className="row"
+              style={{
+                justifyContent: 'center',
+                gap: 6,
+                marginBottom: 10,
+                flexWrap: 'wrap',
+              }}
+            >
+              {t.mockSections.map((sec, idx) => (
+                <span
+                  key={idx}
+                  className="pill"
+                  style={{
+                    fontSize: 12,
+                    padding: '3px 9px',
+                    background: 'var(--sf-2)',
+                    color: 'var(--tx)',
+                    border: '1px solid var(--line)',
+                    fontVariantNumeric: 'tabular-nums',
+                  }}
+                >
+                  {sec.label || sec.name || `Section ${idx + 1}`}:{' '}
+                  {fmtHMS(sec.elapsedMs)}
+                </span>
+              ))}
+            </div>
+          )}
+
+        {/* Primary Transport Controls */}
+        <div
+          className="row"
+          style={{
+            justifyContent: 'center',
+            gap: 10,
+            marginBottom: 12,
+            flexWrap: 'wrap',
+          }}
+        >
+          {t ? (
+            <Button
+              variant="primary"
+              size="lg"
+              icon={
+                t.status === 'running' ? (
+                  <Pause size={18} strokeWidth={2} />
+                ) : (
+                  <Play size={18} strokeWidth={2} />
+                )
+              }
+              onClick={onTogglePause}
+              style={{ minWidth: 148 }}
+            >
+              {t.status === 'running' ? 'Pause' : 'Resume'}
+            </Button>
+          ) : (
+            <Button
+              variant="primary"
+              size="lg"
+              icon={<Play size={18} strokeWidth={2} />}
+              onClick={() =>
+                onStartTimer(
+                  effectiveSubId,
+                  headingInput,
+                  curMode,
+                  undefined,
+                  effectiveChapId || undefined
+                )
+              }
+              style={{ minWidth: 148 }}
+            >
+              Start focus
+            </Button>
+          )}
+
+          {curMode === 'pomo' && (
+            <Button
+              variant="secondary"
+              size="lg"
+              icon={
+                t?.phase === 'break' ? (
+                  <Zap size={17} strokeWidth={1.75} />
+                ) : (
+                  <Coffee size={17} strokeWidth={1.75} />
+                )
+              }
+              onClick={onTogglePomoPhase}
+            >
+              {t?.phase === 'break' ? 'Work phase' : 'Break'}
+            </Button>
+          )}
+
+          {t?.mode === 'fullMock' && onNextMockSection && (
+            <Button
+              variant="secondary"
+              size="lg"
+              icon={<SkipForward size={17} strokeWidth={1.75} />}
+              onClick={onNextMockSection}
+            >
+              Next section
+            </Button>
+          )}
+
+          {t && (
+            <Button
+              variant="danger"
+              size="lg"
+              icon={<Square size={16} strokeWidth={2} />}
+              onClick={onStopAndReflect}
+            >
+              Stop & log
+            </Button>
+          )}
+        </div>
+
+        {/* Session Duration vs Target Recharts Visualization */}
         <div
           aria-label="Current study session duration vs target chart"
           style={{
-            width: '100%',
-            maxWidth: '380px',
-            margin: '8px auto 10px',
-            padding: '8px 12px',
-            borderRadius: '12px',
-            background: 'color-mix(in srgb, var(--c2) 78%, transparent)',
-            border: '1px solid var(--bd)',
+            maxWidth: 380,
+            margin: '4px auto 12px',
+            padding: '10px 14px',
+            borderRadius: 12,
+            background: 'var(--sf-2)',
+            border: '1px solid var(--line)',
           }}
         >
           <div
-            className="row sp"
-            style={{ marginBottom: '4px', fontSize: '11.5px', gap: '8px' }}
+            className="split"
+            style={{
+              fontSize: 12,
+              color: 'var(--tx-2)',
+              marginBottom: 6,
+            }}
           >
-            <span className="mut" style={{ fontWeight: 600 }}>
-              Session vs Target
-            </span>
+            <span>Session vs target</span>
             <span
-              className="mono"
               style={{
-                fontWeight: 700,
+                fontWeight: 600,
+                color: 'var(--tx)',
                 fontVariantNumeric: 'tabular-nums',
-                color:
-                  m?.status === 'paused'
-                    ? 'var(--am)'
-                    : sessionChartMetrics.overtimeMins > 0
-                      ? 'var(--em)'
-                      : 'var(--tx)',
               }}
             >
-              {fmtMS(sessionChartMetrics.activeMs)} / {sessionChartMetrics.targetMins}m (
-              {sessionChartMetrics.pctOfTarget}%)
+              {elapsedMins}m / {targetMins}m ({progressRatio}%)
             </span>
           </div>
-          <div style={{ width: '100%', height: 42 }}>
+          <div style={{ width: '100%', height: 48 }}>
             <ResponsiveContainer width="100%" height="100%">
               <BarChart
-                data={sessionChartMetrics.data}
+                data={sessionProgressData}
                 layout="vertical"
-                margin={{ top: 4, right: 8, bottom: 4, left: 8 }}
+                margin={{ top: 4, right: 10, left: 4, bottom: 4 }}
               >
-                <XAxis
-                  type="number"
-                  domain={[0, sessionChartMetrics.domainMax]}
-                  hide
-                />
+                <XAxis type="number" domain={[0, chartDomainMax]} hide />
                 <YAxis type="category" dataKey="name" hide />
                 <Tooltip
                   cursor={{ fill: 'transparent' }}
-                  contentStyle={{
-                    background: 'var(--card)',
-                    border: '1px solid var(--bd)',
-                    borderRadius: '8px',
-                    fontSize: '11px',
-                    padding: '4px 8px',
-                    color: 'var(--tx)',
-                  }}
-                  formatter={(value, name) => [
-                    `${Number(value ?? 0)} min`,
-                    name === 'elapsed' ? 'Elapsed' : 'Remaining to target',
-                  ]}
-                  labelFormatter={() =>
-                    `Target: ${sessionChartMetrics.targetMins} min (${sessionChartMetrics.pctOfTarget}%)`
-                  }
+                  contentStyle={CHART_THEME.tooltipStyle}
+                  formatter={(value) => [`${Number(value ?? 0)} min`, 'Elapsed']}
+                  labelFormatter={() => `Target: ${targetMins} min`}
                 />
                 <Bar
-                  dataKey="elapsed"
-                  stackId="session"
-                  fill={
-                    m?.status === 'paused'
-                      ? '#f59e0b'
-                      : sessionChartMetrics.overtimeMins > 0
-                        ? '#10b981'
-                        : accentColor
-                  }
-                  radius={
-                    sessionChartMetrics.remainingMins <= 0
-                      ? [6, 6, 6, 6]
-                      : [6, 0, 0, 6]
-                  }
+                  dataKey="minutes"
+                  background={{ fill: 'var(--sf-3)', radius: 6 }}
+                  radius={[6, 6, 6, 6]}
                   barSize={14}
                   isAnimationActive={false}
-                />
-                <Bar
-                  dataKey="remaining"
-                  stackId="session"
-                  fill="rgba(148, 163, 184, 0.22)"
-                  radius={
-                    sessionChartMetrics.elapsedMins <= 0
-                      ? [6, 6, 6, 6]
-                      : [0, 6, 6, 0]
-                  }
-                  barSize={14}
-                  isAnimationActive={false}
-                />
-                <ReferenceLine
-                  x={sessionChartMetrics.targetMins}
-                  stroke="#38bdf8"
-                  strokeDasharray="3 3"
-                  strokeWidth={1.5}
-                />
+                >
+                  <Cell
+                    fill={
+                      m?.phase === 'break'
+                        ? 'var(--info)'
+                        : m && m.overtimeMs > 0
+                          ? 'var(--ok)'
+                          : curSubject.color || 'var(--ac)'
+                    }
+                  />
+                </Bar>
+                {targetMins > 0 && (
+                  <ReferenceLine
+                    x={targetMins}
+                    stroke="var(--ok)"
+                    strokeWidth={2}
+                    strokeDasharray="3 3"
+                  />
+                )}
               </BarChart>
             </ResponsiveContainer>
           </div>
         </div>
 
-        {t && m && m.status === 'running' && (
-          <div
-            id="focusMotivationalQuote"
-            className="focus-quote-bar"
-            role="status"
-            aria-live="polite"
-          >
+        {/* Motivational Quote Bar while timer is active */}
+        {m && (
+          <div id="focusMotivationalQuote" className="focus-quote-bar">
             <span className="focus-quote-text">
-              “{getStudyQuoteForTimer(t.startTs, m.totalActiveMs, quoteOffset)}”
+              "{getStudyQuoteForTimer(t?.startTs || 0, m.totalActiveMs, quoteOffset)}"
             </span>
             <button
               type="button"
-              className="focus-quote-next"
-              aria-label="Next motivational study quote"
-              title="Next study affirmation"
+              className="s focus-quote-next"
+              title="Next quote"
+              aria-label="Next quote"
               onClick={() => setQuoteOffset((n) => n + 1)}
             >
-              <svg width="12" height="12" viewBox="0 0 16 16" fill="none" aria-hidden="true">
-                <path
-                  d="M13.5 8A5.5 5.5 0 1 1 11.8 4.1M13.5 2.5V6H10"
-                  stroke="currentColor"
-                  strokeWidth="1.8"
-                  strokeLinecap="round"
-                  strokeLinejoin="round"
-                />
-              </svg>
+              <RotateCw size={13} strokeWidth={1.75} />
             </button>
           </div>
         )}
 
-        <div className="purity-bar">
+        {/* Purity & Today's Subject Total Bar */}
+        <div className="purity-bar" style={{ marginBottom: 4 }}>
           <span>
-            Subject: <b>{activeSubject.name}</b>
+            Focus purity <b id="livePurity">{m ? m.purity : 100}%</b>
           </span>
+          <span>·</span>
           <span>
-            Focus Purity: <b id="livePurity">{m ? m.purity : 100}%</b>
-          </span>
-          <span>
-            Studied Today:{' '}
-            <b id="liveTodaySub">
-              {fmtHMShort(getTodaySubjectMs(state, 'any', todayKey, todayKey))}
-            </b>
+            Today {curSubject.name}{' '}
+            <b id="liveTodaySub">{fmtHMShort(todaySubMs)}</b>
           </span>
         </div>
 
-        {t && t.mode !== 'stopwatch' && onExtendTarget && (
+        {/* Desk Mode Controls (only shown when top toolbar is hidden in Desk Mode) */}
+        {deskMode && (
           <div
             className="row"
-            style={{ justifyContent: 'center', gap: '8px', marginTop: '4px' }}
+            style={{ justifyContent: 'center', gap: 8, marginTop: 8 }}
           >
-            <small className="mu" style={{ fontSize: '11px' }}>
-              Target: {Math.round((t.targetMs || 0) / 60000)}m
-            </small>
-            <button
-              type="button"
-              className="s"
-              style={{ padding: '4px 9px', fontSize: '11px' }}
-              onClick={() => onExtendTarget(5)}
+            <Button
+              variant="secondary"
+              size="sm"
+              icon={<PictureInPicture2 size={14} strokeWidth={1.75} />}
+              onClick={onOpenPiP}
             >
-              +5m
-            </button>
-            <button
-              type="button"
-              className="s"
-              style={{ padding: '4px 9px', fontSize: '11px' }}
-              onClick={() => onExtendTarget(15)}
+              Floating timer (PiP)
+            </Button>
+            <Button
+              variant="secondary"
+              size="sm"
+              icon={<Minimize2 size={14} strokeWidth={1.75} />}
+              onClick={onToggleDeskMode}
             >
-              +15m
-            </button>
+              Exit desk mode
+            </Button>
           </div>
         )}
-
-        {/* 1.14 Full Mock Recorded Section Splits */}
-        {t && t.mode === 'fullMock' && Array.isArray(t.mockSections) && t.mockSections.length > 0 && (
-          <div
-            style={{
-              margin: '6px auto',
-              padding: '6px 10px',
-              borderRadius: '10px',
-              background: 'var(--c2)',
-              display: 'flex',
-              gap: '6px',
-              flexWrap: 'wrap',
-              justifyContent: 'center',
-            }}
-          >
-            {t.mockSections.map((sec, i) => (
-              <span
-                key={i}
-                className="pill mono"
-                style={{ fontSize: '11px', padding: '2px 8px', borderColor: '#6366f1' }}
-              >
-                {sec.label}: {fmtMS(sec.elapsedMs)}
-              </span>
-            ))}
-          </div>
-        )}
-
-        {/* Primary Controls */}
-        <div
-          className="row"
-          style={{ justifyContent: 'center', gap: '10px', marginTop: '8px', flexWrap: 'wrap' }}
-        >
-          {!t ? (
-            <button
-              type="button"
-              className="em-btn g"
-              style={{ padding: '14px', fontSize: '16px' }}
-              onClick={() =>
-                onStartTimer(
-                  selectedSubjectId,
-                  mode === 'fullMock'
-                    ? 'Full Mock'
-                    : sessionHeading.trim() ||
-                        selectedChapterObj?.name ||
-                        `${activeSubject.name} Study Session`,
-                  mode,
-                  mode === 'countdown'
-                    ? customCountdownMins
-                    : mode === 'fullMock'
-                      ? state.set.fullMockMins || 180
-                      : undefined,
-                  selectedChapterId || undefined
-                )
-              }
-            >
-              ▶ Start{' '}
-              {mode === 'stopwatch'
-                ? 'Stopwatch'
-                : mode === 'countdown'
-                  ? 'Countdown'
-                  : mode === 'fullMock'
-                    ? `Full Mock (${state.set.fullMockMins || 180}m)`
-                    : 'Pomodoro'}
-            </button>
-          ) : (
-            <>
-              <button
-                type="button"
-                className={`${t.status === 'running' ? 'am-btn' : 'em-btn'} g`}
-                style={{ padding: '14px', fontSize: '16px' }}
-                onClick={onTogglePause}
-              >
-                {t.status === 'running' ? '⏸ Pause' : '▶ Resume'}
-              </button>
-              {t.mode === 'pomo' && (
-                <button
-                  type="button"
-                  className="s"
-                  style={{ padding: '14px' }}
-                  onClick={onTogglePomoPhase}
-                >
-                  {t.phase === 'work' ? '☕ Break' : '🔥 Work'}
-                </button>
-              )}
-              {t.mode === 'fullMock' && onNextMockSection && (
-                <button
-                  type="button"
-                  className="s pri"
-                  style={{ padding: '14px' }}
-                  onClick={onNextMockSection}
-                >
-                  ⏭ Next section
-                </button>
-              )}
-              <button
-                type="button"
-                className="dg-btn"
-                style={{ padding: '14px 18px' }}
-                onClick={onStopAndReflect}
-              >
-                ⏹ Stop &amp; Log
-              </button>
-            </>
-          )}
-        </div>
-
-        <div
-          className="row"
-          style={{ justifyContent: 'center', marginTop: '10px', gap: '8px', flexWrap: 'wrap' }}
-        >
-          <button type="button" className="s" onClick={onOpenPiP}>
-            📲 Pop-out Floating Lecture PiP
-          </button>
-          <button
-            type="button"
-            className="s"
-            onClick={() => onOpenManualSession(selectedSubjectId)}
-          >
-            + Log Manual Hours
-          </button>
-          {deskMode ? (
-            <button type="button" className="s" onClick={onToggleDeskMode}>
-              Exit Desk Mode
-            </button>
-          ) : (
-            <button type="button" className="s" onClick={onOpenTimerConfig}>
-              ⚙️ Durations
-            </button>
-          )}
-        </div>
       </div>
 
-      {/* Procedural Web Audio Soundscapes */}
-      <div className="card hide-desk">
-        <div className="row sp">
+      {/* 3. Topic, Subject & Chapter Switcher Card */}
+      <Card className="hide-desk">
+        <div className="split" style={{ marginBottom: 10 }}>
           <div>
-            <h3>🎧 Procedural Focus Soundscape</h3>
-            <small>Auto-pauses when study timer pauses · Plays in PiP stream</small>
+            <h3 style={{ margin: 0, fontSize: 16 }}>Subject & chapter</h3>
+            <small style={{ fontSize: 12 }}>
+              {t
+                ? 'Tap another subject or chapter to auto-log current slice and switch immediately'
+                : 'Select what you are studying for this session'}
+            </small>
           </div>
         </div>
-        <div className="chips wrap" style={{ marginTop: '8px' }}>
-          {(
-            [
-              ['off', '🔇 Off'],
-              ['brown', '🌊 Brown Noise'],
-              ['pink', '🍃 Pink Noise'],
-              ['rain', '🌧️ Soft Rain'],
-            ] as const
-          ).map(([k, lbl]) => (
-            <button
-              type="button"
+
+        {/* Subject Chips */}
+        <div
+          className="row"
+          style={{
+            gap: 6,
+            overflowX: 'auto',
+            paddingBottom: 8,
+            scrollbarWidth: 'none',
+          }}
+        >
+          {activeSubjects.map((s) => (
+            <Chip
+              key={s.id}
+              selected={effectiveSubId === s.id}
+              colorDot={s.color}
+              onClick={() => {
+                setSelectedSubjectId(s.id);
+                setSelectedChapterId('');
+                if (t) {
+                  const nextHeading =
+                    headingInput.trim() &&
+                    headingInput.trim() !== `${curSubject.name} Study`
+                      ? headingInput.trim()
+                      : `${s.name} Study`;
+                  setHeadingInput(nextHeading);
+                  onSwitchTopic(s.id, nextHeading, undefined);
+                }
+              }}
+            >
+              {s.e} {s.name}
+            </Chip>
+          ))}
+        </div>
+
+        {/* Chapter Select Sheet Picker */}
+        <div style={{ marginTop: 8 }}>
+          <Select
+            aria-label="Link syllabus chapter"
+            title={`Link ${curSubject.name} chapter`}
+            value={effectiveChapId}
+            options={chapterOptions}
+            onChange={(nextChapId) => {
+              setSelectedChapterId(nextChapId);
+              const chap = subjectChapters.find((c) => c.id === nextChapId);
+              const nextHeading = chap
+                ? chap.name
+                : headingInput.trim() || `${curSubject.name} Study`;
+              if (chap) setHeadingInput(chap.name);
+              if (t) {
+                onSwitchTopic(
+                  effectiveSubId,
+                  nextHeading,
+                  nextChapId || undefined
+                );
+              }
+            }}
+            placeholder="General subject study"
+          />
+        </div>
+
+        {/* Session Heading / Topic */}
+        <div style={{ marginTop: 12 }}>
+          <label
+            htmlFor="sessionHeadingInput"
+            style={{
+              display: 'block',
+              fontSize: 13,
+              fontWeight: 500,
+              color: 'var(--tx-2)',
+              marginBottom: 6,
+            }}
+          >
+            Session topic or goal
+          </label>
+          <div className="row" style={{ gap: 8, flexWrap: 'wrap' }}>
+            <input
+              id="sessionHeadingInput"
+              type="text"
+              placeholder="e.g., Rotational Mechanics PYQs, NCERT Ch 4..."
+              value={headingInput}
+              onChange={(e) => setHeadingInput(e.target.value)}
+              onKeyDown={(e) => {
+                if (e.key === 'Enter' && t) {
+                  e.preventDefault();
+                  onSwitchTopic(
+                    effectiveSubId,
+                    headingInput,
+                    effectiveChapId || undefined
+                  );
+                }
+              }}
+              style={{ flex: '1 1 220px', minHeight: 44, fontSize: 14 }}
+            />
+            {t && headingInput.trim() && headingInput.trim() !== t.heading && (
+              <Button
+                variant="primary"
+                size="sm"
+                onClick={() =>
+                  onSwitchTopic(
+                    effectiveSubId,
+                    headingInput,
+                    effectiveChapId || undefined
+                  )
+                }
+              >
+                Switch topic
+              </Button>
+            )}
+          </div>
+
+          {recentHeadings.length > 0 && (
+            <div
+              className="row"
+              style={{
+                gap: 6,
+                marginTop: 8,
+                overflowX: 'auto',
+                paddingBottom: 2,
+                scrollbarWidth: 'none',
+              }}
+            >
+              <span style={{ fontSize: 12, color: 'var(--tx-3)', flexShrink: 0 }}>
+                Recent:
+              </span>
+              {recentHeadings.map((h) => (
+                <Chip
+                  key={`${h.subjectId}_${h.heading}`}
+                  selected={headingInput === h.heading}
+                  onClick={() => {
+                    setSelectedSubjectId(h.subjectId);
+                    setHeadingInput(h.heading);
+                    if (t) {
+                      onSwitchTopic(
+                        h.subjectId,
+                        h.heading,
+                        effectiveChapId || undefined
+                      );
+                    }
+                  }}
+                >
+                  {h.heading}
+                </Chip>
+              ))}
+            </div>
+          )}
+        </div>
+      </Card>
+
+      {/* 4. Focus Sounds Card (Renamed from Procedural Focus Soundscape) */}
+      <Card className="hide-desk">
+        <div className="split" style={{ marginBottom: 10 }}>
+          <div className="row" style={{ gap: 8 }}>
+            {state.set.soundscape === 'off' ? (
+              <VolumeX size={18} strokeWidth={1.75} style={{ color: 'var(--tx-2)' }} />
+            ) : (
+              <Volume2 size={18} strokeWidth={1.75} style={{ color: 'var(--ac-ink)' }} />
+            )}
+            <div>
+              <h3 style={{ margin: 0, fontSize: 16 }}>Focus sounds</h3>
+              <small style={{ fontSize: 12 }}>
+                Offline ambient audio while the timer runs
+              </small>
+            </div>
+          </div>
+          {state.set.soundscape !== 'off' && (
+            <span
+              className="pill"
+              style={{
+                background: 'color-mix(in srgb, var(--ok) 15%, transparent)',
+                color: 'var(--ok-ink)',
+                fontSize: 12,
+                padding: '2px 8px',
+              }}
+            >
+              Active
+            </span>
+          )}
+        </div>
+
+        <div
+          className="row"
+          style={{
+            gap: 6,
+            flexWrap: 'wrap',
+            marginBottom: state.set.soundscape !== 'off' ? 12 : 0,
+          }}
+        >
+          {SOUNDSCAPE_ITEMS.map(([k, lbl]) => (
+            <Chip
               key={k}
-              className={state.set.soundscape === k ? 'on' : ''}
+              selected={state.set.soundscape === k}
               onClick={() => onSetSoundscape(k)}
             >
               {lbl}
-            </button>
+            </Chip>
           ))}
         </div>
+
         {state.set.soundscape !== 'off' && (
-          <div className="row" style={{ marginTop: '8px' }}>
-            <small>Volume</small>
+          <div className="row" style={{ gap: 10 }}>
+            <small style={{ fontSize: 12, minWidth: 52 }}>Volume</small>
             <input
               type="range"
               min="0.05"
-              max="0.9"
+              max="0.95"
               step="0.05"
-              aria-label="Soundscape Volume"
-              value={state.set.soundVol ?? 0.35}
-              onChange={(e) => onSetSoundVolume(Number(e.target.value))}
+              value={state.set.soundVol || 0.35}
+              onChange={(e) => onSetSoundVolume(parseFloat(e.target.value))}
+              aria-label="Focus sound volume"
+              style={{ flex: 1, minHeight: 24, padding: 0 }}
             />
+            <small
+              style={{
+                width: 38,
+                textAlign: 'right',
+                fontSize: 12,
+                fontVariantNumeric: 'tabular-nums',
+              }}
+            >
+              {Math.round((state.set.soundVol || 0.35) * 100)}%
+            </small>
           </div>
         )}
-      </div>
+      </Card>
 
-      {/* Session Action Checklist */}
-      <div className="card hide-desk">
-        <div className="row sp">
-          <h3>✅ Study Session Checklist</h3>
-          <small>
-            {todos.filter((x) => x.done).length}/{todos.length} done
+      {/* 5. Session Checklist Card */}
+      <Card className="hide-desk">
+        <div className="split" style={{ marginBottom: 10 }}>
+          <div className="row" style={{ gap: 8 }}>
+            <ListChecks
+              size={18}
+              strokeWidth={1.75}
+              style={{ color: 'var(--ac-ink)' }}
+            />
+            <h3 style={{ margin: 0, fontSize: 16 }}>Session checklist</h3>
+          </div>
+          <small style={{ fontSize: 12 }}>
+            {globalTodos.filter((x) => x.done).length}/{globalTodos.length} done
           </small>
         </div>
-        <form onSubmit={handleTodoSubmit} className="row" style={{ margin: '8px 0' }}>
+
+        <form
+          onSubmit={(e) => {
+            e.preventDefault();
+            const clean = newTodoText.trim();
+            if (!clean) return;
+            onAddTodo(clean);
+            setNewTodoText('');
+          }}
+          className="row"
+          style={{ gap: 8, marginBottom: globalTodos.length > 0 ? 10 : 0 }}
+        >
           <input
-            name="txt"
-            value={todoInput}
-            onChange={(e) => setTodoInput(e.target.value)}
-            placeholder="Add action item or goal for this session..."
-            maxLength={80}
-            required
+            type="text"
+            placeholder="Add micro-goal (e.g., 30 rotational mechanics MCQs)..."
+            value={newTodoText}
+            onChange={(e) => setNewTodoText(e.target.value)}
+            style={{ flex: 1, minHeight: 44, fontSize: 14 }}
           />
-          <button type="submit" className="pri" aria-label="Add checklist item">
-            +
-          </button>
+          <Button
+            type="submit"
+            variant="primary"
+            size="md"
+            icon={<Plus size={15} strokeWidth={2} />}
+          >
+            Add
+          </Button>
         </form>
-        <div>
-          {todos.length ? (
-            todos.map((td) => (
+
+        {globalTodos.length > 0 && (
+          <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
+            {globalTodos.map((td) => (
               <div
                 key={td.id}
-                className="row sp"
-                style={{ padding: '6px 0', borderBottom: '1px solid var(--bd)' }}
+                className="split"
+                style={{
+                  background: 'var(--sf-2)',
+                  padding: '8px 12px',
+                  borderRadius: 12,
+                  border: '1px solid var(--line)',
+                  gap: 10,
+                }}
               >
-                <label className="row g" style={{ cursor: 'pointer' }}>
-                  <input
-                    type="checkbox"
-                    style={{ width: '18px', height: '18px' }}
-                    checked={td.done}
-                    onChange={() => onToggleTodo(td.id)}
-                  />
+                <button
+                  type="button"
+                  onClick={() => onToggleTodo(td.id)}
+                  style={{
+                    flex: 1,
+                    display: 'flex',
+                    alignItems: 'center',
+                    gap: 10,
+                    background: 'transparent',
+                    border: 'none',
+                    padding: 0,
+                    textAlign: 'left',
+                    cursor: 'pointer',
+                    minHeight: 36,
+                  }}
+                >
                   <span
-                    style={
-                      td.done
-                        ? { textDecoration: 'line-through', color: 'var(--mu)' }
-                        : undefined
-                    }
+                    style={{
+                      width: 24,
+                      height: 24,
+                      borderRadius: 7,
+                      display: 'grid',
+                      placeItems: 'center',
+                      background: td.done ? 'var(--ok)' : 'var(--sf-1)',
+                      color: td.done ? 'var(--ok-on)' : 'transparent',
+                      border: td.done ? 'none' : '1px solid var(--line)',
+                      flexShrink: 0,
+                    }}
+                  >
+                    <Check size={14} strokeWidth={2.25} />
+                  </span>
+                  <span
+                    style={{
+                      fontSize: 14,
+                      textDecoration: td.done ? 'line-through' : 'none',
+                      color: td.done ? 'var(--tx-2)' : 'var(--tx)',
+                    }}
                   >
                     {td.text}
                   </span>
-                </label>
+                </button>
                 <button
                   type="button"
-                  className="s dg"
-                  aria-label={`Delete task ${td.text}`}
+                  className="s"
+                  aria-label={`Delete ${td.text}`}
+                  style={{ color: 'var(--err-ink)', padding: '6px 8px' }}
                   onClick={() => onDeleteTodo(td.id)}
                 >
-                  ×
+                  <Trash2 size={14} strokeWidth={1.75} />
                 </button>
               </div>
-            ))
-          ) : (
-            <small className="mu">No study tasks in your checklist yet.</small>
-          )}
-        </div>
-      </div>
+            ))}
+          </div>
+        )}
+      </Card>
 
-      {/* Today's Logged Sessions & Retroactive Editor */}
-      <div className="card hide-desk">
-        <div className="row sp" style={{ marginBottom: '8px' }}>
-          <h3>Today&apos;s Logged Sessions ({sel})</h3>
-          <button
-            type="button"
-            className="s pri"
-            onClick={() => onOpenManualSession(selectedSubjectId)}
+      {/* 6. Today's Logged Sessions */}
+      <Card className="hide-desk">
+        <div className="split" style={{ marginBottom: 10 }}>
+          <div className="row" style={{ gap: 8 }}>
+            <BookOpen
+              size={18}
+              strokeWidth={1.75}
+              style={{ color: 'var(--ac-ink)' }}
+            />
+            <h3 style={{ margin: 0, fontSize: 16 }}>
+              Today's sessions ({todaySessions.length})
+            </h3>
+          </div>
+          <Button
+            variant="secondary"
+            size="sm"
+            icon={<Plus size={14} strokeWidth={2} />}
+            onClick={() =>
+              onOpenManualSession(effectiveSubId, effectiveChapId || undefined)
+            }
           >
-            + Manual Entry
-          </button>
+            Log manual hours
+          </Button>
         </div>
-        {state.sessions.filter((s) => s.dayKey === sel).length ? (
-          state.sessions
-            .filter((s) => s.dayKey === sel)
-            .slice()
-            .reverse()
-            .map((s) => {
-              const sub = getSubject(state, s.subjectId);
-              const heading = getSessionHeading(state, s);
+
+        {todaySessions.length === 0 ? (
+          <div style={{ fontSize: 13, color: 'var(--tx-3)', padding: '4px 0' }}>
+            Start the timer above or log past study hours manually.
+          </div>
+        ) : (
+          <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
+            {todaySessions.slice(0, 10).map((ses: StudySession) => {
+              const sSub = getSubject(state, ses.subjectId);
+              const heading = getSessionHeading(state, ses);
               return (
                 <div
-                  key={s.id}
-                  className="row sp"
-                  style={{ padding: '8px 0', borderBottom: '1px solid var(--bd)' }}
+                  key={ses.id}
+                  className="split"
+                  style={{
+                    background: 'var(--sf-2)',
+                    padding: '10px 12px',
+                    borderRadius: 12,
+                    borderLeft: `3px solid ${sSub.color}`,
+                    gap: 10,
+                  }}
                 >
-                  <div className="g">
-                    <b>
-                      <i
-                        className="dot"
-                        style={{ '--sc': sub.color } as React.CSSProperties}
-                      />{' '}
-                      {sub.e} {sub.name} · {heading} ·{' '}
-                      <span className="mono" style={{ color: 'var(--em)' }}>
-                        {fmtHMShort(s.activeMs)}
+                  <div style={{ minWidth: 0, flex: 1 }}>
+                    <div className="row" style={{ gap: 6, flexWrap: 'wrap' }}>
+                      <b
+                        style={{
+                          fontSize: 14,
+                          whiteSpace: 'nowrap',
+                          overflow: 'hidden',
+                          textOverflow: 'ellipsis',
+                        }}
+                      >
+                        {sSub.e} {heading}
+                      </b>
+                      <span
+                        className="pill"
+                        style={{
+                          fontSize: 12,
+                          padding: '1px 8px',
+                          background: 'var(--sf-3)',
+                          color: 'var(--tx)',
+                          fontVariantNumeric: 'tabular-nums',
+                        }}
+                      >
+                        {fmtHMShort(ses.activeMs)}
                       </span>
-                    </b>
-                    <small style={{ display: 'block' }}>
-                      {fmtClockTime(s.startTs)} – {fmtClockTime(s.endTs)} ·{' '}
-                      {s.mode.toUpperCase()} · Purity {s.purity ?? 100}% ·{' '}
-                      {'★'.repeat(s.rating || 5)}
+                    </div>
+                    <small
+                      style={{
+                        display: 'block',
+                        marginTop: 3,
+                        fontSize: 12,
+                        fontVariantNumeric: 'tabular-nums',
+                      }}
+                    >
+                      {sSub.name} · {fmtClockTime(ses.startTs)} –{' '}
+                      {fmtClockTime(ses.endTs)} · {ses.purity || 100}% purity
+                      {ses.note ? ` · "${ses.note}"` : ''}
                     </small>
-                    {s.note && (
-                      <small style={{ display: 'block', color: 'var(--tx)', marginTop: '2px' }}>
-                        What I did: “{s.note}”
-                      </small>
-                    )}
                   </div>
-                  <button
-                    type="button"
-                    className="s"
-                    onClick={() => onEditSession(s.id)}
+                  <Button
+                    variant="secondary"
+                    size="sm"
+                    icon={<Edit3 size={13} strokeWidth={1.75} />}
+                    onClick={() => onEditSession(ses.id)}
                   >
                     Edit
-                  </button>
+                  </Button>
                 </div>
               );
-            })
-        ) : (
-          <small className="mu">No study sessions logged on this day yet.</small>
+            })}
+          </div>
         )}
-      </div>
+      </Card>
     </div>
   );
 };

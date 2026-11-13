@@ -1,0 +1,182 @@
+import { describe, it } from 'node:test';
+import assert from 'node:assert/strict';
+import {
+  LUMEN_ACCENT,
+  LUMEN_ACCENT_ON,
+  computeUiPaceReport,
+  contrastRatio,
+  evaluateUi3dEligibility,
+  getReadableAccentText,
+  getReadableOnColor,
+  getTimerStyleDisplayLabel,
+  resolveUiExam,
+} from './uiHelpers.ts';
+import { createBlankState } from './studyLogic.ts';
+
+describe('UI Helpers — contrast, D-Day pace fallback, display labels', () => {
+  it('computes WCAG AA contrast on Lumen accent and legacy yellow/sky accents', () => {
+    assert.equal(getReadableOnColor(LUMEN_ACCENT), LUMEN_ACCENT_ON);
+    assert.ok(contrastRatio(LUMEN_ACCENT, LUMEN_ACCENT_ON) >= 4.5);
+    assert.equal(getReadableOnColor('#f59e0b'), LUMEN_ACCENT_ON);
+    assert.equal(getReadableOnColor('#38bdf8'), LUMEN_ACCENT_ON);
+    assert.equal(getReadableOnColor('#6366f1'), '#FFFFFF');
+  });
+
+  it('darkens bright yellow accents on light warm paper to preserve AA contrast', () => {
+    const lightInk = getReadableAccentText(LUMEN_ACCENT, 'light');
+    assert.ok(contrastRatio(lightInk, '#EFECE5') >= 4.5);
+
+    const darkInk = getReadableAccentText(LUMEN_ACCENT, 'dark');
+    assert.ok(contrastRatio(darkInk, '#181C22') >= 4.5);
+  });
+
+  it('resolveUiExam and computeUiPaceReport fall back to nearest upcoming D-Day when none is primary', () => {
+    const state = createBlankState();
+    state.chapters = [
+      {
+        id: 'ch_1',
+        subjectId: 'sub_phy',
+        name: 'Kinematics',
+        status: 'notStarted',
+        revisions: [],
+      },
+    ];
+    state.ddays = [
+      {
+        id: 'dd_past',
+        title: 'Past Practice',
+        date: '2026-09-01',
+        e: '📝',
+        color: '#6366f1',
+        primary: false,
+      },
+      {
+        id: 'dd_far',
+        title: 'Far Target',
+        date: '2027-06-01',
+        e: '🎯',
+        color: '#10b981',
+        primary: false,
+      },
+      {
+        id: 'dd_near',
+        title: 'Upcoming NEET',
+        date: '2026-12-20',
+        e: '🩺',
+        color: '#f59e0b',
+        primary: false,
+      },
+    ];
+
+    const chosen = resolveUiExam(state, '2026-11-01');
+    assert.equal(chosen?.id, 'dd_near');
+
+    const pace = computeUiPaceReport(state, '2026-11-01');
+    assert.equal(pace.exam?.id, 'dd_near');
+    assert.equal(pace.exam?.title, 'Upcoming NEET');
+    assert.equal(pace.daysToExam, 49);
+  });
+
+  it('maps stored timer aesthetic keys to restrained display labels', () => {
+    assert.equal(getTimerStyleDisplayLabel('neon'), 'Digital');
+    assert.equal(getTimerStyleDisplayLabel('minimal'), 'Mono');
+    assert.equal(getTimerStyleDisplayLabel('retro'), 'Analog');
+    assert.equal(getTimerStyleDisplayLabel(undefined), 'Digital');
+  });
+
+  it('evaluates 3D scene gating and Lite vs Normal quality tiers accurately', () => {
+    // 'off' never enables WebGL
+    const offRes = evaluateUi3dEligibility({
+      ui3dSetting: 'off',
+      webgl2Supported: true,
+      isSoftwareGl: false,
+      prefersReducedMotion: false,
+      saveData: false,
+      hardwareConcurrency: 8,
+      deviceMemory: 8,
+    });
+    assert.equal(offRes.enabled, false);
+    assert.equal(offRes.tier, 'off');
+
+    // 'auto' disables on prefersReducedMotion, saveData, or low hardware (<=2 cores/memory)
+    assert.equal(
+      evaluateUi3dEligibility({
+        ui3dSetting: 'auto',
+        webgl2Supported: true,
+        isSoftwareGl: false,
+        prefersReducedMotion: true,
+        saveData: false,
+        hardwareConcurrency: 8,
+        deviceMemory: 8,
+      }).enabled,
+      false
+    );
+    assert.equal(
+      evaluateUi3dEligibility({
+        ui3dSetting: 'auto',
+        webgl2Supported: true,
+        isSoftwareGl: false,
+        prefersReducedMotion: false,
+        saveData: true,
+        hardwareConcurrency: 8,
+        deviceMemory: 8,
+      }).enabled,
+      false
+    );
+    assert.equal(
+      evaluateUi3dEligibility({
+        ui3dSetting: 'auto',
+        webgl2Supported: true,
+        isSoftwareGl: false,
+        prefersReducedMotion: false,
+        saveData: false,
+        hardwareConcurrency: 2,
+        deviceMemory: 8,
+      }).enabled,
+      false
+    );
+
+    // 'auto' on capable hardware -> Normal tier (DPR 1.5, 60fps, 600 particles)
+    const normalRes = evaluateUi3dEligibility({
+      ui3dSetting: 'auto',
+      webgl2Supported: true,
+      isSoftwareGl: false,
+      prefersReducedMotion: false,
+      saveData: false,
+      hardwareConcurrency: 8,
+      deviceMemory: 8,
+    });
+    assert.equal(normalRes.enabled, true);
+    assert.equal(normalRes.tier, 'normal');
+    assert.equal(normalRes.maxDpr, 1.5);
+    assert.equal(normalRes.particleBudget, 600);
+
+    // 'on' forces enablement when WebGL2 is supported, using Lite tier on software GL
+    const forcedSwRes = evaluateUi3dEligibility({
+      ui3dSetting: 'on',
+      webgl2Supported: true,
+      isSoftwareGl: true,
+      prefersReducedMotion: true,
+      saveData: false,
+      hardwareConcurrency: 2,
+      deviceMemory: 2,
+    });
+    assert.equal(forcedSwRes.enabled, true);
+    assert.equal(forcedSwRes.tier, 'lite');
+    assert.equal(forcedSwRes.maxDpr, 1);
+    assert.equal(forcedSwRes.particleBudget, 200);
+
+    // deskMode always disables 3D canvas
+    assert.equal(
+      evaluateUi3dEligibility({
+        ui3dSetting: 'on',
+        webgl2Supported: true,
+        isSoftwareGl: false,
+        prefersReducedMotion: false,
+        saveData: false,
+        deskMode: true,
+      }).enabled,
+      false
+    );
+  });
+});

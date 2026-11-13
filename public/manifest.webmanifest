@@ -7,8 +7,8 @@
   "scope": "/",
   "display": "standalone",
   "orientation": "portrait",
-  "background_color": "#090d16",
-  "theme_color": "#090d16",
+  "background_color": "#0B0D10",
+  "theme_color": "#0B0D10",
   "icons": [
     {
       "src": "/icon.svg",
@@ -21,6 +21,20 @@
       "sizes": "192x192 512x512",
       "type": "image/svg+xml",
       "purpose": "maskable"
+    }
+  ],
+  "shortcuts": [
+    {
+      "name": "Start session",
+      "short_name": "Focus",
+      "description": "Open Focus and start a study timer",
+      "url": "/?shortcut=start"
+    },
+    {
+      "name": "Add task",
+      "short_name": "Task",
+      "description": "Jump to Today and add a study task",
+      "url": "/?shortcut=task"
     }
   ]
 }

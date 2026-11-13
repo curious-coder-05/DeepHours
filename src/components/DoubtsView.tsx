@@ -1,12 +1,23 @@
-import React, { useEffect, useMemo, useState } from 'react';
-import { PulseHabitState } from '../types';
-import { getSubject, logicalKey } from '../utils/studyLogic';
+import React, { useMemo, useState } from 'react';
+import { Check, HelpCircle, Plus, RotateCcw, Trash2 } from 'lucide-react';
+import type { Doubt, PulseHabitState } from '../types';
+import { getSubject } from '../utils/studyLogic';
+import { Button } from './ui/Button';
+import { Card } from './ui/Card';
+import { Chip } from './ui/Chip';
+import { EmptyState } from './ui/EmptyState';
+import { Field } from './ui/Field';
+import { IconButton } from './ui/IconButton';
+import { SectionHeader } from './ui/SectionHeader';
+import { Segmented } from './ui/Segmented';
+import { Select } from './ui/Select';
+import { Sheet } from './ui/Sheet';
 
 interface DoubtsViewProps {
   state: PulseHabitState;
-  onAddDoubt: (doubt: { subjectId: string; chapterId?: string; text: string }) => void;
-  onToggleDoubtResolved: (doubtId: string) => void;
-  onDeleteDoubt: (doubtId: string) => void;
+  onAddDoubt: (doubt: Omit<Doubt, 'id' | 'createdAt' | 'resolved'>) => void;
+  onToggleDoubtResolved: (id: string) => void;
+  onDeleteDoubt: (id: string) => void;
 }
 
 export const DoubtsView: React.FC<DoubtsViewProps> = ({
@@ -15,368 +26,284 @@ export const DoubtsView: React.FC<DoubtsViewProps> = ({
   onToggleDoubtResolved,
   onDeleteDoubt,
 }) => {
-  const activeSubjects = useMemo(
-    () => state.subjects.filter((s) => !s.arch),
-    [state.subjects]
-  );
+  const defaultSubjectId = state.subjects[0]?.id || 'phy';
+  const [subjectId, setSubjectId] = useState<string>(defaultSubjectId);
+  const [chapterId, setChapterId] = useState<string>('');
+  const [text, setText] = useState<string>('');
+  const [sheetOpen, setSheetOpen] = useState<boolean>(false);
 
-  const [formSubId, setFormSubId] = useState(activeSubjects[0]?.id || 'sub_phy');
-  const [formChapId, setFormChapId] = useState('');
-  const [formText, setFormText] = useState('');
-
-  const [filterSub, setFilterSub] = useState<string>('all');
-  const [filterStatus, setFilterStatus] = useState<'open' | 'resolved' | 'all'>('open');
-
-  useEffect(() => {
-    if (activeSubjects.length > 0 && !activeSubjects.some((s) => s.id === formSubId)) {
-      setFormSubId(activeSubjects[0].id);
-      setFormChapId('');
-    }
-  }, [activeSubjects, formSubId]);
-
-  useEffect(() => {
-    if (filterSub !== 'all' && !activeSubjects.some((s) => s.id === filterSub)) {
-      setFilterSub('all');
-    }
-  }, [activeSubjects, filterSub]);
+  const [filterSubject, setFilterSubject] = useState<string>('all');
+  const [filterStatus, setFilterStatus] = useState<'all' | 'open' | 'resolved'>('open');
 
   const availableChapters = useMemo(
-    () => state.chapters.filter((ch) => ch.subjectId === formSubId),
-    [state.chapters, formSubId]
+    () => state.chapters.filter((ch) => ch.subjectId === subjectId),
+    [state.chapters, subjectId]
   );
 
-  const doubts = state.doubts || [];
-  const openCount = doubts.filter((d) => !d.resolved).length;
-  const resolvedCount = doubts.filter((d) => d.resolved).length;
-
   const filteredDoubts = useMemo(() => {
-    return doubts
+    return (state.doubts || [])
+      .slice()
+      .sort((a, b) => {
+        if (a.resolved !== b.resolved) return a.resolved ? 1 : -1;
+        return b.createdAt - a.createdAt;
+      })
       .filter((d) => {
-        if (filterSub !== 'all' && d.subjectId !== filterSub) return false;
+        if (filterSubject !== 'all' && d.subjectId !== filterSubject) return false;
         if (filterStatus === 'open' && d.resolved) return false;
         if (filterStatus === 'resolved' && !d.resolved) return false;
         return true;
-      })
-      .sort((a, b) => Number(a.resolved) - Number(b.resolved) || b.createdAt - a.createdAt);
-  }, [doubts, filterSub, filterStatus]);
+      });
+  }, [state.doubts, filterSubject, filterStatus]);
+
+  const openCount = (state.doubts || []).filter((d) => !d.resolved).length;
+  const resolvedCount = (state.doubts || []).filter((d) => d.resolved).length;
 
   const handleSubmit = (e: React.FormEvent) => {
     e.preventDefault();
-    const clean = formText.trim();
-    if (!clean) return;
+    const trimmed = text.trim();
+    if (!trimmed) return;
     onAddDoubt({
-      subjectId: formSubId,
-      chapterId: formChapId || undefined,
-      text: clean,
+      subjectId,
+      chapterId: chapterId || undefined,
+      text: trimmed,
     });
-    setFormText('');
+    setText('');
+    setSheetOpen(false);
   };
 
   return (
-    <div style={{ display: 'flex', flexDirection: 'column', gap: 14 }}>
-      {/* Quick Add Doubt Card */}
-      <div className="card" style={{ marginBottom: 0 }}>
-        <div
-          style={{
-            display: 'flex',
-            justifyContent: 'space-between',
-            alignItems: 'center',
-            marginBottom: 10,
-          }}
-        >
+    <div className="space-y-4">
+      <Card>
+        <div className="split mb-3 flex-wrap gap-2">
           <div>
-            <div style={{ fontSize: '0.92rem', fontWeight: 900, color: '#f8fafc' }}>
-              ❓ Doubt Queue
-            </div>
-            <div style={{ fontSize: '0.73rem', color: 'var(--muted)', fontWeight: 600 }}>
-              {openCount} open • {resolvedCount} resolved • Park questions while studying, clear them
-              later
-            </div>
+            <h3 className="text-[16px] font-semibold text-[var(--tx)]">
+              Doubts &amp; questions queue
+            </h3>
+            <p className="text-[12px] text-[var(--tx-2)]">
+              Capture conceptual questions during study blocks without breaking focus
+            </p>
           </div>
+          <Button
+            variant="primary"
+            size="sm"
+            icon={<Plus size={16} />}
+            onClick={() => setSheetOpen(true)}
+          >
+            Add doubt
+          </Button>
         </div>
 
-        <form
-          onSubmit={handleSubmit}
-          style={{
-            display: 'flex',
-            flexDirection: 'column',
-            gap: 9,
-            padding: 12,
-            borderRadius: 14,
-            background: 'rgba(15, 23, 42, 0.72)',
-            border: '1px solid rgba(255, 255, 255, 0.08)',
-          }}
-        >
-          {/* Subject chips */}
-          <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap' }}>
-            {activeSubjects.map((sub) => {
-              const active = formSubId === sub.id;
+        {/* Quick inline capture */}
+        <form onSubmit={handleSubmit} className="flex flex-col gap-2 sm:flex-row">
+          <div className="sm:w-44">
+            <Select
+              value={subjectId}
+              onChange={(nextSub) => {
+                setSubjectId(nextSub);
+                setChapterId('');
+              }}
+              ariaLabel="Select subject for doubt"
+              options={state.subjects.map((s) => ({
+                value: s.id,
+                label: `${s.e} ${s.name}`,
+              }))}
+            />
+          </div>
+          <input
+            type="text"
+            value={text}
+            onChange={(e) => setText(e.target.value)}
+            placeholder="Type a question or concept to clarify later…"
+            aria-label="Doubt description"
+            className="h-11 flex-1 rounded-xl border border-[var(--line)] bg-[var(--sf-2)] px-3 text-[14px] text-[var(--tx)]"
+          />
+          <Button type="submit" variant="primary" disabled={!text.trim()}>
+            Save
+          </Button>
+        </form>
+      </Card>
+
+      {/* Filter Bar */}
+      <Card>
+        <div className="flex flex-col gap-3">
+          <div className="split flex-wrap gap-2">
+            <Segmented
+              value={filterStatus}
+              onChange={setFilterStatus}
+              ariaLabel="Doubt status filter"
+              options={[
+                { value: 'open', label: `Open (${openCount})` },
+                { value: 'resolved', label: `Resolved (${resolvedCount})` },
+                { value: 'all', label: `All (${(state.doubts || []).length})` },
+              ]}
+            />
+          </div>
+          <div className="flex items-center gap-1.5 overflow-x-auto pb-1">
+            <Chip
+              selected={filterSubject === 'all'}
+              onClick={() => setFilterSubject('all')}
+            >
+              All subjects
+            </Chip>
+            {state.subjects.map((s) => (
+              <Chip
+                key={s.id}
+                selected={filterSubject === s.id}
+                colorDot={s.color}
+                onClick={() => setFilterSubject(s.id)}
+              >
+                {s.e} {s.name}
+              </Chip>
+            ))}
+          </div>
+        </div>
+      </Card>
+
+      {filteredDoubts.length === 0 ? (
+        <EmptyState
+          icon={<HelpCircle size={22} />}
+          title="No doubts in this view"
+          description="Jot down tricky NCERT lines or numerical doubts here so you never lose track before your next teacher session."
+          action={
+            <Button
+              variant="secondary"
+              size="sm"
+              icon={<Plus size={16} />}
+              onClick={() => setSheetOpen(true)}
+            >
+              Add with chapter tag
+            </Button>
+          }
+        />
+      ) : (
+        <Card>
+          <SectionHeader
+            title="Saved doubts"
+            subtitle={`${filteredDoubts.length} items`}
+          />
+          <div className="mt-2 divide-y divide-[var(--line)]">
+            {filteredDoubts.map((d) => {
+              const sub = getSubject(state, d.subjectId);
+              const ch = d.chapterId
+                ? state.chapters.find((c) => c.id === d.chapterId)
+                : null;
               return (
-                <button
-                  key={sub.id}
-                  type="button"
-                  onClick={() => {
-                    setFormSubId(sub.id);
-                    setFormChapId('');
-                  }}
-                  style={{
-                    padding: '5px 11px',
-                    borderRadius: 999,
-                    fontSize: '0.73rem',
-                    fontWeight: 800,
-                    border: `1px solid ${active ? sub.color : 'rgba(255,255,255,0.1)'}`,
-                    background: active ? `${sub.color}22` : 'rgba(15,23,42,0.6)',
-                    color: active ? '#fff' : 'var(--muted)',
-                    cursor: 'pointer',
-                  }}
+                <div
+                  key={d.id}
+                  className={`flex flex-col gap-2 py-3 sm:flex-row sm:items-center sm:justify-between ${
+                    d.resolved ? 'opacity-65' : ''
+                  }`}
                 >
-                  {sub.e} {sub.name}
-                </button>
+                  <div className="min-w-0 flex-1">
+                    <div className="flex flex-wrap items-center gap-2">
+                      <span
+                        className="h-2.5 w-2.5 shrink-0 rounded-full"
+                        style={{ background: sub.color }}
+                      />
+                      <span className="text-[13px] font-medium text-[var(--tx)]">
+                        {sub.e} {sub.name}
+                      </span>
+                      {ch && (
+                        <span className="rounded-md bg-[var(--sf-2)] px-2 py-0.5 text-[12px] text-[var(--tx-2)]">
+                          {ch.name}
+                        </span>
+                      )}
+                      <span className="tnum text-[12px] text-[var(--tx-3)]">
+                        {new Date(d.createdAt).toLocaleDateString()}
+                      </span>
+                    </div>
+                    <p
+                      className={`mt-1 text-[14px] text-[var(--tx)] ${
+                        d.resolved ? 'line-through' : ''
+                      }`}
+                    >
+                      {d.text}
+                    </p>
+                  </div>
+
+                  <div className="flex shrink-0 items-center gap-2">
+                    <Button
+                      variant={d.resolved ? 'secondary' : 'primary'}
+                      size="sm"
+                      icon={d.resolved ? <RotateCcw size={14} /> : <Check size={14} />}
+                      onClick={() => onToggleDoubtResolved(d.id)}
+                    >
+                      {d.resolved ? 'Reopen' : 'Resolved'}
+                    </Button>
+                    <IconButton
+                      label="Delete doubt"
+                      onClick={() => onDeleteDoubt(d.id)}
+                    >
+                      <Trash2 size={16} />
+                    </IconButton>
+                  </div>
+                </div>
               );
             })}
           </div>
+        </Card>
+      )}
 
-          <div
-            style={{
-              display: 'grid',
-              gridTemplateColumns: 'minmax(120px, 1fr) 2fr auto',
-              gap: 8,
-              alignItems: 'center',
-            }}
-          >
-            <select
-              className="inp"
-              value={formChapId}
-              onChange={(e) => setFormChapId(e.target.value)}
-              style={{ padding: '8px 10px', fontSize: '0.76rem' }}
-            >
-              <option value="">Chapter (optional)</option>
-              {availableChapters.map((ch) => (
-                <option key={ch.id} value={ch.id}>
-                  {ch.name}
-                </option>
-              ))}
-            </select>
+      {/* Detailed Doubt Sheet */}
+      <Sheet
+        open={sheetOpen}
+        onClose={() => setSheetOpen(false)}
+        title="Add doubt with chapter tag"
+      >
+        <form onSubmit={handleSubmit} className="space-y-4">
+          <Field label="Subject">
+            <Select
+              value={subjectId}
+              onChange={(nextSub) => {
+                setSubjectId(nextSub);
+                setChapterId('');
+              }}
+              options={state.subjects.map((s) => ({
+                value: s.id,
+                label: `${s.e} ${s.name}`,
+              }))}
+            />
+          </Field>
 
+          <Field label="Chapter (optional)">
+            <Select
+              value={chapterId}
+              onChange={setChapterId}
+              options={[
+                { value: '', label: 'General / No chapter' },
+                ...availableChapters.map((c) => ({
+                  value: c.id,
+                  label: c.name,
+                })),
+              ]}
+            />
+          </Field>
+
+          <Field label="Doubt question">
             <input
               type="text"
-              className="inp"
-              placeholder="Write your doubt or question..."
-              value={formText}
-              onChange={(e) => setFormText(e.target.value)}
-              style={{ padding: '8px 12px', fontSize: '0.8rem' }}
+              value={text}
+              onChange={(e) => setText(e.target.value)}
+              placeholder="Describe the concept or problem…"
+              className="h-11 w-full rounded-xl border border-[var(--line)] bg-[var(--sf-2)] px-3 text-[14px] text-[var(--tx)]"
+              required
             />
+          </Field>
 
-            <button
-              type="submit"
-              className="btn-main"
-              disabled={!formText.trim()}
-              style={{ width: 'auto', padding: '8px 14px', fontSize: '0.76rem' }}
+          <div className="flex justify-end gap-2 pt-2">
+            <Button
+              type="button"
+              variant="secondary"
+              onClick={() => setSheetOpen(false)}
             >
-              + Add
-            </button>
+              Cancel
+            </Button>
+            <Button type="submit" variant="primary" disabled={!text.trim()}>
+              Save doubt
+            </Button>
           </div>
         </form>
-      </div>
-
-      {/* Filters */}
-      <div
-        style={{
-          display: 'flex',
-          justifyContent: 'space-between',
-          alignItems: 'center',
-          gap: 8,
-          flexWrap: 'wrap',
-        }}
-      >
-        <div style={{ display: 'flex', gap: 6, overflowX: 'auto' }}>
-          <button
-            type="button"
-            onClick={() => setFilterSub('all')}
-            style={{
-              padding: '5px 11px',
-              borderRadius: 999,
-              fontSize: '0.72rem',
-              fontWeight: 800,
-              border: `1px solid ${filterSub === 'all' ? 'var(--acc)' : 'var(--border)'}`,
-              background: filterSub === 'all' ? 'rgba(99,102,241,0.18)' : 'rgba(15,23,42,0.5)',
-              color: filterSub === 'all' ? '#fff' : 'var(--muted)',
-              cursor: 'pointer',
-            }}
-          >
-            All Subjects
-          </button>
-          {activeSubjects.map((sub) => (
-            <button
-              key={sub.id}
-              type="button"
-              onClick={() => setFilterSub(sub.id)}
-              style={{
-                padding: '5px 11px',
-                borderRadius: 999,
-                fontSize: '0.72rem',
-                fontWeight: 800,
-                border: `1px solid ${filterSub === sub.id ? sub.color : 'var(--border)'}`,
-                background: filterSub === sub.id ? `${sub.color}22` : 'rgba(15,23,42,0.5)',
-                color: filterSub === sub.id ? '#fff' : 'var(--muted)',
-                cursor: 'pointer',
-              }}
-            >
-              {sub.e} {sub.name}
-            </button>
-          ))}
-        </div>
-
-        <div style={{ display: 'flex', gap: 4 }}>
-          {(['open', 'resolved', 'all'] as const).map((st) => (
-            <button
-              key={st}
-              type="button"
-              onClick={() => setFilterStatus(st)}
-              style={{
-                padding: '5px 10px',
-                borderRadius: 8,
-                fontSize: '0.7rem',
-                fontWeight: 800,
-                textTransform: 'capitalize',
-                border: `1px solid ${filterStatus === st ? 'var(--acc2)' : 'var(--border)'}`,
-                background: filterStatus === st ? 'rgba(99,102,241,0.18)' : 'transparent',
-                color: filterStatus === st ? '#fff' : 'var(--muted)',
-                cursor: 'pointer',
-              }}
-            >
-              {st}
-            </button>
-          ))}
-        </div>
-      </div>
-
-      {/* Doubts List */}
-      {filteredDoubts.length === 0 ? (
-        <div
-          className="card"
-          style={{ textAlign: 'center', padding: '26px 16px', color: 'var(--muted)' }}
-        >
-          <div style={{ fontSize: '1.6rem', marginBottom: 6 }}>💡</div>
-          <div style={{ fontSize: '0.84rem', fontWeight: 800, color: 'var(--text)' }}>
-            No doubts in this view
-          </div>
-          <div style={{ fontSize: '0.74rem', marginTop: 4 }}>
-            Jot down questions quickly without breaking your study flow, then clear them with your
-            teacher or notes.
-          </div>
-        </div>
-      ) : (
-        <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
-          {filteredDoubts.map((d) => {
-            const sub = getSubject(state, d.subjectId);
-            const ch = d.chapterId
-              ? state.chapters.find((c) => c.id === d.chapterId)
-              : undefined;
-            const dateStr = logicalKey(d.createdAt, state.set.dayResetHour ?? 0);
-
-            return (
-              <div
-                key={d.id}
-                className="card"
-                style={{
-                  marginBottom: 0,
-                  padding: '12px 14px',
-                  borderLeft: `4px solid ${d.resolved ? '#10b981' : sub.color}`,
-                  display: 'flex',
-                  justifyContent: 'space-between',
-                  alignItems: 'center',
-                  gap: 12,
-                  opacity: d.resolved ? 0.75 : 1,
-                }}
-              >
-                <div style={{ flex: 1, minWidth: 0 }}>
-                  <div
-                    style={{
-                      display: 'flex',
-                      alignItems: 'center',
-                      gap: 6,
-                      flexWrap: 'wrap',
-                      marginBottom: 3,
-                    }}
-                  >
-                    <span style={{ fontSize: '0.72rem', fontWeight: 800, color: sub.color }}>
-                      {sub.e} {sub.name}
-                    </span>
-                    {ch && (
-                      <span
-                        style={{
-                          fontSize: '0.7rem',
-                          fontWeight: 700,
-                          color: '#e2e8f0',
-                          background: 'rgba(255,255,255,0.06)',
-                          padding: '2px 7px',
-                          borderRadius: 6,
-                        }}
-                      >
-                        📖 {ch.name}
-                      </span>
-                    )}
-                    <span style={{ fontSize: '0.67rem', color: 'var(--muted)' }}>
-                      • Added {dateStr}
-                    </span>
-                  </div>
-
-                  <div
-                    style={{
-                      fontSize: '0.84rem',
-                      fontWeight: 700,
-                      color: d.resolved ? 'var(--muted)' : '#f8fafc',
-                      textDecoration: d.resolved ? 'line-through' : 'none',
-                    }}
-                  >
-                    {d.text}
-                  </div>
-                </div>
-
-                <div style={{ display: 'flex', alignItems: 'center', gap: 6, flexShrink: 0 }}>
-                  <button
-                    type="button"
-                    onClick={() => onToggleDoubtResolved(d.id)}
-                    style={{
-                      padding: '5px 10px',
-                      borderRadius: 8,
-                      fontSize: '0.72rem',
-                      fontWeight: 800,
-                      border: `1px solid ${
-                        d.resolved ? 'rgba(16,185,129,0.4)' : 'rgba(255,255,255,0.14)'
-                      }`,
-                      background: d.resolved
-                        ? 'rgba(16,185,129,0.15)'
-                        : 'rgba(15,23,42,0.65)',
-                      color: d.resolved ? '#10b981' : '#e2e8f0',
-                      cursor: 'pointer',
-                    }}
-                  >
-                    {d.resolved ? '✓ Cleared' : 'Mark Cleared'}
-                  </button>
-                  <button
-                    type="button"
-                    onClick={() => onDeleteDoubt(d.id)}
-                    title="Delete doubt"
-                    style={{
-                      padding: '5px 8px',
-                      borderRadius: 8,
-                      fontSize: '0.72rem',
-                      border: '1px solid rgba(239,68,68,0.25)',
-                      background: 'rgba(239,68,68,0.1)',
-                      color: '#f87171',
-                      cursor: 'pointer',
-                    }}
-                  >
-                    ✕
-                  </button>
-                </div>
-              </div>
-            );
-          })}
-        </div>
-      )}
+      </Sheet>
     </div>
   );
 };

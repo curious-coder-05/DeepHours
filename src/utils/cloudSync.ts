@@ -1990,6 +1990,15 @@ export async function performCloudSyncCycle(
     ...(controllerArg?.getMeta().dirtyDocs || []),
     ...(extraOpts?.dirtyDocKeys || []),
   ]);
+  const remoteCoreDoc = downloadedDocs['meta/core'] as MetaCoreDoc | undefined;
+  const remoteNeedsV2Migration =
+    Boolean(remoteCoreDoc) && (Number(remoteCoreDoc?.set?.defaultsVersion) || 0) < 2;
+  const localCoreNewerThanRemote =
+    (Number(partitioned.docs['meta/core']?.updatedAt) || 0) >
+    (meta.knownRemoteDocTs['meta/core'] || 0);
+  if (remoteNeedsV2Migration || localCoreNewerThanRemote) {
+    explicitDirtySet.add('meta/core');
+  }
   const candidateKeys = isFirstSignIn
     ? Object.keys(partitioned.docs)
     : Array.from(new Set([...explicitDirtySet, ...dirtyDocKeys]));

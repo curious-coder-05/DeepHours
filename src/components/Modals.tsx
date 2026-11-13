@@ -1,4 +1,5 @@
 import React, { useEffect, useMemo, useRef, useState } from 'react';
+import { AlertTriangle, Star } from 'lucide-react';
 import type {
   DDay,
   Habit,
@@ -12,8 +13,10 @@ import type {
   TimerMetrics,
 } from '../types';
 import {
+  ACS,
   CATS,
   DN,
+  SUB_COLORS,
   addD,
   computeMockScore,
   fmtHMS,
@@ -21,6 +24,7 @@ import {
   mkHabit,
   pad,
 } from '../utils/studyLogic';
+import { Button, Chip, Dialog, Field, Select, type SelectOption, Sheet, Stat, Switch } from './ui';
 
 export type ModalState =
   | { type: 'none' }
@@ -89,6 +93,51 @@ interface ModalsProps {
   onConfirmResetHour: (newHour: number) => void;
 }
 
+const HABIT_CATEGORY_OPTIONS: SelectOption<HabitCategory>[] = CATS.map((c) => ({
+  value: c,
+  label: c,
+}));
+
+const HABIT_SCHEDULE_OPTIONS: SelectOption<HabitSchedule>[] = [
+  { value: 'daily', label: 'Every day' },
+  { value: 'days', label: 'Specific days' },
+  { value: 'week', label: 'X times per week' },
+];
+
+const MISTAKE_REASON_OPTIONS: SelectOption<MistakeReason>[] = [
+  { value: 'concept', label: 'Concept gap' },
+  { value: 'silly', label: 'Silly / calculation' },
+  { value: 'time', label: 'Time pressure' },
+  { value: 'guess', label: 'Guess / 50-50' },
+  { value: 'forgot', label: 'Forgot formula or fact' },
+];
+
+const DDAY_COLORS = Array.from(
+  new Set(['#10b981', '#6366f1', '#f59e0b', '#ec4899', ...SUB_COLORS, ...ACS])
+);
+
+const DDAY_COLOR_LABELS: Record<string, string> = {
+  '#10b981': 'Emerald',
+  '#6366f1': 'Indigo',
+  '#f59e0b': 'Amber',
+  '#ec4899': 'Rose',
+  '#3b82f6': 'Blue',
+  '#8b5cf6': 'Violet',
+  '#14b8a6': 'Teal',
+  '#38bdf8': 'Sky',
+  '#34d399': 'Mint',
+  '#a78bfa': 'Lavender',
+  '#f472b6': 'Pink',
+  '#fbbf24': 'Gold',
+};
+
+const DDAY_COLOR_OPTIONS: SelectOption<string>[] = DDAY_COLORS.map((hex) => ({
+  value: hex,
+  label: DDAY_COLOR_LABELS[hex.toLowerCase()] || hex.toUpperCase(),
+  subtitle: hex.toUpperCase(),
+  swatchColor: hex,
+}));
+
 export const Modals: React.FC<ModalsProps> = ({
   modal,
   state,
@@ -110,14 +159,12 @@ export const Modals: React.FC<ModalsProps> = ({
   onConfirmReset,
   onConfirmResetHour,
 }) => {
-  const dialogRef = useRef<HTMLDialogElement | null>(null);
   const activeSubjects = useMemo(
     () => state.subjects.filter((s) => !s.arch),
     [state.subjects]
   );
 
-  // Keep latest references so the modal-open effect only runs when the active modal changes,
-  // preventing keystrokes or background timer ticks from resetting form inputs.
+  // Keep latest references so modal-open initialization only fires when modalKey changes
   const stateRef = useRef(state);
   stateRef.current = state;
   const selRef = useRef(sel);
@@ -197,9 +244,7 @@ export const Modals: React.FC<ModalsProps> = ({
   const [mockMarksCorrect, setMockMarksCorrect] = useState<number>(4);
   const [mockMarksLost, setMockMarksLost] = useState<number>(1);
   const [mockMaxMarks, setMockMaxMarks] = useState<number>(720);
-  const [mockScores, setMockScores] = useState<
-    Record<string, MockSubjectScore>
-  >({});
+  const [mockScores, setMockScores] = useState<Record<string, MockSubjectScore>>({});
   const [mockNote, setMockNote] = useState('');
   const [queuedMistakes, setQueuedMistakes] = useState<QueuedMockMistake[]>([]);
   const [mkMisSubId, setMkMisSubId] = useState(activeSubjects[0]?.id || 'sub_phy');
@@ -225,19 +270,13 @@ export const Modals: React.FC<ModalsProps> = ({
   const [ddPrimary, setDdPrimary] = useState(false);
 
   useEffect(() => {
-    const dlg = dialogRef.current;
-    if (!dlg) return;
-
     const curModal = modalRef.current;
     const curState = stateRef.current;
     const curSel = selRef.current;
     const curTodayKey = todayKeyRef.current;
     const curActiveSubjects = activeSubjectsRef.current;
 
-    if (curModal.type === 'none') {
-      if (dlg.open) dlg.close();
-      return;
-    }
+    if (curModal.type === 'none') return;
 
     if (curModal.type === 'habit') {
       const h = curModal.id
@@ -336,15 +375,7 @@ export const Modals: React.FC<ModalsProps> = ({
       setDdTitle(d?.title || '');
       setDdDate(d?.date || addD(curTodayKey, 90));
       setDdColor(d?.color || '#10b981');
-      setDdPrimary(Boolean(d?.primary ?? (curState.ddays.length === 0)));
-    }
-
-    if (!dlg.open) {
-      try {
-        dlg.showModal();
-      } catch {
-        dlg.setAttribute('open', 'true');
-      }
+      setDdPrimary(Boolean(d?.primary ?? curState.ddays.length === 0));
     }
   }, [modalKey]);
 
@@ -383,1186 +414,1309 @@ export const Modals: React.FC<ModalsProps> = ({
     expectedMaxQuestions > 0 &&
     previewMockStats.totalQuestions > expectedMaxQuestions;
 
+  const autoSubjectOptions: SelectOption<string>[] = [
+    { value: 'any', label: 'All subjects combined' },
+    ...activeSubjects.map((s) => ({
+      value: s.id,
+      label: `${s.e} ${s.name}`,
+      swatchColor: s.color,
+    })),
+  ];
+
+  const subjectSelectOptions: SelectOption<string>[] = activeSubjects.map((s) => ({
+    value: s.id,
+    label: `${s.e} ${s.name}`,
+    swatchColor: s.color,
+  }));
+
+  const buildChapterOptions = (subjectId: string, emptyLabel = 'Any / general'): SelectOption<string>[] => [
+    { value: '', label: emptyLabel },
+    ...state.chapters
+      .filter((ch) => ch.subjectId === subjectId)
+      .map((ch) => ({ value: ch.id, label: ch.name })),
+  ];
+
+  const sheetTitle =
+    modal.type === 'habit'
+      ? modal.id
+        ? 'Edit habit'
+        : 'New habit'
+      : modal.type === 'reflect'
+        ? 'Session complete'
+        : modal.type === 'manualSession'
+          ? existingSes
+            ? 'Edit study session'
+            : 'Log study session'
+          : modal.type === 'mock'
+            ? existingMock
+              ? 'Edit mock test'
+              : 'Log NEET mock test'
+            : modal.type === 'timerConfig'
+              ? 'Timer durations'
+              : modal.type === 'dday'
+                ? modal.id
+                  ? 'Edit exam countdown'
+                  : 'New exam countdown'
+                : undefined;
+
+  const isSheetOpen =
+    modal.type === 'habit' ||
+    modal.type === 'reflect' ||
+    modal.type === 'manualSession' ||
+    modal.type === 'mock' ||
+    modal.type === 'timerConfig' ||
+    modal.type === 'dday';
+
   return (
-    <dialog
-      id="dlg"
-      ref={dialogRef}
-      onClose={onClose}
-      onClick={(e) => {
-        if (e.target === dialogRef.current) onClose();
-      }}
-    >
-      {modal.type === 'habit' && (
-        <form
-          id="hf"
-          onSubmit={(e) => {
-            e.preventDefault();
-            const trimmed = hName.trim();
-            if (!trimmed) return;
-            const targetVal = Math.min(999, Math.max(1, Number(hTn) || 1));
-            onSaveHabit(modal.id, {
-              name: trimmed,
-              e: hEmoji.trim() || '✨',
-              c: hCat,
-              sch: hSch,
-              days: hDays.length ? hDays : [0, 1, 2, 3, 4, 5, 6],
-              n: Math.min(7, Math.max(1, Number(hWeeklyN) || 3)),
-              tn: targetVal,
-              tu: hAutoStudy ? 'min' : hTu.trim(),
-              rem: hRem,
-              subjectId: hAutoStudy ? hSubjectId || 'any' : '',
-              autoMins: hAutoStudy ? targetVal : 0,
-            });
-          }}
-        >
-          <h3>{modal.id ? 'Edit' : 'New'} Habit</h3>
-          <div className="row">
-            <input
-              className="em"
-              name="e"
-              value={hEmoji}
-              onChange={(e) => setHEmoji(e.target.value)}
-              maxLength={4}
-              aria-label="Habit Emoji"
-            />
-            <input
-              name="name"
-              value={hName}
-              onChange={(e) => setHName(e.target.value)}
-              placeholder="e.g. Study 180 mins of Physics"
-              required
-              maxLength={60}
-              aria-label="Habit Name"
-            />
-          </div>
-          <div className="row">
-            <label className="g">
-              Category
-              <select
-                name="c"
-                value={hCat}
-                onChange={(e) => setHCat(e.target.value as HabitCategory)}
-              >
-                {CATS.map((c) => (
-                  <option key={c} value={c}>
-                    {c}
-                  </option>
-                ))}
-              </select>
-            </label>
-            <label className="g">
-              Schedule
-              <select
-                name="sch"
-                value={hSch}
-                onChange={(e) => setHSch(e.target.value as HabitSchedule)}
-              >
-                <option value="daily">Every day</option>
-                <option value="days">Specific days</option>
-                <option value="week">X times / week</option>
-              </select>
-            </label>
-          </div>
-          <div className="dys">
-            {DN.map((d, i) => (
-              <label key={i}>
-                <input
-                  type="checkbox"
-                  checked={hDays.includes(i)}
-                  onChange={() => toggleDayInHabit(i)}
-                />
-                {d}
-              </label>
-            ))}
-          </div>
-          <div className="row">
-            <label className="g">
-              Daily Target {hAutoStudy ? '(Minutes)' : ''}
-              <input
-                type="number"
-                name="tn"
-                min={1}
-                max={999}
-                value={hTn}
-                onChange={(e) => setHTn(Number(e.target.value))}
-              />
-            </label>
-            <label className="g">
-              Unit
-              <input
-                name="tu"
-                value={hAutoStudy ? 'min' : hTu}
-                onChange={(e) => setHTu(e.target.value)}
-                maxLength={12}
-                placeholder="min, pages, MCQs"
-                disabled={hAutoStudy}
-              />
-            </label>
-          </div>
-          <label className="row" style={{ marginTop: '10px', cursor: 'pointer' }}>
-            <input
-              type="checkbox"
-              style={{ width: 'auto' }}
-              checked={hAutoStudy}
-              onChange={(e) => setHAutoStudy(e.target.checked)}
-            />
-            🔗 Auto-complete from study timer minutes logged today
-          </label>
-          {hAutoStudy && (
-            <label style={{ marginTop: '6px', display: 'block' }}>
-              Count Study Minutes From Subject
-              <select
-                value={hSubjectId}
-                onChange={(e) => setHSubjectId(e.target.value)}
-              >
-                <option value="any">All Subjects Combined</option>
-                {activeSubjects.map((s) => (
-                  <option key={s.id} value={s.id}>
-                    {s.e} {s.name}
-                  </option>
-                ))}
-              </select>
-            </label>
-          )}
-          <div className="row">
-            <label className="g">
-              Times/week (if weekly)
-              <input
-                type="number"
-                name="n"
-                min={1}
-                max={7}
-                value={hWeeklyN}
-                onChange={(e) => setHWeeklyN(Number(e.target.value))}
-              />
-            </label>
-            <label className="g">
-              Reminder
-              <input
-                type="time"
-                name="rem"
-                value={hRem}
-                onChange={(e) => setHRem(e.target.value)}
-              />
-            </label>
-          </div>
-          <div className="row">
-            <button className="pri g" type="submit">
-              Save Habit
-            </button>
-            <button type="button" onClick={onClose}>
-              Cancel
-            </button>
-          </div>
-          {modal.id && existingHabit && (
-            <div className="row">
-              <button
-                type="button"
-                className="g"
-                onClick={() => onArchiveHabit(modal.id!)}
-              >
-                {existingHabit.arch ? 'Unarchive' : 'Archive'}
-              </button>
-              <button
-                type="button"
-                className="dg-btn g"
-                onClick={() => onDeleteHabit(modal.id!)}
-              >
-                Delete
-              </button>
-            </div>
-          )}
-        </form>
-      )}
-
-      {modal.type === 'reflect' && (
-        <form
-          id="reflectForm"
-          onSubmit={(e) => {
-            e.preventDefault();
-            const chosenChapter = refChapterId
-              ? state.chapters.find((c) => c.id === refChapterId)
-              : undefined;
-            const sub = state.subjects.find((s) => s.id === refSubjectId);
-            const resolvedHeading =
-              refHeading.trim() ||
-              chosenChapter?.name ||
-              (sub ? `${sub.name} Study` : 'Deep Study Session');
-            onSubmitReflection(
-              refSubjectId,
-              resolvedHeading,
-              refRating,
-              refNote.trim(),
-              refChapterId || undefined
-            );
-          }}
-        >
-          <h3>🎉 Session Complete!</h3>
-          <div className="stat-mini">
-            <div className="stat-box">
-              <small>Studied Duration</small>
-              <b className="mono" style={{ color: 'var(--em)' }}>
-                {fmtHMS(modal.metrics.sliceActiveMs)}
-              </b>
-            </div>
-            <div className="stat-box">
-              <small>Focus Purity</small>
-              <b className="mono">
-                {modal.metrics.purity}% ({modal.metrics.pauseCount}p)
-              </b>
-            </div>
-          </div>
-
-          <label style={{ display: 'block', marginTop: '6px' }}>
-            Subject
-          </label>
-          <div className="chips" style={{ marginBottom: '6px' }}>
-            {activeSubjects.map((s) => (
-              <button
-                key={s.id}
-                type="button"
-                className={`sub-chip ${refSubjectId === s.id ? 'active' : ''}`}
-                style={{ '--sc': s.color } as React.CSSProperties}
-                onClick={() => {
-                  setRefSubjectId(s.id);
-                  setRefChapterId('');
-                }}
-              >
-                <i className="dot" style={{ '--sc': s.color } as React.CSSProperties} />{' '}
-                {s.e} {s.name}
-              </button>
-            ))}
-          </div>
-
-          <label>
-            Chapter (Optional)
-            <select
-              value={refChapterId}
-              onChange={(e) => setRefChapterId(e.target.value)}
-            >
-              <option value="">— Any / General —</option>
-              {state.chapters
-                .filter((ch) => ch.subjectId === refSubjectId)
-                .map((ch) => (
-                  <option key={ch.id} value={ch.id}>
-                    {ch.name}
-                  </option>
-                ))}
-            </select>
-          </label>
-
-          <label>
-            Session Heading (Defaults to chapter if blank)
-            <input
-              type="text"
-              value={refHeading}
-              onChange={(e) => setRefHeading(e.target.value)}
-              placeholder="e.g. Electrostatics — Gauss Law PYQs"
-              maxLength={90}
-            />
-          </label>
-          <label
-            style={{ textAlign: 'center', display: 'block', marginTop: '6px' }}
+    <>
+      <Sheet
+        open={isSheetOpen}
+        onClose={onClose}
+        title={sheetTitle}
+        snap={modal.type === 'mock' || modal.type === 'manualSession' ? 'tall' : 'auto'}
+      >
+        {modal.type === 'habit' && (
+          <form
+            id="hf"
+            style={{ display: 'grid', gap: '12px' }}
+            onSubmit={(e) => {
+              e.preventDefault();
+              const trimmed = hName.trim();
+              if (!trimmed) return;
+              const targetVal = Math.min(999, Math.max(1, Number(hTn) || 1));
+              onSaveHabit(modal.id, {
+                name: trimmed,
+                e: hEmoji.trim() || '✨',
+                c: hCat,
+                sch: hSch,
+                days: hDays.length ? hDays : [0, 1, 2, 3, 4, 5, 6],
+                n: Math.min(7, Math.max(1, Number(hWeeklyN) || 3)),
+                tn: targetVal,
+                tu: hAutoStudy ? 'min' : hTu.trim(),
+                rem: hRem,
+                subjectId: hAutoStudy ? hSubjectId || 'any' : '',
+                autoMins: hAutoStudy ? targetVal : 0,
+              });
+            }}
           >
-            Rate Focus Quality
-          </label>
-          <div className="stars" id="starPicker">
-            {[1, 2, 3, 4, 5].map((v) => (
-              <button
-                key={v}
-                type="button"
-                className={v <= refRating ? 'lit' : ''}
-                onClick={() => setRefRating(v)}
-                aria-label={`Rate ${v} stars`}
-              >
-                ★
-              </button>
-            ))}
-          </div>
-          <label>
-            What did you do in this session?
-            <textarea
-              name="note"
-              rows={3}
-              maxLength={300}
-              value={refNote}
-              onChange={(e) => setRefNote(e.target.value)}
-              placeholder="Summarize NCERT pages read, PYQs solved, or mistakes noted..."
-            />
-          </label>
-          <div className="row">
-            <button className="em-btn g" type="submit">
-              Save &amp; Log Session
-            </button>
-            <button
-              type="button"
-              className="dg-btn"
-              onClick={onDiscardSession}
-            >
-              Discard
-            </button>
-          </div>
-        </form>
-      )}
-
-      {modal.type === 'manualSession' && (
-        <form
-          id="manualSesForm"
-          onSubmit={(e) => {
-            e.preventDefault();
-            const sub = state.subjects.find((s) => s.id === msSubjectId);
-            const chosenChapter = msChapterId
-              ? state.chapters.find((c) => c.id === msChapterId)
-              : undefined;
-            const headingClean =
-              msHeading.trim() ||
-              chosenChapter?.name ||
-              (sub ? `${sub.name} Study` : 'Deep Study Session');
-            const totalDurationMins = Math.min(
-              1440,
-              Math.max(1, (Number(msHours) || 0) * 60 + (Number(msMins) || 0))
-            );
-            const activeMs = totalDurationMins * 60000;
-            if (!/^\d{4}-\d{2}-\d{2}$/.test(msDayKey)) return;
-
-            // A1: Use Number.isFinite so 00:xx is preserved as hour 0.
-            // Times earlier than dayResetHour belong to the NEXT calendar date of the selected logical day.
-            const [shStr, smStr] = msStartTime.split(':');
-            const sh = Number(shStr);
-            const sm = Number(smStr);
-            const safeSh = Number.isFinite(sh) ? sh : 9;
-            const safeSm = Number.isFinite(sm) ? sm : 0;
-            const [yr, mo, dy] = msDayKey.split('-').map(Number);
-            const resetHr = state.set.dayResetHour ?? 0;
-            const dayOffset = safeSh < resetHr ? 1 : 0;
-            const startTs = new Date(
-              yr,
-              mo - 1,
-              dy + dayOffset,
-              safeSh,
-              safeSm,
-              0,
-              0
-            ).getTime();
-            const endTs = startTs + activeMs;
-
-            onSaveManualSession(modal.id, {
-              subjectId: msSubjectId || activeSubjects[0]?.id || 'sub_phy',
-              chapterId: msChapterId || undefined,
-              heading: headingClean,
-              dayKey: msDayKey,
-              startTs,
-              endTs,
-              activeMs,
-              pausedMs: 0,
-              pauseCount: 0,
-              overtimeMs: 0,
-              purity: existingSes ? existingSes.purity : 100,
-              mode: existingSes?.mode || 'manual',
-              source:
-                existingSes?.source ||
-                (existingSes && existingSes.mode !== 'manual' ? 'timer' : 'manual'),
-              rating: Math.min(5, Math.max(1, Number(msRating) || 5)),
-              note: msNote.trim(),
-              updatedAt: Date.now(),
-            });
-          }}
-        >
-          <h3>{existingSes ? 'Edit Study Session' : 'Log Study Session Manually'}</h3>
-
-          <label style={{ display: 'block', marginBottom: '4px' }}>
-            Subject
-          </label>
-          <div className="chips" style={{ marginBottom: '8px' }}>
-            {activeSubjects.map((s) => (
-              <button
-                key={s.id}
-                type="button"
-                className={`sub-chip ${msSubjectId === s.id ? 'active' : ''}`}
-                style={{ '--sc': s.color } as React.CSSProperties}
-                onClick={() => {
-                  setMsSubjectId(s.id);
-                  setMsChapterId('');
-                }}
-              >
-                <i className="dot" style={{ '--sc': s.color } as React.CSSProperties} />{' '}
-                {s.e} {s.name}
-              </button>
-            ))}
-          </div>
-
-          <label>
-            Chapter (Optional)
-            <select
-              value={msChapterId}
-              onChange={(e) => setMsChapterId(e.target.value)}
-            >
-              <option value="">— Any / General —</option>
-              {state.chapters
-                .filter((ch) => ch.subjectId === msSubjectId)
-                .map((ch) => (
-                  <option key={ch.id} value={ch.id}>
-                    {ch.name}
-                  </option>
-                ))}
-            </select>
-          </label>
-
-          <label>
-            Session Heading (Defaults to chapter if blank)
-            <input
-              type="text"
-              name="heading"
-              value={msHeading}
-              onChange={(e) => setMsHeading(e.target.value)}
-              placeholder="e.g., Rotational Motion PYQs"
-              maxLength={90}
-            />
-          </label>
-          <div className="row">
-            <label className="g">
-              Hours Studied
+            <div style={{ display: 'flex', gap: '8px' }}>
               <input
-                type="number"
-                name="hours"
-                min={0}
-                max={24}
-                value={msHours}
-                onChange={(e) => setMsHours(Math.max(0, Number(e.target.value)))}
+                className="em"
+                name="e"
+                value={hEmoji}
+                onChange={(e) => setHEmoji(e.target.value)}
+                maxLength={4}
+                aria-label="Habit Emoji"
+                style={{ width: '56px', textAlign: 'center', flexShrink: 0 }}
               />
-            </label>
-            <label className="g">
-              Minutes Studied
               <input
-                type="number"
-                name="mins"
-                min={0}
-                max={59}
-                value={msMins}
-                onChange={(e) => setMsMins(Math.max(0, Number(e.target.value)))}
-              />
-            </label>
-          </div>
-          <div className="row">
-            <label className="g">
-              Logical Study Date
-              <input
-                type="date"
-                name="dayKey"
-                value={msDayKey}
-                onChange={(e) => setMsDayKey(e.target.value)}
+                name="name"
+                value={hName}
+                onChange={(e) => setHName(e.target.value)}
+                placeholder="e.g. Study 180 mins of Physics"
                 required
+                autoFocus
+                maxLength={60}
+                aria-label="Habit Name"
+                style={{ flex: 1, minWidth: 0 }}
               />
-            </label>
-            <label className="g">
-              Start Time (for 24h timeline)
-              <input
-                type="time"
-                name="startTime"
-                value={msStartTime}
-                onChange={(e) => setMsStartTime(e.target.value)}
-                required
-              />
-            </label>
-          </div>
-          <label>
-            What did you do in this session?
-            <textarea
-              name="note"
-              rows={3}
-              maxLength={300}
-              value={msNote}
-              onChange={(e) => setMsNote(e.target.value)}
-              placeholder="e.g., Completed NCERT reading and solved 45 questions..."
-            />
-          </label>
-          <label>
-            Focus Rating (1–5 Stars)
-            <input
-              type="number"
-              name="rating"
-              min={1}
-              max={5}
-              value={msRating}
-              onChange={(e) => setMsRating(Number(e.target.value))}
-            />
-          </label>
-          <div className="row">
-            <button className="pri g" type="submit">
-              Save Session
-            </button>
-            <button type="button" onClick={onClose}>
-              Cancel
-            </button>
-          </div>
-          {existingSes && (
-            <button
-              type="button"
-              className="dg-btn"
-              onClick={() => onDeleteSession(existingSes.id)}
-            >
-              Delete Session
-            </button>
-          )}
-        </form>
-      )}
+            </div>
 
-          {modal.type === 'mock' && (
-            <form
-              id="mockForm"
-              onSubmit={(e) => {
-                e.preventDefault();
-                const cleanName = mockName.trim() || 'NEET Mock Test';
-                const durNum = Number(mockDurationMins);
-                const clampedSubjects: Record<string, MockSubjectScore> = {};
-                for (const [subId, sc] of Object.entries(mockScores)) {
-                  clampedSubjects[subId] = {
-                    correct: Math.max(0, Math.floor(Number(sc?.correct) || 0)),
-                    wrong: Math.max(0, Math.floor(Number(sc?.wrong) || 0)),
-                    unattempted: Math.max(0, Math.floor(Number(sc?.unattempted) || 0)),
-                  };
-                }
-                onSaveMock(
-                  modal.id,
-                  {
-                    name: cleanName,
-                    dayKey: mockDayKey || todayKey,
-                    durationMins:
-                      mockDurationMins.trim() && Number.isFinite(durNum) && durNum > 0
-                        ? Math.round(durNum)
-                        : undefined,
-                    marksPerCorrect: Number.isFinite(Number(mockMarksCorrect))
-                      ? Number(mockMarksCorrect)
-                      : 4,
-                    marksPerWrong: storedMarksPerWrong,
-                    maxMarks:
-                      Number.isFinite(Number(mockMaxMarks)) && Number(mockMaxMarks) > 0
-                        ? Number(mockMaxMarks)
-                        : 720,
-                    subjects: clampedSubjects,
-                    note: mockNote.trim(),
-                    updatedAt: Date.now(),
-                  },
-                  queuedMistakes
-                );
+            <div
+              style={{
+                display: 'grid',
+                gridTemplateColumns: 'repeat(2, minmax(0, 1fr))',
+                gap: '10px',
               }}
             >
-              <h3>{existingMock ? 'Edit Mock Test' : 'Log NEET Mock Test'}</h3>
-              <label>
-                Test Name / Series
-                <input
-                  type="text"
-                  value={mockName}
-                  onChange={(e) => setMockName(e.target.value)}
-                  placeholder="e.g. Allen Major Test #4 / Aakash FTS-02"
-                  required
-                  maxLength={80}
+              <Field label="Category">
+                <Select
+                  aria-label="Habit category"
+                  title="Category"
+                  value={hCat}
+                  options={HABIT_CATEGORY_OPTIONS}
+                  onChange={setHCat}
                 />
-              </label>
-              <div className="row">
-                <label className="g">
-                  Date
-                  <input
-                    type="date"
-                    value={mockDayKey}
-                    onChange={(e) => setMockDayKey(e.target.value)}
-                    required
-                  />
-                </label>
-                <label className="g">
-                  Duration (mins, optional)
-                  <input
-                    type="number"
-                    min={10}
-                    max={300}
-                    value={mockDurationMins}
-                    onChange={(e) => setMockDurationMins(e.target.value)}
-                    placeholder="180"
-                  />
-                </label>
-              </div>
-              <div className="row">
-                <label className="g">
-                  +Correct Marks
-                  <input
-                    type="number"
-                    step="0.5"
-                    min={0.5}
-                    value={mockMarksCorrect}
-                    onChange={(e) => setMockMarksCorrect(Number(e.target.value))}
-                  />
-                </label>
-                <label className="g">
-                  Marks lost per wrong answer
-                  <input
-                    type="number"
-                    min={0}
-                    step="0.25"
-                    value={mockMarksLost}
-                    onChange={(e) =>
-                      setMockMarksLost(Math.max(0, Number(e.target.value) || 0))
-                    }
-                  />
-                </label>
-                <label className="g">
-                  Max Marks
-                  <input
-                    type="number"
-                    min={1}
-                    max={2000}
-                    value={mockMaxMarks}
-                    onChange={(e) => setMockMaxMarks(Number(e.target.value))}
-                  />
-                </label>
-              </div>
+              </Field>
+              <Field label="Schedule">
+                <Select
+                  aria-label="Habit schedule"
+                  title="Schedule"
+                  value={hSch}
+                  options={HABIT_SCHEDULE_OPTIONS}
+                  onChange={setHSch}
+                />
+              </Field>
+            </div>
 
-              {exceedsMaxQuestions && (
-                <small
-                  role="status"
-                  style={{
-                    display: 'block',
-                    marginTop: '6px',
-                    padding: '6px 10px',
-                    borderRadius: '8px',
-                    background: 'color-mix(in srgb, var(--am) 14%, transparent)',
-                    border: '1px solid color-mix(in srgb, var(--am) 42%, var(--bd))',
-                    color: '#fbbf24',
-                    fontWeight: 600,
-                  }}
-                >
-                  ⚠️ Total questions ({previewMockStats.totalQuestions}) exceed maxMarks /
-                  marksPerCorrect ({expectedMaxQuestions} questions for {mockMaxMarks} max
-                  marks).
-                </small>
-              )}
+            <Field label="Active days">
+              <div style={{ display: 'flex', flexWrap: 'wrap', gap: '6px' }}>
+                {DN.map((d, i) => (
+                  <Chip
+                    key={d}
+                    selected={hDays.includes(i)}
+                    onClick={() => toggleDayInHabit(i)}
+                  >
+                    {d}
+                  </Chip>
+                ))}
+              </div>
+            </Field>
 
-              <div
-                style={{
-                  border: '1px solid var(--bd)',
-                  borderRadius: '12px',
-                  padding: '10px',
-                  marginTop: '6px',
-                  display: 'grid',
-                  gap: '8px',
-                }}
-              >
-                <div className="row" style={{ justifyContent: 'space-between' }}>
-                  <small style={{ fontWeight: 700, color: 'var(--tx)' }}>
-                    Subject-wise Question Counts
-                  </small>
-                  <span className="pill mono" style={{ color: 'var(--em)' }}>
-                    Score: {previewMockStats.totalScore}/{mockMaxMarks} (
-                    {previewMockStats.accuracyPct}% acc)
-                  </span>
+            <div
+              style={{
+                display: 'grid',
+                gridTemplateColumns: 'repeat(2, minmax(0, 1fr))',
+                gap: '10px',
+              }}
+            >
+              <Field label={`Daily target ${hAutoStudy ? '(mins)' : ''}`}>
+                <input
+                  type="number"
+                  name="tn"
+                  min={1}
+                  max={999}
+                  value={hTn}
+                  onChange={(e) => setHTn(Number(e.target.value))}
+                />
+              </Field>
+              <Field label="Unit">
+                <input
+                  name="tu"
+                  value={hAutoStudy ? 'min' : hTu}
+                  onChange={(e) => setHTu(e.target.value)}
+                  maxLength={12}
+                  placeholder="min, pages, MCQs"
+                  disabled={hAutoStudy}
+                />
+              </Field>
+            </div>
+
+            <div
+              style={{
+                display: 'flex',
+                alignItems: 'center',
+                justifyContent: 'space-between',
+                gap: '12px',
+                padding: '10px 12px',
+                borderRadius: '12px',
+                background: 'var(--sf-2)',
+                border: '1px solid var(--line)',
+              }}
+            >
+              <div>
+                <div style={{ fontSize: '14px', fontWeight: 500 }}>Auto-complete from timer</div>
+                <div style={{ fontSize: '12px', color: 'var(--tx-2)' }}>
+                  Tracks study minutes logged for today
                 </div>
+              </div>
+              <Switch
+                aria-label="Auto-complete from study timer"
+                checked={hAutoStudy}
+                onChange={setHAutoStudy}
+              />
+            </div>
 
-                {activeSubjects.map((sub) => {
-                  const sc = mockScores[sub.id] || {
-                    correct: 0,
-                    wrong: 0,
-                    unattempted: 0,
-                  };
-                  const subDetail = previewMockStats.bySubject.find(
-                    (bs) => bs.subjectId === sub.id
-                  );
+            {hAutoStudy && (
+              <Field label="Count study minutes from subject">
+                <Select
+                  aria-label="Count study minutes from subject"
+                  title="Subject filter"
+                  value={hSubjectId}
+                  options={autoSubjectOptions}
+                  onChange={setHSubjectId}
+                />
+              </Field>
+            )}
+
+            <div
+              style={{
+                display: 'grid',
+                gridTemplateColumns: 'repeat(2, minmax(0, 1fr))',
+                gap: '10px',
+              }}
+            >
+              <Field label="Times per week">
+                <input
+                  type="number"
+                  name="n"
+                  min={1}
+                  max={7}
+                  value={hWeeklyN}
+                  onChange={(e) => setHWeeklyN(Number(e.target.value))}
+                />
+              </Field>
+              <Field label="Reminder">
+                <input
+                  type="time"
+                  name="rem"
+                  value={hRem}
+                  onChange={(e) => setHRem(e.target.value)}
+                />
+              </Field>
+            </div>
+
+            <div style={{ display: 'flex', gap: '8px', marginTop: '4px' }}>
+              <Button variant="secondary" onClick={onClose} style={{ flex: 1 }}>
+                Cancel
+              </Button>
+              <Button variant="primary" type="submit" style={{ flex: 2 }}>
+                Save Habit
+              </Button>
+            </div>
+
+            {modal.id && existingHabit && (
+              <div style={{ display: 'flex', gap: '8px' }}>
+                <Button
+                  variant="secondary"
+                  style={{ flex: 1 }}
+                  onClick={() => onArchiveHabit(modal.id!)}
+                >
+                  {existingHabit.arch ? 'Unarchive' : 'Archive'}
+                </Button>
+                <Button
+                  variant="danger"
+                  style={{ flex: 1 }}
+                  onClick={() => onDeleteHabit(modal.id!)}
+                >
+                  Delete
+                </Button>
+              </div>
+            )}
+          </form>
+        )}
+
+        {modal.type === 'reflect' && (
+          <form
+            id="reflectForm"
+            style={{ display: 'grid', gap: '12px' }}
+            onSubmit={(e) => {
+              e.preventDefault();
+              const chosenChapter = refChapterId
+                ? state.chapters.find((c) => c.id === refChapterId)
+                : undefined;
+              const sub = state.subjects.find((s) => s.id === refSubjectId);
+              const resolvedHeading =
+                refHeading.trim() ||
+                chosenChapter?.name ||
+                (sub ? `${sub.name} Study` : 'Deep Study Session');
+              onSubmitReflection(
+                refSubjectId,
+                resolvedHeading,
+                refRating,
+                refNote.trim(),
+                refChapterId || undefined
+              );
+            }}
+          >
+            <div
+              style={{
+                display: 'grid',
+                gridTemplateColumns: 'repeat(2, minmax(0, 1fr))',
+                gap: '10px',
+              }}
+            >
+              <Stat
+                label="Studied duration"
+                value={fmtHMS(modal.metrics.sliceActiveMs)}
+                tone="ok"
+              />
+              <Stat
+                label="Focus purity"
+                value={`${modal.metrics.purity}% (${modal.metrics.pauseCount}p)`}
+              />
+            </div>
+
+            <Field label="Subject">
+              <div style={{ display: 'flex', flexWrap: 'wrap', gap: '6px' }}>
+                {activeSubjects.map((s) => (
+                  <Chip
+                    key={s.id}
+                    selected={refSubjectId === s.id}
+                    colorDot={s.color}
+                    onClick={() => {
+                      setRefSubjectId(s.id);
+                      setRefChapterId('');
+                    }}
+                  >
+                    {s.e} {s.name}
+                  </Chip>
+                ))}
+              </div>
+            </Field>
+
+            <Field label="Chapter (optional)">
+              <Select
+                aria-label="Session chapter"
+                title="Chapter"
+                value={refChapterId}
+                options={buildChapterOptions(refSubjectId)}
+                onChange={setRefChapterId}
+              />
+            </Field>
+
+            <Field label="Session heading" hint="Defaults to chapter or subject if left blank">
+              <input
+                type="text"
+                value={refHeading}
+                onChange={(e) => setRefHeading(e.target.value)}
+                placeholder="e.g. Electrostatics — Gauss Law PYQs"
+                maxLength={90}
+              />
+            </Field>
+
+            <Field label="Focus quality">
+              <div style={{ display: 'flex', justifyContent: 'center', gap: '8px' }}>
+                {[1, 2, 3, 4, 5].map((v) => {
+                  const lit = v <= refRating;
                   return (
-                    <div
-                      key={sub.id}
+                    <button
+                      key={v}
+                      type="button"
+                      onClick={() => setRefRating(v)}
+                      aria-label={`Rate ${v} stars`}
+                      aria-pressed={lit}
                       style={{
-                        borderTop: '1px solid var(--bd)',
-                        paddingTop: '8px',
+                        width: '44px',
+                        height: '44px',
+                        padding: 0,
+                        display: 'inline-flex',
+                        alignItems: 'center',
+                        justifyContent: 'center',
+                        background: lit ? 'var(--ac-soft)' : 'var(--sf-2)',
+                        borderColor: lit ? 'var(--ac)' : 'var(--line)',
+                        color: lit ? 'var(--ac-ink)' : 'var(--tx-3)',
                       }}
                     >
-                      <div
-                        className="row"
-                        style={{
-                          justifyContent: 'space-between',
-                          marginBottom: '4px',
-                        }}
-                      >
-                        <b style={{ fontSize: '12px', color: sub.color }}>
-                          {sub.e} {sub.name}
-                        </b>
-                        <small className="mono">
-                          {subDetail
-                            ? `${subDetail.score} marks · ${subDetail.accuracyPct}% acc`
-                            : ''}
-                        </small>
-                      </div>
-                      <div className="row">
-                        <label className="g" style={{ margin: 0 }}>
-                          Correct
-                          <input
-                            type="number"
-                            min={0}
-                            max={200}
-                            step={1}
-                            value={sc.correct}
-                            onChange={(e) =>
-                              setMockScores((prev) => ({
-                                ...prev,
-                                [sub.id]: {
-                                  ...sc,
-                                  correct: Math.max(
-                                    0,
-                                    Math.floor(Number(e.target.value) || 0)
-                                  ),
-                                },
-                              }))
-                            }
-                          />
-                        </label>
-                        <label className="g" style={{ margin: 0 }}>
-                          Wrong
-                          <input
-                            type="number"
-                            min={0}
-                            max={200}
-                            step={1}
-                            value={sc.wrong}
-                            onChange={(e) =>
-                              setMockScores((prev) => ({
-                                ...prev,
-                                [sub.id]: {
-                                  ...sc,
-                                  wrong: Math.max(
-                                    0,
-                                    Math.floor(Number(e.target.value) || 0)
-                                  ),
-                                },
-                              }))
-                            }
-                          />
-                        </label>
-                        <label className="g" style={{ margin: 0 }}>
-                          Unattempted
-                          <input
-                            type="number"
-                            min={0}
-                            max={200}
-                            step={1}
-                            value={sc.unattempted}
-                            onChange={(e) =>
-                              setMockScores((prev) => ({
-                                ...prev,
-                                [sub.id]: {
-                                  ...sc,
-                                  unattempted: Math.max(
-                                    0,
-                                    Math.floor(Number(e.target.value) || 0)
-                                  ),
-                                },
-                              }))
-                            }
-                          />
-                        </label>
-                      </div>
-                    </div>
+                      <Star
+                        size={20}
+                        strokeWidth={1.75}
+                        fill={lit ? 'currentColor' : 'none'}
+                        aria-hidden="true"
+                      />
+                    </button>
                   );
                 })}
               </div>
+            </Field>
 
-              <label>
-                Mistakes &amp; Analysis Note
-                <textarea
-                  rows={3}
-                  maxLength={400}
-                  value={mockNote}
-                  onChange={(e) => setMockNote(e.target.value)}
-                  placeholder="Silly mistakes, weak topics to revise before next test..."
-                />
-              </label>
+            <Field label="What did you cover?">
+              <textarea
+                name="note"
+                rows={3}
+                maxLength={300}
+                value={refNote}
+                onChange={(e) => setRefNote(e.target.value)}
+                placeholder="Summarize NCERT pages read, PYQs solved, or mistakes noted..."
+              />
+            </Field>
 
-              {/* Milestone 1.3: Add mistakes directly from the mock modal */}
-              <div
-                style={{
-                  border: '1px solid var(--bd)',
-                  borderRadius: '10px',
-                  padding: '8px 10px',
-                  marginTop: '6px',
-                  background: 'rgba(15, 23, 42, 0.35)',
-                }}
-              >
-                <div className="row" style={{ justifyContent: 'space-between', marginBottom: '6px' }}>
-                  <small style={{ fontWeight: 700, color: 'var(--tx)' }}>
-                    ⚠️ Log Mistakes from this Mock ({queuedMistakes.length} queued)
-                  </small>
-                </div>
-                <div className="row" style={{ gap: '6px', flexWrap: 'wrap' }}>
-                  <select
-                    value={mkMisSubId}
-                    onChange={(e) => {
-                      setMkMisSubId(e.target.value);
-                      setMkMisChapId('');
-                    }}
-                    style={{ flex: 1, minWidth: '105px' }}
-                    aria-label="Mistake Subject"
-                  >
-                    {activeSubjects.map((s) => (
-                      <option key={s.id} value={s.id}>
-                        {s.e} {s.name}
-                      </option>
-                    ))}
-                  </select>
-                  <select
-                    value={mkMisChapId}
-                    onChange={(e) => setMkMisChapId(e.target.value)}
-                    style={{ flex: 1, minWidth: '120px' }}
-                    aria-label="Mistake Chapter"
-                  >
-                    <option value="">— Chapter (opt) —</option>
-                    {state.chapters
-                      .filter((c) => c.subjectId === mkMisSubId)
-                      .map((c) => (
-                        <option key={c.id} value={c.id}>
-                          {c.name}
-                        </option>
-                      ))}
-                  </select>
-                  <select
-                    value={mkMisReason}
-                    onChange={(e) => setMkMisReason(e.target.value as MistakeReason)}
-                    style={{ width: 'auto' }}
-                    aria-label="Mistake Reason"
-                  >
-                    <option value="concept">Concept</option>
-                    <option value="silly">Silly</option>
-                    <option value="time">Time</option>
-                    <option value="guess">Guess</option>
-                    <option value="forgot">Forgot</option>
-                  </select>
-                </div>
-                <div className="row" style={{ gap: '6px', marginTop: '6px' }}>
-                  <input
-                    type="text"
-                    className="g"
-                    placeholder="Short mistake note (optional)..."
-                    value={mkMisNote}
-                    onChange={(e) => setMkMisNote(e.target.value)}
-                    maxLength={140}
-                  />
-                  <button
-                    type="button"
-                    className="s"
+            <div style={{ display: 'flex', gap: '8px', marginTop: '4px' }}>
+              <Button variant="danger" onClick={onDiscardSession}>
+                Discard
+              </Button>
+              <Button variant="primary" type="submit" style={{ flex: 1 }}>
+                Save &amp; Log Session
+              </Button>
+            </div>
+          </form>
+        )}
+
+        {modal.type === 'manualSession' && (
+          <form
+            id="manualSesForm"
+            style={{ display: 'grid', gap: '12px' }}
+            onSubmit={(e) => {
+              e.preventDefault();
+              const sub = state.subjects.find((s) => s.id === msSubjectId);
+              const chosenChapter = msChapterId
+                ? state.chapters.find((c) => c.id === msChapterId)
+                : undefined;
+              const headingClean =
+                msHeading.trim() ||
+                chosenChapter?.name ||
+                (sub ? `${sub.name} Study` : 'Deep Study Session');
+              const totalDurationMins = Math.min(
+                1440,
+                Math.max(1, (Number(msHours) || 0) * 60 + (Number(msMins) || 0))
+              );
+              const activeMs = totalDurationMins * 60000;
+              if (!/^\d{4}-\d{2}-\d{2}$/.test(msDayKey)) return;
+
+              const [shStr, smStr] = msStartTime.split(':');
+              const sh = Number(shStr);
+              const sm = Number(smStr);
+              const safeSh = Number.isFinite(sh) ? sh : 9;
+              const safeSm = Number.isFinite(sm) ? sm : 0;
+              const [yr, mo, dy] = msDayKey.split('-').map(Number);
+              const resetHr = state.set.dayResetHour ?? 0;
+              const dayOffset = safeSh < resetHr ? 1 : 0;
+              const startTs = new Date(
+                yr,
+                mo - 1,
+                dy + dayOffset,
+                safeSh,
+                safeSm,
+                0,
+                0
+              ).getTime();
+              const endTs = startTs + activeMs;
+
+              onSaveManualSession(modal.id, {
+                subjectId: msSubjectId || activeSubjects[0]?.id || 'sub_phy',
+                chapterId: msChapterId || undefined,
+                heading: headingClean,
+                dayKey: msDayKey,
+                startTs,
+                endTs,
+                activeMs,
+                pausedMs: 0,
+                pauseCount: 0,
+                overtimeMs: 0,
+                purity: existingSes ? existingSes.purity : 100,
+                mode: existingSes?.mode || 'manual',
+                source:
+                  existingSes?.source ||
+                  (existingSes && existingSes.mode !== 'manual' ? 'timer' : 'manual'),
+                rating: Math.min(5, Math.max(1, Number(msRating) || 5)),
+                note: msNote.trim(),
+                updatedAt: Date.now(),
+              });
+            }}
+          >
+            <Field label="Subject">
+              <div style={{ display: 'flex', flexWrap: 'wrap', gap: '6px' }}>
+                {activeSubjects.map((s) => (
+                  <Chip
+                    key={s.id}
+                    selected={msSubjectId === s.id}
+                    colorDot={s.color}
                     onClick={() => {
-                      setQueuedMistakes((prev) => [
-                        ...prev,
-                        {
-                          subjectId: mkMisSubId,
-                          chapterId: mkMisChapId || undefined,
-                          reason: mkMisReason,
-                          note: mkMisNote.trim() || undefined,
-                        },
-                      ]);
-                      setMkMisNote('');
+                      setMsSubjectId(s.id);
+                      setMsChapterId('');
                     }}
                   >
-                    + Add Mistake
-                  </button>
-                </div>
-                {queuedMistakes.length > 0 && (
-                  <div style={{ display: 'grid', gap: '4px', marginTop: '6px' }}>
-                    {queuedMistakes.map((qm, idx) => {
-                      const sub = state.subjects.find((s) => s.id === qm.subjectId);
-                      const ch = qm.chapterId
-                        ? state.chapters.find((c) => c.id === qm.chapterId)
-                        : undefined;
-                      return (
-                        <div
-                          key={idx}
-                          className="row"
-                          style={{
-                            justifyContent: 'space-between',
-                            fontSize: '11px',
-                            padding: '3px 6px',
-                            background: 'rgba(255,255,255,0.04)',
-                            borderRadius: '6px',
-                          }}
-                        >
-                          <span>
-                            {sub?.e} <b>{qm.reason}</b>
-                            {ch ? ` · ${ch.name}` : ''}
-                            {qm.note ? ` — ${qm.note}` : ''}
-                          </span>
-                          <button
-                            type="button"
-                            className="s dg-btn"
-                            style={{ padding: '1px 5px', fontSize: '10px' }}
-                            onClick={() =>
-                              setQueuedMistakes((prev) =>
-                                prev.filter((_, i) => i !== idx)
-                              )
-                            }
-                          >
-                            ✕
-                          </button>
-                        </div>
-                      );
-                    })}
-                  </div>
-                )}
-              </div>
-
-              <div className="row" style={{ marginTop: '8px' }}>
-                <button className="pri g" type="submit">
-                  Save Mock Test
-                </button>
-                <button type="button" onClick={onClose}>
-                  Cancel
-                </button>
-              </div>
-              {existingMock && (
-                <button
-                  type="button"
-                  className="dg-btn"
-                  onClick={() => onDeleteMock(existingMock.id)}
-                >
-                  Delete Mock Test
-                </button>
-              )}
-            </form>
-          )}
-
-          {modal.type === 'timerConfig' && (
-            <form
-              id="cfgTimerForm"
-              onSubmit={(e) => {
-                e.preventDefault();
-                onSaveTimerConfig(
-                  Math.max(5, Number(cfgPomoWork) || 25),
-                  Math.max(1, Number(cfgPomoBreak) || 5),
-                  Math.max(5, Number(cfgCountdown) || 45),
-                  Math.max(10, Number(cfgFullMock) || 180)
-                );
-              }}
-            >
-              <h3>Timer Durations</h3>
-              <div className="row">
-                <label className="g">
-                  Pomodoro Work (min)
-                  <input
-                    type="number"
-                    name="pomoWork"
-                    min={5}
-                    max={180}
-                    value={cfgPomoWork}
-                    onChange={(e) => setCfgPomoWork(Number(e.target.value))}
-                  />
-                </label>
-                <label className="g">
-                  Pomodoro Break (min)
-                  <input
-                    type="number"
-                    name="pomoBreak"
-                    min={1}
-                    max={60}
-                    value={cfgPomoBreak}
-                    onChange={(e) => setCfgPomoBreak(Number(e.target.value))}
-                  />
-                </label>
-              </div>
-              <div className="row">
-                <label className="g">
-                  Default Countdown (min)
-                  <input
-                    type="number"
-                    name="countdownMins"
-                    min={5}
-                    max={360}
-                    value={cfgCountdown}
-                    onChange={(e) => setCfgCountdown(Number(e.target.value))}
-                  />
-                </label>
-                <label className="g">
-                  Full Mock Duration (min)
-                  <input
-                    type="number"
-                    name="fullMockMins"
-                    min={10}
-                    max={360}
-                    value={cfgFullMock}
-                    onChange={(e) => setCfgFullMock(Number(e.target.value))}
-                  />
-                </label>
-              </div>
-              <div className="row">
-                <button className="pri g" type="submit">
-                  Save
-                </button>
-                <button type="button" onClick={onClose}>
-                  Cancel
-                </button>
-              </div>
-            </form>
-          )}
-
-          {modal.type === 'dday' && (
-            <form
-              id="ddayForm"
-              onSubmit={(e) => {
-                e.preventDefault();
-                const formTitleInput = e.currentTarget.elements.namedItem(
-                  'title'
-                ) as HTMLInputElement | null;
-                const resolvedTitle = (ddTitle || formTitleInput?.value || '').trim();
-                if (!resolvedTitle) return;
-                onSaveDDay(modal.id, {
-                  title: resolvedTitle,
-                  date: ddDate || addD(todayKey, 90),
-                  e: ddEmoji.trim() || '🎯',
-                  color: ddColor || '#10b981',
-                  primary: ddPrimary,
-                  updatedAt: Date.now(),
-                });
-              }}
-            >
-              <h3>{modal.id ? 'Edit' : 'New'} Exam Countdown</h3>
-              <div className="chips wrap" style={{ paddingBottom: 0 }}>
-                {[
-                  { e: '🎯', title: 'NEET UG Exam', color: '#10b981' },
-                  { e: '🧪', title: 'Grand Mock Test', color: '#6366f1' },
-                  { e: '📚', title: 'Syllabus Completion', color: '#f59e0b' },
-                  { e: '🏫', title: 'Board / Term Exam', color: '#ec4899' },
-                ].map((preset) => (
-                  <button
-                    type="button"
-                    key={preset.title}
-                    className="s"
-                    style={{ fontSize: '11.5px', padding: '4px 9px' }}
-                    onClick={() => {
-                      setDdEmoji(preset.e);
-                      setDdTitle(preset.title);
-                      setDdColor(preset.color);
-                    }}
-                  >
-                    {preset.e} {preset.title}
-                  </button>
+                    {s.e} {s.name}
+                  </Chip>
                 ))}
               </div>
-              <div className="row">
+            </Field>
+
+            <Field label="Chapter (optional)">
+              <Select
+                aria-label="Manual session chapter"
+                title="Chapter"
+                value={msChapterId}
+                options={buildChapterOptions(msSubjectId)}
+                onChange={setMsChapterId}
+              />
+            </Field>
+
+            <Field label="Session heading" hint="Defaults to chapter if blank">
+              <input
+                type="text"
+                name="heading"
+                value={msHeading}
+                onChange={(e) => setMsHeading(e.target.value)}
+                placeholder="e.g., Rotational Motion PYQs"
+                maxLength={90}
+              />
+            </Field>
+
+            <div
+              style={{
+                display: 'grid',
+                gridTemplateColumns: 'repeat(2, minmax(0, 1fr))',
+                gap: '10px',
+              }}
+            >
+              <Field label="Hours studied">
                 <input
-                  type="text"
-                  className="em"
-                  name="e"
-                  value={ddEmoji}
-                  onChange={(e) => setDdEmoji(e.target.value)}
-                  maxLength={4}
-                  aria-label="D-Day Emoji"
+                  type="number"
+                  name="hours"
+                  min={0}
+                  max={24}
+                  value={msHours}
+                  onChange={(e) => setMsHours(Math.max(0, Number(e.target.value)))}
                 />
+              </Field>
+              <Field label="Minutes studied">
                 <input
-                  type="text"
-                  id="ddayTitleInput"
-                  name="title"
-                  value={ddTitle}
-                  onChange={(e) => setDdTitle(e.target.value)}
-                  placeholder="Type custom exam or target name..."
+                  type="number"
+                  name="mins"
+                  min={0}
+                  max={59}
+                  value={msMins}
+                  onChange={(e) => setMsMins(Math.max(0, Number(e.target.value)))}
+                />
+              </Field>
+            </div>
+
+            <div
+              style={{
+                display: 'grid',
+                gridTemplateColumns: 'repeat(2, minmax(0, 1fr))',
+                gap: '10px',
+              }}
+            >
+              <Field label="Logical study date">
+                <input
+                  type="date"
+                  name="dayKey"
+                  value={msDayKey}
+                  onChange={(e) => setMsDayKey(e.target.value)}
                   required
-                  autoFocus
-                  maxLength={40}
-                  aria-label="D-Day Title"
                 />
-              </div>
-              <div className="row">
-                <label className="g">
-                  Target Date
-                  <input
-                    type="date"
-                    name="date"
-                    value={ddDate}
-                    onChange={(e) => setDdDate(e.target.value)}
-                    required
-                  />
-                </label>
-                <label className="g">
-                  Badge Color
-                  <input
-                    type="color"
-                    name="color"
-                    value={ddColor}
-                    onChange={(e) => setDdColor(e.target.value)}
-                    style={{ height: '42px', padding: '4px' }}
-                  />
-                </label>
-              </div>
-              <label className="row" style={{ marginTop: '6px', cursor: 'pointer' }}>
+              </Field>
+              <Field label="Start time">
                 <input
-                  type="checkbox"
-                  style={{ width: 'auto' }}
-                  checked={ddPrimary}
-                  onChange={(e) => setDdPrimary(e.target.checked)}
+                  type="time"
+                  name="startTime"
+                  value={msStartTime}
+                  onChange={(e) => setMsStartTime(e.target.value)}
+                  required
                 />
-                ★ Primary exam (used for Syllabus Pace Calculator)
-              </label>
-              <div className="row">
-                <button className="pri g" type="submit">
-                  Save D-Day
-                </button>
-                <button type="button" onClick={onClose}>
-                  Cancel
-                </button>
+              </Field>
+            </div>
+
+            <Field label="What did you cover?">
+              <textarea
+                name="note"
+                rows={3}
+                maxLength={300}
+                value={msNote}
+                onChange={(e) => setMsNote(e.target.value)}
+                placeholder="e.g., Completed NCERT reading and solved 45 questions..."
+              />
+            </Field>
+
+            <Field label="Focus rating (1–5)">
+              <input
+                type="number"
+                name="rating"
+                min={1}
+                max={5}
+                value={msRating}
+                onChange={(e) => setMsRating(Number(e.target.value))}
+              />
+            </Field>
+
+            <div style={{ display: 'flex', gap: '8px', marginTop: '4px' }}>
+              <Button variant="secondary" onClick={onClose} style={{ flex: 1 }}>
+                Cancel
+              </Button>
+              <Button variant="primary" type="submit" style={{ flex: 2 }}>
+                Save Session
+              </Button>
+            </div>
+
+            {existingSes && (
+              <Button
+                variant="danger"
+                fullWidth
+                onClick={() => onDeleteSession(existingSes.id)}
+              >
+                Delete Session
+              </Button>
+            )}
+          </form>
+        )}
+
+        {modal.type === 'mock' && (
+          <form
+            id="mockForm"
+            style={{ display: 'grid', gap: '12px' }}
+            onSubmit={(e) => {
+              e.preventDefault();
+              const cleanName = mockName.trim() || 'NEET Mock Test';
+              const durNum = Number(mockDurationMins);
+              const clampedSubjects: Record<string, MockSubjectScore> = {};
+              for (const [subId, sc] of Object.entries(mockScores)) {
+                clampedSubjects[subId] = {
+                  correct: Math.max(0, Math.floor(Number(sc?.correct) || 0)),
+                  wrong: Math.max(0, Math.floor(Number(sc?.wrong) || 0)),
+                  unattempted: Math.max(0, Math.floor(Number(sc?.unattempted) || 0)),
+                };
+              }
+              onSaveMock(
+                modal.id,
+                {
+                  name: cleanName,
+                  dayKey: mockDayKey || todayKey,
+                  durationMins:
+                    mockDurationMins.trim() && Number.isFinite(durNum) && durNum > 0
+                      ? Math.round(durNum)
+                      : undefined,
+                  marksPerCorrect: Number.isFinite(Number(mockMarksCorrect))
+                    ? Number(mockMarksCorrect)
+                    : 4,
+                  marksPerWrong: storedMarksPerWrong,
+                  maxMarks:
+                    Number.isFinite(Number(mockMaxMarks)) && Number(mockMaxMarks) > 0
+                      ? Number(mockMaxMarks)
+                      : 720,
+                  subjects: clampedSubjects,
+                  note: mockNote.trim(),
+                  updatedAt: Date.now(),
+                },
+                queuedMistakes
+              );
+            }}
+          >
+            <Field label="Test name / series">
+              <input
+                type="text"
+                value={mockName}
+                onChange={(e) => setMockName(e.target.value)}
+                placeholder="e.g. Allen Major Test #4 / Aakash FTS-02"
+                required
+                autoFocus
+                maxLength={80}
+              />
+            </Field>
+
+            <div
+              style={{
+                display: 'grid',
+                gridTemplateColumns: 'repeat(2, minmax(0, 1fr))',
+                gap: '10px',
+              }}
+            >
+              <Field label="Date">
+                <input
+                  type="date"
+                  value={mockDayKey}
+                  onChange={(e) => setMockDayKey(e.target.value)}
+                  required
+                />
+              </Field>
+              <Field label="Duration (mins)">
+                <input
+                  type="number"
+                  min={10}
+                  max={300}
+                  value={mockDurationMins}
+                  onChange={(e) => setMockDurationMins(e.target.value)}
+                  placeholder="180"
+                />
+              </Field>
+            </div>
+
+            <div
+              style={{
+                display: 'grid',
+                gridTemplateColumns: 'repeat(3, minmax(0, 1fr))',
+                gap: '8px',
+              }}
+            >
+              <Field label="+Correct">
+                <input
+                  type="number"
+                  step="0.5"
+                  min={0.5}
+                  value={mockMarksCorrect}
+                  onChange={(e) => setMockMarksCorrect(Number(e.target.value))}
+                />
+              </Field>
+              <Field label="-Wrong">
+                <input
+                  type="number"
+                  min={0}
+                  step="0.25"
+                  value={mockMarksLost}
+                  onChange={(e) =>
+                    setMockMarksLost(Math.max(0, Number(e.target.value) || 0))
+                  }
+                />
+              </Field>
+              <Field label="Max marks">
+                <input
+                  type="number"
+                  min={1}
+                  max={2000}
+                  value={mockMaxMarks}
+                  onChange={(e) => setMockMaxMarks(Number(e.target.value))}
+                />
+              </Field>
+            </div>
+
+            {exceedsMaxQuestions && (
+              <div
+                role="status"
+                style={{
+                  display: 'flex',
+                  alignItems: 'center',
+                  gap: '8px',
+                  padding: '8px 12px',
+                  borderRadius: '10px',
+                  background: 'color-mix(in srgb, var(--warn) 14%, transparent)',
+                  border: '1px solid color-mix(in srgb, var(--warn) 42%, transparent)',
+                  color: 'var(--warn-ink)',
+                  fontSize: '12px',
+                  fontWeight: 600,
+                }}
+              >
+                <AlertTriangle size={16} strokeWidth={1.75} aria-hidden="true" style={{ flexShrink: 0 }} />
+                <span>
+                  Total questions ({previewMockStats.totalQuestions}) exceed{' '}
+                  {expectedMaxQuestions} questions for {mockMaxMarks} max marks.
+                </span>
               </div>
-              {modal.id && existingDDay && (
-                <button
-                  type="button"
-                  className="dg-btn"
-                  onClick={() => onDeleteDDay(modal.id!)}
+            )}
+
+            <div
+              style={{
+                border: '1px solid var(--line)',
+                borderRadius: '12px',
+                padding: '12px',
+                display: 'grid',
+                gap: '10px',
+                background: 'var(--sf-2)',
+              }}
+            >
+              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: '8px' }}>
+                <span style={{ fontSize: '13px', fontWeight: 600 }}>Subject question counts</span>
+                <span className="dh-chip active tabular-nums">
+                  {previewMockStats.totalScore}/{mockMaxMarks} ({previewMockStats.accuracyPct}%)
+                </span>
+              </div>
+
+              {activeSubjects.map((sub) => {
+                const sc = mockScores[sub.id] || {
+                  correct: 0,
+                  wrong: 0,
+                  unattempted: 0,
+                };
+                const subDetail = previewMockStats.bySubject.find(
+                  (bs) => bs.subjectId === sub.id
+                );
+                return (
+                  <div
+                    key={sub.id}
+                    style={{
+                      borderTop: '1px solid var(--line)',
+                      paddingTop: '10px',
+                      display: 'grid',
+                      gap: '6px',
+                    }}
+                  >
+                    <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                      <span style={{ display: 'inline-flex', alignItems: 'center', gap: '6px', fontSize: '13px', fontWeight: 600 }}>
+                        <span
+                          aria-hidden="true"
+                          style={{
+                            width: '8px',
+                            height: '8px',
+                            borderRadius: '99px',
+                            background: sub.color,
+                          }}
+                        />
+                        {sub.e} {sub.name}
+                      </span>
+                      <span className="tabular-nums" style={{ fontSize: '12px', color: 'var(--tx-2)' }}>
+                        {subDetail
+                          ? `${subDetail.score} marks · ${subDetail.accuracyPct}%`
+                          : ''}
+                      </span>
+                    </div>
+                    <div
+                      style={{
+                        display: 'grid',
+                        gridTemplateColumns: 'repeat(3, minmax(0, 1fr))',
+                        gap: '6px',
+                      }}
+                    >
+                      <label style={{ fontSize: '12px', color: 'var(--tx-2)', margin: 0 }}>
+                        Correct
+                        <input
+                          type="number"
+                          min={0}
+                          max={200}
+                          step={1}
+                          value={sc.correct}
+                          onChange={(e) =>
+                            setMockScores((prev) => ({
+                              ...prev,
+                              [sub.id]: {
+                                ...sc,
+                                correct: Math.max(
+                                  0,
+                                  Math.floor(Number(e.target.value) || 0)
+                                ),
+                              },
+                            }))
+                          }
+                          style={{ marginTop: '4px', minHeight: '38px', padding: '6px 8px' }}
+                        />
+                      </label>
+                      <label style={{ fontSize: '12px', color: 'var(--tx-2)', margin: 0 }}>
+                        Wrong
+                        <input
+                          type="number"
+                          min={0}
+                          max={200}
+                          step={1}
+                          value={sc.wrong}
+                          onChange={(e) =>
+                            setMockScores((prev) => ({
+                              ...prev,
+                              [sub.id]: {
+                                ...sc,
+                                wrong: Math.max(
+                                  0,
+                                  Math.floor(Number(e.target.value) || 0)
+                                ),
+                              },
+                            }))
+                          }
+                          style={{ marginTop: '4px', minHeight: '38px', padding: '6px 8px' }}
+                        />
+                      </label>
+                      <label style={{ fontSize: '12px', color: 'var(--tx-2)', margin: 0 }}>
+                        Skipped
+                        <input
+                          type="number"
+                          min={0}
+                          max={200}
+                          step={1}
+                          value={sc.unattempted}
+                          onChange={(e) =>
+                            setMockScores((prev) => ({
+                              ...prev,
+                              [sub.id]: {
+                                ...sc,
+                                unattempted: Math.max(
+                                  0,
+                                  Math.floor(Number(e.target.value) || 0)
+                                ),
+                              },
+                            }))
+                          }
+                          style={{ marginTop: '4px', minHeight: '38px', padding: '6px 8px' }}
+                        />
+                      </label>
+                    </div>
+                  </div>
+                );
+              })}
+            </div>
+
+            <Field label="Mistakes & analysis note">
+              <textarea
+                rows={3}
+                maxLength={400}
+                value={mockNote}
+                onChange={(e) => setMockNote(e.target.value)}
+                placeholder="Silly mistakes, weak topics to revise before next test..."
+              />
+            </Field>
+
+            <div
+              style={{
+                border: '1px solid var(--line)',
+                borderRadius: '12px',
+                padding: '12px',
+                background: 'var(--sf-2)',
+                display: 'grid',
+                gap: '8px',
+              }}
+            >
+              <div style={{ fontSize: '13px', fontWeight: 600 }}>
+                Log mistakes from this mock ({queuedMistakes.length} queued)
+              </div>
+              <div
+                style={{
+                  display: 'grid',
+                  gridTemplateColumns: 'repeat(auto-fit, minmax(140px, 1fr))',
+                  gap: '8px',
+                }}
+              >
+                <Select
+                  aria-label="Mistake Subject"
+                  title="Subject"
+                  value={mkMisSubId}
+                  options={subjectSelectOptions}
+                  onChange={(val) => {
+                    setMkMisSubId(val);
+                    setMkMisChapId('');
+                  }}
+                />
+                <Select
+                  aria-label="Mistake Chapter"
+                  title="Chapter (optional)"
+                  value={mkMisChapId}
+                  options={buildChapterOptions(mkMisSubId, 'Chapter (optional)')}
+                  onChange={setMkMisChapId}
+                />
+                <Select
+                  aria-label="Mistake Reason"
+                  title="Mistake reason"
+                  value={mkMisReason}
+                  options={MISTAKE_REASON_OPTIONS}
+                  onChange={setMkMisReason}
+                />
+              </div>
+              <div style={{ display: 'flex', gap: '8px', alignItems: 'center' }}>
+                <input
+                  type="text"
+                  placeholder="Short mistake note (optional)..."
+                  value={mkMisNote}
+                  onChange={(e) => setMkMisNote(e.target.value)}
+                  maxLength={140}
+                  style={{ flex: 1, minWidth: 0 }}
+                />
+                <Button
+                  variant="secondary"
+                  onClick={() => {
+                    setQueuedMistakes((prev) => [
+                      ...prev,
+                      {
+                        subjectId: mkMisSubId,
+                        chapterId: mkMisChapId || undefined,
+                        reason: mkMisReason,
+                        note: mkMisNote.trim() || undefined,
+                      },
+                    ]);
+                    setMkMisNote('');
+                  }}
                 >
-                  Remove D-Day
-                </button>
+                  + Queue
+                </Button>
+              </div>
+              {queuedMistakes.length > 0 && (
+                <div style={{ display: 'grid', gap: '6px' }}>
+                  {queuedMistakes.map((qm, idx) => {
+                    const sub = state.subjects.find((s) => s.id === qm.subjectId);
+                    const ch = qm.chapterId
+                      ? state.chapters.find((c) => c.id === qm.chapterId)
+                      : undefined;
+                    return (
+                      <div
+                        key={idx}
+                        style={{
+                          display: 'flex',
+                          alignItems: 'center',
+                          justifyContent: 'space-between',
+                          gap: '8px',
+                          fontSize: '12px',
+                          padding: '6px 8px',
+                          borderRadius: '8px',
+                          background: 'var(--sf-1)',
+                          border: '1px solid var(--line)',
+                        }}
+                      >
+                        <span style={{ minWidth: 0 }}>
+                          {sub?.e} <strong>{qm.reason}</strong>
+                          {ch ? ` · ${ch.name}` : ''}
+                          {qm.note ? ` — ${qm.note}` : ''}
+                        </span>
+                        <Button
+                          variant="danger"
+                          onClick={() =>
+                            setQueuedMistakes((prev) =>
+                              prev.filter((_, i) => i !== idx)
+                            )
+                          }
+                          aria-label="Remove queued mistake"
+                          style={{ minHeight: '32px', padding: '0 8px' }}
+                        >
+                          Remove
+                        </Button>
+                      </div>
+                    );
+                  })}
+                </div>
               )}
-            </form>
-          )}
+            </div>
 
-      {modal.type === 'confirmResetHour' && (
-        <div style={{ display: 'grid', gap: '12px' }}>
-          <h3>
-            Change Day Reset Hour to {pad(modal.newHour)}:00
-            {modal.newHour === 0 ? ' (Midnight)' : ' AM'}?
-          </h3>
-          <small>
-            This will recompute the logical study date for all existing study
-            sessions and re-sync your auto-study habits across affected days.
-          </small>
-          <small style={{ color: 'var(--tx)', fontWeight: 600 }}>
-            Sessions are re-dated. Habit ticks, tasks, notes, mood and planner blocks keep their original dates.
-          </small>
-          <div className="row">
-            <button
-              type="button"
-              className="pri g"
-              onClick={() => onConfirmResetHour(modal.newHour)}
-            >
-              Confirm &amp; Recalculate
-            </button>
-            <button type="button" className="g" onClick={onClose}>
-              Cancel
-            </button>
-          </div>
-        </div>
-      )}
+            <div style={{ display: 'flex', gap: '8px', marginTop: '4px' }}>
+              <Button variant="secondary" onClick={onClose} style={{ flex: 1 }}>
+                Cancel
+              </Button>
+              <Button variant="primary" type="submit" style={{ flex: 2 }}>
+                Save Mock Test
+              </Button>
+            </div>
 
-      {modal.type === 'confirmReset' && (
-        <div style={{ display: 'grid', gap: '12px' }}>
-          <h3>Erase All Device Data?</h3>
-          <small>
-            This will reset all study sessions, habits, syllabus chapters, and
-            mock tests on this device to a clean blank state. Export a JSON
-            backup first if you want to keep your records.
-          </small>
-          <div className="row">
-            <button
-              type="button"
-              className="dg-btn g"
-              onClick={onConfirmReset}
+            {existingMock && (
+              <Button
+                variant="danger"
+                fullWidth
+                onClick={() => onDeleteMock(existingMock.id)}
+              >
+                Delete Mock Test
+              </Button>
+            )}
+          </form>
+        )}
+
+        {modal.type === 'timerConfig' && (
+          <form
+            id="cfgTimerForm"
+            style={{ display: 'grid', gap: '12px' }}
+            onSubmit={(e) => {
+              e.preventDefault();
+              onSaveTimerConfig(
+                Math.max(5, Number(cfgPomoWork) || 25),
+                Math.max(1, Number(cfgPomoBreak) || 5),
+                Math.max(5, Number(cfgCountdown) || 45),
+                Math.max(10, Number(cfgFullMock) || 180)
+              );
+            }}
+          >
+            <div
+              style={{
+                display: 'grid',
+                gridTemplateColumns: 'repeat(2, minmax(0, 1fr))',
+                gap: '10px',
+              }}
             >
-              Erase Everything
-            </button>
-            <button type="button" className="g" onClick={onClose}>
-              Cancel
-            </button>
-          </div>
+              <Field label="Pomodoro work (min)">
+                <input
+                  type="number"
+                  name="pomoWork"
+                  min={5}
+                  max={180}
+                  value={cfgPomoWork}
+                  onChange={(e) => setCfgPomoWork(Number(e.target.value))}
+                />
+              </Field>
+              <Field label="Pomodoro break (min)">
+                <input
+                  type="number"
+                  name="pomoBreak"
+                  min={1}
+                  max={60}
+                  value={cfgPomoBreak}
+                  onChange={(e) => setCfgPomoBreak(Number(e.target.value))}
+                />
+              </Field>
+              <Field label="Countdown default (min)">
+                <input
+                  type="number"
+                  name="countdownMins"
+                  min={5}
+                  max={360}
+                  value={cfgCountdown}
+                  onChange={(e) => setCfgCountdown(Number(e.target.value))}
+                />
+              </Field>
+              <Field label="Full mock duration (min)">
+                <input
+                  type="number"
+                  name="fullMockMins"
+                  min={10}
+                  max={360}
+                  value={cfgFullMock}
+                  onChange={(e) => setCfgFullMock(Number(e.target.value))}
+                />
+              </Field>
+            </div>
+
+            <div style={{ display: 'flex', gap: '8px', marginTop: '4px' }}>
+              <Button variant="secondary" onClick={onClose} style={{ flex: 1 }}>
+                Cancel
+              </Button>
+              <Button variant="primary" type="submit" style={{ flex: 2 }}>
+                Save
+              </Button>
+            </div>
+          </form>
+        )}
+
+        {modal.type === 'dday' && (
+          <form
+            id="ddayForm"
+            style={{ display: 'grid', gap: '12px' }}
+            onSubmit={(e) => {
+              e.preventDefault();
+              const formTitleInput = e.currentTarget.elements.namedItem(
+                'title'
+              ) as HTMLInputElement | null;
+              const resolvedTitle = (ddTitle || formTitleInput?.value || '').trim();
+              if (!resolvedTitle) return;
+              onSaveDDay(modal.id, {
+                title: resolvedTitle,
+                date: ddDate || addD(todayKey, 90),
+                e: ddEmoji.trim() || '🎯',
+                color: ddColor || '#10b981',
+                primary: ddPrimary,
+                updatedAt: Date.now(),
+              });
+            }}
+          >
+            <div style={{ display: 'flex', flexWrap: 'wrap', gap: '6px' }}>
+              {[
+                { e: '🎯', title: 'NEET UG Exam', color: '#10b981' },
+                { e: '🧪', title: 'Grand Mock Test', color: '#6366f1' },
+                { e: '📚', title: 'Syllabus Completion', color: '#f59e0b' },
+                { e: '🏫', title: 'Board / Term Exam', color: '#ec4899' },
+              ].map((preset) => (
+                <Chip
+                  key={preset.title}
+                  onClick={() => {
+                    setDdEmoji(preset.e);
+                    setDdTitle(preset.title);
+                    setDdColor(preset.color);
+                  }}
+                >
+                  {preset.e} {preset.title}
+                </Chip>
+              ))}
+            </div>
+
+            <div style={{ display: 'flex', gap: '8px' }}>
+              <input
+                type="text"
+                className="em"
+                name="e"
+                value={ddEmoji}
+                onChange={(e) => setDdEmoji(e.target.value)}
+                maxLength={4}
+                aria-label="D-Day Emoji"
+                style={{ width: '56px', textAlign: 'center', flexShrink: 0 }}
+              />
+              <input
+                type="text"
+                id="ddayTitleInput"
+                name="title"
+                value={ddTitle}
+                onChange={(e) => setDdTitle(e.target.value)}
+                placeholder="Exam or milestone name..."
+                required
+                autoFocus
+                maxLength={40}
+                aria-label="D-Day Title"
+                style={{ flex: 1, minWidth: 0 }}
+              />
+            </div>
+
+            <div
+              style={{
+                display: 'grid',
+                gridTemplateColumns: 'repeat(2, minmax(0, 1fr))',
+                gap: '10px',
+              }}
+            >
+              <Field label="Target date">
+                <input
+                  type="date"
+                  name="date"
+                  value={ddDate}
+                  onChange={(e) => setDdDate(e.target.value)}
+                  required
+                />
+              </Field>
+              <Field label="Indicator color">
+                <Select
+                  aria-label="D-Day badge color"
+                  title="Indicator color"
+                  value={ddColor}
+                  options={DDAY_COLOR_OPTIONS}
+                  onChange={setDdColor}
+                />
+              </Field>
+            </div>
+
+            <div
+              style={{
+                display: 'flex',
+                alignItems: 'center',
+                justifyContent: 'space-between',
+                gap: '12px',
+                padding: '10px 12px',
+                borderRadius: '12px',
+                background: 'var(--sf-2)',
+                border: '1px solid var(--line)',
+              }}
+            >
+              <div>
+                <div style={{ fontSize: '14px', fontWeight: 500 }}>Primary exam</div>
+                <div style={{ fontSize: '12px', color: 'var(--tx-2)' }}>
+                  Used for Syllabus Pace calculations
+                </div>
+              </div>
+              <Switch
+                aria-label="Primary exam"
+                checked={ddPrimary}
+                onChange={setDdPrimary}
+              />
+            </div>
+
+            <div style={{ display: 'flex', gap: '8px', marginTop: '4px' }}>
+              <Button variant="secondary" onClick={onClose} style={{ flex: 1 }}>
+                Cancel
+              </Button>
+              <Button variant="primary" type="submit" style={{ flex: 2 }}>
+                Save D-Day
+              </Button>
+            </div>
+
+            {modal.id && existingDDay && (
+              <Button
+                variant="danger"
+                fullWidth
+                onClick={() => onDeleteDDay(modal.id!)}
+              >
+                Remove D-Day
+              </Button>
+            )}
+          </form>
+        )}
+      </Sheet>
+
+      <Dialog
+        open={modal.type === 'confirmResetHour'}
+        onClose={onClose}
+        title={
+          modal.type === 'confirmResetHour'
+            ? `Change day reset hour to ${pad(modal.newHour)}:00${modal.newHour === 0 ? ' (Midnight)' : ' AM'}?`
+            : 'Change day reset hour?'
+        }
+      >
+        {modal.type === 'confirmResetHour' && (
+          <>
+            <p style={{ margin: 0, fontSize: '13px', color: 'var(--tx-2)', lineHeight: 1.5 }}>
+              This recalculates the logical study date for all saved sessions and re-syncs
+              auto-study habits across affected days.
+            </p>
+            <p style={{ margin: 0, fontSize: '13px', color: 'var(--tx)', lineHeight: 1.5 }}>
+              Habit ticks, tasks, notes, mood, and planner blocks keep their original dates.
+            </p>
+            <div style={{ display: 'flex', gap: '8px', marginTop: '4px' }}>
+              <Button variant="secondary" onClick={onClose} style={{ flex: 1 }}>
+                Cancel
+              </Button>
+              <Button
+                variant="primary"
+                onClick={() => onConfirmResetHour(modal.newHour)}
+                style={{ flex: 2 }}
+              >
+                Confirm &amp; Recalculate
+              </Button>
+            </div>
+          </>
+        )}
+      </Dialog>
+
+      <Dialog
+        open={modal.type === 'confirmReset'}
+        onClose={onClose}
+        title="Erase all device data?"
+      >
+        <p style={{ margin: 0, fontSize: '13px', color: 'var(--tx-2)', lineHeight: 1.5 }}>
+          This resets all study sessions, habits, syllabus chapters, and mock tests on this
+          device to a clean slate. Export a JSON backup first if you want to keep your records.
+        </p>
+        <div style={{ display: 'flex', gap: '8px', marginTop: '4px' }}>
+          <Button variant="secondary" onClick={onClose} style={{ flex: 1 }}>
+            Cancel
+          </Button>
+          <Button variant="danger" onClick={onConfirmReset} style={{ flex: 1 }}>
+            Erase Everything
+          </Button>
         </div>
-      )}
-    </dialog>
+      </Dialog>
+    </>
   );
 };

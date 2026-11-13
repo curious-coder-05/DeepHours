@@ -1,4 +1,4 @@
-const CACHE_NAME = 'deep-hours-v6';
+const CACHE_NAME = 'deep-hours-v7';
 const ASSETS = [
   '/',
   '/index.html',
@@ -72,6 +72,13 @@ self.addEventListener('fetch', event => {
 
   const url = new URL(event.request.url);
   if (url.origin !== self.location.origin) return;
+  if (
+    url.pathname.startsWith('/src/') ||
+    url.pathname.startsWith('/@') ||
+    url.pathname.startsWith('/node_modules/')
+  ) {
+    return;
+  }
 
   const isNav =
     event.request.mode === 'navigate' ||

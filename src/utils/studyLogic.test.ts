@@ -2492,15 +2492,78 @@ describe('Part C: Deep Hours NEET Study & Habit Logger Unit Tests', () => {
     const twoThirtyAm = new Date(2026, 9, 25, 2, 30, 0, 0);
     assert.equal(logicalKey(twoThirtyAm), '2026-10-25');
 
-    // norm() preserves explicit user edits/overrides and legacy sub_chem fallback still resolves
+    // v1 saved state automatically migrates old defaults (4->0, 200->180, 4 subjects -> 6 subjects + custom kept)
+    const legacyV1State = norm({
+      set: { dayResetHour: 4, fullMockMins: 200, updatedAt: 1700000000000 },
+      subjects: [
+        { id: 'sub_phy', name: 'Physics', e: '⚛️', color: '#3b82f6', dailyGoalMins: 90, arch: 0, todos: [] },
+        { id: 'sub_chem', name: 'Chemistry', e: '🧪', color: '#f59e0b', dailyGoalMins: 0, arch: 0, todos: [] },
+        { id: 'sub_bot', name: 'Botany', e: '🌿', color: '#10b981', dailyGoalMins: 0, arch: 0, todos: [] },
+        { id: 'sub_zoo', name: 'Zoology', e: '🧬', color: '#ec4899', dailyGoalMins: 0, arch: 0, todos: [] },
+        { id: 'sub_extra', name: 'Biochemistry', e: '📘', color: '#38bdf8', dailyGoalMins: 30, arch: 0, todos: [] },
+      ],
+    });
+    assert.equal(legacyV1State.set.defaultsVersion, 2);
+    assert.equal(legacyV1State.set.dayResetHour, 0);
+    assert.equal(legacyV1State.set.fullMockMins, 180);
+    assert.deepEqual(
+      legacyV1State.subjects.map((s) => ({ name: s.name, e: s.e })),
+      [
+        { name: 'Physics', e: '⚛️' },
+        { name: 'Botany', e: '🌱' },
+        { name: 'Zoology', e: '🧬' },
+        { name: 'Physical chemistry', e: '🧪' },
+        { name: 'Inorganic chemistry', e: '⚗️' },
+        { name: 'Organic chemistry', e: '⌬' },
+        { name: 'Biochemistry', e: '📘' },
+      ]
+    );
+    assert.equal(legacyV1State.subjects[0].dailyGoalMins, 90);
+    assert.ok(legacyV1State.del.includes('sub_chem'));
+
+    // Cloud merge against older v1 remote meta/core keeps migrated v2 defaults and does not resurrect sub_chem
+    const mergedFromV1Cloud = mergeStateWithCloudDocs(
+      legacyV1State,
+      {
+        metaDocs: {
+          core: {
+            set: { ...legacyV1State.set, dayResetHour: 4, fullMockMins: 200, defaultsVersion: undefined, updatedAt: 1700000000000 },
+            subjects: {
+              sub_phy: { id: 'sub_phy', name: 'Physics', e: '⚛️', color: '#3b82f6', arch: 0, todos: [], updatedAt: 1700000000000 },
+              sub_chem: { id: 'sub_chem', name: 'Chemistry', e: '🧪', color: '#f59e0b', arch: 0, todos: [], updatedAt: 1700000000000 },
+              sub_bot: { id: 'sub_bot', name: 'Botany', e: '🌿', color: '#10b981', arch: 0, todos: [], updatedAt: 1700000000000 },
+              sub_zoo: { id: 'sub_zoo', name: 'Zoology', e: '🧬', color: '#ec4899', arch: 0, todos: [], updatedAt: 1700000000000 },
+            },
+            ddays: {},
+            restDays: [],
+            del: {},
+            bonus: 0,
+            exp: 0,
+            ob: 1,
+            profile: { nick: '', emoji: '🩺' },
+            groupHistory: {},
+            groupsConfig: { consentAccepted: false, joined: [] },
+            updatedAt: 1700000000000,
+          },
+        },
+        monthDocs: {},
+      },
+      Date.now()
+    );
+    assert.equal(mergedFromV1Cloud.set.dayResetHour, 0);
+    assert.equal(mergedFromV1Cloud.set.fullMockMins, 180);
+    assert.equal(mergedFromV1Cloud.subjects.some((s) => s.id === 'sub_chem'), false);
+    assert.equal(mergedFromV1Cloud.subjects.length, 7);
+
+    // Once on v2 (defaultsVersion: 2), manual overrides back to 4 or 200/210 or custom subjects are preserved
     const customState = norm({
-      set: { dayResetHour: 4, fullMockMins: 210 },
+      set: { defaultsVersion: 2, dayResetHour: 4, fullMockMins: 200 },
       subjects: [
         { id: 'sub_custom', name: 'Biochemistry', e: '🧬', color: '#38bdf8', arch: 0, todos: [] },
       ],
     });
     assert.equal(customState.set.dayResetHour, 4);
-    assert.equal(customState.set.fullMockMins, 210);
+    assert.equal(customState.set.fullMockMins, 200);
     assert.equal(customState.subjects.length, 1);
     assert.equal(customState.subjects[0].name, 'Biochemistry');
     const legacyChem = getSubject(fresh, 'sub_chem');

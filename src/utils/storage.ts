@@ -441,6 +441,14 @@ export async function loadInitialState(): Promise<PulseHabitState> {
     }
   }
 
+  const chosenRawDefaultsVersion =
+    isPlainStateRecord(chosenRaw) && isPlainStateRecord(chosenRaw.set)
+      ? Number(chosenRaw.set.defaultsVersion) || 0
+      : 0;
+  if (chosenRaw && chosenRawDefaultsVersion < 2) {
+    needsResave = true;
+  }
+
   const state = norm(chosenRaw);
   if (chosenRaw && !state.savedAt) {
     state.savedAt = Date.now();

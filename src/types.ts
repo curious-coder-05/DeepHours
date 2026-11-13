@@ -252,6 +252,8 @@ export interface AppSettings {
   revisionSuggestDays?: number[];
   burnoutDismissedUntil?: string;
   avatarEmoji?: string;
+  defaultsVersion?: number;
+  ui3d?: 'auto' | 'on' | 'off';
   cloudAccount?: CloudAccountInfo;
   updatedAt?: number;
 }

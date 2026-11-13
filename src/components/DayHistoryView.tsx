@@ -1,4 +1,14 @@
 import React, { useEffect, useMemo, useState } from 'react';
+import {
+  Calendar,
+  CheckCircle2,
+  ChevronDown,
+  ChevronLeft,
+  ChevronRight,
+  Edit3,
+  Plus,
+  XCircle,
+} from 'lucide-react';
 import type {
   Chapter,
   DailyTask,
@@ -32,6 +42,12 @@ import {
   skip,
 } from '../utils/studyLogic';
 import { computeDayXpBreakdown } from '../utils/xp';
+import { Button } from './ui/Button';
+import { Card } from './ui/Card';
+import { IconButton } from './ui/IconButton';
+import { SectionHeader } from './ui/SectionHeader';
+import { Segmented } from './ui/Segmented';
+import { Stat } from './ui/Stat';
 
 export interface DayHistoryViewProps {
   state: PulseHabitState;
@@ -69,12 +85,12 @@ const WEEKDAY_FULL = [
   'Saturday',
 ] as const;
 
-const MOOD_EMOJIS: Record<number, { emoji: string; label: string }> = {
-  1: { emoji: '😫', label: 'Drained' },
-  2: { emoji: '😕', label: 'Low' },
-  3: { emoji: '😐', label: 'Okay' },
-  4: { emoji: '🙂', label: 'Good' },
-  5: { emoji: '🔥', label: 'In Flow' },
+const MOOD_LABELS: Record<number, string> = {
+  1: 'Drained (1/5)',
+  2: 'Low (2/5)',
+  3: 'Okay (3/5)',
+  4: 'Good (4/5)',
+  5: 'In flow (5/5)',
 };
 
 function formatReadableDate(dayKey: string): string {
@@ -149,7 +165,6 @@ export function buildDayArchiveRecord(
   const xpBreakdown = computeDayXpBreakdown(state, dayKey);
   const xpEarned = xpBreakdown.total;
 
-  // Habits due on dayKey (plus any habit that has a log entry on dayKey)
   const dueHabits = dueOn(state, dayKey).filter((h) => h.created <= dayKey);
   const dueIds = new Set(dueHabits.map((h) => h.id));
   const extraLoggedHabits = live(state).filter(
@@ -175,18 +190,15 @@ export function buildDayArchiveRecord(
     }
   }
 
-  // Daily Tasks for dayKey
   const dayTasks = (state.tasks || []).filter((t) => t.dayKey === dayKey);
   const tasksCompleted = dayTasks.filter((t) => t.done);
   const tasksMissed = isFuture ? [] : dayTasks.filter((t) => !t.done);
 
-  // Study Sessions on dayKey
   const sessions = (state.sessions || [])
     .filter((s) => s.dayKey === dayKey)
     .slice()
     .sort((a, b) => a.startTs - b.startTs);
 
-  // Syllabus Chapters & Revisions on dayKey
   const chaptersCompleted = (state.chapters || []).filter(
     (ch) => ch.status === 'completed' && ch.completedOn === dayKey
   );
@@ -215,7 +227,6 @@ export function buildDayArchiveRecord(
     }
   }
 
-  // Mocks, PYQs, Mistakes, Doubts
   const mocks = (state.mocks || []).filter((m) => m.dayKey === dayKey);
   const pyqEntries = (state.pyq || []).filter((p) => p.dayKey === dayKey);
   const mistakes = (state.mistakes || []).filter((m) => m.dayKey === dayKey);
@@ -224,7 +235,6 @@ export function buildDayArchiveRecord(
     (d) => logicalKey(d.createdAt, resetHour) === dayKey
   );
 
-  // Wellbeing, Mood & Note
   const wb = state.wellbeing?.[dayKey];
   const moodValue = state.mood?.[dayKey];
   const dailyNote = (state.notes?.[dayKey] || '').trim();
@@ -299,12 +309,11 @@ export const DayHistoryView: React.FC<DayHistoryViewProps> = ({
     [state, selectedDayKey, todayKey]
   );
 
-  // Build calendar cells for calYearMonth
   const calendarCells = useMemo(() => {
     const { year, month } = calYearMonth;
     const firstDay = new Date(year, month, 1);
     const daysInMonth = new Date(year, month + 1, 0).getDate();
-    const weekStart = state.set.ws ?? 1; // 0 = Sun, 1 = Mon
+    const weekStart = state.set.ws ?? 1;
     const startOffset = (firstDay.getDay() - weekStart + 7) % 7;
 
     const cells: Array<
@@ -370,48 +379,35 @@ export const DayHistoryView: React.FC<DayHistoryViewProps> = ({
   const showMissedSection = filterMode === 'all' || filterMode === 'missed';
 
   return (
-    <div>
-      {/* Top Date Selector & Navigation Bar */}
-      <div className="card" style={{ padding: '14px' }}>
-        <div
-          className="row sp"
-          style={{ flexWrap: 'wrap', gap: '10px', marginBottom: '10px' }}
-        >
+    <div className="space-y-4">
+      {/* Top Date Selector & Collapsible Month Calendar */}
+      <Card>
+        <div className="split flex-wrap gap-3">
           <div>
-            <small
-              style={{
-                textTransform: 'uppercase',
-                letterSpacing: '0.05em',
-                fontWeight: 700,
-                color: 'var(--ac)',
-              }}
-            >
-              📅 Daily Activity Archive &amp; Time Machine
-            </small>
-            <h3 style={{ marginTop: '2px', fontSize: '17px' }}>
+            <span className="text-[12px] font-medium text-[var(--ac)]">
+              Daily activity history
+            </span>
+            <h3 className="text-[17px] font-semibold text-[var(--tx)]">
               {formatReadableDate(selectedDayKey)}
             </h3>
-            <small className="mono mut">
-              Date Key: {selectedDayKey}
+            <p className="tnum text-[12px] text-[var(--tx-2)]">
+              {selectedDayKey}
               {selectedDayKey === todayKey
                 ? ' · Today'
                 : selectedDayKey > todayKey
-                  ? ' · Future Date'
+                  ? ' · Future date'
                   : ''}
-              {record.isRestDay ? ' · 🛡️ Rest Pass Day' : ''}
-            </small>
+              {record.isRestDay ? ' · Protected rest pass' : ''}
+            </p>
           </div>
 
-          <div className="row" style={{ gap: '6px', flexWrap: 'wrap' }}>
-            <button
-              type="button"
-              className="s"
+          <div className="flex flex-wrap items-center gap-1.5">
+            <IconButton
+              label="Previous day"
               onClick={() => handleSelectDate(addD(selectedDayKey, -1))}
-              aria-label="Previous day"
-              title="Go to previous day"
             >
-              ← Prev
-            </button>
+              <ChevronLeft size={18} />
+            </IconButton>
             <input
               type="date"
               aria-label="Select date to view history"
@@ -419,82 +415,60 @@ export const DayHistoryView: React.FC<DayHistoryViewProps> = ({
               onChange={(e) => {
                 if (e.target.value) handleSelectDate(e.target.value);
               }}
-              style={{
-                width: 'auto',
-                padding: '7px 10px',
-                borderRadius: '10px',
-                fontSize: '13px',
-                fontWeight: 700,
-              }}
+              className="tnum h-10 rounded-xl border border-[var(--line)] bg-[var(--sf-2)] px-3 text-[13px] font-medium text-[var(--tx)]"
             />
-            <button
-              type="button"
-              className="s"
+            <IconButton
+              label="Next day"
               onClick={() => handleSelectDate(addD(selectedDayKey, 1))}
-              aria-label="Next day"
-              title="Go to next day"
             >
-              Next →
-            </button>
+              <ChevronRight size={18} />
+            </IconButton>
             {selectedDayKey !== todayKey && (
-              <button
-                type="button"
-                className="s pri"
+              <Button
+                variant="secondary"
+                size="sm"
                 onClick={() => handleSelectDate(todayKey)}
               >
                 Today
-              </button>
+              </Button>
             )}
           </div>
         </div>
 
-        {/* Toggleable Interactive Month Calendar */}
-        <div
-          className="row sp"
-          style={{
-            paddingTop: '8px',
-            borderTop: '1px solid var(--bd)',
-            flexWrap: 'wrap',
-            gap: '8px',
-          }}
-        >
-          <button
-            type="button"
-            className="s"
+        <div className="split mt-3 border-t border-[var(--line)] pt-3 flex-wrap gap-2">
+          <Button
+            variant="ghost"
+            size="sm"
+            icon={
+              showCalendarPicker ? (
+                <ChevronDown size={15} />
+              ) : (
+                <Calendar size={15} />
+              )
+            }
             onClick={() => setShowCalendarPicker((v) => !v)}
-            style={{ fontSize: '12px', padding: '5px 10px' }}
           >
-            {showCalendarPicker ? '🗓️ Hide Month Calendar ▴' : '🗓️ Browse Month Calendar ▾'}
-          </button>
+            {showCalendarPicker ? 'Hide month calendar' : 'Show month calendar'}
+          </Button>
 
           {onSelectDateInToday && (
-            <button
-              type="button"
-              className="s pri"
+            <Button
+              variant="secondary"
+              size="sm"
+              icon={<Edit3 size={14} />}
               onClick={() => onSelectDateInToday(selectedDayKey)}
-              style={{ fontSize: '12px', padding: '5px 12px' }}
-              title="Switch to the Today tab with this date selected so you can check off habits or edit tasks"
             >
-              ✏️ Edit This Day in Today Tab →
-            </button>
+              Edit day in Today tab
+            </Button>
           )}
         </div>
 
         {showCalendarPicker && (
-          <div
-            style={{
-              marginTop: '10px',
-              padding: '10px',
-              borderRadius: '12px',
-              background: 'var(--c2)',
-              border: '1px solid var(--bd)',
-            }}
-          >
-            <div className="row sp" style={{ marginBottom: '8px' }}>
-              <button
-                type="button"
-                className="s"
-                style={{ padding: '4px 10px', fontSize: '12px' }}
+          <div className="mt-3 rounded-xl border border-[var(--line)] bg-[var(--sf-2)] p-3">
+            <div className="split mb-2.5">
+              <Button
+                variant="secondary"
+                size="sm"
                 onClick={() =>
                   setCalYearMonth((prev) => {
                     const dt = new Date(prev.year, prev.month - 1, 1);
@@ -502,15 +476,14 @@ export const DayHistoryView: React.FC<DayHistoryViewProps> = ({
                   })
                 }
               >
-                ‹ Prev Month
-              </button>
-              <b style={{ fontSize: '13.5px' }}>
+                Prev
+              </Button>
+              <strong className="text-[13.5px] font-semibold text-[var(--tx)]">
                 {MONTH_NAMES[calYearMonth.month]} {calYearMonth.year}
-              </b>
-              <button
-                type="button"
-                className="s"
-                style={{ padding: '4px 10px', fontSize: '12px' }}
+              </strong>
+              <Button
+                variant="secondary"
+                size="sm"
                 onClick={() =>
                   setCalYearMonth((prev) => {
                     const dt = new Date(prev.year, prev.month + 1, 1);
@@ -518,45 +491,28 @@ export const DayHistoryView: React.FC<DayHistoryViewProps> = ({
                   })
                 }
               >
-                Next Month ›
-              </button>
+                Next
+              </Button>
             </div>
 
-            {/* Weekday Header */}
-            <div
-              style={{
-                display: 'grid',
-                gridTemplateColumns: 'repeat(7, 1fr)',
-                gap: '4px',
-                textAlign: 'center',
-                marginBottom: '4px',
-              }}
-            >
+            <div className="mb-1.5 grid grid-cols-7 gap-1 text-center">
               {Array.from({ length: 7 }, (_, i) => {
                 const dow = ((state.set.ws ?? 1) + i) % 7;
                 return (
-                  <small
+                  <span
                     key={i}
-                    className="mut"
-                    style={{ fontSize: '10.5px', fontWeight: 700 }}
+                    className="text-[12px] font-medium text-[var(--tx-3)]"
                   >
                     {DN[dow]}
-                  </small>
+                  </span>
                 );
               })}
             </div>
 
-            {/* Days Grid */}
-            <div
-              style={{
-                display: 'grid',
-                gridTemplateColumns: 'repeat(7, 1fr)',
-                gap: '4px',
-              }}
-            >
+            <div className="grid grid-cols-7 gap-1">
               {calendarCells.map((cell, idx) => {
                 if (!cell) {
-                  return <div key={`empty_${idx}`} style={{ minHeight: '38px' }} />;
+                  return <div key={`empty_${idx}`} className="min-h-[38px]" />;
                 }
                 const hasActivity = cell.studyMs > 0 || cell.doneCount > 0;
                 const allDone =
@@ -566,64 +522,27 @@ export const DayHistoryView: React.FC<DayHistoryViewProps> = ({
                     key={cell.dayKey}
                     type="button"
                     onClick={() => handleSelectDate(cell.dayKey)}
-                    title={`${cell.dayKey}: Studied ${fmtHMShort(cell.studyMs)} · Habits & Tasks ${cell.doneCount}/${cell.totalCount} (${cell.pct}%)`}
-                    style={{
-                      minHeight: '40px',
-                      padding: '3px 2px',
-                      borderRadius: '8px',
-                      display: 'flex',
-                      flexDirection: 'column',
-                      alignItems: 'center',
-                      justifyContent: 'center',
-                      gap: '2px',
-                      fontSize: '12px',
-                      fontWeight: cell.isSelected || cell.isToday ? 800 : 600,
-                      border: cell.isSelected
-                        ? '2px solid var(--ac)'
+                    title={`${cell.dayKey}: Studied ${fmtHMShort(cell.studyMs)} · ${cell.doneCount}/${cell.totalCount} (${cell.pct}%)`}
+                    className={`tnum flex min-h-[38px] flex-col items-center justify-center gap-0.5 rounded-lg border text-[12px] transition-colors ${
+                      cell.isSelected
+                        ? 'border-[var(--ac)] bg-[var(--ac-soft)] font-bold text-[var(--ac)]'
                         : cell.isToday
-                          ? '1.5px dashed var(--em)'
-                          : '1px solid var(--bd)',
-                      background: cell.isSelected
-                        ? 'rgba(56, 189, 248, 0.18)'
-                        : allDone && !cell.isFuture
-                          ? 'rgba(16, 185, 129, 0.14)'
-                          : hasActivity
-                            ? 'rgba(56, 189, 248, 0.08)'
-                            : 'var(--card)',
-                      opacity: cell.isFuture ? 0.45 : 1,
-                    }}
+                          ? 'border-[var(--ok)] bg-[var(--sf-1)] font-semibold text-[var(--tx)]'
+                          : allDone && !cell.isFuture
+                            ? 'border-[var(--line)] bg-[var(--sf-1)] font-medium text-[var(--ok)]'
+                            : hasActivity
+                              ? 'border-[var(--line)] bg-[var(--sf-1)] text-[var(--tx)]'
+                              : 'border-transparent bg-[var(--sf-1)] text-[var(--tx-2)]'
+                    }`}
+                    style={{ opacity: cell.isFuture ? 0.45 : 1 }}
                   >
                     <span>{cell.dayNum}</span>
-                    <span
-                      style={{
-                        display: 'flex',
-                        alignItems: 'center',
-                        gap: '2px',
-                        fontSize: '9px',
-                        lineHeight: 1,
-                      }}
-                    >
+                    <span className="flex items-center gap-1">
                       {cell.studyMs > 0 && (
-                        <i
-                          style={{
-                            width: '5px',
-                            height: '5px',
-                            borderRadius: '50%',
-                            background: '#10b981',
-                            display: 'inline-block',
-                          }}
-                        />
+                        <i className="inline-block h-1.5 w-1.5 rounded-full bg-[var(--ok)]" />
                       )}
                       {cell.doneCount > 0 && (
-                        <i
-                          style={{
-                            width: '5px',
-                            height: '5px',
-                            borderRadius: '50%',
-                            background: '#38bdf8',
-                            display: 'inline-block',
-                          }}
-                        />
+                        <i className="inline-block h-1.5 w-1.5 rounded-full bg-[var(--ac)]" />
                       )}
                     </span>
                   </button>
@@ -632,209 +551,108 @@ export const DayHistoryView: React.FC<DayHistoryViewProps> = ({
             </div>
           </div>
         )}
+      </Card>
+
+      {/* Day Summary KPIs */}
+      <div className="grid grid-cols-2 gap-3 sm:grid-cols-4">
+        <Stat
+          label="Study time"
+          value={fmtHMShort(record.studyMs)}
+          sub={
+            record.metMinStudyTarget
+              ? `Met ${fmtHMShort(record.minTargetMs)} goal`
+              : `Goal ${fmtHMShort(record.minTargetMs)}`
+          }
+        />
+        <Stat
+          label="Habits due"
+          value={`${record.habitsCompleted.length}/${
+            record.habitsCompleted.length + record.habitsMissed.length
+          }`}
+          sub={
+            record.habitsMissed.length === 0
+              ? 'All due completed'
+              : `${record.habitsMissed.length} missed`
+          }
+        />
+        <Stat
+          label="Daily tasks"
+          value={`${record.tasksCompleted.length}/${
+            record.tasksCompleted.length + record.tasksMissed.length
+          }`}
+          sub={
+            record.tasksMissed.length === 0
+              ? 'All tasks finished'
+              : `${record.tasksMissed.length} unfinished`
+          }
+        />
+        <Stat
+          label="XP earned"
+          value={`+${record.xpEarned} XP`}
+          sub={`${record.sessions.length} ${
+            record.sessions.length === 1 ? 'session' : 'sessions'
+          } logged`}
+        />
       </div>
 
-      {/* Day Summary KPI Cards */}
-      <div
-        className="stat-mini"
-        style={{
-          gridTemplateColumns: 'repeat(auto-fit, minmax(135px, 1fr))',
-          gap: '8px',
-          marginBottom: '12px',
-        }}
-      >
-        <div className="card" style={{ margin: 0, padding: '12px' }}>
-          <small className="mut">⏱️ Study Time</small>
-          <b
-            className="mono"
-            style={{
-              display: 'block',
-              fontSize: '18px',
-              marginTop: '2px',
-              color: record.metMinStudyTarget ? 'var(--em)' : 'var(--tx)',
-            }}
-          >
-            {fmtHMShort(record.studyMs)}
-          </b>
-          <small className="mut" style={{ fontSize: '11px' }}>
-            {record.metMinStudyTarget
-              ? `✅ Met ${fmtHMShort(record.minTargetMs)} min goal`
-              : record.isRestDay
-                ? '🛡️ Protected Rest Day'
-                : `Goal: ${fmtHMShort(record.minTargetMs)}`}
-          </small>
-        </div>
+      {/* Segmented Filter */}
+      <Segmented<DayRecordFilter>
+        value={filterMode}
+        onChange={setFilterMode}
+        ariaLabel="Day record filter"
+        options={[
+          {
+            value: 'all',
+            label: `Full day (${totalDidCount + totalMissedCount})`,
+          },
+          { value: 'did', label: `Did (${totalDidCount})` },
+          { value: 'missed', label: `Didn't do (${totalMissedCount})` },
+        ]}
+      />
 
-        <div className="card" style={{ margin: 0, padding: '12px' }}>
-          <small className="mut">🔥 Habits Due</small>
-          <b
-            className="mono"
-            style={{ display: 'block', fontSize: '18px', marginTop: '2px' }}
-          >
-            {record.habitsCompleted.length}/
-            {record.habitsCompleted.length + record.habitsMissed.length}
-          </b>
-          <small className="mut" style={{ fontSize: '11px' }}>
-            {record.habitsMissed.length === 0
-              ? 'All due habits completed'
-              : `${record.habitsMissed.length} missed`}
-          </small>
-        </div>
-
-        <div className="card" style={{ margin: 0, padding: '12px' }}>
-          <small className="mut">☑️ Daily Tasks</small>
-          <b
-            className="mono"
-            style={{ display: 'block', fontSize: '18px', marginTop: '2px' }}
-          >
-            {record.tasksCompleted.length}/
-            {record.tasksCompleted.length + record.tasksMissed.length}
-          </b>
-          <small className="mut" style={{ fontSize: '11px' }}>
-            {record.tasksMissed.length === 0
-              ? record.tasksCompleted.length > 0
-                ? 'All tasks finished!'
-                : 'No tasks scheduled'
-              : `${record.tasksMissed.length} unfinished`}
-          </small>
-        </div>
-
-        <div className="card" style={{ margin: 0, padding: '12px' }}>
-          <small className="mut">⚡ XP Earned</small>
-          <b
-            className="mono"
-            style={{
-              display: 'block',
-              fontSize: '18px',
-              marginTop: '2px',
-              color: 'var(--ac)',
-            }}
-          >
-            +{record.xpEarned} XP
-          </b>
-          <small className="mut" style={{ fontSize: '11px' }}>
-            {record.sessions.length}{' '}
-            {record.sessions.length === 1 ? 'session' : 'sessions'} logged
-          </small>
-        </div>
-      </div>
-
-      {/* Filter Bar: All | What I Did | What I Missed */}
-      <div
-        className="chips wrap"
-        style={{ marginBottom: '12px', gap: '6px', paddingBottom: 0 }}
-      >
-        <button
-          type="button"
-          className={filterMode === 'all' ? 'on' : ''}
-          onClick={() => setFilterMode('all')}
-        >
-          📋 Full Day View ({totalDidCount + totalMissedCount})
-        </button>
-        <button
-          type="button"
-          className={filterMode === 'did' ? 'on' : ''}
-          onClick={() => setFilterMode('did')}
-        >
-          ✅ What I Did ({totalDidCount})
-        </button>
-        <button
-          type="button"
-          className={filterMode === 'missed' ? 'on' : ''}
-          onClick={() => setFilterMode('missed')}
-        >
-          ❌ What I Didn&apos;t Do ({totalMissedCount})
-        </button>
-      </div>
-
-      {/* SECTION 1: WHAT I DID ON THIS DAY */}
+      {/* Section 1: Did */}
       {showDidSection && (
-        <div
-          className="card"
-          style={{
-            borderLeft: '4px solid #10b981',
-            marginBottom: '12px',
-          }}
-        >
-          <div className="row sp" style={{ marginBottom: '10px' }}>
-            <div>
-              <h3 style={{ color: '#10b981' }}>
-                ✅ What I Did on {selectedDayKey}
-              </h3>
-              <small>
-                Completed habits, finished tasks, study sessions, chapters, revisions &amp; logs
-              </small>
-            </div>
-            <span className="pill mono" style={{ color: '#10b981' }}>
-              {totalDidCount} completed
-            </span>
-          </div>
+        <Card className="space-y-4">
+          <SectionHeader
+            title={`Did on ${selectedDayKey}`}
+            subtitle="Completed habits, tasks, study sessions, chapters, revisions, and logs"
+            action={
+              <span className="tnum rounded-md bg-[var(--sf-2)] px-2.5 py-1 text-[12px] font-medium text-[var(--ok)]">
+                {totalDidCount} completed
+              </span>
+            }
+          />
 
           {totalDidCount === 0 ? (
-            <div
-              className="mut"
-              style={{
-                padding: '14px',
-                borderRadius: '10px',
-                background: 'var(--c2)',
-                textAlign: 'center',
-                fontSize: '13px',
-              }}
-            >
+            <div className="rounded-xl border border-[var(--line)] bg-[var(--sf-2)] p-4 text-center text-[13px] text-[var(--tx-2)]">
               No completed habits, tasks, or study sessions recorded on{' '}
-              <b>{selectedDayKey}</b>.
+              <strong>{selectedDayKey}</strong>.
             </div>
           ) : (
-            <div style={{ display: 'flex', flexDirection: 'column', gap: '12px' }}>
-              {/* 1. Completed Habits */}
+            <div className="space-y-4">
+              {/* Habits Completed */}
               {record.habitsCompleted.length > 0 && (
                 <div>
-                  <small
-                    style={{
-                      display: 'block',
-                      fontWeight: 700,
-                      textTransform: 'uppercase',
-                      letterSpacing: '0.04em',
-                      marginBottom: '6px',
-                      color: 'var(--mu)',
-                    }}
-                  >
-                    🔥 Habits Completed ({record.habitsCompleted.length})
-                  </small>
-                  <div style={{ display: 'flex', flexDirection: 'column', gap: '6px' }}>
+                  <h4 className="mb-2 text-[12.5px] font-semibold text-[var(--tx-2)]">
+                    Habits completed ({record.habitsCompleted.length})
+                  </h4>
+                  <div className="divide-y divide-[var(--line)] rounded-xl border border-[var(--line)] bg-[var(--sf-2)] px-3">
                     {record.habitsCompleted.map(({ habit, value, target, unit }) => (
                       <div
                         key={habit.id}
-                        className="row sp"
-                        style={{
-                          padding: '8px 10px',
-                          borderRadius: '10px',
-                          background: 'var(--c2)',
-                          border: '1px solid rgba(16, 185, 129, 0.28)',
-                        }}
+                        className="flex items-center justify-between gap-2 py-2.5 text-[13.5px]"
                       >
-                        <span style={{ fontWeight: 700, fontSize: '13.5px' }}>
-                          ✅ {habit.e} {habit.name}{' '}
+                        <span className="flex items-center gap-2 font-medium text-[var(--tx)]">
+                          <CheckCircle2 size={16} className="shrink-0 text-[var(--ok)]" />
+                          {habit.e} {habit.name}
                           <span
-                            className="pill"
-                            style={{
-                              fontSize: '10px',
-                              padding: '1px 6px',
-                              marginLeft: '4px',
-                              borderColor: CC[habit.c] || '#94a3b8',
-                            }}
+                            className="rounded-md bg-[var(--sf-1)] px-2 py-0.5 text-[12px]"
+                            style={{ color: CC[habit.c] || 'var(--tx-2)' }}
                           >
                             {habit.c}
                           </span>
                         </span>
-                        <span
-                          className="mono"
-                          style={{
-                            fontSize: '12px',
-                            fontWeight: 700,
-                            color: '#10b981',
-                          }}
-                        >
+                        <span className="tnum text-[12.5px] font-semibold text-[var(--ok)]">
                           {value}/{target} {unit}
                         </span>
                       </div>
@@ -843,22 +661,13 @@ export const DayHistoryView: React.FC<DayHistoryViewProps> = ({
                 </div>
               )}
 
-              {/* 2. Completed Daily Tasks */}
+              {/* Tasks Completed */}
               {record.tasksCompleted.length > 0 && (
                 <div>
-                  <small
-                    style={{
-                      display: 'block',
-                      fontWeight: 700,
-                      textTransform: 'uppercase',
-                      letterSpacing: '0.04em',
-                      marginBottom: '6px',
-                      color: 'var(--mu)',
-                    }}
-                  >
-                    ☑️ Daily Tasks Finished ({record.tasksCompleted.length})
-                  </small>
-                  <div style={{ display: 'flex', flexDirection: 'column', gap: '6px' }}>
+                  <h4 className="mb-2 text-[12.5px] font-semibold text-[var(--tx-2)]">
+                    Daily tasks finished ({record.tasksCompleted.length})
+                  </h4>
+                  <div className="divide-y divide-[var(--line)] rounded-xl border border-[var(--line)] bg-[var(--sf-2)] px-3">
                     {record.tasksCompleted.map((task) => {
                       const sub = task.subjectId
                         ? getSubject(state, task.subjectId)
@@ -866,26 +675,14 @@ export const DayHistoryView: React.FC<DayHistoryViewProps> = ({
                       return (
                         <div
                           key={task.id}
-                          className="row sp"
-                          style={{
-                            padding: '8px 10px',
-                            borderRadius: '10px',
-                            background: 'var(--c2)',
-                            border: '1px solid rgba(16, 185, 129, 0.28)',
-                          }}
+                          className="flex items-center justify-between gap-2 py-2.5 text-[13.5px]"
                         >
-                          <span style={{ fontWeight: 600, fontSize: '13.5px' }}>
-                            ✅ {task.title}
+                          <span className="flex items-center gap-2 font-medium text-[var(--tx)]">
+                            <CheckCircle2 size={16} className="shrink-0 text-[var(--ok)]" />
+                            {task.title}
                           </span>
                           {sub && (
-                            <span
-                              className="pill"
-                              style={{
-                                fontSize: '11px',
-                                padding: '2px 8px',
-                                borderColor: sub.color,
-                              }}
-                            >
+                            <span className="rounded-md bg-[var(--sf-1)] px-2 py-0.5 text-[12px] text-[var(--tx-2)]">
                               {sub.e} {sub.name}
                             </span>
                           )}
@@ -896,83 +693,66 @@ export const DayHistoryView: React.FC<DayHistoryViewProps> = ({
                 </div>
               )}
 
-              {/* 3. Logged Study Sessions */}
+              {/* Study Sessions */}
               {record.sessions.length > 0 && (
                 <div>
-                  <div className="row sp" style={{ marginBottom: '6px' }}>
-                    <small
-                      style={{
-                        fontWeight: 700,
-                        textTransform: 'uppercase',
-                        letterSpacing: '0.04em',
-                        color: 'var(--mu)',
-                      }}
-                    >
-                      📚 Study Sessions Logged ({record.sessions.length} ·{' '}
+                  <div className="split mb-2">
+                    <h4 className="text-[12.5px] font-semibold text-[var(--tx-2)]">
+                      Study sessions ({record.sessions.length} ·{' '}
                       {fmtHMShort(record.studyMs)})
-                    </small>
+                    </h4>
                     {onOpenManualSession && (
-                      <button
-                        type="button"
-                        className="s"
-                        style={{ padding: '3px 8px', fontSize: '11px' }}
+                      <Button
+                        variant="ghost"
+                        size="sm"
+                        icon={<Plus size={14} />}
                         onClick={() => onOpenManualSession()}
                       >
-                        + Log Session
-                      </button>
+                        Log session
+                      </Button>
                     )}
                   </div>
-                  <div style={{ display: 'flex', flexDirection: 'column', gap: '6px' }}>
+                  <div className="divide-y divide-[var(--line)] rounded-xl border border-[var(--line)] bg-[var(--sf-2)] px-3">
                     {record.sessions.map((ses) => {
                       const sub = getSubject(state, ses.subjectId);
                       const heading = getSessionHeading(state, ses);
                       return (
                         <div
                           key={ses.id}
-                          className="row sp"
-                          style={{
-                            padding: '8px 10px',
-                            borderRadius: '10px',
-                            background: 'var(--c2)',
-                            border: '1px solid var(--bd)',
-                          }}
+                          className="flex items-center justify-between gap-3 py-2.5"
                         >
-                          <div style={{ minWidth: 0, flex: 1 }}>
-                            <b style={{ fontSize: '13.5px', display: 'block' }}>
-                              {sub.e} {sub.name} · {heading}
-                            </b>
-                            <small className="mut">
+                          <div className="min-w-0 flex-1">
+                            <div className="flex items-center gap-2 text-[13.5px] font-medium text-[var(--tx)]">
+                              <span
+                                className="h-2 w-2 shrink-0 rounded-full"
+                                style={{ background: sub.color }}
+                              />
+                              <span className="truncate">
+                                {sub.e} {sub.name} · {heading}
+                              </span>
+                            </div>
+                            <p className="tnum text-[12px] text-[var(--tx-2)]">
                               {fmtClockTime(ses.startTs)} – {fmtClockTime(ses.endTs)} ·{' '}
-                              {ses.mode.toUpperCase()} · Purity {ses.purity ?? 100}%
-                            </small>
+                              {ses.mode} · Purity {ses.purity ?? 100}%
+                            </p>
                             {ses.note && (
-                              <small
-                                style={{
-                                  display: 'block',
-                                  color: 'var(--tx)',
-                                  marginTop: '2px',
-                                }}
-                              >
+                              <p className="mt-0.5 text-[12px] text-[var(--tx-2)]">
                                 “{ses.note}”
-                              </small>
+                              </p>
                             )}
                           </div>
-                          <div className="row" style={{ gap: '8px', flexShrink: 0 }}>
-                            <b
-                              className="mono"
-                              style={{ color: '#10b981', fontSize: '13.5px' }}
-                            >
+                          <div className="flex shrink-0 items-center gap-2">
+                            <strong className="tnum text-[13.5px] text-[var(--ok)]">
                               {fmtHMShort(ses.activeMs)}
-                            </b>
+                            </strong>
                             {onEditSession && (
-                              <button
-                                type="button"
-                                className="s"
-                                style={{ padding: '4px 8px', fontSize: '11px' }}
+                              <Button
+                                variant="secondary"
+                                size="sm"
                                 onClick={() => onEditSession(ses.id)}
                               >
                                 Edit
-                              </button>
+                              </Button>
                             )}
                           </div>
                         </div>
@@ -982,39 +762,26 @@ export const DayHistoryView: React.FC<DayHistoryViewProps> = ({
                 </div>
               )}
 
-              {/* 4. Syllabus Chapters & Revisions Completed */}
+              {/* Chapters & Revisions */}
               {(record.chaptersCompleted.length > 0 ||
                 record.revisionsCompleted.length > 0) && (
                 <div>
-                  <small
-                    style={{
-                      display: 'block',
-                      fontWeight: 700,
-                      textTransform: 'uppercase',
-                      letterSpacing: '0.04em',
-                      marginBottom: '6px',
-                      color: 'var(--mu)',
-                    }}
-                  >
-                    🎯 Chapters &amp; Revisions Completed
-                  </small>
-                  <div style={{ display: 'flex', flexDirection: 'column', gap: '6px' }}>
+                  <h4 className="mb-2 text-[12.5px] font-semibold text-[var(--tx-2)]">
+                    Chapters &amp; revisions completed
+                  </h4>
+                  <div className="divide-y divide-[var(--line)] rounded-xl border border-[var(--line)] bg-[var(--sf-2)] px-3">
                     {record.chaptersCompleted.map((ch) => {
                       const sub = getSubject(state, ch.subjectId);
                       return (
                         <div
                           key={`ch_${ch.id}`}
-                          className="row sp"
-                          style={{
-                            padding: '8px 10px',
-                            borderRadius: '10px',
-                            background: 'var(--c2)',
-                          }}
+                          className="flex items-center justify-between gap-2 py-2.5 text-[13.5px]"
                         >
-                          <span>
-                            🎓 Completed Chapter: <b>{ch.name}</b> ({sub.e} {sub.name})
+                          <span className="text-[var(--tx)]">
+                            Completed chapter: <strong>{ch.name}</strong> ({sub.e}{' '}
+                            {sub.name})
                           </span>
-                          <span className="pill mono" style={{ fontSize: '11px' }}>
+                          <span className="tnum text-[12px] font-semibold text-[var(--ac)]">
                             +25 XP
                           </span>
                         </div>
@@ -1025,18 +792,13 @@ export const DayHistoryView: React.FC<DayHistoryViewProps> = ({
                       return (
                         <div
                           key={`rev_${rev.chapter.id}_${idx}`}
-                          className="row sp"
-                          style={{
-                            padding: '8px 10px',
-                            borderRadius: '10px',
-                            background: 'var(--c2)',
-                          }}
+                          className="flex items-center justify-between gap-2 py-2.5 text-[13.5px]"
                         >
-                          <span>
-                            🔁 Revision {rev.label}: <b>{rev.chapter.name}</b> ({sub.e}{' '}
-                            {sub.name})
+                          <span className="text-[var(--tx)]">
+                            Revision {rev.label}: <strong>{rev.chapter.name}</strong> (
+                            {sub.e} {sub.name})
                           </span>
-                          <span className="pill mono" style={{ fontSize: '11px' }}>
+                          <span className="text-[12px] font-semibold text-[var(--ok)]">
                             Done
                           </span>
                         </div>
@@ -1046,43 +808,29 @@ export const DayHistoryView: React.FC<DayHistoryViewProps> = ({
                 </div>
               )}
 
-              {/* 5. Mocks, PYQs, Mistakes & Doubts Logged */}
+              {/* Mocks, PYQs, Mistakes & Doubts */}
               {(record.mocks.length > 0 ||
                 record.pyqEntries.length > 0 ||
                 record.mistakes.length > 0 ||
                 record.doubtsCreated.length > 0) && (
                 <div>
-                  <small
-                    style={{
-                      display: 'block',
-                      fontWeight: 700,
-                      textTransform: 'uppercase',
-                      letterSpacing: '0.04em',
-                      marginBottom: '6px',
-                      color: 'var(--mu)',
-                    }}
-                  >
-                    📝 Mocks, PYQs &amp; Practice Logs
-                  </small>
-                  <div style={{ display: 'flex', flexDirection: 'column', gap: '6px' }}>
+                  <h4 className="mb-2 text-[12.5px] font-semibold text-[var(--tx-2)]">
+                    Mocks, PYQs &amp; practice logs
+                  </h4>
+                  <div className="divide-y divide-[var(--line)] rounded-xl border border-[var(--line)] bg-[var(--sf-2)] px-3">
                     {record.mocks.map((mk) => {
                       const sc = computeMockScore(mk, state.subjects);
                       return (
                         <div
                           key={mk.id}
-                          className="row sp"
-                          style={{
-                            padding: '8px 10px',
-                            borderRadius: '10px',
-                            background: 'var(--c2)',
-                          }}
+                          className="flex items-center justify-between gap-2 py-2.5 text-[13.5px]"
                         >
-                          <span>
-                            📊 Mock Test: <b>{mk.name}</b>
+                          <span className="text-[var(--tx)]">
+                            Mock test: <strong>{mk.name}</strong>
                           </span>
-                          <b className="mono">
-                            {sc.totalScore}/{sc.maxMarks} ({sc.accuracyPct}% acc)
-                          </b>
+                          <strong className="tnum text-[13px] text-[var(--ac)]">
+                            {sc.totalScore}/{sc.maxMarks} ({sc.accuracyPct}%)
+                          </strong>
                         </div>
                       );
                     })}
@@ -1091,19 +839,14 @@ export const DayHistoryView: React.FC<DayHistoryViewProps> = ({
                       return (
                         <div
                           key={pq.id}
-                          className="row sp"
-                          style={{
-                            padding: '8px 10px',
-                            borderRadius: '10px',
-                            background: 'var(--c2)',
-                          }}
+                          className="flex items-center justify-between gap-2 py-2.5 text-[13.5px]"
                         >
-                          <span>
-                            📘 PYQ Practice: <b>{ch ? ch.name : 'Chapter'}</b>
+                          <span className="text-[var(--tx)]">
+                            PYQ practice: <strong>{ch ? ch.name : 'Chapter'}</strong>
                           </span>
-                          <b className="mono">
+                          <strong className="tnum text-[13px] text-[var(--tx)]">
                             {pq.correct}/{pq.attempted} correct
-                          </b>
+                          </strong>
                         </div>
                       );
                     })}
@@ -1112,18 +855,13 @@ export const DayHistoryView: React.FC<DayHistoryViewProps> = ({
                       return (
                         <div
                           key={ms.id}
-                          className="row sp"
-                          style={{
-                            padding: '8px 10px',
-                            borderRadius: '10px',
-                            background: 'var(--c2)',
-                          }}
+                          className="flex items-center justify-between gap-2 py-2.5 text-[13.5px]"
                         >
-                          <span>
-                            ⚠️ Mistake Logged ({sub.e} {sub.name} · {ms.reason}):{' '}
-                            {ms.note || 'No note'}
+                          <span className="text-[var(--tx)]">
+                            Mistake ({sub.e} {sub.name} · {ms.reason}):{' '}
+                            {ms.note || 'Logged'}
                           </span>
-                          <span className="pill" style={{ fontSize: '10.5px' }}>
+                          <span className="text-[12px] text-[var(--tx-2)]">
                             {ms.resolved ? 'Resolved' : 'Open'}
                           </span>
                         </div>
@@ -1134,17 +872,12 @@ export const DayHistoryView: React.FC<DayHistoryViewProps> = ({
                       return (
                         <div
                           key={db.id}
-                          className="row sp"
-                          style={{
-                            padding: '8px 10px',
-                            borderRadius: '10px',
-                            background: 'var(--c2)',
-                          }}
+                          className="flex items-center justify-between gap-2 py-2.5 text-[13.5px]"
                         >
-                          <span>
-                            ❓ Doubt ({sub.e} {sub.name}): {db.text}
+                          <span className="text-[var(--tx)]">
+                            Doubt ({sub.e} {sub.name}): {db.text}
                           </span>
-                          <span className="pill" style={{ fontSize: '10.5px' }}>
+                          <span className="text-[12px] text-[var(--tx-2)]">
                             {db.resolved ? 'Resolved' : 'Open'}
                           </span>
                         </div>
@@ -1154,179 +887,98 @@ export const DayHistoryView: React.FC<DayHistoryViewProps> = ({
                 </div>
               )}
 
-              {/* 6. Wellbeing, Mood & Daily Note */}
+              {/* Wellbeing & Reflection */}
               {(record.sleepHours !== undefined ||
                 record.energyLevel !== undefined ||
                 record.moodValue !== undefined ||
                 Boolean(record.dailyNote)) && (
                 <div>
-                  <small
-                    style={{
-                      display: 'block',
-                      fontWeight: 700,
-                      textTransform: 'uppercase',
-                      letterSpacing: '0.04em',
-                      marginBottom: '6px',
-                      color: 'var(--mu)',
-                    }}
-                  >
-                    🌙 Wellbeing, Mood &amp; Daily Journal
-                  </small>
-                  <div
-                    style={{
-                      padding: '10px',
-                      borderRadius: '10px',
-                      background: 'var(--c2)',
-                    }}
-                  >
-                    <div className="row" style={{ gap: '12px', flexWrap: 'wrap' }}>
+                  <h4 className="mb-2 text-[12.5px] font-semibold text-[var(--tx-2)]">
+                    Wellbeing &amp; reflection
+                  </h4>
+                  <div className="rounded-xl border border-[var(--line)] bg-[var(--sf-2)] p-3 text-[13px] text-[var(--tx)] space-y-1.5">
+                    <div className="flex flex-wrap gap-4">
                       {record.sleepHours !== undefined && (
                         <span>
-                          💤 Sleep: <b className="mono">{record.sleepHours}h</b>
+                          Sleep: <strong className="tnum">{record.sleepHours}h</strong>
                         </span>
                       )}
                       {record.energyLevel !== undefined && (
                         <span>
-                          ⚡ Energy: <b className="mono">{record.energyLevel}/5</b>
+                          Energy:{' '}
+                          <strong className="tnum">{record.energyLevel}/5</strong>
                         </span>
                       )}
                       {record.moodValue !== undefined &&
-                        MOOD_EMOJIS[record.moodValue] && (
+                        MOOD_LABELS[record.moodValue] && (
                           <span>
-                            Mood: {MOOD_EMOJIS[record.moodValue].emoji}{' '}
-                            <b>{MOOD_EMOJIS[record.moodValue].label}</b>
+                            Mood: <strong>{MOOD_LABELS[record.moodValue]}</strong>
                           </span>
                         )}
                     </div>
                     {record.dailyNote && (
-                      <div
-                        style={{
-                          marginTop: '6px',
-                          paddingTop: '6px',
-                          borderTop: '1px solid var(--bd)',
-                          fontSize: '13px',
-                        }}
-                      >
-                        📝 <b>Daily Reflection:</b> “{record.dailyNote}”
-                      </div>
+                      <p className="border-t border-[var(--line)] pt-2 text-[var(--tx-2)]">
+                        Reflection: “{record.dailyNote}”
+                      </p>
                     )}
                   </div>
                 </div>
               )}
             </div>
           )}
-        </div>
+        </Card>
       )}
 
-      {/* SECTION 2: WHAT I DIDN'T DO / MISSED ON THIS DAY */}
+      {/* Section 2: Didn't Do */}
       {showMissedSection && (
-        <div
-          className="card"
-          style={{
-            borderLeft: '4px solid #ef4444',
-            marginBottom: '12px',
-          }}
-        >
-          <div className="row sp" style={{ marginBottom: '10px' }}>
-            <div>
-              <h3 style={{ color: '#f87171' }}>
-                ❌ What I Didn&apos;t Do on {selectedDayKey}
-              </h3>
-              <small>
-                Habits due but not completed, unfinished daily tasks, and missed targets
-              </small>
-            </div>
-            <span className="pill mono" style={{ color: '#f87171' }}>
-              {totalMissedCount} missed
-            </span>
-          </div>
+        <Card className="space-y-4">
+          <SectionHeader
+            title={`Didn't do on ${selectedDayKey}`}
+            subtitle="Unfinished habits, pending tasks, and missed revisions"
+            action={
+              <span className="tnum rounded-md bg-[var(--sf-2)] px-2.5 py-1 text-[12px] font-medium text-[var(--bad)]">
+                {totalMissedCount} missed
+              </span>
+            }
+          />
 
           {totalMissedCount === 0 ? (
-            <div
-              style={{
-                padding: '14px',
-                borderRadius: '10px',
-                background: 'rgba(16, 185, 129, 0.1)',
-                border: '1px solid rgba(16, 185, 129, 0.3)',
-                textAlign: 'center',
-                fontSize: '13px',
-                color: '#10b981',
-                fontWeight: 700,
-              }}
-            >
-              🎉 Nothing missed on {selectedDayKey}! All due habits, tasks, and targets were
+            <div className="rounded-xl border border-[var(--line)] bg-[var(--sf-2)] p-4 text-center text-[13px] font-medium text-[var(--ok)]">
+              Nothing missed on {selectedDayKey}. All due habits, tasks, and targets were
               completed.
             </div>
           ) : (
-            <div style={{ display: 'flex', flexDirection: 'column', gap: '12px' }}>
-              {/* Missed Daily Minimum Study Target */}
+            <div className="space-y-4">
               {!record.isFuture &&
                 !record.isRestDay &&
                 !record.metMinStudyTarget && (
-                  <div
-                    className="row sp"
-                    style={{
-                      padding: '8px 10px',
-                      borderRadius: '10px',
-                      background: 'rgba(239, 68, 68, 0.09)',
-                      border: '1px solid rgba(239, 68, 68, 0.28)',
-                    }}
-                  >
-                    <span style={{ fontWeight: 700, fontSize: '13px' }}>
-                      ⏱️ Daily Study Minimum Not Reached
+                  <div className="flex items-center justify-between gap-2 rounded-xl border border-[var(--line)] bg-[var(--sf-2)] px-3 py-2.5 text-[13px]">
+                    <span className="flex items-center gap-2 font-medium text-[var(--tx)]">
+                      <XCircle size={16} className="shrink-0 text-[var(--bad)]" />
+                      Daily study minimum not reached
                     </span>
-                    <span className="mono" style={{ fontSize: '12px', color: '#f87171' }}>
-                      {fmtHMShort(record.studyMs)} / {fmtHMShort(record.minTargetMs)} (short by{' '}
-                      {fmtHMShort(Math.max(0, record.minTargetMs - record.studyMs))})
+                    <span className="tnum text-[12px] text-[var(--bad)]">
+                      {fmtHMShort(record.studyMs)} / {fmtHMShort(record.minTargetMs)}
                     </span>
                   </div>
                 )}
 
-              {/* Missed Habits */}
               {record.habitsMissed.length > 0 && (
                 <div>
-                  <small
-                    style={{
-                      display: 'block',
-                      fontWeight: 700,
-                      textTransform: 'uppercase',
-                      letterSpacing: '0.04em',
-                      marginBottom: '6px',
-                      color: 'var(--mu)',
-                    }}
-                  >
-                    🔥 Due Habits Not Completed ({record.habitsMissed.length})
-                  </small>
-                  <div style={{ display: 'flex', flexDirection: 'column', gap: '6px' }}>
+                  <h4 className="mb-2 text-[12.5px] font-semibold text-[var(--tx-2)]">
+                    Due habits not completed ({record.habitsMissed.length})
+                  </h4>
+                  <div className="divide-y divide-[var(--line)] rounded-xl border border-[var(--line)] bg-[var(--sf-2)] px-3">
                     {record.habitsMissed.map(({ habit, value, target, unit }) => (
                       <div
                         key={habit.id}
-                        className="row sp"
-                        style={{
-                          padding: '8px 10px',
-                          borderRadius: '10px',
-                          background: 'var(--c2)',
-                          border: '1px solid rgba(239, 68, 68, 0.25)',
-                        }}
+                        className="flex items-center justify-between gap-2 py-2.5 text-[13.5px]"
                       >
-                        <span style={{ fontWeight: 600, fontSize: '13.5px' }}>
-                          ❌ {habit.e} {habit.name}{' '}
-                          <span
-                            className="pill"
-                            style={{
-                              fontSize: '10px',
-                              padding: '1px 6px',
-                              marginLeft: '4px',
-                              borderColor: CC[habit.c] || '#94a3b8',
-                            }}
-                          >
-                            {habit.c}
-                          </span>
+                        <span className="flex items-center gap-2 font-medium text-[var(--tx)]">
+                          <XCircle size={16} className="shrink-0 text-[var(--bad)]" />
+                          {habit.e} {habit.name}
                         </span>
-                        <span
-                          className="mono"
-                          style={{ fontSize: '12px', color: '#f87171', fontWeight: 700 }}
-                        >
+                        <span className="tnum text-[12px] text-[var(--bad)]">
                           {value}/{target} {unit}
                         </span>
                       </div>
@@ -1335,22 +987,12 @@ export const DayHistoryView: React.FC<DayHistoryViewProps> = ({
                 </div>
               )}
 
-              {/* Unfinished Daily Tasks */}
               {record.tasksMissed.length > 0 && (
                 <div>
-                  <small
-                    style={{
-                      display: 'block',
-                      fontWeight: 700,
-                      textTransform: 'uppercase',
-                      letterSpacing: '0.04em',
-                      marginBottom: '6px',
-                      color: 'var(--mu)',
-                    }}
-                  >
-                    ☑️ Unfinished Daily Tasks ({record.tasksMissed.length})
-                  </small>
-                  <div style={{ display: 'flex', flexDirection: 'column', gap: '6px' }}>
+                  <h4 className="mb-2 text-[12.5px] font-semibold text-[var(--tx-2)]">
+                    Unfinished daily tasks ({record.tasksMissed.length})
+                  </h4>
+                  <div className="divide-y divide-[var(--line)] rounded-xl border border-[var(--line)] bg-[var(--sf-2)] px-3">
                     {record.tasksMissed.map((task) => {
                       const sub = task.subjectId
                         ? getSubject(state, task.subjectId)
@@ -1358,26 +1000,14 @@ export const DayHistoryView: React.FC<DayHistoryViewProps> = ({
                       return (
                         <div
                           key={task.id}
-                          className="row sp"
-                          style={{
-                            padding: '8px 10px',
-                            borderRadius: '10px',
-                            background: 'var(--c2)',
-                            border: '1px solid rgba(239, 68, 68, 0.25)',
-                          }}
+                          className="flex items-center justify-between gap-2 py-2.5 text-[13.5px]"
                         >
-                          <span style={{ fontWeight: 600, fontSize: '13.5px' }}>
-                            ❌ {task.title}
+                          <span className="flex items-center gap-2 font-medium text-[var(--tx)]">
+                            <XCircle size={16} className="shrink-0 text-[var(--bad)]" />
+                            {task.title}
                           </span>
                           {sub && (
-                            <span
-                              className="pill"
-                              style={{
-                                fontSize: '11px',
-                                padding: '2px 8px',
-                                borderColor: sub.color,
-                              }}
-                            >
+                            <span className="rounded-md bg-[var(--sf-1)] px-2 py-0.5 text-[12px] text-[var(--tx-2)]">
                               {sub.e} {sub.name}
                             </span>
                           )}
@@ -1388,39 +1018,24 @@ export const DayHistoryView: React.FC<DayHistoryViewProps> = ({
                 </div>
               )}
 
-              {/* Pending / Missed Chapter Revisions Scheduled for This Day */}
               {record.revisionsMissed.length > 0 && (
                 <div>
-                  <small
-                    style={{
-                      display: 'block',
-                      fontWeight: 700,
-                      textTransform: 'uppercase',
-                      letterSpacing: '0.04em',
-                      marginBottom: '6px',
-                      color: 'var(--mu)',
-                    }}
-                  >
-                    🔁 Scheduled Revisions Not Marked Done ({record.revisionsMissed.length})
-                  </small>
-                  <div style={{ display: 'flex', flexDirection: 'column', gap: '6px' }}>
+                  <h4 className="mb-2 text-[12.5px] font-semibold text-[var(--tx-2)]">
+                    Scheduled revisions not marked done ({record.revisionsMissed.length})
+                  </h4>
+                  <div className="divide-y divide-[var(--line)] rounded-xl border border-[var(--line)] bg-[var(--sf-2)] px-3">
                     {record.revisionsMissed.map((rev, idx) => {
                       const sub = getSubject(state, rev.chapter.subjectId);
                       return (
                         <div
                           key={`missed_rev_${rev.chapter.id}_${idx}`}
-                          className="row sp"
-                          style={{
-                            padding: '8px 10px',
-                            borderRadius: '10px',
-                            background: 'var(--c2)',
-                            border: '1px solid rgba(239, 68, 68, 0.25)',
-                          }}
+                          className="flex items-center justify-between gap-2 py-2.5 text-[13.5px]"
                         >
-                          <span>
-                            ❌ {rev.label}: <b>{rev.chapter.name}</b> ({sub.e} {sub.name})
+                          <span className="text-[var(--tx)]">
+                            {rev.label}: <strong>{rev.chapter.name}</strong> ({sub.e}{' '}
+                            {sub.name})
                           </span>
-                          <span className="pill mono" style={{ fontSize: '11px', color: '#f87171' }}>
+                          <span className="tnum text-[12px] text-[var(--bad)]">
                             Due {rev.scheduledDate}
                           </span>
                         </div>
@@ -1430,25 +1045,18 @@ export const DayHistoryView: React.FC<DayHistoryViewProps> = ({
                 </div>
               )}
 
-              {/* Skipped Habits Info */}
               {record.habitsSkipped.length > 0 && (
                 <div>
-                  <small
-                    style={{
-                      display: 'block',
-                      fontWeight: 700,
-                      textTransform: 'uppercase',
-                      letterSpacing: '0.04em',
-                      marginBottom: '4px',
-                      color: 'var(--mu)',
-                    }}
-                  >
-                    ⏭️ Intentionally Skipped Habits ({record.habitsSkipped.length})
-                  </small>
-                  <div className="chips wrap" style={{ paddingBottom: 0 }}>
+                  <h4 className="mb-2 text-[12.5px] font-semibold text-[var(--tx-2)]">
+                    Skipped habits ({record.habitsSkipped.length})
+                  </h4>
+                  <div className="flex flex-wrap gap-2">
                     {record.habitsSkipped.map((h) => (
-                      <span key={h.id} className="pill" style={{ fontSize: '11.5px' }}>
-                        ⏭️ {h.e} {h.name}
+                      <span
+                        key={h.id}
+                        className="rounded-lg border border-[var(--line)] bg-[var(--sf-2)] px-2.5 py-1 text-[12.5px] text-[var(--tx-2)]"
+                      >
+                        {h.e} {h.name}
                       </span>
                     ))}
                   </div>
@@ -1456,7 +1064,7 @@ export const DayHistoryView: React.FC<DayHistoryViewProps> = ({
               )}
             </div>
           )}
-        </div>
+        </Card>
       )}
     </div>
   );

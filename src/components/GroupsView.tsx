@@ -7,6 +7,23 @@ import {
   XAxis,
   YAxis,
 } from 'recharts';
+import {
+  Award,
+  Check,
+  ChevronDown,
+  ChevronUp,
+  Copy,
+  Crown,
+  KeyRound,
+  Lock,
+  Plus,
+  RefreshCw,
+  Share2,
+  ShieldCheck,
+  Target,
+  Timer,
+  Users,
+} from 'lucide-react';
 import type {
   GroupSharingFlags,
   GroupsUserConfig,
@@ -58,6 +75,17 @@ import {
   computeTotalXp,
   computeXpByDay,
 } from '../utils/xp';
+import { Button } from './ui/Button';
+import { Card } from './ui/Card';
+import { Chip } from './ui/Chip';
+import { EmptyState } from './ui/EmptyState';
+import { Field } from './ui/Field';
+import { Meter } from './ui/Meter';
+import { SectionHeader } from './ui/SectionHeader';
+import { Segmented } from './ui/Segmented';
+import { Sheet } from './ui/Sheet';
+import { Stat } from './ui/Stat';
+import { Switch } from './ui/Switch';
 
 type BoardTab = 'today' | 'week' | 'xp' | 'streak' | 'mocks' | 'history';
 type MemberFilterMode = 'all' | 'activeToday' | 'studyingNow' | 'top3';
@@ -109,7 +137,7 @@ function formatRelativeAgo(ts: number, now: number): string {
 function getWeekDayKeysUpToToday(todayKey: string): string[] {
   const [y, m, d] = todayKey.split('-').map(Number);
   const dt = new Date(Date.UTC(y, (m || 1) - 1, d || 1));
-  const dow = dt.getUTCDay(); // 0 = Sun, 1 = Mon .. 6 = Sat
+  const dow = dt.getUTCDay();
   const diffToMon = dow === 0 ? -6 : 1 - dow;
   const keys: string[] = [];
   for (let offset = diffToMon; offset <= 0; offset++) {
@@ -341,9 +369,7 @@ export const Leaderboard: React.FC<LeaderboardProps> = ({
   );
   const [localRefreshing, setLocalRefreshing] = useState(false);
   const [hoveredLiveKey, setHoveredLiveKey] = useState<string | null>(null);
-  const [expandedMemberUid, setExpandedMemberUid] = useState<string | null>(
-    null
-  );
+  const [expandedMemberUid, setExpandedMemberUid] = useState<string | null>(null);
 
   const rows = useMemo(
     () => rankWeekBoard(members, todayKey),
@@ -358,9 +384,9 @@ export const Leaderboard: React.FC<LeaderboardProps> = ({
     return map;
   }, [rows]);
 
-  const [prevRanksState, setPrevRanksState] = useState<
-    Record<string, number | null>
-  >(() => currentRanksMap);
+  const [prevRanksState, setPrevRanksState] = useState<Record<string, number | null>>(
+    () => currentRanksMap
+  );
   const lastCommittedRanksRef =
     useRef<Record<string, number | null>>(currentRanksMap);
 
@@ -412,68 +438,43 @@ export const Leaderboard: React.FC<LeaderboardProps> = ({
 
   return (
     <div>
-      <div
-        className="row sp"
-        style={{
-          marginBottom: 10,
-          padding: '4px 4px 8px',
-          borderBottom: '1px solid var(--bd)',
-          gap: 8,
-          flexWrap: 'wrap',
-        }}
-      >
-        <div className="row" style={{ gap: 8 }}>
-          <b style={{ fontSize: 13.5 }}>Weekly Study Leaderboard</b>
-          <span
-            className="mut mono"
-            style={{
-              fontSize: 11,
-              background: 'var(--c2)',
-              padding: '2px 7px',
-              borderRadius: 6,
-            }}
-          >
+      <div className="split mb-3 border-b border-[var(--line)] pb-2.5 flex-wrap gap-2">
+        <div className="flex items-center gap-2">
+          <strong className="text-[14px] font-semibold text-[var(--tx)]">
+            Weekly study leaderboard
+          </strong>
+          <span className="tnum rounded-md bg-[var(--sf-2)] px-2 py-0.5 text-[12px] text-[var(--tx-2)]">
             {rows.length} {rows.length === 1 ? 'member' : 'members'}
           </span>
           {lastUpdatedAt ? (
-            <span className="mut mono" style={{ fontSize: 11 }}>
-              · Synced{' '}
-              {Math.max(0, Math.floor((effectiveNowTs - lastUpdatedAt) / 60000))}
-              m ago
+            <span className="tnum text-[12px] text-[var(--tx-3)]">
+              · Synced {Math.max(0, Math.floor((effectiveNowTs - lastUpdatedAt) / 60000))}m
+              ago
             </span>
           ) : null}
         </div>
-        <button
-          type="button"
-          className="g"
+        <Button
+          variant="secondary"
+          size="sm"
+          icon={<RefreshCw size={14} />}
           onClick={handleManualRefresh}
           disabled={busyRefreshing}
           aria-label="Refresh leaderboard stats"
-          title="Pull latest member stats on demand"
-          style={{
-            minHeight: 36,
-            padding: '6px 12px',
-            borderRadius: 10,
-            fontSize: 12,
-            fontWeight: 700,
-            display: 'inline-flex',
-            alignItems: 'center',
-            gap: 6,
-            cursor: busyRefreshing ? 'not-allowed' : 'pointer',
-            opacity: busyRefreshing ? 0.65 : 1,
-          }}
         >
-          <span aria-hidden="true">↻</span>
-          <span>{busyRefreshing ? 'Refreshing...' : 'Refresh'}</span>
-        </button>
+          {busyRefreshing ? 'Refreshing…' : 'Refresh'}
+        </Button>
       </div>
 
       {rows.length === 0 ? (
-        <div className="mut" style={{ textAlign: 'center', padding: 16 }}>
+        <div className="py-6 text-center text-[13px] text-[var(--tx-2)]">
           No members in this weekly study leaderboard yet.
         </div>
       ) : (
-        <div role="list" aria-label="Weekly study duration leaderboard">
+        <div
+          role="list"
+          aria-label="Weekly study duration leaderboard"
+          className="divide-y divide-[var(--line)]"
+        >
           {rows.map((row) => {
             const isMe = Boolean(myUid && row.uid === myUid);
             const studyingNow = isMemberStudyingNow(row.entry, effectiveNowTs);
@@ -483,20 +484,9 @@ export const Leaderboard: React.FC<LeaderboardProps> = ({
             const activeToday = (row.entry.days?.[todayKey] || 0) > 0;
             const pctBar = row.hidden
               ? 0
-              : Math.min(
-                  100,
-                  Math.round((row.primaryValue / maxWeeklyMinutes) * 100)
-                );
+              : Math.min(100, Math.round((row.primaryValue / maxWeeklyMinutes) * 100));
             const rankBadge =
-              row.rank === 1
-                ? '🥇'
-                : row.rank === 2
-                  ? '🥈'
-                  : row.rank === 3
-                    ? '🥉'
-                    : row.rank !== null
-                      ? `#${row.rank}`
-                      : '—';
+              row.rank !== null ? `#${row.rank}` : '—';
             const dotHoverKey = `dot_${row.uid}`;
             const badgeHoverKey = `badge_${row.uid}`;
 
@@ -515,56 +505,19 @@ export const Leaderboard: React.FC<LeaderboardProps> = ({
               <div
                 key={row.uid}
                 role="listitem"
-                style={{
-                  padding: '10px 12px',
-                  borderBottom: '1px solid var(--bd)',
-                  background: isMe
-                    ? 'rgba(56, 189, 248, 0.09)'
-                    : isExpanded
-                      ? 'color-mix(in srgb, var(--c2) 55%, transparent)'
-                      : 'transparent',
-                  borderRadius: isMe || isExpanded ? 12 : 0,
-                  opacity: row.hidden ? 0.65 : 1,
-                }}
+                className={`py-3 px-2 transition-colors ${
+                  isMe ? 'rounded-xl bg-[var(--ac-soft)]' : ''
+                }`}
+                style={{ opacity: row.hidden ? 0.65 : 1 }}
               >
-                <div className="row sp" style={{ gap: 10 }}>
-                  <div className="row" style={{ gap: 10, minWidth: 0, flex: 1 }}>
-                    <span
-                      className="mono"
-                      style={{
-                        minWidth: 30,
-                        textAlign: 'center',
-                        fontWeight: 800,
-                        fontSize: row.rank && row.rank <= 3 ? 18 : 13,
-                      }}
-                    >
+                <div className="split gap-3">
+                  <div className="flex min-w-0 flex-1 items-center gap-3">
+                    <span className="tnum w-8 text-center text-[13px] font-bold text-[var(--tx-2)]">
                       {rankBadge}
                     </span>
 
-                    <div
-                      style={{
-                        position: 'relative',
-                        width: 38,
-                        height: 38,
-                        borderRadius: 12,
-                        background: studyingNow
-                          ? 'rgba(16, 185, 129, 0.14)'
-                          : 'var(--c2)',
-                        border: studyingNow
-                          ? '1.5px solid rgba(16, 185, 129, 0.55)'
-                          : isMe
-                            ? '1.5px solid rgba(56, 189, 248, 0.5)'
-                            : '1px solid var(--bd)',
-                        display: 'flex',
-                        alignItems: 'center',
-                        justifyContent: 'center',
-                        flexShrink: 0,
-                      }}
-                    >
-                      <span
-                        style={{ fontSize: 20, lineHeight: 1 }}
-                        aria-hidden="true"
-                      >
+                    <div className="relative flex h-10 w-10 shrink-0 items-center justify-center rounded-xl border border-[var(--line)] bg-[var(--sf-2)]">
+                      <span className="text-[20px] leading-none" aria-hidden="true">
                         {row.entry.emoji}
                       </span>
                       <span
@@ -574,15 +527,7 @@ export const Leaderboard: React.FC<LeaderboardProps> = ({
                           if (studyingNow) setHoveredLiveKey(dotHoverKey);
                         }}
                         onMouseLeave={() => {
-                          if (hoveredLiveKey === dotHoverKey)
-                            setHoveredLiveKey(null);
-                        }}
-                        onFocus={() => {
-                          if (studyingNow) setHoveredLiveKey(dotHoverKey);
-                        }}
-                        onBlur={() => {
-                          if (hoveredLiveKey === dotHoverKey)
-                            setHoveredLiveKey(null);
+                          if (hoveredLiveKey === dotHoverKey) setHoveredLiveKey(null);
                         }}
                         aria-label={
                           studyingNow
@@ -602,55 +547,21 @@ export const Leaderboard: React.FC<LeaderboardProps> = ({
                                 ? 'Studied today'
                                 : 'Idle today'
                         }
+                        className="absolute -bottom-0.5 -right-0.5 h-3 w-3 rounded-full border-2 border-[var(--sf-1)]"
                         style={{
-                          position: 'absolute',
-                          right: -2,
-                          bottom: -2,
-                          width: 11,
-                          height: 11,
-                          borderRadius: '50%',
                           background: studyingNow
-                            ? '#10b981'
+                            ? 'var(--ok)'
                             : row.entry.paused
-                              ? '#f59e0b'
+                              ? 'var(--warn)'
                               : activeToday
-                                ? '#38bdf8'
-                                : 'var(--bd)',
-                          border: '2px solid var(--card)',
-                          boxShadow: studyingNow
-                            ? '0 0 0 2px rgba(16, 185, 129, 0.28)'
-                            : 'none',
-                          cursor: studyingNow ? 'help' : 'default',
+                                ? 'var(--info)'
+                                : 'var(--line)',
                         }}
                       />
-                      {studyingNow && hoveredLiveKey === dotHoverKey && (
-                        <div
-                          role="tooltip"
-                          className="mono"
-                          style={{
-                            position: 'absolute',
-                            bottom: 'calc(100% + 6px)',
-                            left: 0,
-                            zIndex: 30,
-                            whiteSpace: 'nowrap',
-                            background: 'var(--card)',
-                            color: 'var(--tx)',
-                            border: '1px solid rgba(16, 185, 129, 0.5)',
-                            boxShadow: '0 6px 18px rgba(0, 0, 0, 0.28)',
-                            padding: '4px 8px',
-                            borderRadius: 6,
-                            fontSize: 11,
-                            fontWeight: 700,
-                            pointerEvents: 'none',
-                          }}
-                        >
-                          {liveTooltip}
-                        </div>
-                      )}
                     </div>
 
-                    <div style={{ minWidth: 0, flex: 1 }}>
-                      <div className="row" style={{ gap: 6, flexWrap: 'wrap' }}>
+                    <div className="min-w-0 flex-1">
+                      <div className="flex flex-wrap items-center gap-2">
                         <button
                           type="button"
                           onClick={() =>
@@ -660,40 +571,13 @@ export const Leaderboard: React.FC<LeaderboardProps> = ({
                           }
                           aria-expanded={isExpanded}
                           title="Click to view 7-day study consistency chart"
-                          style={{
-                            background: 'transparent',
-                            border: 'none',
-                            padding: 0,
-                            margin: 0,
-                            minHeight: 'auto',
-                            fontSize: 13.5,
-                            fontWeight: 700,
-                            color: 'var(--tx)',
-                            cursor: 'pointer',
-                            display: 'inline-flex',
-                            alignItems: 'center',
-                            gap: 4,
-                            textAlign: 'left',
-                          }}
+                          className="inline-flex items-center gap-1 text-left text-[14px] font-semibold text-[var(--tx)] hover:text-[var(--ac)]"
                         >
-                          <span
-                            style={{
-                              overflow: 'hidden',
-                              textOverflow: 'ellipsis',
-                              whiteSpace: 'nowrap',
-                            }}
-                          >
+                          <span className="truncate">
                             {row.entry.nick}
                             {isMe ? ' (You)' : ''}
                           </span>
-                          <span
-                            aria-hidden="true"
-                            style={{
-                              fontSize: 10,
-                              color: 'var(--ac)',
-                              opacity: 0.85,
-                            }}
-                          >
+                          <span className="text-[12px] text-[var(--ac)]" aria-hidden="true">
                             {isExpanded ? '▴' : '▾'}
                           </span>
                         </button>
@@ -702,27 +586,7 @@ export const Leaderboard: React.FC<LeaderboardProps> = ({
                           <span
                             title={timeBadge.tooltip}
                             aria-label={timeBadge.tooltip}
-                            style={{
-                              display: 'inline-flex',
-                              alignItems: 'center',
-                              gap: 3,
-                              fontSize: 10.5,
-                              fontWeight: 700,
-                              padding: '1px 7px',
-                              borderRadius: 6,
-                              color:
-                                timeBadge.type === 'earlyBird'
-                                  ? '#f59e0b'
-                                  : '#a855f7',
-                              background:
-                                timeBadge.type === 'earlyBird'
-                                  ? 'rgba(245, 158, 11, 0.14)'
-                                  : 'rgba(168, 85, 247, 0.14)',
-                              border:
-                                timeBadge.type === 'earlyBird'
-                                  ? '1px solid rgba(245, 158, 11, 0.35)'
-                                  : '1px solid rgba(168, 85, 247, 0.35)',
-                            }}
+                            className="inline-flex items-center gap-1 rounded-md border border-[var(--line)] bg-[var(--sf-2)] px-2 py-0.5 text-[12px] font-medium text-[var(--tx-2)]"
                           >
                             <span aria-hidden="true">{timeBadge.emoji}</span>
                             <span>{timeBadge.label}</span>
@@ -735,183 +599,79 @@ export const Leaderboard: React.FC<LeaderboardProps> = ({
                             aria-label={liveTooltip}
                             onMouseEnter={() => setHoveredLiveKey(badgeHoverKey)}
                             onMouseLeave={() => {
-                              if (hoveredLiveKey === badgeHoverKey)
-                                setHoveredLiveKey(null);
+                              if (hoveredLiveKey === badgeHoverKey) setHoveredLiveKey(null);
                             }}
-                            style={{
-                              position: 'relative',
-                              display: 'inline-flex',
-                              alignItems: 'center',
-                              gap: 4,
-                              fontSize: 10.5,
-                              fontWeight: 700,
-                              color: '#10b981',
-                              background: 'rgba(16, 185, 129, 0.12)',
-                              padding: '1px 7px',
-                              borderRadius: 6,
-                              cursor: 'help',
-                            }}
+                            className="inline-flex items-center gap-1.5 rounded-md bg-[var(--sf-2)] px-2 py-0.5 text-[12px] font-medium text-[var(--ok)]"
                           >
-                            <span
-                              aria-hidden="true"
-                              style={{
-                                width: 6,
-                                height: 6,
-                                borderRadius: '50%',
-                                background: '#10b981',
-                              }}
-                            />
+                            <span className="h-1.5 w-1.5 rounded-full bg-[var(--ok)]" />
                             Studying now
-                            {hoveredLiveKey === badgeHoverKey && (
-                              <span
-                                role="tooltip"
-                                className="mono"
-                                style={{
-                                  position: 'absolute',
-                                  bottom: 'calc(100% + 6px)',
-                                  left: 0,
-                                  zIndex: 30,
-                                  whiteSpace: 'nowrap',
-                                  background: 'var(--card)',
-                                  color: 'var(--tx)',
-                                  border: '1px solid rgba(16, 185, 129, 0.5)',
-                                  boxShadow: '0 6px 18px rgba(0, 0, 0, 0.28)',
-                                  padding: '4px 8px',
-                                  borderRadius: 6,
-                                  fontSize: 11,
-                                  fontWeight: 700,
-                                  pointerEvents: 'none',
-                                }}
-                              >
-                                {liveTooltip}
-                              </span>
-                            )}
                           </span>
                         )}
                       </div>
+
                       {!row.hidden && (
-                        <div
-                          style={{
-                            marginTop: 4,
-                            height: 4,
-                            borderRadius: 4,
-                            background: 'var(--c2)',
-                            overflow: 'hidden',
-                            maxWidth: 180,
-                          }}
-                        >
-                          <div
-                            style={{
-                              width: `${pctBar}%`,
-                              height: '100%',
-                              borderRadius: 4,
-                              background: studyingNow ? '#10b981' : 'var(--ac)',
-                            }}
+                        <div className="mt-1.5 max-w-[180px]">
+                          <Meter
+                            value={pctBar}
+                            max={100}
+                            color={studyingNow ? 'var(--ok)' : 'var(--ac)'}
                           />
                         </div>
                       )}
                     </div>
                   </div>
 
-                  <div style={{ textAlign: 'right', flexShrink: 0 }}>
-                    <div
-                      className="row"
-                      style={{
-                        gap: 5,
-                        justifyContent: 'flex-end',
-                        alignItems: 'center',
-                      }}
-                    >
+                  <div className="shrink-0 text-right">
+                    <div className="flex items-center justify-end gap-1.5">
                       {(rankTrend.direction === 'up' ||
                         rankTrend.direction === 'down') && (
                         <span
-                          className="mono"
                           aria-label={
                             rankTrend.direction === 'up'
-                              ? `Moved up ${rankTrend.delta} ${rankTrend.delta === 1 ? 'rank' : 'ranks'} since last refresh`
-                              : `Moved down ${rankTrend.delta} ${rankTrend.delta === 1 ? 'rank' : 'ranks'} since last refresh`
+                              ? `Moved up ${rankTrend.delta}`
+                              : `Moved down ${rankTrend.delta}`
                           }
-                          title={
-                            rankTrend.direction === 'up'
-                              ? `Moved up ${rankTrend.delta} ${rankTrend.delta === 1 ? 'spot' : 'spots'} since last refresh (from #${rankTrend.previousRank} to #${row.rank})`
-                              : `Moved down ${rankTrend.delta} ${rankTrend.delta === 1 ? 'spot' : 'spots'} since last refresh (from #${rankTrend.previousRank} to #${row.rank})`
-                          }
+                          className="tnum rounded px-1.5 py-0.5 text-[12px] font-semibold"
                           style={{
-                            display: 'inline-flex',
-                            alignItems: 'center',
-                            gap: 1,
-                            fontSize: 11,
-                            fontWeight: 800,
-                            lineHeight: 1,
-                            padding: '2px 5px',
-                            borderRadius: 5,
                             color:
                               rankTrend.direction === 'up'
-                                ? '#10b981'
-                                : '#ef4444',
-                            background:
-                              rankTrend.direction === 'up'
-                                ? 'rgba(16, 185, 129, 0.14)'
-                                : 'rgba(239, 68, 68, 0.14)',
+                                ? 'var(--ok)'
+                                : 'var(--bad)',
+                            background: 'var(--sf-2)',
                           }}
                         >
-                          <span aria-hidden="true">
-                            {rankTrend.direction === 'up' ? '▲' : '▼'}
-                          </span>
-                          {rankTrend.delta > 1 ? (
-                            <span>{rankTrend.delta}</span>
-                          ) : null}
+                          {rankTrend.direction === 'up' ? '▲' : '▼'}
+                          {rankTrend.delta > 1 ? rankTrend.delta : ''}
                         </span>
                       )}
-                      <b
-                        className="mono"
-                        style={{
-                          fontSize: 14,
-                          fontVariantNumeric: 'tabular-nums',
-                          color: row.hidden ? 'var(--mu)' : 'var(--tx)',
-                        }}
-                      >
+                      <strong className="tnum text-[14px] text-[var(--tx)]">
                         {row.displayLabel}
-                      </b>
+                      </strong>
                     </div>
                     {row.subLabel && (
-                      <div className="mut mono" style={{ fontSize: 10.5 }}>
+                      <div className="tnum text-[12px] text-[var(--tx-2)]">
                         {row.subLabel}
                       </div>
                     )}
                   </div>
                 </div>
 
-                {/* Inline Recharts 7-Day Study Consistency Chart when clicking member name */}
                 {isExpanded && consistencyData && (
                   <div
                     aria-label={`7-day study consistency chart for ${row.entry.nick}`}
-                    style={{
-                      marginTop: 10,
-                      padding: '10px 12px',
-                      borderRadius: 10,
-                      background: 'var(--c2)',
-                      border: '1px solid var(--bd)',
-                    }}
+                    className="mt-3 rounded-xl border border-[var(--line)] bg-[var(--sf-2)] p-3"
                   >
-                    <div
-                      className="row sp"
-                      style={{
-                        marginBottom: 6,
-                        fontSize: 11.5,
-                        gap: 8,
-                        flexWrap: 'wrap',
-                      }}
-                    >
-                      <b>📊 7-Day Study Consistency ({row.entry.nick})</b>
-                      <span className="mut mono">
+                    <div className="split mb-2 flex-wrap gap-2 text-[12px]">
+                      <strong className="text-[var(--tx)]">
+                        7-day study consistency ({row.entry.nick})
+                      </strong>
+                      <span className="tnum text-[var(--tx-2)]">
                         {consistencyData.activeDaysCount}/7 days active ·{' '}
                         {consistencyData.consistencyPct}% consistency ·{' '}
-                        {formatMinutesAsHoursMins(consistencyData.totalMinutes)}{' '}
-                        total
+                        {formatMinutesAsHoursMins(consistencyData.totalMinutes)} total
                       </span>
                     </div>
-                    <div style={{ width: '100%', height: 104 }}>
+                    <div className="h-[104px] w-full">
                       <ResponsiveContainer width="100%" height="100%">
                         <BarChart
                           data={consistencyData.days}
@@ -919,20 +679,18 @@ export const Leaderboard: React.FC<LeaderboardProps> = ({
                         >
                           <XAxis
                             dataKey="label"
-                            tick={{ fontSize: 10, fill: 'var(--mu)' }}
+                            tick={{ fontSize: 12, fill: '#A3ABB8' }}
                             axisLine={false}
                             tickLine={false}
                           />
                           <YAxis hide domain={[0, 'dataMax + 30']} />
                           <Tooltip
-                            cursor={{ fill: 'rgba(148, 163, 184, 0.1)' }}
                             contentStyle={{
-                              background: 'var(--card)',
-                              border: '1px solid var(--bd)',
+                              background: '#181C22',
+                              border: '1px solid rgba(255,255,255,0.08)',
                               borderRadius: 8,
-                              fontSize: 11,
-                              padding: '4px 8px',
-                              color: 'var(--tx)',
+                              fontSize: 12,
+                              color: '#ECEFF4',
                             }}
                             formatter={(value) => [
                               formatMinutesAsHoursMins(Number(value ?? 0)),
@@ -942,7 +700,7 @@ export const Leaderboard: React.FC<LeaderboardProps> = ({
                           />
                           <Bar
                             dataKey="minutes"
-                            fill={studyingNow ? '#10b981' : '#38bdf8'}
+                            fill={studyingNow ? '#4ADE80' : '#F5C451'}
                             radius={[4, 4, 0, 0]}
                             barSize={18}
                             isAnimationActive={false}
@@ -1021,6 +779,7 @@ export const GroupsView: React.FC<GroupsViewProps> = ({
   useEffect(() => {
     snapshotsRef.current = snapshots;
   }, [snapshots]);
+
   const [boardTab, setBoardTab] = useState<BoardTab>('today');
   const [xpSortMode, setXpSortMode] = useState<XpSortMode>('weekly');
   const [mockSortMode, setMockSortMode] = useState<MockSortMode>('latest');
@@ -1038,7 +797,11 @@ export const GroupsView: React.FC<GroupsViewProps> = ({
   const [lastManualRefreshTs, setLastManualRefreshTs] = useState(0);
   const [nowTick, setNowTick] = useState(() => Date.now());
 
-  // Create / Join modal state
+  // Pull-to-refresh touch state
+  const pullStartYRef = useRef<number | null>(null);
+  const [pullOffsetY, setPullOffsetY] = useState<number>(0);
+
+  // Create / Join Sheet state
   const [dialogMode, setDialogMode] = useState<'none' | 'create' | 'join'>('none');
   const [newGroupName, setNewGroupName] = useState('');
   const [newGroupEmoji, setNewGroupEmoji] = useState('🩺');
@@ -1058,13 +821,11 @@ export const GroupsView: React.FC<GroupsViewProps> = ({
 
   const cleanupRanForGroupRef = useRef<Set<string>>(new Set());
 
-  // Tick every 30s to keep relative timestamps ("updated X ago") fresh
   useEffect(() => {
     const iv = setInterval(() => setNowTick(Date.now()), 30_000);
     return () => clearInterval(iv);
   }, []);
 
-  // Personal XP v2 & Timer-verified study calculations from utils/xp.ts
   const myPersonalStats = useMemo(() => {
     const xpByDay = computeXpByDay(state);
     const totalXp = computeTotalXp(state, todayKey);
@@ -1130,7 +891,6 @@ export const GroupsView: React.FC<GroupsViewProps> = ({
   const activeSnapshot = activeGroupId ? snapshots[activeGroupId] : undefined;
   const activeGroupDoc = activeSnapshot?.doc;
 
-  // Keep owner inputs synced with active group doc
   useEffect(() => {
     if (activeGroupDoc) {
       setOwnerEditName(activeGroupDoc.name);
@@ -1153,7 +913,6 @@ export const GroupsView: React.FC<GroupsViewProps> = ({
     boardTab,
   ]);
 
-  // Refresh a group snapshot from Firestore
   const refreshGroup = useCallback(
     async (groupId: string, manual = false) => {
       if (!myUid || !groupId || !isOnline) return;
@@ -1185,8 +944,7 @@ export const GroupsView: React.FC<GroupsViewProps> = ({
             const existing = prev.joined.find((j) => j.groupId === groupId);
             if (
               !existing ||
-              (existing.name === snap.doc.name &&
-                existing.emoji === snap.doc.emoji)
+              (existing.name === snap.doc.name && existing.emoji === snap.doc.emoji)
             ) {
               return prev;
             }
@@ -1200,7 +958,6 @@ export const GroupsView: React.FC<GroupsViewProps> = ({
             };
           });
 
-          // Record last week's completed standings if available
           const completedStanding = computeCompletedWeekStandings(
             snap.doc,
             todayKey
@@ -1222,7 +979,6 @@ export const GroupsView: React.FC<GroupsViewProps> = ({
             }
           }
 
-          // Occasional cleanup of own cheers older than 14 days
           if (!cleanupRanForGroupRef.current.has(groupId)) {
             cleanupRanForGroupRef.current.add(groupId);
             void cleanupOldOwnCheers({
@@ -1267,9 +1023,6 @@ export const GroupsView: React.FC<GroupsViewProps> = ({
     ]
   );
 
-  // 5-Minute Cache & Auto-Refresh Logic:
-  // On opening GroupsView or switching activeGroupId, if cached snapshot is missing or > 5 minutes old
-  // (GROUP_CACHE_STALE_MS), automatically fetch fresh snapshot from Firestore.
   useEffect(() => {
     if (!myUid || !activeGroupId || !isOnline) return;
     const cached = loadCachedGroupSnapshots()[activeGroupId];
@@ -1288,6 +1041,36 @@ export const GroupsView: React.FC<GroupsViewProps> = ({
     }, GROUP_AUTO_REFRESH_MS);
     return () => clearInterval(interval);
   }, [myUid, activeGroupId, isOnline, refreshGroup]);
+
+  // Pull-to-refresh touch handlers
+  const handleTouchStart = (e: React.TouchEvent) => {
+    if (window.scrollY > 10 || !activeGroupId || !myUid) {
+      pullStartYRef.current = null;
+      return;
+    }
+    pullStartYRef.current = e.touches[0].clientY;
+  };
+
+  const handleTouchMove = (e: React.TouchEvent) => {
+    if (pullStartYRef.current === null) return;
+    const dy = e.touches[0].clientY - pullStartYRef.current;
+    if (dy > 0 && window.scrollY <= 5) {
+      setPullOffsetY(Math.min(80, Math.round(dy * 0.45)));
+    } else {
+      setPullOffsetY(0);
+    }
+  };
+
+  const handleTouchEnd = () => {
+    if (pullOffsetY >= 48 && activeGroupId && myUid && isOnline) {
+      if (state.set.snd && typeof navigator !== 'undefined' && navigator.vibrate) {
+        navigator.vibrate(12);
+      }
+      void refreshGroup(activeGroupId, true);
+    }
+    pullStartYRef.current = null;
+    setPullOffsetY(0);
+  };
 
   const ensureValidProfileBeforeGroupAction = (actionLabel: string): boolean => {
     const check = validateNickname(state.profile?.nick || '');
@@ -1574,7 +1357,7 @@ export const GroupsView: React.FC<GroupsViewProps> = ({
       } else {
         next[activeGroupId] = targetUid;
         savePaceTargets(next);
-        showToast(`🎯 Set ${targetNick} as your friendly Pace Target!`);
+        showToast(`Set ${targetNick} as your friendly Pace Target`);
       }
       return next;
     });
@@ -1748,7 +1531,6 @@ export const GroupsView: React.FC<GroupsViewProps> = ({
     }
   };
 
-  // Computed leaderboard rows for active group
   const rankedRows = useMemo(() => {
     if (!activeGroupDoc) return [];
     const members = activeGroupDoc.members || {};
@@ -1799,10 +1581,6 @@ export const GroupsView: React.FC<GroupsViewProps> = ({
     return map;
   }, [activeGroupId, prevGroupDocs, boardTab, todayKey, xpSortMode, mockSortMode]);
 
-  const [hoveredLiveStatusKey, setHoveredLiveStatusKey] = useState<
-    string | null
-  >(null);
-
   const studyingNowList = useMemo(() => {
     if (!activeGroupDoc || !activeSnapshot) return [];
     return getActiveStudyingNowMembers(
@@ -1825,7 +1603,6 @@ export const GroupsView: React.FC<GroupsViewProps> = ({
     return map;
   }, [studyingNowList]);
 
-  // Filtered rows for interactive search & filter chips
   const filteredRows = useMemo(() => {
     const q = memberSearch.trim().toLowerCase();
     return rankedRows.filter((r) => {
@@ -1845,7 +1622,6 @@ export const GroupsView: React.FC<GroupsViewProps> = ({
     });
   }, [rankedRows, memberSearch, memberFilter, todayKey, studyingNowUidSet]);
 
-  // Top 3 podium entries (only visible ranked members with rank 1..3)
   const podiumRows = useMemo(() => {
     return rankedRows.filter(
       (r): r is RankedMemberRow & { rank: 1 | 2 | 3 } =>
@@ -1858,7 +1634,6 @@ export const GroupsView: React.FC<GroupsViewProps> = ({
     return computeWeeklyGroupGoalProgress(activeGroupDoc, todayKey);
   }, [activeGroupDoc, todayKey]);
 
-  // Member contribution breakdown for Weekly Group Goal
   const weeklyMemberContributions = useMemo(() => {
     if (!activeGroupDoc || !weeklyGoalProg || !weeklyGoalProg.hasGoal) return [];
     const weekKeys = getWeekDayKeysUpToToday(todayKey);
@@ -1896,7 +1671,6 @@ export const GroupsView: React.FC<GroupsViewProps> = ({
     return activeSnapshot.receivedCheers.filter((c) => c.dayKey === todayKey);
   }, [activeSnapshot, todayKey]);
 
-  // Active Pace Target (Friendly Rival)
   const activePaceTargetUid = activeGroupId ? paceTargets[activeGroupId] : undefined;
   const activePaceTargetEntry =
     activePaceTargetUid && activeGroupDoc?.members?.[activePaceTargetUid]
@@ -1948,233 +1722,201 @@ export const GroupsView: React.FC<GroupsViewProps> = ({
     return rankedRows.find((r) => r.uid === myUid)?.rank ?? null;
   }, [rankedRows, myUid]);
 
-  return (
-    <div>
-      {/* Page Title & Live Squad Overview */}
-      <div className="top" style={{ marginBottom: 10 }}>
-        <div>
-          <h2 style={{ margin: 0, fontSize: 20 }}>🏆 Study Groups &amp; Arena</h2>
-          <small>
-            Anonymous NEET study squads · Timer-verified hours &amp; XP v2 leaderboards
-          </small>
-        </div>
-        {onGoToFocus && (
-          <button
-            type="button"
-            className="em-btn"
-            onClick={onGoToFocus}
-            style={{ minHeight: 44, padding: '0 14px', fontSize: 12.5, whiteSpace: 'nowrap' }}
-          >
-            ⏱️ Focus Timer
-          </button>
-        )}
-      </div>
+  const boardOptions = useMemo(() => {
+    const opts: Array<{ value: BoardTab; label: string }> = [
+      { value: 'today', label: 'Today' },
+      { value: 'week', label: 'Week' },
+      { value: 'xp', label: 'XP' },
+      { value: 'streak', label: 'Streak' },
+    ];
+    if (activeGroupDoc?.mockBoard) {
+      opts.push({ value: 'mocks', label: 'Mocks' });
+    }
+    opts.push({ value: 'history', label: 'History' });
+    return opts;
+  }, [activeGroupDoc?.mockBoard]);
 
-      {/* Personal Live XP v2 & Timer Standing Card (powered by utils/xp.ts) */}
-      <div
-        className="card"
-        style={{
-          padding: 15,
-          marginBottom: 12,
-          background:
-            'linear-gradient(145deg, color-mix(in srgb, var(--ac) 12%, var(--card)), var(--card) 72%)',
-          borderColor: 'color-mix(in srgb, var(--ac) 34%, var(--bd))',
-        }}
-      >
-        <div className="row sp" style={{ flexWrap: 'wrap', gap: 10 }}>
-          <div className="row" style={{ gap: 10 }}>
+  return (
+    <div
+      onTouchStart={handleTouchStart}
+      onTouchMove={handleTouchMove}
+      onTouchEnd={handleTouchEnd}
+      className="space-y-4"
+    >
+      {/* Pull-to-refresh visual indicator */}
+      {pullOffsetY > 0 && (
+        <div
+          className="flex items-center justify-center gap-2 rounded-xl border border-[var(--line)] bg-[var(--sf-1)] py-2 text-[12.5px] font-medium text-[var(--ac)] transition-all"
+          style={{ height: `${Math.max(36, pullOffsetY)}px` }}
+        >
+          <RefreshCw
+            size={15}
+            className={pullOffsetY >= 48 ? 'animate-spin' : ''}
+          />
+          <span>
+            {pullOffsetY >= 48
+              ? 'Release to refresh leaderboard'
+              : 'Pull down to refresh'}
+          </span>
+        </div>
+      )}
+
+      {/* Personal Live XP v2 & Timer Standing Card */}
+      <Card className="space-y-3">
+        <div className="split flex-wrap gap-3">
+          <div className="flex items-center gap-3">
             <button
               type="button"
               onClick={() => onOpenProfileModal()}
               aria-label="Edit anonymous group profile"
               title="Tap to edit your anonymous nickname & avatar"
-              style={{
-                width: 48,
-                height: 48,
-                borderRadius: 15,
-                fontSize: 24,
-                padding: 0,
-                display: 'grid',
-                placeItems: 'center',
-                background: 'color-mix(in srgb, var(--ac) 18%, var(--c2))',
-                border: '1px solid color-mix(in srgb, var(--ac) 40%, var(--bd))',
-              }}
+              className="flex h-12 w-12 items-center justify-center rounded-2xl border border-[var(--ac-line)] bg-[var(--ac-soft)] text-[24px]"
             >
               {state.profile?.emoji || '🩺'}
             </button>
             <div>
-              <div className="row" style={{ gap: 6, flexWrap: 'wrap' }}>
-                <b style={{ fontSize: 15 }}>
+              <div className="flex flex-wrap items-center gap-2">
+                <strong className="text-[15px] font-semibold text-[var(--tx)]">
                   {state.profile?.nick || 'Anonymous Aspirant'}
-                </b>
+                </strong>
                 {state.profile?.examYear ? (
-                  <small className="mono">
+                  <span className="tnum text-[12px] text-[var(--tx-2)]">
                     · NEET {state.profile.examYear}
-                  </small>
+                  </span>
                 ) : null}
-                <button
-                  type="button"
-                  className="s"
+                <Button
+                  variant="secondary"
+                  size="sm"
                   onClick={() => onOpenProfileModal()}
-                  style={{
-                    minHeight: 28,
-                    padding: '2px 8px',
-                    fontSize: 11,
-                    borderRadius: 8,
-                  }}
                 >
-                  ✎ Edit Profile
-                </button>
+                  Edit profile
+                </Button>
               </div>
-              <div className="mut" style={{ fontSize: 12, marginTop: 2 }}>
-                Level <b>{myPersonalStats.levelInfo.level}</b> ·{' '}
-                <b className="mono">{myPersonalStats.totalXp.toLocaleString()} XP</b>
+              <p className="tnum mt-0.5 text-[12.5px] text-[var(--tx-2)]">
+                Level <strong>{myPersonalStats.levelInfo.level}</strong> ·{' '}
+                <strong>{myPersonalStats.totalXp.toLocaleString()} XP</strong>
                 {myRankOnCurrentBoard ? (
                   <span>
                     {' '}
-                    · Group Rank <b>#{myRankOnCurrentBoard}</b>
+                    · Group rank <strong>#{myRankOnCurrentBoard}</strong>
                   </span>
                 ) : null}
-              </div>
+              </p>
             </div>
           </div>
 
-          <div className="row" style={{ gap: 6, flexWrap: 'wrap' }}>
-            <button
-              type="button"
-              className="s"
+          <div className="flex flex-wrap items-center gap-2">
+            <Button
+              variant="secondary"
+              size="sm"
               onClick={() => setShowMyXpDrawer((v) => !v)}
               aria-expanded={showMyXpDrawer}
-              style={{ minHeight: 40, fontSize: 12 }}
             >
-              ⚡ Today: +{myPersonalStats.todayXp} XP {showMyXpDrawer ? '▴' : '▾'}
-            </button>
+              Today: +{myPersonalStats.todayXp} XP {showMyXpDrawer ? '▴' : '▾'}
+            </Button>
             {myUid && activeGroupId && activeGroupPref && (
-              <button
-                type="button"
-                className="pri"
+              <Button
+                variant="primary"
+                size="sm"
                 disabled={isPublishingMine || !isOnline}
                 onClick={handlePushMyStatsNow}
-                title="Push your latest timer study hours & XP to this group"
-                style={{ minHeight: 40, padding: '0 12px', fontSize: 12 }}
               >
-                {isPublishingMine ? 'Syncing…' : '📤 Sync My Stats'}
-              </button>
+                {isPublishingMine ? 'Syncing…' : 'Sync my stats'}
+              </Button>
+            )}
+            {onGoToFocus && (
+              <Button
+                variant="secondary"
+                size="sm"
+                icon={<Timer size={15} />}
+                onClick={onGoToFocus}
+              >
+                Focus timer
+              </Button>
             )}
           </div>
         </div>
 
-        {/* Level Progress Bar + Quick Metric Strip */}
-        <div style={{ marginTop: 10 }}>
-          <div className="row sp" style={{ fontSize: 11, marginBottom: 4 }}>
-            <span className="mut">
+        {/* Level Progress Meter */}
+        <div>
+          <div className="split mb-1 text-[12px] text-[var(--tx-2)]">
+            <span>
               Lv. {myPersonalStats.levelInfo.level} → Lv.{' '}
               {myPersonalStats.levelInfo.level + 1} (
               {myPersonalStats.levelInfo.progressPct}%)
             </span>
-            <span className="mono mut">
+            <span className="tnum">
               {myPersonalStats.levelInfo.xpIntoLevel} /{' '}
               {myPersonalStats.levelInfo.xpNeededForNext} XP
             </span>
           </div>
-          <div className="pbar" style={{ height: 7 }}>
-            <div
-              className="pfill"
-              style={{ width: `${myPersonalStats.levelInfo.progressPct}%` }}
-            />
-          </div>
+          <Meter value={myPersonalStats.levelInfo.progressPct} max={100} />
         </div>
 
-        <div
-          className="stat-mini"
-          style={{
-            gridTemplateColumns: 'repeat(3, 1fr)',
-            gap: 8,
-            marginTop: 10,
-          }}
-        >
-          <div className="stat-box" style={{ padding: '8px 10px' }}>
-            <small style={{ fontSize: 11 }}>Today Timer</small>
-            <b className="mono" style={{ fontSize: 14 }}>
-              {formatMinutesAsHoursMins(myPersonalStats.todayTimerMins)}
-            </b>
-          </div>
-          <div className="stat-box" style={{ padding: '8px 10px' }}>
-            <small style={{ fontSize: 11 }}>Week Timer</small>
-            <b className="mono" style={{ fontSize: 14 }}>
-              {formatMinutesAsHoursMins(myPersonalStats.weekTimerMins)}
-            </b>
-          </div>
-          <div className="stat-box" style={{ padding: '8px 10px' }}>
-            <small style={{ fontSize: 11 }}>Week XP v2</small>
-            <b className="mono" style={{ fontSize: 14, color: 'var(--em)' }}>
-              +{myPersonalStats.weekXp} XP
-            </b>
-          </div>
+        <div className="grid grid-cols-3 gap-2.5">
+          <Stat
+            label="Today timer"
+            value={formatMinutesAsHoursMins(myPersonalStats.todayTimerMins)}
+          />
+          <Stat
+            label="Week timer"
+            value={formatMinutesAsHoursMins(myPersonalStats.weekTimerMins)}
+          />
+          <Stat
+            label="Week XP v2"
+            value={`+${myPersonalStats.weekXp} XP`}
+          />
         </div>
 
-        {/* Expandable Interactive Today XP v2 Breakdown Drawer */}
         {showMyXpDrawer && (
-          <div
-            style={{
-              marginTop: 12,
-              paddingTop: 12,
-              borderTop: '1px solid var(--bd)',
-              fontSize: 12,
-            }}
-          >
-            <div className="row sp" style={{ marginBottom: 8 }}>
-              <b>⚡ Today's XP v2 Breakdown ({todayKey})</b>
-              <span className="mono" style={{ color: 'var(--em)', fontWeight: 700 }}>
+          <div className="space-y-3 border-t border-[var(--line)] pt-3 text-[12.5px]">
+            <div className="split">
+              <strong className="text-[var(--tx)]">
+                Today&apos;s XP v2 breakdown ({todayKey})
+              </strong>
+              <span className="tnum font-semibold text-[var(--ok)]">
                 Total: +{myPersonalStats.todayBreakdown.total} XP
               </span>
             </div>
-            <div
-              style={{
-                display: 'grid',
-                gridTemplateColumns: 'repeat(auto-fit, minmax(145px, 1fr))',
-                gap: 6,
-                marginBottom: 10,
-              }}
-            >
+            <div className="grid grid-cols-2 gap-2 sm:grid-cols-4">
               {[
                 {
-                  label: 'Timer Study',
+                  label: 'Timer study',
                   val: myPersonalStats.todayBreakdown.study,
                   cap: 'max 960/d',
                 },
                 {
-                  label: 'Focus Purity ≥90%',
+                  label: 'Focus purity ≥90%',
                   val: myPersonalStats.todayBreakdown.focusBonus,
                   cap: 'max 20/d',
                 },
                 {
-                  label: 'Min-Day Goal Met',
+                  label: 'Min-day goal met',
                   val: myPersonalStats.todayBreakdown.minDayBonus,
                   cap: '+30/d',
                 },
                 {
-                  label: 'Streak Bonus',
+                  label: 'Streak bonus',
                   val: myPersonalStats.todayBreakdown.streakBonus,
                   cap: 'max 20/d',
                 },
                 {
-                  label: 'Revisions Done',
+                  label: 'Revisions done',
                   val: myPersonalStats.todayBreakdown.revisions,
                   cap: '+10 on-time',
                 },
                 {
-                  label: 'Chapters Completed',
+                  label: 'Chapters completed',
                   val: myPersonalStats.todayBreakdown.chapters,
                   cap: '+25 each',
                 },
                 {
-                  label: 'Mock Logged',
+                  label: 'Mock logged',
                   val: myPersonalStats.todayBreakdown.mocks,
                   cap: 'max 25/d',
                 },
                 {
-                  label: 'Tasks & Habits',
+                  label: 'Tasks & habits',
                   val:
                     myPersonalStats.todayBreakdown.tasks +
                     myPersonalStats.todayBreakdown.habits,
@@ -2183,184 +1925,181 @@ export const GroupsView: React.FC<GroupsViewProps> = ({
               ].map((item) => (
                 <div
                   key={item.label}
-                  className="row sp"
-                  style={{
-                    padding: '6px 9px',
-                    borderRadius: 10,
-                    background: 'var(--c2)',
-                    border: '1px solid var(--bd)',
-                  }}
+                  className="split rounded-xl border border-[var(--line)] bg-[var(--sf-2)] px-3 py-2"
                 >
                   <div>
-                    <div style={{ fontWeight: 600 }}>{item.label}</div>
-                    <small style={{ fontSize: 10 }}>{item.cap}</small>
+                    <div className="font-medium text-[var(--tx)]">{item.label}</div>
+                    <span className="text-[12px] text-[var(--tx-3)]">{item.cap}</span>
                   </div>
-                  <b
-                    className="mono"
+                  <strong
+                    className="tnum"
                     style={{
-                      color: item.val > 0 ? 'var(--em)' : 'var(--mu)',
+                      color: item.val > 0 ? 'var(--ok)' : 'var(--tx-2)',
                     }}
                   >
                     +{item.val}
-                  </b>
+                  </strong>
                 </div>
               ))}
             </div>
-            <details style={{ fontSize: 11.5, color: 'var(--mu)' }}>
-              <summary style={{ cursor: 'pointer', fontWeight: 600 }}>
-                How XP v2 &amp; Fair Group Scoring Work
+            <details className="text-[12px] text-[var(--tx-2)]">
+              <summary className="cursor-pointer font-medium text-[var(--tx)]">
+                How XP v2 &amp; fair group scoring work
               </summary>
-              <ul style={{ margin: '6px 0 0', paddingLeft: 18, lineHeight: 1.5 }}>
+              <ul className="mt-2 list-disc space-y-1 pl-5">
                 {XP_V2_PLAIN_RULES.map((r) => (
                   <li key={r.label}>
-                    <b>{r.label}:</b> {r.rule}
+                    <strong>{r.label}:</strong> {r.rule}
                   </li>
                 ))}
               </ul>
             </details>
           </div>
         )}
-      </div>
+      </Card>
 
-      {/* 1. Signed-out state */}
+      {/* 1. Signed-Out Landing Card */}
       {!myUid ? (
-        <div className="card" style={{ textAlign: 'center', padding: 24 }}>
-          <div style={{ fontSize: 38, marginBottom: 8 }} aria-hidden="true">
-            🏆
-          </div>
-          <b style={{ fontSize: 16, display: 'block', marginBottom: 6 }}>
-            Sign In to Join NEET Study Groups
-          </b>
-          <p
-            className="mut"
-            style={{ fontSize: 13, maxWidth: 380, margin: '0 auto 16px' }}
-          >
-            Study with up to 3 private squads using 10-character invite codes. Compare
-            timer-verified study hours, XP v2, consistency streaks, and head-to-head
-            7-day pace while keeping your Google identity 100% private.
-          </p>
-          <button
-            type="button"
-            className="pri"
-            onClick={onSignIn}
-            style={{ minHeight: 44, padding: '0 22px' }}
-          >
-            Sign in with Google to Use Groups
-          </button>
-        </div>
-      ) : !groupsConfig.consentAccepted ? (
-        /* 2. First-time privacy consent screen */
-        <div className="card" style={{ padding: 20 }}>
-          <div className="row" style={{ gap: 10, marginBottom: 12 }}>
-            <span style={{ fontSize: 28 }} aria-hidden="true">
-              🛡️
-            </span>
+        <Card className="space-y-4 p-6">
+          <div className="flex items-start gap-3">
+            <div className="flex h-11 w-11 shrink-0 items-center justify-center rounded-xl border border-[var(--ac-line)] bg-[var(--ac-soft)] text-[var(--ac)]">
+              <Users size={22} />
+            </div>
             <div>
-              <b style={{ fontSize: 16 }}>Privacy-First Study Groups</b>
-              <div className="mut" style={{ fontSize: 12 }}>
-                How group sharing works in Deep Hours
-              </div>
+              <h3 className="text-[17px] font-semibold text-[var(--tx)]">
+                Sign in to join private study groups
+              </h3>
+              <p className="mt-1 text-[13.5px] text-[var(--tx-2)]">
+                Study alongside up to 3 private NEET squads using 10-character invite
+                codes. Compare timer-verified hours, XP v2, consistency streaks, and 7-day
+                pace while keeping your Google account private.
+              </p>
             </div>
           </div>
-          <ul
-            style={{
-              margin: '0 0 16px',
-              paddingLeft: 18,
-              fontSize: 13,
-              lineHeight: 1.55,
-              color: 'var(--tx)',
-            }}
-          >
-            <li style={{ marginBottom: 6 }}>
-              <b>Anonymous by design:</b> Your Google email, real name, and account ID
-              are never visible to other members. You pick an anonymous nickname &amp;
-              emoji.
+
+          <div className="grid grid-cols-1 gap-2.5 sm:grid-cols-3">
+            <div className="rounded-xl border border-[var(--line)] bg-[var(--sf-2)] p-3">
+              <div className="flex items-center gap-2 text-[13px] font-semibold text-[var(--tx)]">
+                <ShieldCheck size={16} className="text-[var(--ok)]" />
+                Anonymous identity
+              </div>
+              <p className="mt-1 text-[12px] text-[var(--tx-2)]">
+                Your email and Google profile are never exposed. You choose a nickname and
+                avatar.
+              </p>
+            </div>
+            <div className="rounded-xl border border-[var(--line)] bg-[var(--sf-2)] p-3">
+              <div className="flex items-center gap-2 text-[13px] font-semibold text-[var(--tx)]">
+                <Timer size={16} className="text-[var(--ac)]" />
+                Timer-verified hours
+              </div>
+              <p className="mt-1 text-[12px] text-[var(--tx-2)]">
+                Only real focus timer sessions count toward squad leaderboards.
+              </p>
+            </div>
+            <div className="rounded-xl border border-[var(--line)] bg-[var(--sf-2)] p-3">
+              <div className="flex items-center gap-2 text-[13px] font-semibold text-[var(--tx)]">
+                <Lock size={16} className="text-[var(--info)]" />
+                Granular sharing
+              </div>
+              <p className="mt-1 text-[12px] text-[var(--tx-2)]">
+                Toggle hours, XP, streak, mocks, or live status per group anytime.
+              </p>
+            </div>
+          </div>
+
+          <div className="flex justify-start">
+            <Button variant="primary" onClick={onSignIn}>
+              Sign in with Google
+            </Button>
+          </div>
+        </Card>
+      ) : !groupsConfig.consentAccepted ? (
+        /* 2. First-time Privacy Consent Screen */
+        <Card className="space-y-4 p-5">
+          <div>
+            <h3 className="text-[16px] font-semibold text-[var(--tx)]">
+              Privacy-first study groups
+            </h3>
+            <p className="text-[12.5px] text-[var(--tx-2)]">
+              How group sharing works in Deep Hours
+            </p>
+          </div>
+          <ul className="list-disc space-y-2 pl-5 text-[13.5px] text-[var(--tx)]">
+            <li>
+              <strong>Anonymous by design:</strong> Your Google email, real name, and
+              account ID are never visible to other members. You pick an anonymous nickname
+              and emoji.
             </li>
-            <li style={{ marginBottom: 6 }}>
-              <b>Timer-verified fairness:</b> Only timer-tracked sessions count toward
-              group study time and XP. Manual sessions stay in your personal log only.
+            <li>
+              <strong>Timer-verified fairness:</strong> Only timer-tracked sessions count
+              toward group study time and XP. Manual sessions stay in your personal log
+              only.
             </li>
-            <li style={{ marginBottom: 6 }}>
-              <b>Granular controls:</b> You can toggle Study Time, XP, Streak, Mock
-              Scores (OFF by default), and Studying-Now status per group, or pause
+            <li>
+              <strong>Granular controls:</strong> You can toggle Study Time, XP, Streak,
+              Mock Scores (off by default), and Studying-Now status per group, or pause
               sharing anytime.
             </li>
           </ul>
-          <button
-            type="button"
-            className="pri"
-            onClick={handleAcceptConsent}
-            style={{ minHeight: 44, width: '100%' }}
-          >
-            I Understand — Continue to Groups
-          </button>
-        </div>
+          <Button variant="primary" fullWidth onClick={handleAcceptConsent}>
+            I understand — Continue to groups
+          </Button>
+        </Card>
       ) : (
         <>
           {/* Group Switcher & Create/Join Bar */}
-          <div className="card" style={{ padding: 14, marginBottom: 12 }}>
-            <div
-              className="row sp"
-              style={{ flexWrap: 'wrap', gap: 8, marginBottom: joinedGroups.length > 0 ? 10 : 0 }}
-            >
+          <Card className="space-y-3">
+            <div className="split flex-wrap gap-2">
               <div>
-                <b style={{ fontSize: 14 }}>
-                  My Study Squads ({joinedGroups.length}/{MAX_JOINED_GROUPS})
-                </b>
-                <div className="mut" style={{ fontSize: 11.5 }}>
+                <h3 className="text-[15px] font-semibold text-[var(--tx)]">
+                  My study squads ({joinedGroups.length}/{MAX_JOINED_GROUPS})
+                </h3>
+                <p className="text-[12px] text-[var(--tx-2)]">
                   Switch groups or create/join with a 10-character code
-                </div>
+                </p>
               </div>
 
-              <div className="row" style={{ gap: 6 }}>
+              <div className="flex items-center gap-2">
                 {joinedGroups.length < MAX_JOINED_GROUPS ? (
                   <>
-                    <button
-                      type="button"
-                      className="pri"
+                    <Button
+                      variant="primary"
+                      size="sm"
+                      icon={<Plus size={15} />}
                       onClick={() => {
                         if (!ensureValidProfileBeforeGroupAction('create a group'))
                           return;
                         setActionError(null);
-                        setDialogMode(dialogMode === 'create' ? 'none' : 'create');
+                        setDialogMode('create');
                       }}
-                      style={{ minHeight: 44, padding: '0 13px', fontSize: 12.5 }}
                     >
-                      + Create Group
-                    </button>
-                    <button
-                      type="button"
-                      className="s"
+                      Create group
+                    </Button>
+                    <Button
+                      variant="secondary"
+                      size="sm"
+                      icon={<KeyRound size={15} />}
                       onClick={() => {
                         if (!ensureValidProfileBeforeGroupAction('join a group'))
                           return;
                         setActionError(null);
-                        setDialogMode(dialogMode === 'join' ? 'none' : 'join');
+                        setDialogMode('join');
                       }}
-                      style={{ minHeight: 44, padding: '0 13px', fontSize: 12.5 }}
                     >
-                      🔑 Join Code
-                    </button>
+                      Join code
+                    </Button>
                   </>
                 ) : (
-                  <small className="mono">
+                  <span className="tnum text-[12px] text-[var(--tx-2)]">
                     Max {MAX_JOINED_GROUPS} groups joined
-                  </small>
+                  </span>
                 )}
               </div>
             </div>
 
-            {/* Group Selector Chips */}
             {joinedGroups.length > 0 && (
-              <div
-                className="chips"
-                style={{
-                  overflowX: 'auto',
-                  paddingBottom: 2,
-                  gap: 6,
-                  flexWrap: 'nowrap',
-                }}
-              >
+              <div className="flex items-center gap-2 overflow-x-auto pb-1">
                 {joinedGroups.map((g) => {
                   const snapDoc = snapshots[g.groupId]?.doc;
                   const label =
@@ -2371,10 +2110,9 @@ export const GroupsView: React.FC<GroupsViewProps> = ({
                     : undefined;
                   const isSelected = g.groupId === activeGroupId;
                   return (
-                    <button
+                    <Chip
                       key={g.groupId}
-                      type="button"
-                      className={isSelected ? 'on' : ''}
+                      selected={isSelected}
                       onClick={() => {
                         setExpandedMemberUid(null);
                         onUpdateGroupsConfig((prev) => ({
@@ -2382,341 +2120,254 @@ export const GroupsView: React.FC<GroupsViewProps> = ({
                           activeGroupId: g.groupId,
                         }));
                       }}
-                      style={{ minHeight: 44, whiteSpace: 'nowrap' }}
                     >
                       {em} {label}
                       {mCount !== undefined ? ` (${mCount})` : ''}
-                    </button>
+                    </Chip>
                   );
                 })}
               </div>
             )}
+          </Card>
 
-            {/* Inline Create Group Form */}
-            {dialogMode === 'create' && (
-              <form
-                onSubmit={handleCreateGroup}
-                style={{
-                  marginTop: 12,
-                  paddingTop: 12,
-                  borderTop: '1px solid var(--bd)',
-                }}
-              >
-                <div style={{ fontWeight: 700, fontSize: 13, marginBottom: 8 }}>
-                  Create a New Study Group
-                </div>
-                <div style={{ marginBottom: 10 }}>
-                  <input
-                    type="text"
-                    placeholder="Group Name (e.g. AIIMS Delhi 2026 Squad)"
-                    maxLength={32}
-                    value={newGroupName}
-                    onChange={(e) => setNewGroupName(e.target.value)}
-                    aria-label="New study group name"
-                    style={{ minHeight: 44, width: '100%' }}
-                    required
-                  />
-                </div>
-                <div
-                  className="chips"
-                  style={{ marginBottom: 10, gap: 6, flexWrap: 'wrap' }}
-                >
+          {/* Create Group Sheet */}
+          <Sheet
+            open={dialogMode === 'create'}
+            onClose={() => setDialogMode('none')}
+            title="Create a new study group"
+          >
+            <form onSubmit={handleCreateGroup} className="space-y-4">
+              <Field label="Group name">
+                <input
+                  type="text"
+                  placeholder="e.g. AIIMS Delhi 2026 Squad"
+                  maxLength={32}
+                  value={newGroupName}
+                  onChange={(e) => setNewGroupName(e.target.value)}
+                  aria-label="New study group name"
+                  className="h-11 w-full rounded-xl border border-[var(--line)] bg-[var(--sf-2)] px-3 text-[14px] text-[var(--tx)]"
+                  required
+                />
+              </Field>
+              <Field label="Squad icon">
+                <div className="flex flex-wrap gap-2">
                   {GROUP_EMOJIS.map((em) => (
-                    <button
+                    <Chip
                       key={em}
-                      type="button"
-                      className={newGroupEmoji === em ? 'on' : ''}
+                      selected={newGroupEmoji === em}
                       onClick={() => setNewGroupEmoji(em)}
-                      style={{ minHeight: 40 }}
                     >
                       {em}
-                    </button>
+                    </Chip>
                   ))}
                 </div>
-                {actionError && (
-                  <div style={{ color: '#f43f5e', fontSize: 12, marginBottom: 8 }}>
-                    {actionError}
-                  </div>
-                )}
-                <div className="row" style={{ gap: 8, justifyContent: 'flex-end' }}>
-                  <button
-                    type="button"
-                    className="s"
-                    onClick={() => setDialogMode('none')}
-                    style={{ minHeight: 44 }}
-                  >
-                    Cancel
-                  </button>
-                  <button
-                    type="submit"
-                    className="pri"
-                    disabled={actionBusy}
-                    style={{ minHeight: 44 }}
-                  >
-                    {actionBusy ? 'Creating…' : 'Create Group'}
-                  </button>
-                </div>
-              </form>
-            )}
+              </Field>
+              {actionError && (
+                <p className="text-[12.5px] text-[var(--bad)]">{actionError}</p>
+              )}
+              <div className="flex justify-end gap-2">
+                <Button
+                  type="button"
+                  variant="secondary"
+                  onClick={() => setDialogMode('none')}
+                >
+                  Cancel
+                </Button>
+                <Button type="submit" variant="primary" disabled={actionBusy}>
+                  {actionBusy ? 'Creating…' : 'Create group'}
+                </Button>
+              </div>
+            </form>
+          </Sheet>
 
-            {/* Inline Join Group Form */}
-            {dialogMode === 'join' && (
-              <form
-                onSubmit={handleJoinGroup}
-                style={{
-                  marginTop: 12,
-                  paddingTop: 12,
-                  borderTop: '1px solid var(--bd)',
-                }}
-              >
-                <div style={{ fontWeight: 700, fontSize: 13, marginBottom: 8 }}>
-                  Join with 10-Character Invite Code
-                </div>
-                <div className="row" style={{ gap: 8, marginBottom: 8, flexWrap: 'wrap' }}>
-                  <input
-                    type="text"
-                    placeholder="ABCDE-23456"
-                    maxLength={15}
-                    value={joinCodeInput}
-                    onChange={(e) => setJoinCodeInput(e.target.value.toUpperCase())}
-                    aria-label="Group invite code"
-                    className="mono"
-                    style={{ minHeight: 44, flex: 1, minWidth: 160, letterSpacing: 1 }}
-                    required
-                  />
-                  <button
-                    type="submit"
-                    className="pri"
-                    disabled={actionBusy}
-                    style={{ minHeight: 44, padding: '0 16px' }}
-                  >
-                    {actionBusy ? 'Joining…' : 'Join Squad'}
-                  </button>
-                  <button
-                    type="button"
-                    className="s"
-                    onClick={() => setDialogMode('none')}
-                    style={{ minHeight: 44 }}
-                  >
-                    Cancel
-                  </button>
-                </div>
-                {actionError && (
-                  <div style={{ color: '#f43f5e', fontSize: 12, marginTop: 4 }}>
-                    {actionError}
-                  </div>
-                )}
-              </form>
-            )}
-          </div>
+          {/* Join Group Sheet */}
+          <Sheet
+            open={dialogMode === 'join'}
+            onClose={() => setDialogMode('none')}
+            title="Join with 10-character invite code"
+          >
+            <form onSubmit={handleJoinGroup} className="space-y-4">
+              <Field label="Invite code">
+                <input
+                  type="text"
+                  placeholder="ABCDE-23456"
+                  maxLength={15}
+                  value={joinCodeInput}
+                  onChange={(e) => setJoinCodeInput(e.target.value.toUpperCase())}
+                  aria-label="Group invite code"
+                  className="mono h-11 w-full rounded-xl border border-[var(--line)] bg-[var(--sf-2)] px-3 text-[15px] tracking-wider text-[var(--tx)]"
+                  required
+                />
+              </Field>
+              {actionError && (
+                <p className="text-[12.5px] text-[var(--bad)]">{actionError}</p>
+              )}
+              <div className="flex justify-end gap-2">
+                <Button
+                  type="button"
+                  variant="secondary"
+                  onClick={() => setDialogMode('none')}
+                >
+                  Cancel
+                </Button>
+                <Button type="submit" variant="primary" disabled={actionBusy}>
+                  {actionBusy ? 'Joining…' : 'Join squad'}
+                </Button>
+              </div>
+            </form>
+          </Sheet>
 
           {/* Empty state when user hasn't joined any group yet */}
           {joinedGroups.length === 0 && (
-            <div className="card" style={{ textAlign: 'center', padding: 26 }}>
-              <div style={{ fontSize: 38, marginBottom: 8 }} aria-hidden="true">
-                🤝
-              </div>
-              <b style={{ fontSize: 16, display: 'block', marginBottom: 6 }}>
-                No Study Groups Joined Yet
-              </b>
-              <p
-                className="mut"
-                style={{ fontSize: 13, maxWidth: 380, margin: '0 auto 16px' }}
-              >
-                Create a private study group for your NEET batchmates or enter a
-                10-character invite code to compare daily timer hours, weekly XP v2,
-                consistency streaks, and 7-day head-to-head graphs.
-              </p>
-              <div
-                className="row"
-                style={{ justifyContent: 'center', gap: 8, flexWrap: 'wrap' }}
-              >
-                <button
-                  type="button"
-                  className="pri"
-                  onClick={() => {
-                    if (!ensureValidProfileBeforeGroupAction('create a group'))
-                      return;
-                    setDialogMode('create');
-                  }}
-                  style={{ minHeight: 44, padding: '0 18px' }}
-                >
-                  + Create Study Group
-                </button>
-                <button
-                  type="button"
-                  className="s"
-                  onClick={() => {
-                    if (!ensureValidProfileBeforeGroupAction('join a group'))
-                      return;
-                    setDialogMode('join');
-                  }}
-                  style={{ minHeight: 44, padding: '0 18px' }}
-                >
-                  🔑 Enter Invite Code
-                </button>
-                {!validateNickname(state.profile?.nick || '').valid && (
-                  <button
-                    type="button"
-                    className="s"
-                    onClick={() =>
-                      onOpenProfileModal(
-                        'Configure your anonymous nickname (2–20 chars) and emoji avatar before joining a group.'
-                      )
-                    }
-                    style={{ minHeight: 44, padding: '0 16px' }}
+            <EmptyState
+              icon={<Users size={22} />}
+              title="No study groups joined yet"
+              description="Create a private study group for your batchmates or enter a 10-character invite code to compare daily timer hours, weekly XP v2, and 7-day consistency."
+              action={
+                <div className="flex flex-wrap justify-center gap-2">
+                  <Button
+                    variant="primary"
+                    size="sm"
+                    icon={<Plus size={15} />}
+                    onClick={() => {
+                      if (!ensureValidProfileBeforeGroupAction('create a group'))
+                        return;
+                      setDialogMode('create');
+                    }}
                   >
-                    {state.profile?.emoji || '🩺'} Set Up Profile First
-                  </button>
-                )}
-              </div>
-            </div>
+                    Create study group
+                  </Button>
+                  <Button
+                    variant="secondary"
+                    size="sm"
+                    icon={<KeyRound size={15} />}
+                    onClick={() => {
+                      if (!ensureValidProfileBeforeGroupAction('join a group'))
+                        return;
+                      setDialogMode('join');
+                    }}
+                  >
+                    Enter invite code
+                  </Button>
+                </div>
+              }
+            />
           )}
 
-          {/* Loading / Uncached state when a group is selected but snapshot hasn't loaded yet */}
+          {/* Uncached / Loading state */}
           {activeGroupId && !activeGroupDoc && (
-            <div
-              className="card"
-              style={{ textAlign: 'center', padding: 24, marginBottom: 12 }}
-            >
-              <div style={{ fontSize: 30, marginBottom: 8 }} aria-hidden="true">
-                {isRefreshing ? '⏳' : '📡'}
-              </div>
-              <b style={{ fontSize: 15, display: 'block', marginBottom: 6 }}>
+            <Card className="p-6 text-center space-y-3">
+              <strong className="block text-[15px] text-[var(--tx)]">
                 {isRefreshing
-                  ? 'Loading Group Leaderboard…'
-                  : 'Group Snapshot Unavailable Offline'}
-              </b>
-              <p
-                className="mut"
-                style={{ fontSize: 13, maxWidth: 340, margin: '0 auto 14px' }}
-              >
+                  ? 'Loading group leaderboard…'
+                  : 'Group snapshot unavailable offline'}
+              </strong>
+              <p className="mx-auto max-w-sm text-[13px] text-[var(--tx-2)]">
                 {isRefreshing
                   ? 'Fetching latest study hours and XP standings from Cloud Firestore…'
                   : 'Connect to the internet and tap Refresh to load this study group.'}
               </p>
-              <button
-                type="button"
-                className="pri"
+              <Button
+                variant="primary"
+                size="sm"
+                icon={<RefreshCw size={15} />}
                 disabled={isRefreshing || !isOnline}
                 onClick={() => refreshGroup(activeGroupId, true)}
-                style={{ minHeight: 44, padding: '0 18px' }}
               >
-                🔄 {isRefreshing ? 'Refreshing…' : 'Refresh Group'}
-              </button>
-            </div>
+                {isRefreshing ? 'Refreshing…' : 'Refresh group'}
+              </Button>
+            </Card>
           )}
 
           {/* Active Group Dashboard */}
           {activeGroupId && activeGroupDoc && (
             <>
-              {/* Group Header & Live Activity Card */}
-              <div className="card" style={{ padding: 15, marginBottom: 12 }}>
-                <div className="row sp" style={{ flexWrap: 'wrap', gap: 8 }}>
-                  <div className="row" style={{ gap: 10 }}>
-                    <span style={{ fontSize: 30 }} aria-hidden="true">
+              {/* Group Header & Live Activity */}
+              <Card className="space-y-3">
+                <div className="split flex-wrap gap-2">
+                  <div className="flex items-center gap-3">
+                    <span className="text-[28px]" aria-hidden="true">
                       {activeGroupDoc.emoji}
                     </span>
                     <div>
-                      <div className="row" style={{ gap: 6, flexWrap: 'wrap' }}>
-                        <b style={{ fontSize: 16.5 }}>{activeGroupDoc.name}</b>
-                        <small className="mono">
+                      <div className="flex flex-wrap items-center gap-2">
+                        <strong className="text-[16px] font-semibold text-[var(--tx)]">
+                          {activeGroupDoc.name}
+                        </strong>
+                        <span className="tnum text-[12px] text-[var(--tx-2)]">
                           · {memberCount}/{activeGroupDoc.memberCap || 50} members
-                        </small>
+                        </span>
                       </div>
-                      <div className="mut" style={{ fontSize: 11.5, marginTop: 2 }}>
-                        Invite Code:{' '}
-                        <b className="mono" style={{ color: 'var(--tx)' }}>
+                      <p className="tnum text-[12px] text-[var(--tx-2)]">
+                        Invite code:{' '}
+                        <strong className="mono text-[var(--tx)]">
                           {formatGroupCode(activeGroupId)}
-                        </b>{' '}
+                        </strong>{' '}
                         · Updated{' '}
-                        {formatRelativeAgo(activeSnapshot?.fetchedAt || 0, nowTick)}{' '}
-                        <small>(5m auto-cache)</small>
-                      </div>
+                        {formatRelativeAgo(activeSnapshot?.fetchedAt || 0, nowTick)}
+                      </p>
                     </div>
                   </div>
 
-                  <div className="row" style={{ gap: 6, flexWrap: 'wrap' }}>
-                    <button
-                      type="button"
-                      className="s"
+                  <div className="flex flex-wrap items-center gap-2">
+                    <Button
+                      variant="secondary"
+                      size="sm"
+                      icon={<Copy size={14} />}
                       onClick={() => handleCopyInvite(activeGroupId)}
-                      aria-label="Copy group invite code"
-                      style={{ minHeight: 44, padding: '0 11px', fontSize: 12 }}
                     >
-                      📋 Copy Code
-                    </button>
-                    <button
-                      type="button"
-                      className="s"
+                      Copy code
+                    </Button>
+                    <Button
+                      variant="secondary"
+                      size="sm"
+                      icon={<Share2 size={14} />}
                       onClick={() =>
                         handleShareInvite(activeGroupId, activeGroupDoc.name)
                       }
-                      aria-label="Share group invite code"
-                      style={{ minHeight: 44, padding: '0 11px', fontSize: 12 }}
                     >
-                      📤 Invite
-                    </button>
-                    <button
-                      type="button"
-                      className="s"
+                      Invite
+                    </Button>
+                    <Button
+                      variant="secondary"
+                      size="sm"
+                      icon={<RefreshCw size={14} />}
                       disabled={
                         isRefreshing || refreshCooldownLeftSec > 0 || !isOnline
                       }
                       onClick={() => refreshGroup(activeGroupId, true)}
-                      aria-label="Refresh group leaderboard"
-                      style={{ minHeight: 44, padding: '0 11px', fontSize: 12 }}
                     >
-                      🔄{' '}
                       {isRefreshing
                         ? '…'
                         : refreshCooldownLeftSec > 0
                           ? `${refreshCooldownLeftSec}s`
                           : 'Refresh'}
-                    </button>
+                    </Button>
                   </div>
                 </div>
 
-                {/* Studying Now Live Strip */}
+                {/* Studying Now Strip */}
                 {studyingNowList.length > 0 && (
-                  <div
-                    style={{
-                      marginTop: 12,
-                      padding: '9px 12px',
-                      borderRadius: 12,
-                      background: 'rgba(16, 185, 129, 0.12)',
-                      border: '1px solid rgba(16, 185, 129, 0.32)',
-                      fontSize: 12.5,
-                    }}
-                  >
-                    <b style={{ color: '#10b981' }}>
-                      🟢 Studying right now ({studyingNowList.length}):
-                    </b>{' '}
+                  <div className="rounded-xl border border-[var(--line)] bg-[var(--sf-2)] px-3.5 py-2.5 text-[13px]">
+                    <strong className="text-[var(--ok)]">
+                      Studying right now ({studyingNowList.length}):
+                    </strong>{' '}
                     {studyingNowList.map((m, idx) => (
                       <span key={m.uid}>
                         {idx > 0 ? ' · ' : ''}
-                        {m.emoji} <b>{m.nick}</b> ({m.elapsedMins}m)
+                        {m.emoji} <strong>{m.nick}</strong> ({m.elapsedMins}m)
                       </span>
                     ))}
                   </div>
                 )}
 
-                {/* Received Cheers Chip */}
+                {/* Received Cheers */}
                 {todayCheersReceived.length > 0 && (
-                  <div
-                    style={{
-                      marginTop: 10,
-                      padding: '9px 12px',
-                      borderRadius: 12,
-                      background: 'rgba(245, 158, 11, 0.12)',
-                      border: '1px solid rgba(245, 158, 11, 0.32)',
-                      fontSize: 12.5,
-                    }}
-                  >
-                    <b>
-                      🎉 You received {todayCheersReceived.length} cheer
+                  <div className="rounded-xl border border-[var(--ac-line)] bg-[var(--ac-soft)] px-3.5 py-2.5 text-[13px] text-[var(--tx)]">
+                    <strong>
+                      You received {todayCheersReceived.length} cheer
                       {todayCheersReceived.length === 1 ? '' : 's'} today:
-                    </b>{' '}
+                    </strong>{' '}
                     {todayCheersReceived.map((c, idx) => (
                       <span key={c.id}>
                         {idx > 0 ? ', ' : ''}
@@ -2726,156 +2377,100 @@ export const GroupsView: React.FC<GroupsViewProps> = ({
                   </div>
                 )}
 
-                {/* Interactive Pace Target (Friendly Rival) Card */}
+                {/* Friendly Rival Pace Comparison */}
                 {paceComparison && (
-                  <div
-                    style={{
-                      marginTop: 12,
-                      padding: '10px 12px',
-                      borderRadius: 13,
-                      background: 'color-mix(in srgb, var(--ac) 11%, var(--c2))',
-                      border: '1px solid color-mix(in srgb, var(--ac) 32%, var(--bd))',
-                      fontSize: 12.5,
-                    }}
-                  >
-                    <div className="row sp" style={{ flexWrap: 'wrap', gap: 6 }}>
-                      <div>
-                        <b>
-                          🎯 Pace Target: {paceComparison.entry.emoji}{' '}
-                          {paceComparison.entry.nick}
-                        </b>
-                        <div className="mut" style={{ fontSize: 11.5, marginTop: 2 }}>
-                          Today:{' '}
-                          <b
-                            className="mono"
-                            style={{
-                              color:
-                                paceComparison.diffTodayMins >= 0
-                                  ? '#10b981'
-                                  : '#f59e0b',
-                            }}
-                          >
-                            {paceComparison.diffTodayMins >= 0
-                              ? `You lead by +${formatMinutesAsHoursMins(paceComparison.diffTodayMins)}`
-                              : `${formatMinutesAsHoursMins(Math.abs(paceComparison.diffTodayMins))} to catch up`}
-                          </b>{' '}
-                          · Week:{' '}
-                          <b
-                            className="mono"
-                            style={{
-                              color:
-                                paceComparison.diffWeekMins >= 0
-                                  ? '#10b981'
-                                  : '#f59e0b',
-                            }}
-                          >
-                            {paceComparison.diffWeekMins >= 0
-                              ? `+${formatMinutesAsHoursMins(paceComparison.diffWeekMins)} ahead`
-                              : `${formatMinutesAsHoursMins(Math.abs(paceComparison.diffWeekMins))} behind`}
-                          </b>{' '}
-                          ({paceComparison.diffWeekXp >= 0 ? '+' : ''}
-                          {paceComparison.diffWeekXp} XP)
-                        </div>
+                  <div className="split flex-wrap gap-2 rounded-xl border border-[var(--line)] bg-[var(--sf-2)] px-3.5 py-2.5 text-[12.5px]">
+                    <div>
+                      <strong className="text-[var(--tx)]">
+                        Pace target: {paceComparison.entry.emoji}{' '}
+                        {paceComparison.entry.nick}
+                      </strong>
+                      <div className="tnum mt-0.5 text-[var(--tx-2)]">
+                        Today:{' '}
+                        <strong
+                          style={{
+                            color:
+                              paceComparison.diffTodayMins >= 0
+                                ? 'var(--ok)'
+                                : 'var(--warn)',
+                          }}
+                        >
+                          {paceComparison.diffTodayMins >= 0
+                            ? `You lead by +${formatMinutesAsHoursMins(paceComparison.diffTodayMins)}`
+                            : `${formatMinutesAsHoursMins(Math.abs(paceComparison.diffTodayMins))} to catch up`}
+                        </strong>{' '}
+                        · Week:{' '}
+                        <strong
+                          style={{
+                            color:
+                              paceComparison.diffWeekMins >= 0
+                                ? 'var(--ok)'
+                                : 'var(--warn)',
+                          }}
+                        >
+                          {paceComparison.diffWeekMins >= 0
+                            ? `+${formatMinutesAsHoursMins(paceComparison.diffWeekMins)} ahead`
+                            : `${formatMinutesAsHoursMins(Math.abs(paceComparison.diffWeekMins))} behind`}
+                        </strong>
                       </div>
-                      <button
-                        type="button"
-                        className="s"
-                        onClick={() =>
-                          handleTogglePaceTarget(
-                            paceComparison.uid,
-                            paceComparison.entry.nick
-                          )
-                        }
-                        style={{ minHeight: 34, padding: '4px 10px', fontSize: 11 }}
-                      >
-                        Clear Target
-                      </button>
                     </div>
+                    <Button
+                      variant="secondary"
+                      size="sm"
+                      onClick={() =>
+                        handleTogglePaceTarget(
+                          paceComparison.uid,
+                          paceComparison.entry.nick
+                        )
+                      }
+                    >
+                      Clear target
+                    </Button>
                   </div>
                 )}
 
-                {/* Weekly Group Hours Goal + Interactive Member Contribution Breakdown */}
+                {/* Weekly Group Goal */}
                 {weeklyGoalProg && weeklyGoalProg.hasGoal && (
-                  <div style={{ marginTop: 12 }}>
-                    <div className="row sp" style={{ fontSize: 12, marginBottom: 4 }}>
-                      <span className="mut">
-                        🎯 Weekly Squad Goal:{' '}
-                        <b style={{ color: 'var(--tx)' }}>
+                  <div className="space-y-2 pt-1">
+                    <div className="split text-[12.5px]">
+                      <span className="text-[var(--tx-2)]">
+                        Weekly squad goal:{' '}
+                        <strong className="tnum text-[var(--tx)]">
                           {formatMinutesAsHoursMins(weeklyGoalProg.combinedMinutes)}
-                        </b>{' '}
+                        </strong>{' '}
                         / {formatMinutesAsHoursMins(weeklyGoalProg.targetMinutes)}
                       </span>
-                      <div className="row" style={{ gap: 8 }}>
-                        <b className="mono">{weeklyGoalProg.pct}%</b>
+                      <div className="flex items-center gap-2">
+                        <strong className="tnum text-[var(--ac)]">
+                          {weeklyGoalProg.pct}%
+                        </strong>
                         {weeklyMemberContributions.length > 0 && (
-                          <button
-                            type="button"
-                            className="s"
+                          <Button
+                            variant="ghost"
+                            size="sm"
                             onClick={() => setShowGoalBreakdown((v) => !v)}
-                            style={{
-                              minHeight: 28,
-                              padding: '2px 8px',
-                              fontSize: 11,
-                              borderRadius: 8,
-                            }}
                           >
-                            {showGoalBreakdown ? 'Hide Split ▴' : 'Contributions ▾'}
-                          </button>
+                            {showGoalBreakdown ? 'Hide split' : 'Contributions'}
+                          </Button>
                         )}
                       </div>
                     </div>
-                    <div className="pbar" style={{ height: 9 }}>
-                      <div
-                        className="pfill"
-                        style={{
-                          width: `${weeklyGoalProg.pct}%`,
-                          background: weeklyGoalProg.reached
-                            ? '#10b981'
-                            : 'linear-gradient(90deg, var(--ac), var(--em))',
-                        }}
-                      />
-                    </div>
-                    {weeklyGoalProg.reached && (
-                      <div
-                        style={{
-                          marginTop: 6,
-                          fontSize: 12,
-                          color: '#10b981',
-                          fontWeight: 700,
-                        }}
-                      >
-                        🏆 Squad goal achieved! Outstanding teamwork this week!
-                      </div>
-                    )}
+                    <Meter
+                      value={weeklyGoalProg.pct}
+                      max={100}
+                      color={weeklyGoalProg.reached ? 'var(--ok)' : 'var(--ac)'}
+                    />
                     {showGoalBreakdown && weeklyMemberContributions.length > 0 && (
-                      <div
-                        style={{
-                          marginTop: 10,
-                          padding: '10px 12px',
-                          borderRadius: 12,
-                          background: 'var(--c2)',
-                          fontSize: 12,
-                        }}
-                      >
-                        <div
-                          className="mut"
-                          style={{ fontSize: 11, marginBottom: 6, fontWeight: 600 }}
-                        >
-                          Member Contributions to Weekly Goal
-                        </div>
+                      <div className="rounded-xl border border-[var(--line)] bg-[var(--sf-2)] p-3 text-[12.5px] space-y-1.5">
                         {weeklyMemberContributions.map((c) => (
-                          <div
-                            key={c.uid}
-                            className="row sp"
-                            style={{ padding: '4px 0', fontSize: 12 }}
-                          >
+                          <div key={c.uid} className="split">
                             <span>
-                              {c.emoji} <b>{c.nick}</b>
+                              {c.emoji} <strong>{c.nick}</strong>
                               {c.uid === myUid ? ' (You)' : ''}
                             </span>
-                            <span className="mono">
-                              <b>{formatMinutesAsHoursMins(c.minutes)}</b> ({c.sharePct}
-                              %)
+                            <span className="tnum">
+                              <strong>{formatMinutesAsHoursMins(c.minutes)}</strong> (
+                              {c.sharePct}%)
                             </span>
                           </div>
                         ))}
@@ -2883,269 +2478,134 @@ export const GroupsView: React.FC<GroupsViewProps> = ({
                     )}
                   </div>
                 )}
+              </Card>
+
+              {/* Sticky Segmented Board Tabs */}
+              <div className="sticky top-[56px] z-10 rounded-xl bg-[var(--bg)] py-1">
+                <Segmented<BoardTab>
+                  value={boardTab}
+                  onChange={setBoardTab}
+                  ariaLabel="Group leaderboard tabs"
+                  options={boardOptions}
+                />
               </div>
 
-              {/* Horizontally Scrollable Board Tabs */}
-              <div
-                className="chips"
-                role="tablist"
-                aria-label="Group leaderboard tabs"
-                style={{
-                  overflowX: 'auto',
-                  flexWrap: 'nowrap',
-                  gap: 6,
-                  marginBottom: 10,
-                  paddingBottom: 2,
-                }}
-              >
-                <button
-                  type="button"
-                  role="tab"
-                  aria-selected={boardTab === 'today'}
-                  className={boardTab === 'today' ? 'on' : ''}
-                  onClick={() => setBoardTab('today')}
-                  style={{ minHeight: 44, whiteSpace: 'nowrap' }}
-                >
-                  ☀️ Today
-                </button>
-                <button
-                  type="button"
-                  role="tab"
-                  aria-selected={boardTab === 'week'}
-                  className={boardTab === 'week' ? 'on' : ''}
-                  onClick={() => setBoardTab('week')}
-                  style={{ minHeight: 44, whiteSpace: 'nowrap' }}
-                >
-                  📅 Week
-                </button>
-                <button
-                  type="button"
-                  role="tab"
-                  aria-selected={boardTab === 'xp'}
-                  className={boardTab === 'xp' ? 'on' : ''}
-                  onClick={() => setBoardTab('xp')}
-                  style={{ minHeight: 44, whiteSpace: 'nowrap' }}
-                >
-                  ⚡ XP
-                </button>
-                <button
-                  type="button"
-                  role="tab"
-                  aria-selected={boardTab === 'streak'}
-                  className={boardTab === 'streak' ? 'on' : ''}
-                  onClick={() => setBoardTab('streak')}
-                  style={{ minHeight: 44, whiteSpace: 'nowrap' }}
-                >
-                  🔥 Streak
-                </button>
-                {activeGroupDoc.mockBoard && (
-                  <button
-                    type="button"
-                    role="tab"
-                    aria-selected={boardTab === 'mocks'}
-                    className={boardTab === 'mocks' ? 'on' : ''}
-                    onClick={() => setBoardTab('mocks')}
-                    style={{ minHeight: 44, whiteSpace: 'nowrap' }}
-                  >
-                    📝 Mocks
-                  </button>
-                )}
-                <button
-                  type="button"
-                  role="tab"
-                  aria-selected={boardTab === 'history'}
-                  className={boardTab === 'history' ? 'on' : ''}
-                  onClick={() => setBoardTab('history')}
-                  style={{ minHeight: 44, whiteSpace: 'nowrap' }}
-                >
-                  🏅 History
-                </button>
-              </div>
-
-              {/* Sub-controls for XP or Mocks + Interactive Member Filter & Search */}
+              {/* Sub-controls for XP or Mocks + Member Filter & Search */}
               {boardTab !== 'history' && (
-                <div
-                  className="row sp"
-                  style={{
-                    flexWrap: 'wrap',
-                    gap: 8,
-                    marginBottom: 10,
-                  }}
-                >
-                  <div className="chips" style={{ paddingBottom: 0, gap: 5 }}>
-                    {boardTab === 'xp' && (
-                      <>
-                        <button
-                          type="button"
-                          className={xpSortMode === 'weekly' ? 'on' : ''}
-                          onClick={() => setXpSortMode('weekly')}
-                          style={{ minHeight: 38, padding: '4px 12px', fontSize: 12 }}
+                <Card>
+                  <div className="flex flex-col gap-2.5 sm:flex-row sm:items-center sm:justify-between">
+                    <div className="flex flex-wrap items-center gap-1.5">
+                      {boardTab === 'xp' && (
+                        <>
+                          <Chip
+                            selected={xpSortMode === 'weekly'}
+                            onClick={() => setXpSortMode('weekly')}
+                          >
+                            This week XP
+                          </Chip>
+                          <Chip
+                            selected={xpSortMode === 'allTime'}
+                            onClick={() => setXpSortMode('allTime')}
+                          >
+                            All-time XP &amp; level
+                          </Chip>
+                        </>
+                      )}
+                      {boardTab === 'mocks' && activeGroupDoc.mockBoard && (
+                        <>
+                          <Chip
+                            selected={mockSortMode === 'latest'}
+                            onClick={() => setMockSortMode('latest')}
+                          >
+                            Latest score
+                          </Chip>
+                          <Chip
+                            selected={mockSortMode === 'best'}
+                            onClick={() => setMockSortMode('best')}
+                          >
+                            Best score
+                          </Chip>
+                          <Chip
+                            selected={mockSortMode === 'avg5'}
+                            onClick={() => setMockSortMode('avg5')}
+                          >
+                            Avg of last 5
+                          </Chip>
+                        </>
+                      )}
+                      {(
+                        [
+                          { id: 'all' as const, label: 'All' },
+                          { id: 'activeToday' as const, label: 'Active today' },
+                          { id: 'top3' as const, label: 'Top 3' },
+                          ...(studyingNowList.length > 0
+                            ? [{ id: 'studyingNow' as const, label: 'Studying now' }]
+                            : []),
+                        ] as const
+                      ).map((f) => (
+                        <Chip
+                          key={f.id}
+                          selected={memberFilter === f.id}
+                          onClick={() => setMemberFilter(f.id)}
                         >
-                          This Week XP
-                        </button>
-                        <button
-                          type="button"
-                          className={xpSortMode === 'allTime' ? 'on' : ''}
-                          onClick={() => setXpSortMode('allTime')}
-                          style={{ minHeight: 38, padding: '4px 12px', fontSize: 12 }}
-                        >
-                          All-Time XP &amp; Level
-                        </button>
-                      </>
+                          {f.label}
+                        </Chip>
+                      ))}
+                    </div>
+
+                    {rankedRows.length >= 4 && (
+                      <input
+                        type="search"
+                        value={memberSearch}
+                        onChange={(e) => setMemberSearch(e.target.value)}
+                        placeholder="Filter member…"
+                        aria-label="Filter group members by nickname"
+                        className="h-9 rounded-xl border border-[var(--line)] bg-[var(--sf-2)] px-3 text-[12.5px] sm:w-44"
+                      />
                     )}
-                    {boardTab === 'mocks' && activeGroupDoc.mockBoard && (
-                      <>
-                        <button
-                          type="button"
-                          className={mockSortMode === 'latest' ? 'on' : ''}
-                          onClick={() => setMockSortMode('latest')}
-                          style={{ minHeight: 38, padding: '4px 12px', fontSize: 12 }}
-                        >
-                          Latest Score
-                        </button>
-                        <button
-                          type="button"
-                          className={mockSortMode === 'best' ? 'on' : ''}
-                          onClick={() => setMockSortMode('best')}
-                          style={{ minHeight: 38, padding: '4px 12px', fontSize: 12 }}
-                        >
-                          Best Score
-                        </button>
-                        <button
-                          type="button"
-                          className={mockSortMode === 'avg5' ? 'on' : ''}
-                          onClick={() => setMockSortMode('avg5')}
-                          style={{ minHeight: 38, padding: '4px 12px', fontSize: 12 }}
-                        >
-                          Avg of Last 5
-                        </button>
-                      </>
-                    )}
-                    {(
-                      [
-                        { id: 'all' as const, label: 'All' },
-                        { id: 'activeToday' as const, label: 'Active Today' },
-                        { id: 'top3' as const, label: 'Top 3' },
-                        ...(studyingNowList.length > 0
-                          ? [{ id: 'studyingNow' as const, label: '🟢 Live' }]
-                          : []),
-                      ] as const
-                    ).map((f) => (
-                      <button
-                        key={f.id}
-                        type="button"
-                        className={memberFilter === f.id ? 'on' : ''}
-                        onClick={() => setMemberFilter(f.id)}
-                        style={{ minHeight: 38, padding: '4px 11px', fontSize: 12 }}
-                      >
-                        {f.label}
-                      </button>
-                    ))}
                   </div>
-
-                  {rankedRows.length >= 4 && (
-                    <input
-                      type="search"
-                      value={memberSearch}
-                      onChange={(e) => setMemberSearch(e.target.value)}
-                      placeholder="Filter member…"
-                      aria-label="Filter group members by nickname"
-                      style={{
-                        minHeight: 38,
-                        width: 155,
-                        padding: '5px 10px',
-                        fontSize: 12,
-                      }}
-                    />
-                  )}
-                </div>
+                </Card>
               )}
 
-              {boardTab === 'mocks' && activeGroupDoc.mockBoard && (
-                <div
-                  style={{
-                    padding: '8px 12px',
-                    borderRadius: 10,
-                    background: 'var(--c2)',
-                    fontSize: 12,
-                    marginBottom: 10,
-                    color: 'var(--mu)',
-                  }}
-                >
-                  💡 <i>Scores are shared only by choice. Rank is not your worth.</i>
-                </div>
-              )}
-
-              {/* Visual Top-3 Podium Card */}
+              {/* Animated Top-3 Podium Card */}
               {boardTab !== 'history' &&
                 memberFilter === 'all' &&
                 !memberSearch.trim() &&
                 podiumRows.length > 0 && (
-                  <div
-                    className="card"
-                    style={{
-                      padding: '14px 12px',
-                      marginBottom: 12,
-                      background:
-                        'linear-gradient(180deg, color-mix(in srgb, var(--am) 9%, var(--card)), var(--card) 85%)',
-                    }}
-                  >
-                    <div
-                      className="row sp"
-                      style={{ marginBottom: 10, fontSize: 12 }}
-                    >
-                      <b>
-                        🏅 Top Podium ·{' '}
+                  <Card className="space-y-3">
+                    <div className="split text-[12.5px]">
+                      <strong className="text-[var(--tx)]">
+                        Top podium ·{' '}
                         {boardTab === 'today'
-                          ? "Today's Study Time"
+                          ? "Today's study time"
                           : boardTab === 'week'
-                            ? 'This Week Study Time'
+                            ? 'This week study time'
                             : boardTab === 'xp'
                               ? xpSortMode === 'weekly'
                                 ? 'Weekly XP v2'
-                                : 'All-Time XP & Level'
+                                : 'All-time XP & level'
                               : boardTab === 'streak'
-                                ? 'Consistency & Streak'
-                                : 'Mock Test Standings'}
-                      </b>
-                      <small>Tap any member to compare 7-day pace</small>
+                                ? 'Consistency & streak'
+                                : 'Mock test standings'}
+                      </strong>
+                      <span className="text-[var(--tx-2)]">
+                        Tap any member to compare 7-day pace
+                      </span>
                     </div>
-                    <div
-                      style={{
-                        display: 'grid',
-                        gridTemplateColumns: 'repeat(3, 1fr)',
-                        gap: 8,
-                        alignItems: 'end',
-                      }}
-                    >
+
+                    <div className="grid grid-cols-3 items-end gap-2.5">
                       {[2, 1, 3].map((targetRank) => {
                         const pRow = podiumRows.find((r) => r.rank === targetRank);
                         if (!pRow) {
                           return (
                             <div
                               key={targetRank}
-                              style={{
-                                textAlign: 'center',
-                                padding: '10px 6px',
-                                borderRadius: 14,
-                                border: '1px dashed var(--bd)',
-                                opacity: 0.45,
-                                minHeight: targetRank === 1 ? 116 : 98,
-                                display: 'grid',
-                                placeItems: 'center',
-                                fontSize: 11,
-                              }}
+                              className="grid min-h-[100px] place-items-center rounded-xl border border-dashed border-[var(--line)] p-3 text-center text-[12px] text-[var(--tx-3)]"
                             >
-                              #{targetRank} Open
+                              #{targetRank} open
                             </div>
                           );
                         }
-                        const medal =
-                          targetRank === 1
-                            ? '🥇'
-                            : targetRank === 2
-                              ? '🥈'
-                              : '🥉';
                         const isMe = pRow.uid === myUid;
                         return (
                           <button
@@ -3156,891 +2616,412 @@ export const GroupsView: React.FC<GroupsViewProps> = ({
                                 cur === pRow.uid ? null : pRow.uid
                               )
                             }
-                            style={{
-                              textAlign: 'center',
-                              padding: targetRank === 1 ? '12px 8px' : '10px 6px',
-                              borderRadius: 16,
-                              background:
-                                targetRank === 1
-                                  ? 'linear-gradient(160deg, rgba(245, 158, 11, 0.2), color-mix(in srgb, var(--c2) 85%, transparent))'
-                                  : 'var(--c2)',
-                              border:
-                                targetRank === 1
-                                  ? '1.5px solid rgba(245, 158, 11, 0.5)'
-                                  : isMe
-                                    ? '1.5px solid var(--ac)'
-                                    : '1px solid var(--bd)',
-                              minHeight: targetRank === 1 ? 124 : 104,
-                              display: 'flex',
-                              flexDirection: 'column',
-                              alignItems: 'center',
-                              justifyContent: 'center',
-                              gap: 3,
-                            }}
+                            className={`podium-rise flex flex-col items-center justify-center gap-1 rounded-xl border p-3 text-center transition-colors ${
+                              targetRank === 1
+                                ? 'min-h-[126px] border-[var(--ac)] bg-[var(--ac-soft)]'
+                                : isMe
+                                  ? 'min-h-[106px] border-[var(--ac-line)] bg-[var(--sf-2)]'
+                                  : 'min-h-[106px] border-[var(--line)] bg-[var(--sf-2)]'
+                            }`}
                           >
-                            <span style={{ fontSize: targetRank === 1 ? 24 : 20 }}>
-                              {medal} {pRow.entry.emoji}
+                            <span className="tnum text-[12px] font-bold text-[var(--ac)]">
+                              #{targetRank}
                             </span>
-                            <b
-                              style={{
-                                fontSize: 12.5,
-                                maxWidth: '100%',
-                                overflow: 'hidden',
-                                textOverflow: 'ellipsis',
-                                whiteSpace: 'nowrap',
-                              }}
-                            >
+                            <span className="text-[22px]">{pRow.entry.emoji}</span>
+                            <strong className="max-w-full truncate text-[13px] text-[var(--tx)]">
                               {pRow.entry.nick}
                               {isMe ? ' (You)' : ''}
-                            </b>
-                            <span
-                              className="mono"
-                              style={{
-                                fontSize: 12,
-                                fontWeight: 800,
-                                color:
-                                  targetRank === 1 ? '#fbbf24' : 'var(--ac)',
-                              }}
-                            >
+                            </strong>
+                            <span className="tnum text-[12.5px] font-semibold text-[var(--ac)]">
                               {pRow.displayLabel}
                             </span>
                           </button>
                         );
                       })}
                     </div>
-                  </div>
+                  </Card>
                 )}
 
-              {/* Leaderboard Member List + Expandable Head-to-Head Compare Drawer */}
+              {/* Leaderboard Member List + Expandable 7-Day Consistency Chart */}
               {boardTab !== 'history' && (
-                <div className="card" style={{ padding: 12, marginBottom: 12 }}>
+                <Card>
                   {filteredRows.length === 0 ? (
-                    <div
-                      className="mut"
-                      style={{ textAlign: 'center', padding: 20, fontSize: 13 }}
-                    >
+                    <div className="py-6 text-center text-[13px] text-[var(--tx-2)]">
                       No members match the current filter on this leaderboard.
                     </div>
                   ) : (
-                    filteredRows.map((row) => {
-                      const isMe = row.uid === myUid;
-                      const isExpanded = expandedMemberUid === row.uid;
-                      const isPaceTarget = activePaceTargetUid === row.uid;
-                      const isLiveNow = studyingNowUidSet.has(row.uid);
-                      const liveMemberInfo = studyingNowByUid.get(row.uid);
-                      const liveTooltipText = isLiveNow
-                        ? getStudyingNowTooltipText(
-                            row.entry,
-                            nowTick,
-                            liveMemberInfo?.since
-                          )
-                        : '';
-                      const dotHoverKey = `gv_dot_${row.uid}`;
-                      const badgeHoverKey = `gv_badge_${row.uid}`;
-                      const rankBadge =
-                        row.rank === 1
-                          ? '🥇'
-                          : row.rank === 2
-                            ? '🥈'
-                            : row.rank === 3
-                              ? '🥉'
-                              : row.rank !== null
-                                ? `#${row.rank}`
-                                : '—';
-                      const sentCheer =
-                        sentCheersLocal[
-                          `${activeGroupId}_${row.uid}_${todayKey}`
-                        ];
+                    <div className="divide-y divide-[var(--line)]">
+                      {filteredRows.map((row) => {
+                        const isMe = row.uid === myUid;
+                        const isExpanded = expandedMemberUid === row.uid;
+                        const isPaceTarget = activePaceTargetUid === row.uid;
+                        const isLiveNow = studyingNowUidSet.has(row.uid);
+                        const liveMemberInfo = studyingNowByUid.get(row.uid);
+                        const liveTooltipText = isLiveNow
+                          ? getStudyingNowTooltipText(
+                              row.entry,
+                              nowTick,
+                              liveMemberInfo?.since
+                            )
+                          : '';
+                        const rankBadge =
+                          row.rank !== null ? `#${row.rank}` : '—';
+                        const sentCheer =
+                          sentCheersLocal[
+                            `${activeGroupId}_${row.uid}_${todayKey}`
+                          ];
 
-                      const memberTodayMins = row.entry.days?.[todayKey] || 0;
-                      const memberWeekMins = sumMemberRange(
-                        row.entry,
-                        myPersonalStats.weekKeys,
-                        'm'
-                      );
-                      const memberWeekXp = sumMemberRange(
-                        row.entry,
-                        myPersonalStats.weekKeys,
-                        'xp'
-                      );
+                        const memberTodayMins = row.entry.days?.[todayKey] || 0;
+                        const memberWeekMins = sumMemberRange(
+                          row.entry,
+                          myPersonalStats.weekKeys,
+                          'm'
+                        );
+                        const memberWeekXp = sumMemberRange(
+                          row.entry,
+                          myPersonalStats.weekKeys,
+                          'xp'
+                        );
+                        const memberTimeBadge = getMemberTimeOfDayBadge(
+                          row.entry,
+                          isMe ? myPersonalStats.latestMySessionTs : undefined
+                        );
+                        const rowRankTrend = computeRankDelta(
+                          previousBoardRanksMap[row.uid],
+                          row.rank
+                        );
 
-                      return (
-                        <div
-                          key={row.uid}
-                          style={{
-                            borderBottom: '1px solid var(--bd)',
-                            padding: '10px 8px',
-                            background: isMe
-                              ? 'rgba(56, 189, 248, 0.09)'
-                              : isExpanded
-                                ? 'color-mix(in srgb, var(--c2) 60%, transparent)'
-                                : 'transparent',
-                            border: isMe
-                              ? '1px solid rgba(56, 189, 248, 0.32)'
-                              : undefined,
-                            borderRadius: isMe || isExpanded ? 12 : 0,
-                            marginBottom: isMe || isExpanded ? 4 : 0,
-                            opacity: row.hidden ? 0.65 : 1,
-                          }}
-                        >
+                        return (
                           <div
-                            className="row sp"
-                            onClick={() =>
-                              setExpandedMemberUid((cur) =>
-                                cur === row.uid ? null : row.uid
-                              )
-                            }
-                            role="button"
-                            tabIndex={0}
-                            onKeyDown={(e) => {
-                              if (e.key === 'Enter' || e.key === ' ') {
-                                e.preventDefault();
-                                setExpandedMemberUid((cur) =>
-                                  cur === row.uid ? null : row.uid
-                                );
-                              }
-                            }}
-                            aria-expanded={isExpanded}
-                            style={{
-                              cursor: 'pointer',
-                              gap: 8,
-                              flexWrap: 'wrap',
-                            }}
+                            key={row.uid}
+                            className={`py-3 px-2 ${
+                              isMe ? 'rounded-xl bg-[var(--ac-soft)]' : ''
+                            }`}
+                            style={{ opacity: row.hidden ? 0.65 : 1 }}
                           >
                             <div
-                              className="row"
-                              style={{ gap: 10, minWidth: 0, flex: 1 }}
+                              className="split cursor-pointer flex-wrap gap-2"
+                              onClick={() =>
+                                setExpandedMemberUid((cur) =>
+                                  cur === row.uid ? null : row.uid
+                                )
+                              }
+                              role="button"
+                              tabIndex={0}
+                              onKeyDown={(e) => {
+                                if (e.key === 'Enter' || e.key === ' ') {
+                                  e.preventDefault();
+                                  setExpandedMemberUid((cur) =>
+                                    cur === row.uid ? null : row.uid
+                                  );
+                                }
+                              }}
+                              aria-expanded={isExpanded}
                             >
-                              <span
-                                className="mono"
-                                style={{
-                                  minWidth: 30,
-                                  textAlign: 'center',
-                                  fontWeight: 800,
-                                  fontSize:
-                                    row.rank && row.rank <= 3 ? 19 : 13,
-                                }}
-                              >
-                                {rankBadge}
-                              </span>
-
-                              {/* Enhanced User Avatar with Status Indicator Dot */}
-                              <div
-                                style={{
-                                  position: 'relative',
-                                  width: 40,
-                                  height: 40,
-                                  borderRadius: 12,
-                                  background: isLiveNow
-                                    ? 'rgba(16, 185, 129, 0.14)'
-                                    : isMe
-                                      ? 'rgba(56, 189, 248, 0.14)'
-                                      : 'var(--c2)',
-                                  border: isLiveNow
-                                    ? '1.5px solid rgba(16, 185, 129, 0.55)'
-                                    : isMe
-                                      ? '1.5px solid rgba(56, 189, 248, 0.48)'
-                                      : '1px solid var(--bd)',
-                                  display: 'flex',
-                                  alignItems: 'center',
-                                  justifyContent: 'center',
-                                  flexShrink: 0,
-                                }}
-                              >
-                                <span
-                                  style={{ fontSize: 21, lineHeight: 1 }}
-                                  aria-hidden="true"
-                                >
-                                  {row.entry.emoji}
+                              <div className="flex min-w-0 flex-1 items-center gap-3">
+                                <span className="tnum w-8 text-center text-[13px] font-bold text-[var(--tx-2)]">
+                                  {rankBadge}
                                 </span>
-                                <span
-                                  role="status"
-                                  tabIndex={isLiveNow ? 0 : undefined}
-                                  onMouseEnter={() => {
-                                    if (isLiveNow)
-                                      setHoveredLiveStatusKey(dotHoverKey);
-                                  }}
-                                  onMouseLeave={() => {
-                                    if (hoveredLiveStatusKey === dotHoverKey)
-                                      setHoveredLiveStatusKey(null);
-                                  }}
-                                  onFocus={() => {
-                                    if (isLiveNow)
-                                      setHoveredLiveStatusKey(dotHoverKey);
-                                  }}
-                                  onBlur={() => {
-                                    if (hoveredLiveStatusKey === dotHoverKey)
-                                      setHoveredLiveStatusKey(null);
-                                  }}
-                                  aria-label={
-                                    isLiveNow
-                                      ? liveTooltipText
-                                      : row.entry.paused
-                                        ? 'Sharing paused'
-                                        : memberTodayMins > 0
-                                          ? 'Studied today'
-                                          : 'Idle today'
-                                  }
-                                  title={
-                                    isLiveNow
-                                      ? liveTooltipText
-                                      : row.entry.paused
-                                        ? 'Sharing paused'
-                                        : memberTodayMins > 0
-                                          ? `Studied ${formatMinutesAsHoursMins(memberTodayMins)} today`
-                                          : 'No study logged yet today'
-                                  }
-                                  style={{
-                                    position: 'absolute',
-                                    right: -2,
-                                    bottom: -2,
-                                    width: 11,
-                                    height: 11,
-                                    borderRadius: '50%',
-                                    background: isLiveNow
-                                      ? '#10b981'
-                                      : row.entry.paused
-                                        ? '#f59e0b'
-                                        : memberTodayMins > 0
-                                          ? '#38bdf8'
-                                          : 'var(--bd)',
-                                    border: '2px solid var(--card)',
-                                    boxShadow: isLiveNow
-                                      ? '0 0 0 2px rgba(16, 185, 129, 0.3)'
-                                      : 'none',
-                                    cursor: isLiveNow ? 'help' : 'default',
-                                  }}
-                                />
-                                {isLiveNow &&
-                                  hoveredLiveStatusKey === dotHoverKey && (
-                                    <div
-                                      role="tooltip"
-                                      className="mono"
-                                      style={{
-                                        position: 'absolute',
-                                        bottom: 'calc(100% + 6px)',
-                                        left: 0,
-                                        zIndex: 30,
-                                        whiteSpace: 'nowrap',
-                                        background: 'var(--card)',
-                                        color: 'var(--tx)',
-                                        border:
-                                          '1px solid rgba(16, 185, 129, 0.5)',
-                                        boxShadow:
-                                          '0 6px 18px rgba(0, 0, 0, 0.28)',
-                                        padding: '4px 8px',
-                                        borderRadius: 6,
-                                        fontSize: 11,
-                                        fontWeight: 700,
-                                        pointerEvents: 'none',
-                                      }}
-                                    >
-                                      {liveTooltipText}
-                                    </div>
-                                  )}
-                              </div>
 
-                              <div style={{ minWidth: 0 }}>
-                                <div
-                                  className="row"
-                                  style={{ gap: 6, flexWrap: 'wrap' }}
-                                >
-                                  <b style={{ fontSize: 14 }}>
-                                    {row.entry.nick}
-                                    {isMe ? ' (You)' : ''}
-                                  </b>
-                                  {(() => {
-                                    const memberTimeBadge =
-                                      getMemberTimeOfDayBadge(
-                                        row.entry,
-                                        isMe
-                                          ? myPersonalStats.latestMySessionTs
-                                          : undefined
-                                      );
-                                    if (!memberTimeBadge) return null;
-                                    return (
+                                <div className="relative flex h-10 w-10 shrink-0 items-center justify-center rounded-xl border border-[var(--line)] bg-[var(--sf-2)]">
+                                  <span className="text-[20px] leading-none">
+                                    {row.entry.emoji}
+                                  </span>
+                                  <span
+                                    title={
+                                      isLiveNow
+                                        ? liveTooltipText
+                                        : row.entry.paused
+                                          ? 'Sharing paused'
+                                          : memberTodayMins > 0
+                                            ? `Studied ${formatMinutesAsHoursMins(memberTodayMins)} today`
+                                            : 'No study logged yet today'
+                                    }
+                                    className="absolute -bottom-0.5 -right-0.5 h-3 w-3 rounded-full border-2 border-[var(--sf-1)]"
+                                    style={{
+                                      background: isLiveNow
+                                        ? 'var(--ok)'
+                                        : row.entry.paused
+                                          ? 'var(--warn)'
+                                          : memberTodayMins > 0
+                                            ? 'var(--info)'
+                                            : 'var(--line)',
+                                    }}
+                                  />
+                                </div>
+
+                                <div className="min-w-0 flex-1">
+                                  <div className="flex flex-wrap items-center gap-2">
+                                    <strong className="text-[14px] font-semibold text-[var(--tx)]">
+                                      {row.entry.nick}
+                                      {isMe ? ' (You)' : ''}
+                                    </strong>
+                                    {memberTimeBadge && (
                                       <span
                                         title={memberTimeBadge.tooltip}
                                         aria-label={memberTimeBadge.tooltip}
-                                        style={{
-                                          display: 'inline-flex',
-                                          alignItems: 'center',
-                                          gap: 3,
-                                          fontSize: 10.5,
-                                          fontWeight: 700,
-                                          padding: '1px 7px',
-                                          borderRadius: 6,
-                                          color:
-                                            memberTimeBadge.type === 'earlyBird'
-                                              ? '#f59e0b'
-                                              : '#a855f7',
-                                          background:
-                                            memberTimeBadge.type === 'earlyBird'
-                                              ? 'rgba(245, 158, 11, 0.14)'
-                                              : 'rgba(168, 85, 247, 0.14)',
-                                          border:
-                                            memberTimeBadge.type === 'earlyBird'
-                                              ? '1px solid rgba(245, 158, 11, 0.35)'
-                                              : '1px solid rgba(168, 85, 247, 0.35)',
-                                        }}
+                                        className="inline-flex items-center gap-1 rounded-md border border-[var(--line)] bg-[var(--sf-2)] px-2 py-0.5 text-[12px] font-medium text-[var(--tx-2)]"
                                       >
                                         <span aria-hidden="true">
                                           {memberTimeBadge.emoji}
                                         </span>
                                         <span>{memberTimeBadge.label}</span>
                                       </span>
-                                    );
-                                  })()}
-                                  {isLiveNow && (
-                                    <span
-                                      title={liveTooltipText}
-                                      aria-label={liveTooltipText}
-                                      onMouseEnter={() =>
-                                        setHoveredLiveStatusKey(badgeHoverKey)
-                                      }
-                                      onMouseLeave={() => {
-                                        if (
-                                          hoveredLiveStatusKey === badgeHoverKey
-                                        )
-                                          setHoveredLiveStatusKey(null);
-                                      }}
-                                      style={{
-                                        position: 'relative',
-                                        display: 'inline-flex',
-                                        alignItems: 'center',
-                                        gap: 4,
-                                        color: '#10b981',
-                                        background: 'rgba(16, 185, 129, 0.12)',
-                                        border:
-                                          '1px solid rgba(16, 185, 129, 0.3)',
-                                        padding: '1px 7px',
-                                        borderRadius: 6,
-                                        fontWeight: 700,
-                                        fontSize: 10.5,
-                                        cursor: 'help',
-                                      }}
-                                    >
+                                    )}
+                                    {isLiveNow && (
                                       <span
-                                        aria-hidden="true"
+                                        title={liveTooltipText}
+                                        className="inline-flex items-center gap-1.5 rounded-md bg-[var(--sf-2)] px-2 py-0.5 text-[12px] font-medium text-[var(--ok)]"
+                                      >
+                                        <span className="h-1.5 w-1.5 rounded-full bg-[var(--ok)]" />
+                                        Studying now
+                                      </span>
+                                    )}
+                                    {isPaceTarget && (
+                                      <span className="rounded-md bg-[var(--sf-2)] px-2 py-0.5 text-[12px] font-medium text-[var(--ac)]">
+                                        Target
+                                      </span>
+                                    )}
+                                  </div>
+                                  <div className="text-[12px] text-[var(--tx-2)]">
+                                    Updated{' '}
+                                    {formatRelativeAgo(row.entry.updatedAt, nowTick)}
+                                    {row.subLabel ? ` · ${row.subLabel}` : ''} ·{' '}
+                                    <span className="text-[var(--ac)]">
+                                      {isExpanded ? 'Hide ▴' : 'Compare ▾'}
+                                    </span>
+                                  </div>
+                                </div>
+                              </div>
+
+                              <div
+                                className="flex items-center gap-2"
+                                onClick={(e) => e.stopPropagation()}
+                              >
+                                <div className="text-right">
+                                  <div className="flex items-center justify-end gap-1.5">
+                                    {(rowRankTrend.direction === 'up' ||
+                                      rowRankTrend.direction === 'down') && (
+                                      <span
+                                        className="tnum rounded bg-[var(--sf-2)] px-1.5 py-0.5 text-[12px] font-semibold"
                                         style={{
-                                          width: 6,
-                                          height: 6,
-                                          borderRadius: '50%',
-                                          background: '#10b981',
+                                          color:
+                                            rowRankTrend.direction === 'up'
+                                              ? 'var(--ok)'
+                                              : 'var(--bad)',
                                         }}
-                                      />
-                                      Studying now
-                                      {hoveredLiveStatusKey ===
-                                        badgeHoverKey && (
-                                        <span
-                                          role="tooltip"
-                                          className="mono"
-                                          style={{
-                                            position: 'absolute',
-                                            bottom: 'calc(100% + 6px)',
-                                            left: 0,
-                                            zIndex: 30,
-                                            whiteSpace: 'nowrap',
-                                            background: 'var(--card)',
-                                            color: 'var(--tx)',
-                                            border:
-                                              '1px solid rgba(16, 185, 129, 0.5)',
-                                            boxShadow:
-                                              '0 6px 18px rgba(0, 0, 0, 0.28)',
-                                            padding: '4px 8px',
-                                            borderRadius: 6,
-                                            fontSize: 11,
-                                            fontWeight: 700,
-                                            pointerEvents: 'none',
-                                          }}
-                                        >
-                                          {liveTooltipText}
-                                        </span>
-                                      )}
-                                    </span>
-                                  )}
-                                  {!isLiveNow && row.entry.paused && (
-                                    <small
-                                      style={{
-                                        color: '#f59e0b',
-                                        fontWeight: 600,
-                                        fontSize: 10.5,
-                                      }}
-                                    >
-                                      · Paused
-                                    </small>
-                                  )}
-                                  {isPaceTarget && (
-                                    <small
-                                      style={{
-                                        color: 'var(--ac)',
-                                        fontWeight: 700,
-                                        fontSize: 11,
-                                      }}
-                                    >
-                                      · 🎯 Target
-                                    </small>
-                                  )}
-                                  {row.entry.examYear && (
-                                    <span
-                                      className="mut"
-                                      style={{ fontSize: 11 }}
-                                    >
-                                      '{String(row.entry.examYear).slice(-2)}
-                                    </span>
-                                  )}
-                                  {(row.medals.gold > 0 ||
-                                    row.medals.silver > 0 ||
-                                    row.medals.bronze > 0) && (
-                                    <span
-                                      style={{ fontSize: 11 }}
-                                      title="Weekly podium trophies"
-                                    >
-                                      {row.medals.gold > 0
-                                        ? `🥇${row.medals.gold} `
-                                        : ''}
-                                      {row.medals.silver > 0
-                                        ? `🥈${row.medals.silver} `
-                                        : ''}
-                                      {row.medals.bronze > 0
-                                        ? `🥉${row.medals.bronze}`
-                                        : ''}
-                                    </span>
-                                  )}
+                                      >
+                                        {rowRankTrend.direction === 'up' ? '▲' : '▼'}
+                                        {rowRankTrend.delta > 1
+                                          ? rowRankTrend.delta
+                                          : ''}
+                                      </span>
+                                    )}
+                                    <strong className="tnum text-[14.5px] text-[var(--tx)]">
+                                      {row.displayLabel}
+                                    </strong>
+                                  </div>
                                 </div>
-                                <div className="mut" style={{ fontSize: 11 }}>
-                                  updated{' '}
-                                  {formatRelativeAgo(
-                                    row.entry.updatedAt,
-                                    nowTick
-                                  )}
-                                  {row.subLabel ? ` · ${row.subLabel}` : ''} ·{' '}
-                                  <span style={{ color: 'var(--ac)' }}>
-                                    {isExpanded ? 'Hide ▴' : 'Compare ▾'}
-                                  </span>
-                                </div>
+
+                                {!isMe && (
+                                  <div className="flex items-center gap-1">
+                                    {ALLOWED_CHEER_EMOJIS.map((ce) => (
+                                      <button
+                                        key={ce}
+                                        type="button"
+                                        onClick={() =>
+                                          handleSendCheer(
+                                            row.uid,
+                                            row.entry.nick,
+                                            ce
+                                          )
+                                        }
+                                        aria-label={`Send ${ce} cheer to ${row.entry.nick}`}
+                                        title={`Cheer ${row.entry.nick} with ${ce}`}
+                                        className={`flex h-9 w-9 items-center justify-center rounded-lg border text-[14px] transition-colors ${
+                                          sentCheer === ce
+                                            ? 'border-[var(--ok)] bg-[var(--sf-2)]'
+                                            : 'border-transparent hover:bg-[var(--sf-2)]'
+                                        }`}
+                                      >
+                                        {ce}
+                                      </button>
+                                    ))}
+                                  </div>
+                                )}
                               </div>
                             </div>
 
-                            <div
-                              className="row"
-                              style={{ gap: 8 }}
-                              onClick={(e) => e.stopPropagation()}
-                            >
-                              <div style={{ textAlign: 'right' }}>
+                            {/* Expandable 7-Day Study Consistency Recharts Drawer */}
+                            {isExpanded && (
+                              <div className="mt-3 space-y-3 border-t border-[var(--line)] pt-3 text-[12.5px]">
+                                <div className="split flex-wrap gap-2">
+                                  <strong className="text-[var(--tx)]">
+                                    7-day study comparison:{' '}
+                                    {isMe
+                                      ? 'Your last 7 days'
+                                      : `You vs ${row.entry.nick}`}
+                                  </strong>
+                                  {!isMe && (
+                                    <Button
+                                      variant={isPaceTarget ? 'primary' : 'secondary'}
+                                      size="sm"
+                                      icon={<Target size={14} />}
+                                      onClick={() =>
+                                        handleTogglePaceTarget(
+                                          row.uid,
+                                          row.entry.nick
+                                        )
+                                      }
+                                    >
+                                      {isPaceTarget
+                                        ? 'Active pace target'
+                                        : 'Set as pace target'}
+                                    </Button>
+                                  )}
+                                </div>
+
                                 {(() => {
-                                  const rowRankTrend = computeRankDelta(
-                                    previousBoardRanksMap[row.uid],
-                                    row.rank
-                                  );
+                                  const memberConsistency =
+                                    buildMemberLast7DaysConsistencyData(
+                                      row.entry,
+                                      todayKey
+                                    );
                                   return (
                                     <div
-                                      className="row"
-                                      style={{
-                                        gap: 5,
-                                        justifyContent: 'flex-end',
-                                        alignItems: 'center',
-                                      }}
+                                      aria-label={`7-day study consistency chart for ${row.entry.nick}`}
+                                      className="rounded-xl border border-[var(--line)] bg-[var(--sf-2)] p-3"
                                     >
-                                      {(rowRankTrend.direction === 'up' ||
-                                        rowRankTrend.direction === 'down') && (
-                                        <span
-                                          className="mono"
-                                          aria-label={
-                                            rowRankTrend.direction === 'up'
-                                              ? `Moved up ${rowRankTrend.delta} ${rowRankTrend.delta === 1 ? 'rank' : 'ranks'} since last refresh`
-                                              : `Moved down ${rowRankTrend.delta} ${rowRankTrend.delta === 1 ? 'rank' : 'ranks'} since last refresh`
-                                          }
-                                          title={
-                                            rowRankTrend.direction === 'up'
-                                              ? `Moved up ${rowRankTrend.delta} ${rowRankTrend.delta === 1 ? 'spot' : 'spots'} since last refresh (from #${rowRankTrend.previousRank} to #${row.rank})`
-                                              : `Moved down ${rowRankTrend.delta} ${rowRankTrend.delta === 1 ? 'spot' : 'spots'} since last refresh (from #${rowRankTrend.previousRank} to #${row.rank})`
-                                          }
-                                          style={{
-                                            display: 'inline-flex',
-                                            alignItems: 'center',
-                                            gap: 1,
-                                            fontSize: 11,
-                                            fontWeight: 800,
-                                            lineHeight: 1,
-                                            padding: '2px 5px',
-                                            borderRadius: 5,
-                                            color:
-                                              rowRankTrend.direction === 'up'
-                                                ? '#10b981'
-                                                : '#ef4444',
-                                            background:
-                                              rowRankTrend.direction === 'up'
-                                                ? 'rgba(16, 185, 129, 0.14)'
-                                                : 'rgba(239, 68, 68, 0.14)',
-                                          }}
-                                        >
-                                          <span aria-hidden="true">
-                                            {rowRankTrend.direction === 'up'
-                                              ? '▲'
-                                              : '▼'}
-                                          </span>
-                                          {rowRankTrend.delta > 1 ? (
-                                            <span>{rowRankTrend.delta}</span>
-                                          ) : null}
+                                      <div className="split mb-2 text-[12px]">
+                                        <span className="text-[var(--tx-2)]">
+                                          7-day consistency ({row.entry.nick})
                                         </span>
-                                      )}
-                                      <b
-                                        className="mono"
-                                        style={{
-                                          fontSize: 14.5,
-                                          fontVariantNumeric: 'tabular-nums',
-                                          color: row.hidden
-                                            ? 'var(--mu)'
-                                            : 'var(--tx)',
-                                        }}
-                                      >
-                                        {row.displayLabel}
-                                      </b>
+                                        <span className="tnum text-[var(--tx-2)]">
+                                          {memberConsistency.activeDaysCount}/7 days ·{' '}
+                                          {memberConsistency.consistencyPct}%
+                                        </span>
+                                      </div>
+                                      <div className="h-[96px] w-full">
+                                        <ResponsiveContainer
+                                          width="100%"
+                                          height="100%"
+                                        >
+                                          <BarChart
+                                            data={memberConsistency.days}
+                                            margin={{
+                                              top: 4,
+                                              right: 4,
+                                              bottom: 0,
+                                              left: 4,
+                                            }}
+                                          >
+                                            <XAxis
+                                              dataKey="label"
+                                              tick={{
+                                                fontSize: 12,
+                                                fill: '#A3ABB8',
+                                              }}
+                                              axisLine={false}
+                                              tickLine={false}
+                                            />
+                                            <YAxis
+                                              hide
+                                              domain={[0, 'dataMax + 30']}
+                                            />
+                                            <Tooltip
+                                              contentStyle={{
+                                                background: '#181C22',
+                                                border:
+                                                  '1px solid rgba(255,255,255,0.08)',
+                                                borderRadius: 8,
+                                                fontSize: 12,
+                                                color: '#ECEFF4',
+                                              }}
+                                              formatter={(value) => [
+                                                formatMinutesAsHoursMins(
+                                                  Number(value ?? 0)
+                                                ),
+                                                'Study time',
+                                              ]}
+                                              labelFormatter={(label) =>
+                                                `Date: ${label}`
+                                              }
+                                            />
+                                            <Bar
+                                              dataKey="minutes"
+                                              fill={
+                                                isLiveNow ? '#4ADE80' : '#F5C451'
+                                              }
+                                              radius={[4, 4, 0, 0]}
+                                              barSize={18}
+                                              isAnimationActive={false}
+                                            />
+                                          </BarChart>
+                                        </ResponsiveContainer>
+                                      </div>
                                     </div>
                                   );
                                 })()}
-                              </div>
 
-                              {/* One-Tap Cheer Buttons for Other Members */}
-                              {!isMe && (
-                                <div className="row" style={{ gap: 2 }}>
-                                  {ALLOWED_CHEER_EMOJIS.map((ce) => (
-                                    <button
-                                      key={ce}
-                                      type="button"
-                                      onClick={() =>
-                                        handleSendCheer(
-                                          row.uid,
-                                          row.entry.nick,
-                                          ce
-                                        )
-                                      }
-                                      aria-label={`Send ${ce} cheer to ${row.entry.nick}`}
-                                      title={`Cheer ${row.entry.nick} with ${ce}`}
-                                      style={{
-                                        minWidth: 34,
-                                        minHeight: 40,
-                                        padding: 0,
-                                        borderRadius: 10,
-                                        fontSize: 14,
-                                        background:
-                                          sentCheer === ce
-                                            ? 'rgba(16, 185, 129, 0.22)'
-                                            : 'transparent',
-                                        borderColor:
-                                          sentCheer === ce
-                                            ? 'rgba(16, 185, 129, 0.45)'
-                                            : 'transparent',
-                                      }}
-                                    >
-                                      {ce}
-                                    </button>
-                                  ))}
-                                </div>
-                              )}
-                            </div>
-                          </div>
-
-                          {/* Expandable Head-to-Head Compare & 7-Day Sparkline Drawer */}
-                          {isExpanded && (
-                            <div
-                              style={{
-                                marginTop: 10,
-                                paddingTop: 10,
-                                borderTop: '1px dashed var(--bd)',
-                                fontSize: 12,
-                              }}
-                            >
-                              <div
-                                className="row sp"
-                                style={{
-                                  flexWrap: 'wrap',
-                                  gap: 8,
-                                  marginBottom: 8,
-                                }}
-                              >
-                                <b>
-                                  ⚡ 7-Day Study Comparison:{' '}
-                                  {isMe
-                                    ? 'Your Last 7 Days'
-                                    : `You vs ${row.entry.nick}`}
-                                </b>
-                                {!isMe && (
-                                  <button
-                                    type="button"
-                                    className={isPaceTarget ? 'on' : 's'}
-                                    onClick={() =>
-                                      handleTogglePaceTarget(
-                                        row.uid,
-                                        row.entry.nick
-                                      )
-                                    }
-                                    style={{
-                                      minHeight: 34,
-                                      padding: '4px 10px',
-                                      fontSize: 11.5,
-                                    }}
-                                  >
-                                    {isPaceTarget
-                                      ? '🎯 Active Pace Target'
-                                      : '🎯 Set as Pace Target'}
-                                  </button>
-                                )}
-                              </div>
-
-                              {/* Inline Recharts 7-Day Study Consistency Chart */}
-                              {(() => {
-                                const memberConsistency =
-                                  buildMemberLast7DaysConsistencyData(
-                                    row.entry,
-                                    todayKey
-                                  );
-                                return (
-                                  <div
-                                    aria-label={`7-day study consistency chart for ${row.entry.nick}`}
-                                    style={{
-                                      marginBottom: 10,
-                                      padding: '8px 10px',
-                                      borderRadius: 12,
-                                      background: 'var(--c2)',
-                                      border: '1px solid var(--bd)',
-                                    }}
-                                  >
-                                    <div
-                                      className="row sp"
-                                      style={{
-                                        marginBottom: 4,
-                                        fontSize: 11,
-                                        gap: 6,
-                                        flexWrap: 'wrap',
-                                      }}
-                                    >
-                                      <span className="mut">
-                                        📊 7-Day Consistency ({row.entry.nick})
-                                      </span>
-                                      <span className="mono mut">
-                                        {memberConsistency.activeDaysCount}/7 days ·{' '}
-                                        {memberConsistency.consistencyPct}%
-                                      </span>
-                                    </div>
-                                    <div style={{ width: '100%', height: 96 }}>
-                                      <ResponsiveContainer
-                                        width="100%"
-                                        height="100%"
-                                      >
-                                        <BarChart
-                                          data={memberConsistency.days}
-                                          margin={{
-                                            top: 4,
-                                            right: 4,
-                                            bottom: 0,
-                                            left: 4,
-                                          }}
-                                        >
-                                          <XAxis
-                                            dataKey="label"
-                                            tick={{
-                                              fontSize: 10,
-                                              fill: 'var(--mu)',
-                                            }}
-                                            axisLine={false}
-                                            tickLine={false}
-                                          />
-                                          <YAxis
-                                            hide
-                                            domain={[0, 'dataMax + 30']}
-                                          />
-                                          <Tooltip
-                                            cursor={{
-                                              fill: 'rgba(148, 163, 184, 0.1)',
-                                            }}
-                                            contentStyle={{
-                                              background: 'var(--card)',
-                                              border: '1px solid var(--bd)',
-                                              borderRadius: 8,
-                                              fontSize: 11,
-                                              padding: '4px 8px',
-                                              color: 'var(--tx)',
-                                            }}
-                                            formatter={(value) => [
-                                              formatMinutesAsHoursMins(
-                                                Number(value ?? 0)
-                                              ),
-                                              'Study time',
-                                            ]}
-                                            labelFormatter={(label) =>
-                                              `Date: ${label}`
-                                            }
-                                          />
-                                          <Bar
-                                            dataKey="minutes"
-                                            fill={
-                                              isLiveNow ? '#10b981' : '#38bdf8'
-                                            }
-                                            radius={[4, 4, 0, 0]}
-                                            barSize={18}
-                                            isAnimationActive={false}
-                                          />
-                                        </BarChart>
-                                      </ResponsiveContainer>
-                                    </div>
+                                <div className="grid grid-cols-2 gap-2 sm:grid-cols-4">
+                                  <div className="rounded-xl border border-[var(--line)] bg-[var(--sf-2)] p-2.5">
+                                    <span className="block text-[12px] text-[var(--tx-2)]">
+                                      Today study
+                                    </span>
+                                    <strong className="tnum text-[13.5px] text-[var(--tx)]">
+                                      {row.entry.sh.t
+                                        ? formatMinutesAsHoursMins(memberTodayMins)
+                                        : 'Hidden'}
+                                    </strong>
                                   </div>
-                                );
-                              })()}
-
-                              {/* 7-Day Sparkline Bars */}
-                              <div
-                                style={{
-                                  display: 'grid',
-                                  gridTemplateColumns: 'repeat(7, 1fr)',
-                                  gap: 6,
-                                  marginBottom: 10,
-                                  padding: '10px 8px',
-                                  borderRadius: 12,
-                                  background: 'var(--c2)',
-                                }}
-                              >
-                                {myPersonalStats.last7Keys.map((dk) => {
-                                  const myM =
-                                    myPersonalStats.timerMinsByDay[dk] || 0;
-                                  const theirM = row.entry.days?.[dk] || 0;
-                                  const maxM = Math.max(
-                                    240,
-                                    myM,
-                                    theirM
-                                  );
-                                  const myH = Math.round((myM / maxM) * 44);
-                                  const theirH = Math.round(
-                                    (theirM / maxM) * 44
-                                  );
-                                  return (
-                                    <div
-                                      key={dk}
-                                      style={{
-                                        display: 'flex',
-                                        flexDirection: 'column',
-                                        alignItems: 'center',
-                                        gap: 4,
-                                      }}
-                                    >
-                                      <div
-                                        style={{
-                                          height: 46,
-                                          display: 'flex',
-                                          alignItems: 'flex-end',
-                                          gap: 3,
-                                        }}
-                                      >
-                                        <div
-                                          title={`You (${dk}): ${formatMinutesAsHoursMins(myM)}`}
-                                          style={{
-                                            width: isMe ? 14 : 9,
-                                            height: Math.max(3, myH),
-                                            borderRadius: 4,
-                                            background: 'var(--ac)',
-                                          }}
-                                        />
-                                        {!isMe && (
-                                          <div
-                                            title={`${row.entry.nick} (${dk}): ${formatMinutesAsHoursMins(theirM)}`}
-                                            style={{
-                                              width: 9,
-                                              height: Math.max(3, theirH),
-                                              borderRadius: 4,
-                                              background: 'var(--em)',
-                                            }}
-                                          />
-                                        )}
-                                      </div>
-                                      <span
-                                        className="mono mut"
-                                        style={{ fontSize: 10 }}
-                                      >
-                                        {dk.slice(8)}
-                                      </span>
-                                    </div>
-                                  );
-                                })}
-                              </div>
-
-                              {/* Head-to-Head Summary Metrics */}
-                              <div
-                                style={{
-                                  display: 'grid',
-                                  gridTemplateColumns:
-                                    'repeat(auto-fit, minmax(125px, 1fr))',
-                                  gap: 6,
-                                }}
-                              >
-                                <div
-                                  className="stat-box"
-                                  style={{ padding: '7px 9px' }}
-                                >
-                                  <small style={{ fontSize: 10.5 }}>
-                                    Today Study
-                                  </small>
-                                  <b className="mono" style={{ fontSize: 13 }}>
-                                    {row.entry.sh.t
-                                      ? formatMinutesAsHoursMins(memberTodayMins)
-                                      : 'Hidden'}
-                                  </b>
-                                </div>
-                                <div
-                                  className="stat-box"
-                                  style={{ padding: '7px 9px' }}
-                                >
-                                  <small style={{ fontSize: 10.5 }}>
-                                    This Week Study
-                                  </small>
-                                  <b className="mono" style={{ fontSize: 13 }}>
-                                    {row.entry.sh.t
-                                      ? formatMinutesAsHoursMins(memberWeekMins)
-                                      : 'Hidden'}
-                                  </b>
-                                </div>
-                                <div
-                                  className="stat-box"
-                                  style={{ padding: '7px 9px' }}
-                                >
-                                  <small style={{ fontSize: 10.5 }}>
-                                    Week / Total XP
-                                  </small>
-                                  <b className="mono" style={{ fontSize: 13 }}>
-                                    {row.entry.sh.x
-                                      ? `${memberWeekXp} / ${(row.entry.xpTotal || 0).toLocaleString()}`
-                                      : 'Hidden'}
-                                  </b>
-                                </div>
-                                <div
-                                  className="stat-box"
-                                  style={{ padding: '7px 9px' }}
-                                >
-                                  <small style={{ fontSize: 10.5 }}>
-                                    Streak &amp; Consistency
-                                  </small>
-                                  <b className="mono" style={{ fontSize: 13 }}>
-                                    {row.entry.sh.s
-                                      ? `${row.entry.streak ?? 0}d · ${row.entry.consistency ?? 0}%`
-                                      : 'Hidden'}
-                                  </b>
+                                  <div className="rounded-xl border border-[var(--line)] bg-[var(--sf-2)] p-2.5">
+                                    <span className="block text-[12px] text-[var(--tx-2)]">
+                                      This week study
+                                    </span>
+                                    <strong className="tnum text-[13.5px] text-[var(--tx)]">
+                                      {row.entry.sh.t
+                                        ? formatMinutesAsHoursMins(memberWeekMins)
+                                        : 'Hidden'}
+                                    </strong>
+                                  </div>
+                                  <div className="rounded-xl border border-[var(--line)] bg-[var(--sf-2)] p-2.5">
+                                    <span className="block text-[12px] text-[var(--tx-2)]">
+                                      Week / total XP
+                                    </span>
+                                    <strong className="tnum text-[13.5px] text-[var(--tx)]">
+                                      {row.entry.sh.x
+                                        ? `${memberWeekXp} / ${(row.entry.xpTotal || 0).toLocaleString()}`
+                                        : 'Hidden'}
+                                    </strong>
+                                  </div>
+                                  <div className="rounded-xl border border-[var(--line)] bg-[var(--sf-2)] p-2.5">
+                                    <span className="block text-[12px] text-[var(--tx-2)]">
+                                      Streak &amp; consistency
+                                    </span>
+                                    <strong className="tnum text-[13.5px] text-[var(--tx)]">
+                                      {row.entry.sh.s
+                                        ? `${row.entry.streak ?? 0}d · ${row.entry.consistency ?? 0}%`
+                                        : 'Hidden'}
+                                    </strong>
+                                  </div>
                                 </div>
                               </div>
-                            </div>
-                          )}
-                        </div>
-                      );
-                    })
+                            )}
+                          </div>
+                        );
+                      })}
+                    </div>
                   )}
-                </div>
+                </Card>
               )}
 
               {/* History & Trophies Tab */}
               {boardTab === 'history' && (
-                <div className="card" style={{ padding: 14, marginBottom: 12 }}>
-                  <b style={{ fontSize: 14, display: 'block', marginBottom: 8 }}>
-                    🏅 Weekly Standings &amp; Trophy Cabinet (Last 12 Weeks)
-                  </b>
+                <Card className="space-y-3">
+                  <SectionHeader
+                    title="Weekly standings &amp; trophy cabinet"
+                    subtitle="Last 12 completed weeks"
+                  />
                   {(() => {
                     const myEntry = myUid
                       ? activeGroupDoc.members[myUid]
@@ -4062,369 +3043,303 @@ export const GroupsView: React.FC<GroupsViewProps> = ({
 
                     return (
                       <>
-                        <div
-                          className="row"
-                          style={{
-                            gap: 12,
-                            marginBottom: 12,
-                            padding: '10px 12px',
-                            borderRadius: 10,
-                            background: 'var(--c2)',
-                          }}
-                        >
-                          <span>
-                            🥇 Gold: <b>{myMedals.gold}</b>
-                          </span>
-                          <span>
-                            🥈 Silver: <b>{myMedals.silver}</b>
-                          </span>
-                          <span>
-                            🥉 Bronze: <b>{myMedals.bronze}</b>
-                          </span>
+                        <div className="grid grid-cols-3 gap-2.5">
+                          <Stat label="1st place" value={String(myMedals.gold)} />
+                          <Stat label="2nd place" value={String(myMedals.silver)} />
+                          <Stat label="3rd place" value={String(myMedals.bronze)} />
                         </div>
 
                         {weekKeys.length === 0 ? (
-                          <div className="mut" style={{ fontSize: 13 }}>
+                          <p className="text-[13px] text-[var(--tx-2)]">
                             Completed weekly standings appear here automatically each
                             Monday when at least 2 members share study time.
-                          </div>
+                          </p>
                         ) : (
-                          weekKeys.map((wk) => {
-                            const w = combinedWeeks[wk];
-                            if (!w) return null;
-                            const medal =
-                              w.rank === 1
-                                ? '🥇'
-                                : w.rank === 2
-                                  ? '🥈'
-                                  : w.rank === 3
-                                    ? '🥉'
-                                    : '🏅';
-                            return (
-                              <div
-                                key={wk}
-                                className="row sp"
-                                style={{
-                                  padding: '8px 4px',
-                                  borderBottom: '1px solid var(--bd)',
-                                  fontSize: 13,
-                                }}
-                              >
-                                <span>
-                                  {medal} Week of <b className="mono">{wk}</b>
-                                </span>
-                                <span className="mono">
-                                  Rank <b>#{w.rank}</b> of {w.of} ·{' '}
-                                  {formatMinutesAsHoursMins(w.minutes)} · {w.xp}{' '}
-                                  XP
-                                </span>
-                              </div>
-                            );
-                          })
+                          <div className="divide-y divide-[var(--line)]">
+                            {weekKeys.map((wk) => {
+                              const w = combinedWeeks[wk];
+                              if (!w) return null;
+                              return (
+                                <div
+                                  key={wk}
+                                  className="split py-2.5 text-[13.5px]"
+                                >
+                                  <span className="tnum text-[var(--tx)]">
+                                    Week of <strong>{wk}</strong>
+                                  </span>
+                                  <span className="tnum text-[var(--tx-2)]">
+                                    Rank <strong>#{w.rank}</strong> of {w.of} ·{' '}
+                                    {formatMinutesAsHoursMins(w.minutes)} · {w.xp} XP
+                                  </span>
+                                </div>
+                              );
+                            })}
+                          </div>
                         )}
                       </>
                     );
                   })()}
-                </div>
+                </Card>
               )}
 
               {/* Per-Group Privacy & Sharing Switches */}
               {activeGroupPref && (
-                <div className="card" style={{ padding: 14, marginBottom: 12 }}>
-                  <b style={{ fontSize: 14, display: 'block', marginBottom: 4 }}>
-                    🔒 My Sharing Preferences in "{activeGroupDoc.name}"
-                  </b>
-                  <div className="mut" style={{ fontSize: 12, marginBottom: 10 }}>
-                    Unchecked items are omitted from your group entry and shown as
-                    "hidden".
+                <Card className="space-y-3">
+                  <div>
+                    <h4 className="text-[14.5px] font-semibold text-[var(--tx)]">
+                      My sharing preferences in &ldquo;{activeGroupDoc.name}&rdquo;
+                    </h4>
+                    <p className="text-[12px] text-[var(--tx-2)]">
+                      Turned-off items are omitted from your group entry and shown as
+                      hidden.
+                    </p>
                   </div>
 
-                  {(
-                    [
-                      {
-                        key: 't' as const,
-                        label: 'Share timer-tracked study hours (Today & Week)',
-                        checked: activeGroupPref.sh.t,
-                      },
-                      {
-                        key: 'x' as const,
-                        label: 'Share XP v2 & level',
-                        checked: activeGroupPref.sh.x,
-                      },
-                      {
-                        key: 's' as const,
-                        label: 'Share consistency score & minimum-day streak',
-                        checked: activeGroupPref.sh.s,
-                      },
-                      {
-                        key: 'm' as const,
-                        label: 'Share last 10 mock test scores (opt-in)',
-                        checked: activeGroupPref.sh.m,
-                      },
-                      {
-                        key: 'l' as const,
-                        label: 'Show "Studying now" live indicator when timer runs',
-                        checked: activeGroupPref.sh.l,
-                      },
-                      {
-                        key: 'paused' as const,
-                        label: 'Pause all sharing in this group (hide all stats)',
-                        checked: Boolean(activeGroupPref.paused),
-                      },
-                    ] as const
-                  ).map((item) => (
-                    <label
-                      key={item.key}
-                      className="row sp"
-                      style={{
-                        minHeight: 44,
-                        padding: '4px 0',
-                        borderBottom: '1px solid var(--bd)',
-                        cursor: 'pointer',
-                        fontSize: 13,
-                      }}
-                    >
-                      <span>{item.label}</span>
-                      <input
-                        type="checkbox"
-                        checked={item.checked}
-                        onChange={(e) =>
-                          handleToggleSharingFlag(item.key, e.target.checked)
-                        }
-                        style={{ width: 20, height: 20 }}
-                      />
-                    </label>
-                  ))}
+                  <div className="divide-y divide-[var(--line)]">
+                    {(
+                      [
+                        {
+                          key: 't' as const,
+                          label: 'Share timer-tracked study hours (Today & Week)',
+                          checked: activeGroupPref.sh.t,
+                        },
+                        {
+                          key: 'x' as const,
+                          label: 'Share XP v2 & level',
+                          checked: activeGroupPref.sh.x,
+                        },
+                        {
+                          key: 's' as const,
+                          label: 'Share consistency score & minimum-day streak',
+                          checked: activeGroupPref.sh.s,
+                        },
+                        {
+                          key: 'm' as const,
+                          label: 'Share last 10 mock test scores (opt-in)',
+                          checked: activeGroupPref.sh.m,
+                        },
+                        {
+                          key: 'l' as const,
+                          label: 'Show "Studying now" live indicator when timer runs',
+                          checked: activeGroupPref.sh.l,
+                        },
+                        {
+                          key: 'paused' as const,
+                          label: 'Pause all sharing in this group (hide all stats)',
+                          checked: Boolean(activeGroupPref.paused),
+                        },
+                      ] as const
+                    ).map((item) => (
+                      <div
+                        key={item.key}
+                        className="split py-2.5 text-[13.5px] text-[var(--tx)]"
+                      >
+                        <span>{item.label}</span>
+                        <Switch
+                          checked={item.checked}
+                          onChange={(nextVal) =>
+                            handleToggleSharingFlag(item.key, nextVal)
+                          }
+                          label={item.label}
+                        />
+                      </div>
+                    ))}
+                  </div>
 
-                  <div className="row sp" style={{ marginTop: 12, flexWrap: 'wrap', gap: 8 }}>
-                    <span className="mut" style={{ fontSize: 11 }}>
+                  <div className="split flex-wrap gap-2 pt-2">
+                    <span className="tnum text-[12px] text-[var(--tx-3)]">
                       Group writes today: {groupBudget.getWritesToday()}/60 · Reads:{' '}
                       {groupBudget.getReadsToday()}/150
                     </span>
                     {confirmLeaveGroupId === activeGroupId ? (
-                      <div className="row" style={{ gap: 6 }}>
-                        <button
-                          type="button"
-                          className="dg-btn"
+                      <div className="flex items-center gap-2">
+                        <Button
+                          variant="danger"
+                          size="sm"
                           disabled={actionBusy}
                           onClick={() => handleLeaveGroup(activeGroupId)}
-                          style={{ minHeight: 40, fontSize: 12 }}
                         >
-                          Confirm Leave
-                        </button>
-                        <button
-                          type="button"
-                          className="s"
+                          Confirm leave
+                        </Button>
+                        <Button
+                          variant="secondary"
+                          size="sm"
                           onClick={() => setConfirmLeaveGroupId(null)}
-                          style={{ minHeight: 40, fontSize: 12 }}
                         >
                           Cancel
-                        </button>
+                        </Button>
                       </div>
                     ) : (
-                      <button
-                        type="button"
-                        className="s"
+                      <Button
+                        variant="danger"
+                        size="sm"
                         onClick={() => setConfirmLeaveGroupId(activeGroupId)}
-                        style={{
-                          minHeight: 40,
-                          fontSize: 12,
-                          color: '#f43f5e',
-                        }}
                       >
-                        Leave Group
-                      </button>
+                        Leave group
+                      </Button>
                     )}
                   </div>
-                </div>
+                </Card>
               )}
 
               {/* Owner Tools Card */}
               {isOwner && (
-                <div className="card" style={{ padding: 14, marginBottom: 12 }}>
-                  <div className="row sp">
-                    <b style={{ fontSize: 14 }}>👑 Group Owner Tools</b>
-                    <button
-                      type="button"
-                      className="s"
+                <Card className="space-y-3">
+                  <div className="split">
+                    <div className="flex items-center gap-2">
+                      <Crown size={17} className="text-[var(--ac)]" />
+                      <strong className="text-[14.5px] text-[var(--tx)]">
+                        Group owner tools
+                      </strong>
+                    </div>
+                    <Button
+                      variant="secondary"
+                      size="sm"
+                      icon={
+                        showOwnerDrawer ? (
+                          <ChevronUp size={15} />
+                        ) : (
+                          <ChevronDown size={15} />
+                        )
+                      }
                       onClick={() => setShowOwnerDrawer((v) => !v)}
-                      style={{ minHeight: 36, fontSize: 12 }}
                     >
-                      {showOwnerDrawer ? 'Hide ▴' : 'Manage Squad ▾'}
-                    </button>
+                      {showOwnerDrawer ? 'Hide' : 'Manage squad'}
+                    </Button>
                   </div>
 
                   {showOwnerDrawer && (
-                    <div style={{ marginTop: 12 }}>
+                    <div className="space-y-4 border-t border-[var(--line)] pt-3">
                       <form
                         onSubmit={handleOwnerSaveSettings}
-                        style={{ marginBottom: 12 }}
+                        className="flex flex-wrap items-center gap-2"
                       >
-                        <div
-                          className="row"
-                          style={{ gap: 8, marginBottom: 8, flexWrap: 'wrap' }}
+                        <input
+                          type="text"
+                          value={ownerEditName}
+                          maxLength={32}
+                          onChange={(e) => setOwnerEditName(e.target.value)}
+                          placeholder="Group Name"
+                          aria-label="Edit group name"
+                          className="h-11 min-w-[160px] flex-1 rounded-xl border border-[var(--line)] bg-[var(--sf-2)] px-3 text-[13.5px]"
+                        />
+                        <input
+                          type="number"
+                          min={0}
+                          max={5000}
+                          step="1"
+                          value={ownerGoalHoursInput}
+                          onChange={(e) => setOwnerGoalHoursInput(e.target.value)}
+                          placeholder="Weekly goal (hrs)"
+                          aria-label="Weekly group goal in hours"
+                          className="h-11 w-44 rounded-xl border border-[var(--line)] bg-[var(--sf-2)] px-3 text-[13.5px]"
+                        />
+                        <Button
+                          type="submit"
+                          variant="primary"
+                          disabled={actionBusy}
                         >
-                          <input
-                            type="text"
-                            value={ownerEditName}
-                            maxLength={32}
-                            onChange={(e) => setOwnerEditName(e.target.value)}
-                            placeholder="Group Name"
-                            aria-label="Edit group name"
-                            style={{ minHeight: 44, flex: 1, minWidth: 160 }}
-                          />
-                          <input
-                            type="number"
-                            min={0}
-                            max={5000}
-                            step="1"
-                            value={ownerGoalHoursInput}
-                            onChange={(e) => setOwnerGoalHoursInput(e.target.value)}
-                            placeholder="Weekly Goal (hrs, blank=none)"
-                            aria-label="Weekly group goal in hours"
-                            style={{ minHeight: 44, width: 170 }}
-                          />
-                          <button
-                            type="submit"
-                            className="pri"
-                            disabled={actionBusy}
-                            style={{ minHeight: 44 }}
-                          >
-                            Save
-                          </button>
-                        </div>
+                          Save
+                        </Button>
                       </form>
 
-                      <label
-                        className="row sp"
-                        style={{
-                          minHeight: 44,
-                          padding: '6px 0',
-                          borderTop: '1px solid var(--bd)',
-                          borderBottom: '1px solid var(--bd)',
-                          cursor: 'pointer',
-                          fontSize: 13,
-                        }}
-                      >
-                        <span>
-                          Enable Mock Score Leaderboard tab for this group
-                        </span>
-                        <input
-                          type="checkbox"
+                      <div className="split border-y border-[var(--line)] py-2.5 text-[13.5px]">
+                        <span>Enable Mock Score Leaderboard tab for this group</span>
+                        <Switch
                           checked={Boolean(activeGroupDoc.mockBoard)}
-                          onChange={(e) =>
-                            handleOwnerToggleMockBoard(e.target.checked)
-                          }
-                          style={{ width: 20, height: 20 }}
+                          onChange={(checked) => handleOwnerToggleMockBoard(checked)}
+                          label="Enable Mock Score Leaderboard tab"
                         />
-                      </label>
+                      </div>
 
-                      {/* Member Removal List */}
                       {Object.keys(activeGroupDoc.members).length > 1 && (
-                        <div style={{ marginTop: 10 }}>
-                          <div
-                            className="mut"
-                            style={{ fontSize: 12, marginBottom: 6 }}
-                          >
-                            Manage Members
-                          </div>
+                        <div className="space-y-2">
+                          <span className="block text-[12.5px] font-medium text-[var(--tx-2)]">
+                            Manage members
+                          </span>
                           {Object.entries(activeGroupDoc.members)
                             .filter(([uid]) => uid !== myUid)
                             .map(([uid, m]) => (
                               <div
                                 key={uid}
-                                className="row sp"
-                                style={{ padding: '4px 0', fontSize: 13 }}
+                                className="split py-1.5 text-[13.5px]"
                               >
                                 <span>
                                   {m.emoji} {m.nick}
                                 </span>
                                 {confirmKickUid === uid ? (
-                                  <div className="row" style={{ gap: 6 }}>
-                                    <button
-                                      type="button"
-                                      className="dg-btn"
+                                  <div className="flex items-center gap-2">
+                                    <Button
+                                      variant="danger"
+                                      size="sm"
                                       disabled={actionBusy}
                                       onClick={() =>
                                         handleOwnerRemoveMember(uid, m.nick)
                                       }
-                                      style={{ minHeight: 38, fontSize: 12 }}
                                     >
-                                      Confirm Remove
-                                    </button>
-                                    <button
-                                      type="button"
-                                      className="s"
+                                      Confirm remove
+                                    </Button>
+                                    <Button
+                                      variant="secondary"
+                                      size="sm"
                                       onClick={() => setConfirmKickUid(null)}
-                                      style={{ minHeight: 38, fontSize: 12 }}
                                     >
                                       Cancel
-                                    </button>
+                                    </Button>
                                   </div>
                                 ) : (
-                                  <button
-                                    type="button"
-                                    className="s"
+                                  <Button
+                                    variant="secondary"
+                                    size="sm"
                                     onClick={() => setConfirmKickUid(uid)}
-                                    style={{ minHeight: 38, fontSize: 12 }}
                                   >
                                     Remove
-                                  </button>
+                                  </Button>
                                 )}
                               </div>
                             ))}
                         </div>
                       )}
 
-                      {/* Close Group */}
-                      <div
-                        style={{
-                          marginTop: 12,
-                          paddingTop: 10,
-                          borderTop: '1px solid var(--bd)',
-                        }}
-                      >
+                      <div className="border-t border-[var(--line)] pt-3">
                         {confirmCloseGroupId === activeGroupId ? (
-                          <div className="row sp" style={{ flexWrap: 'wrap', gap: 8 }}>
-                            <span style={{ fontSize: 12, color: '#f43f5e' }}>
+                          <div className="split flex-wrap gap-2">
+                            <span className="text-[12.5px] text-[var(--bad)]">
                               Permanently delete this group for all members?
                             </span>
-                            <div className="row" style={{ gap: 6 }}>
-                              <button
-                                type="button"
-                                className="dg-btn"
+                            <div className="flex items-center gap-2">
+                              <Button
+                                variant="danger"
+                                size="sm"
                                 disabled={actionBusy}
                                 onClick={() =>
                                   handleOwnerCloseGroup(activeGroupId)
                                 }
-                                style={{ minHeight: 40, fontSize: 12 }}
                               >
-                                Yes, Close Group
-                              </button>
-                              <button
-                                type="button"
-                                className="s"
+                                Yes, close group
+                              </Button>
+                              <Button
+                                variant="secondary"
+                                size="sm"
                                 onClick={() => setConfirmCloseGroupId(null)}
-                                style={{ minHeight: 40, fontSize: 12 }}
                               >
                                 Cancel
-                              </button>
+                              </Button>
                             </div>
                           </div>
                         ) : (
-                          <button
-                            type="button"
-                            className="dg-btn"
+                          <Button
+                            variant="danger"
+                            size="sm"
                             onClick={() => setConfirmCloseGroupId(activeGroupId)}
-                            style={{ minHeight: 40, fontSize: 12 }}
                           >
-                            Close &amp; Delete Group
-                          </button>
+                            Close &amp; delete group
+                          </Button>
                         )}
                       </div>
                     </div>
                   )}
-                </div>
+                </Card>
               )}
             </>
           )}

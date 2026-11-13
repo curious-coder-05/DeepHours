@@ -3,7 +3,7 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
-import React, { useCallback, useEffect, useRef, useState } from 'react';
+import React, { Suspense, useCallback, useEffect, useRef, useState } from 'react';
 import type {
   ActiveTimerMode,
   AppSettings,
@@ -56,6 +56,7 @@ import {
   moveUnfinishedTasksToToday,
   norm,
   pad,
+  parseKey,
   restoreDeletedItem,
   shouldFireFiveMinWarning,
   syncStudyHabitsForDays,
@@ -104,14 +105,36 @@ import {
   publishMyEntryToGroup,
   recordWeekStandingInHistory,
 } from './utils/groups';
+import {
+  LUMEN_ACCENT,
+  getAmoledPref,
+  getReadableAccentText,
+  getReadableOnColor,
+  setAmoledPref,
+} from './utils/uiHelpers';
+import { AppShell } from './components/AppShell';
+import { QuickActionsSheet, type QuickActionKind } from './components/QuickActionsSheet';
+import { Skeleton, Toast } from './components/ui';
 import { TodayView } from './components/TodayView';
-import { PrepView } from './components/PrepView';
 import { FocusView } from './components/FocusView';
-import { GroupsView } from './components/GroupsView';
-import { StatsView } from './components/StatsView';
-import { MoreView } from './components/MoreView';
 import { Modals, type ModalState } from './components/Modals';
 import { ProfileModal } from './components/ProfileModal';
+import { CommandPalette } from './components/CommandPalette';
+import { KeyboardShortcutsSheet } from './components/KeyboardShortcutsSheet';
+import type { SettingsSection } from './components/SettingsView';
+
+const PrepView = React.lazy(() =>
+  import('./components/PrepView').then((m) => ({ default: m.PrepView }))
+);
+const GroupsView = React.lazy(() =>
+  import('./components/GroupsView').then((m) => ({ default: m.GroupsView }))
+);
+const StatsView = React.lazy(() =>
+  import('./components/StatsView').then((m) => ({ default: m.StatsView }))
+);
+const SettingsView = React.lazy(() =>
+  import('./components/SettingsView').then((m) => ({ default: m.SettingsView }))
+);
 
 function boomConfetti() {
   if (
@@ -210,6 +233,40 @@ export default function App() {
   const [profilePromptReason, setProfilePromptReason] = useState<string | undefined>(
     undefined
   );
+  const [settingsOpen, setSettingsOpen] = useState(false);
+  const [settingsSection, setSettingsSection] = useState<SettingsSection | null>(null);
+  const [quickActionsOpen, setQuickActionsOpen] = useState(false);
+  const [commandPaletteOpen, setCommandPaletteOpen] = useState(false);
+  const [shortcutsHelpOpen, setShortcutsHelpOpen] = useState(false);
+  const [amoled, setAmoled] = useState<boolean>(() => getAmoledPref());
+
+  const handleToggleAmoled = useCallback((enabled: boolean) => {
+    setAmoledPref(enabled);
+    setAmoled(enabled);
+  }, []);
+
+  const switchTabWithTransition = useCallback((nextTab: AppTab) => {
+    const apply = () => {
+      setSettingsOpen(false);
+      setSettingsSection(null);
+      setTab(nextTab);
+    };
+    const docWithTransition = document as Document & {
+      startViewTransition?: (cb: () => void) => void;
+    };
+    const reducedMotion =
+      typeof window !== 'undefined' &&
+      window.matchMedia('(prefers-reduced-motion: reduce)').matches;
+    if (!reducedMotion && typeof docWithTransition.startViewTransition === 'function') {
+      try {
+        docWithTransition.startViewTransition(apply);
+        return;
+      } catch {
+        // Fallback if startViewTransition fails
+      }
+    }
+    apply();
+  }, []);
 
   const readyRef = useRef(false);
   const stateRef = useRef<PulseHabitState>(state);
@@ -487,27 +544,78 @@ export default function App() {
     }
   }, [todayKey]);
 
-  // Theme application
+  // Theme & AMOLED & accessible accent token application
   useEffect(() => {
     const applyTheme = () => {
-      const t =
+      const t: 'light' | 'dark' =
         state.set.theme === 'auto'
           ? window.matchMedia('(prefers-color-scheme:light)').matches
             ? 'light'
             : 'dark'
           : state.set.theme;
+      const isAmoled = t === 'dark' && amoled;
       document.documentElement.dataset.t = t;
-      document.documentElement.style.setProperty('--ac', state.set.ac);
+      document.documentElement.dataset.amoled = isAmoled ? '1' : '0';
+
+      const customAcSet =
+        typeof window !== 'undefined' &&
+        window.localStorage.getItem('dh_custom_ac') === '1';
+      const activeAccent =
+        !state.set.ac ||
+        (state.set.ac.toLowerCase() === '#38bdf8' && !customAcSet)
+          ? LUMEN_ACCENT
+          : state.set.ac;
+      document.documentElement.style.setProperty('--ac', activeAccent);
+      document.documentElement.style.setProperty(
+        '--ac-on',
+        getReadableOnColor(activeAccent)
+      );
+      document.documentElement.style.setProperty(
+        '--ac-ink',
+        getReadableAccentText(activeAccent, t)
+      );
+
       const metaTheme = document.querySelector('meta[name=theme-color]');
       if (metaTheme) {
-        metaTheme.setAttribute('content', t === 'light' ? '#f4f6fb' : '#090d16');
+        metaTheme.setAttribute(
+          'content',
+          t === 'light' ? '#F6F4EF' : isAmoled ? '#000000' : '#0B0D10'
+        );
       }
     };
     applyTheme();
     const mq = window.matchMedia('(prefers-color-scheme:light)');
     mq.addEventListener('change', applyTheme);
     return () => mq.removeEventListener('change', applyTheme);
-  }, [state.set.theme, state.set.ac]);
+  }, [state.set.theme, state.set.ac, amoled]);
+
+  // Handle PWA shortcut query params (?shortcut=start | ?shortcut=task) once hydrated
+  useEffect(() => {
+    if (!ready || typeof window === 'undefined') return;
+    const params = new URLSearchParams(window.location.search);
+    const shortcut = params.get('shortcut');
+    if (!shortcut) return;
+    if (shortcut === 'start') {
+      setSettingsOpen(false);
+      setSettingsSection(null);
+      setTab('focus');
+    } else if (shortcut === 'task') {
+      setSettingsOpen(false);
+      setSettingsSection(null);
+      setTab('today');
+      const curToday = logicalKey(new Date(), stateRef.current.set.dayResetHour ?? 0);
+      setSel(curToday);
+      setTimeout(() => {
+        const el = document.getElementById('dailyTaskTitleInput');
+        el?.scrollIntoView({ behavior: 'smooth', block: 'center' });
+        el?.focus();
+      }, 150);
+    }
+    params.delete('shortcut');
+    const qs = params.toString();
+    const nextUrl = `${window.location.pathname}${qs ? `?${qs}` : ''}${window.location.hash}`;
+    window.history.replaceState({}, '', nextUrl);
+  }, [ready]);
 
   // Desk mode class on body
   useEffect(() => {
@@ -1421,6 +1529,41 @@ export default function App() {
     [sel, updateAndSave]
   );
 
+  const handleDeleteHabit = useCallback(
+    (id: string) => {
+      const prev = stateRef.current;
+      const index = prev.habits.findIndex((x) => x.id === id);
+      if (index === -1) return;
+      const record: DeletedEntityRecord = {
+        kind: 'habit',
+        item: JSON.parse(JSON.stringify(prev.habits[index])),
+        index,
+        logEntries: prev.log[id]
+          ? JSON.parse(JSON.stringify(prev.log[id]))
+          : undefined,
+      };
+      updateAndSave((cur) => {
+        const withTomb = addTombstone(cur, id);
+        const nextLog = cloneLog(cur.log);
+        delete nextLog[id];
+        return {
+          ...withTomb,
+          habits: cur.habits.filter((x) => x.id !== id),
+          log: nextLog,
+        };
+      });
+      setModal({ type: 'none' });
+      showToast('Habit deleted', () => {
+        const cur = stateRef.current;
+        const restored = restoreDeletedItem(cur, record);
+        const curToday = logicalKey(new Date(), restored.set.dayResetHour ?? 0);
+        syncStudyHabitsForDays(restored, [sel, curToday], curToday);
+        saveNextState(restored);
+      });
+    },
+    [saveNextState, sel, showToast, updateAndSave]
+  );
+
   // F1 & A5: Delete session with item-only Undo at original index + multi-day habit sync + tombstone
   const handleDeleteSession = useCallback(
     (id: string) => {
@@ -2027,6 +2170,132 @@ export default function App() {
     updateAndSave((cur) => moveUnfinishedTasksToToday(cur, todayKey));
   }, [todayKey, updateAndSave]);
 
+  const handleQuickAction = useCallback(
+    (action: QuickActionKind) => {
+      setSettingsOpen(false);
+      setSettingsSection(null);
+      switch (action) {
+        case 'startSession':
+          setTab('focus');
+          window.scrollTo(0, 0);
+          break;
+        case 'logSession':
+          setModal({ type: 'manualSession' });
+          break;
+        case 'addTask':
+          setTab('today');
+          setSel(todayKey);
+          setTimeout(() => {
+            const el = document.getElementById('dailyTaskTitleInput');
+            el?.scrollIntoView({ behavior: 'smooth', block: 'center' });
+            el?.focus();
+          }, 120);
+          break;
+        case 'addHabit':
+          setModal({ type: 'habit' });
+          break;
+        case 'addChapter':
+          setPrepSubTab('syllabus');
+          setTab('prep');
+          window.scrollTo(0, 0);
+          break;
+        case 'logMock':
+          setModal({ type: 'mock' });
+          break;
+        case 'addMistake':
+          setPrepSubTab('mistakes');
+          setTab('prep');
+          window.scrollTo(0, 0);
+          break;
+        case 'addDoubt':
+          setPrepSubTab('doubts');
+          setTab('prep');
+          window.scrollTo(0, 0);
+          break;
+        case 'logPyq':
+          setPrepSubTab('syllabus');
+          setTab('prep');
+          window.scrollTo(0, 0);
+          break;
+        case 'addDDay':
+          setModal({ type: 'dday' });
+          break;
+      }
+    },
+    [todayKey]
+  );
+
+  // Desktop Keyboard Shortcuts & Command Palette (Ctrl/Cmd+K, ?, Space, N, 1-5)
+  useEffect(() => {
+    const onKeyDown = (e: KeyboardEvent) => {
+      if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === 'k') {
+        e.preventDefault();
+        setCommandPaletteOpen((v) => !v);
+        return;
+      }
+
+      if (e.metaKey || e.ctrlKey || e.altKey) return;
+
+      const target = e.target as HTMLElement | null;
+      const isTyping =
+        target &&
+        (target.tagName === 'INPUT' ||
+          target.tagName === 'TEXTAREA' ||
+          target.tagName === 'SELECT' ||
+          target.isContentEditable);
+      if (isTyping) return;
+
+      if (e.key === '?') {
+        e.preventDefault();
+        setShortcutsHelpOpen((v) => !v);
+        return;
+      }
+
+      if (e.key === '1') {
+        e.preventDefault();
+        switchTabWithTransition('today');
+        return;
+      }
+      if (e.key === '2') {
+        e.preventDefault();
+        switchTabWithTransition('prep');
+        return;
+      }
+      if (e.key === '3') {
+        e.preventDefault();
+        switchTabWithTransition('focus');
+        return;
+      }
+      if (e.key === '4') {
+        e.preventDefault();
+        switchTabWithTransition('stats');
+        return;
+      }
+      if (e.key === '5') {
+        e.preventDefault();
+        switchTabWithTransition('groups');
+        return;
+      }
+      if (e.key.toLowerCase() === 'n') {
+        e.preventDefault();
+        handleQuickAction('addTask');
+        return;
+      }
+      if (e.key === ' ' && target?.tagName !== 'BUTTON' && target?.tagName !== 'A') {
+        e.preventDefault();
+        if (stateRef.current.activeTimer) {
+          toggleTimerPause();
+        } else {
+          const defSub = stateRef.current.subjects.find((s) => !s.arch)?.id || 'phy';
+          switchTabWithTransition('focus');
+          startTimer(defSub, 'Focus Session');
+        }
+      }
+    };
+    window.addEventListener('keydown', onKeyDown);
+    return () => window.removeEventListener('keydown', onKeyDown);
+  }, [handleQuickAction, startTimer, switchTabWithTransition, toggleTimerPause]);
+
   // F4: Storage load failure screen (readyRef.current remains false so existing data is never overwritten)
   if (loadError) {
     return (
@@ -2157,7 +2426,7 @@ export default function App() {
         }}
       >
         <div>
-          <b style={{ fontSize: '18px' }}>⚡ Deep Hours</b>
+          <b style={{ fontSize: '18px' }}>Deep Hours</b>
           <small style={{ display: 'block', marginTop: '6px' }}>
             Loading your study log…
           </small>
@@ -2167,28 +2436,103 @@ export default function App() {
   }
 
   const todayStudyProg = getDailyStudyGoalProgress(state, todayKey, todayKey);
-  const navRingR = 11.5;
-  const navRingCirc = 2 * Math.PI * navRingR;
-  const navRingOffset = navRingCirc * (1 - todayStudyProg.pct / 100);
+  const activeMetrics = state.activeTimer ? getTimerMetrics(state, Date.now()) : null;
+  const isSettingsOpen = settingsOpen || tab === 'more';
+  const selDateFormatted = parseKey(sel).toLocaleDateString('en-US', {
+    weekday: 'short',
+    month: 'short',
+    day: 'numeric',
+  });
+  const topBarTitle = isSettingsOpen
+    ? 'Settings'
+    : tab === 'focus'
+      ? 'Focus'
+      : tab === 'prep'
+        ? 'Prep'
+        : tab === 'stats'
+          ? 'Insights'
+          : tab === 'groups'
+            ? 'Community'
+            : 'Today';
+  const topBarSubtitle = isSettingsOpen
+    ? 'Preferences, goals, exams, sync & data'
+    : tab === 'today'
+      ? `${selDateFormatted} · Reset ${pad(state.set.dayResetHour ?? 0)}:00`
+      : tab === 'focus'
+        ? 'Study timer, desk mode & focus sounds'
+        : tab === 'prep'
+          ? 'Syllabus pace, mocks, mistakes & doubts'
+          : tab === 'stats'
+            ? 'Analytics, history & 10m timeline'
+            : 'Private study squads & weekly leaderboards';
+
+  const lazyFallback = (
+    <div style={{ display: 'grid', gap: '12px', paddingTop: '8px' }}>
+      <Skeleton height={84} />
+      <Skeleton height={160} />
+      <Skeleton height={120} />
+    </div>
+  );
 
   return (
     <>
-      <main id="v" aria-live="polite">
-        {tab === 'today' && (
-          <TodayView
-            state={state}
-            sel={sel}
-            todayKey={todayKey}
-            cat={cat}
-            onSelectDay={setSel}
-            onSelectCat={setCat}
-            onSwitchTab={(t) => {
-              setTab(t);
-              window.scrollTo(0, 0);
-            }}
-            onToggleHabit={toggleHabit}
+      <AppShell
+        activeTab={tab}
+        settingsOpen={isSettingsOpen}
+        onSelectTab={(nextTab) => {
+          switchTabWithTransition(nextTab);
+        }}
+        onCloseSettings={() => {
+          setSettingsOpen(false);
+          setSettingsSection(null);
+          if (tab === 'more') setTab('today');
+        }}
+        topBarTitle={topBarTitle}
+        topBarSubtitle={topBarSubtitle}
+        avatarEmoji={state.set.avatarEmoji || state.profile?.emoji || '🩺'}
+        syncStatus={syncStatus}
+        isOnline={isOnline}
+        isSignedIn={Boolean(authUser)}
+        onOpenQuickActions={() => setQuickActionsOpen(true)}
+        onOpenSettings={() => {
+          setSettingsSection(null);
+          setSettingsOpen(true);
+        }}
+        onOpenSyncSettings={() => {
+          setSettingsSection('sync');
+          setSettingsOpen(true);
+        }}
+        activeMetrics={activeMetrics}
+        onToggleTimerPause={toggleTimerPause}
+        todayPct={todayStudyProg.pct}
+      >
+        <main id="v" aria-live="polite">
+          {!isSettingsOpen && tab === 'today' && (
+            <TodayView
+              state={state}
+              sel={sel}
+              todayKey={todayKey}
+              cat={cat}
+              onSelectDay={setSel}
+              onSelectCat={setCat}
+              onSwitchTab={(t) => {
+                if (t === 'more') {
+                  setSettingsSection(null);
+                  setSettingsOpen(true);
+                } else {
+                  switchTabWithTransition(t);
+                }
+                window.scrollTo(0, 0);
+              }}
+              onManageExams={() => {
+                setSettingsSection('exams');
+                setSettingsOpen(true);
+                window.scrollTo(0, 0);
+              }}
+              onToggleHabit={toggleHabit}
             onIncrementHabit={(id, d) => setHabitValue(id, sel, d)}
             onSkipHabit={skipHabit}
+            onDeleteHabit={handleDeleteHabit}
             onAddStarter={(idx) => {
               updateAndSave((prev) => ({
                 ...prev,
@@ -2262,52 +2606,54 @@ export default function App() {
           />
         )}
 
-        {tab === 'prep' && (
-          <PrepView
-            state={state}
-            todayKey={todayKey}
-            subTab={prepSubTab}
-            onChangeSubTab={setPrepSubTab}
-            onAddChapters={handleAddChapters}
-            onUpdateChapter={handleUpdateChapter}
-            onDeleteChapter={handleDeleteChapter}
-            onAddRevision={handleAddRevision}
-            onToggleRevision={handleToggleRevisionDone}
-            onUpdateRevisionDate={handleUpdateRevisionDate}
-            onDeleteRevision={handleDeleteRevision}
-            onOpenNewMock={() => setModal({ type: 'mock' })}
-            onEditMock={(mockId) => setModal({ type: 'mock', id: mockId })}
-            onDeleteMock={handleDeleteMock}
-            onUpdateTargetScore={(target: number) => {
-              updateAndSave((prev) => ({
-                ...prev,
-                set: { ...prev.set, targetMockScore: target },
-              }));
-            }}
-            onAddMistake={handleAddMistake}
-            onToggleMistakeResolved={handleToggleMistakeResolved}
-            onDeleteMistake={handleDeleteMistake}
-            onAddDoubt={(doubt) =>
-              handleAddDoubt(doubt.subjectId, doubt.text, doubt.chapterId)
-            }
-            onToggleDoubtResolved={handleToggleDoubtResolved}
-            onDeleteDoubt={handleDeleteDoubt}
-            onAddPYQ={(entry) =>
-              handleAddPYQ(entry.chapterId, entry.attempted, entry.correct, entry.dayKey)
-            }
-            onDeletePYQ={handleDeletePYQ}
-            onStartChapterFocus={(
-              subjectId: string,
-              chapterId: string,
-              chapterName: string
-            ) => {
-              setTab('focus');
-              startTimer(subjectId, chapterName, undefined, undefined, chapterId);
-            }}
-          />
+        {!isSettingsOpen && tab === 'prep' && (
+          <Suspense fallback={lazyFallback}>
+            <PrepView
+              state={state}
+              todayKey={todayKey}
+              subTab={prepSubTab}
+              onChangeSubTab={setPrepSubTab}
+              onAddChapters={handleAddChapters}
+              onUpdateChapter={handleUpdateChapter}
+              onDeleteChapter={handleDeleteChapter}
+              onAddRevision={handleAddRevision}
+              onToggleRevision={handleToggleRevisionDone}
+              onUpdateRevisionDate={handleUpdateRevisionDate}
+              onDeleteRevision={handleDeleteRevision}
+              onOpenNewMock={() => setModal({ type: 'mock' })}
+              onEditMock={(mockId) => setModal({ type: 'mock', id: mockId })}
+              onDeleteMock={handleDeleteMock}
+              onUpdateTargetScore={(target: number) => {
+                updateAndSave((prev) => ({
+                  ...prev,
+                  set: { ...prev.set, targetMockScore: target },
+                }));
+              }}
+              onAddMistake={handleAddMistake}
+              onToggleMistakeResolved={handleToggleMistakeResolved}
+              onDeleteMistake={handleDeleteMistake}
+              onAddDoubt={(doubt) =>
+                handleAddDoubt(doubt.subjectId, doubt.text, doubt.chapterId)
+              }
+              onToggleDoubtResolved={handleToggleDoubtResolved}
+              onDeleteDoubt={handleDeleteDoubt}
+              onAddPYQ={(entry) =>
+                handleAddPYQ(entry.chapterId, entry.attempted, entry.correct, entry.dayKey)
+              }
+              onDeletePYQ={handleDeletePYQ}
+              onStartChapterFocus={(
+                subjectId: string,
+                chapterId: string,
+                chapterName: string
+              ) => {
+                setTab('focus');
+                startTimer(subjectId, chapterName, undefined, undefined, chapterId);
+              }}
+            />
+          </Suspense>
         )}
 
-        {tab === 'focus' && (
+        {!isSettingsOpen && tab === 'focus' && (
           <FocusView
             state={state}
             sel={sel}
@@ -2405,81 +2751,92 @@ export default function App() {
           />
         )}
 
-        {tab === 'groups' && groupBudgetRef.current && (
-          <GroupsView
-            state={state}
-            todayKey={todayKey}
-            myUid={authUser?.uid || null}
-            isOnline={isOnline}
-            groupBudget={groupBudgetRef.current}
-            onSignIn={async () => {
-              try {
-                await signInWithGoogleAccount();
-              } catch (err) {
-                showToast(
-                  err instanceof Error ? err.message : 'Google sign-in could not start'
-                );
-              }
-            }}
-            onOpenProfileModal={(reason) => {
-              setProfilePromptReason(reason);
-              setShowProfileModal(true);
-            }}
-            onUpdateGroupsConfig={(updater) => {
-              updateAndSave((prev) => ({
-                ...prev,
-                groupsConfig: updater(
-                  prev.groupsConfig || { consentAccepted: false, joined: [] }
-                ),
-              }));
-            }}
-            onRecordWeekHistory={(groupId, weekKey, standing) => {
-              updateAndSave((prev) => ({
-                ...prev,
-                groupHistory: recordWeekStandingInHistory(
-                  prev.groupHistory || {},
-                  groupId,
-                  weekKey,
-                  standing
-                ),
-              }));
-            }}
-            onGoToFocus={() => {
-              setTab('focus');
-              window.scrollTo(0, 0);
-            }}
-            showToast={showToast}
-          />
+        {!isSettingsOpen && tab === 'groups' && groupBudgetRef.current && (
+          <Suspense fallback={lazyFallback}>
+            <GroupsView
+              state={state}
+              todayKey={todayKey}
+              myUid={authUser?.uid || null}
+              isOnline={isOnline}
+              groupBudget={groupBudgetRef.current}
+              onSignIn={async () => {
+                try {
+                  await signInWithGoogleAccount();
+                } catch (err) {
+                  showToast(
+                    err instanceof Error ? err.message : 'Google sign-in could not start'
+                  );
+                }
+              }}
+              onOpenProfileModal={(reason) => {
+                setProfilePromptReason(reason);
+                setShowProfileModal(true);
+              }}
+              onUpdateGroupsConfig={(updater) => {
+                updateAndSave((prev) => ({
+                  ...prev,
+                  groupsConfig: updater(
+                    prev.groupsConfig || { consentAccepted: false, joined: [] }
+                  ),
+                }));
+              }}
+              onRecordWeekHistory={(groupId, weekKey, standing) => {
+                updateAndSave((prev) => ({
+                  ...prev,
+                  groupHistory: recordWeekStandingInHistory(
+                    prev.groupHistory || {},
+                    groupId,
+                    weekKey,
+                    standing
+                  ),
+                }));
+              }}
+              onGoToFocus={() => {
+                setTab('focus');
+                window.scrollTo(0, 0);
+              }}
+              showToast={showToast}
+            />
+          </Suspense>
         )}
 
-        {tab === 'stats' && (
-          <StatsView
-            state={state}
-            sel={sel}
-            todayKey={todayKey}
-            subTab={statsSubTab}
-            onChangeSubTab={setStatsSubTab}
-            onEditSession={(sesId) => setModal({ type: 'manualSession', id: sesId })}
-            onOpenManualSession={() => setModal({ type: 'manualSession' })}
-            onSelectDateInToday={(dayKey) => {
-              setSel(dayKey);
-              setTab('today');
-              window.scrollTo(0, 0);
-            }}
-            onToast={showToast}
-          />
+        {!isSettingsOpen && tab === 'stats' && (
+          <Suspense fallback={lazyFallback}>
+            <StatsView
+              state={state}
+              sel={sel}
+              todayKey={todayKey}
+              subTab={statsSubTab}
+              onChangeSubTab={setStatsSubTab}
+              onEditSession={(sesId) => setModal({ type: 'manualSession', id: sesId })}
+              onOpenManualSession={() => setModal({ type: 'manualSession' })}
+              onSelectDateInToday={(dayKey) => {
+                setSel(dayKey);
+                setTab('today');
+                window.scrollTo(0, 0);
+              }}
+              onToast={showToast}
+            />
+          </Suspense>
         )}
 
-        {tab === 'more' && (
-          <MoreView
-            state={state}
-            todayKey={todayKey}
-            isOnline={isOnline}
-            authUser={authUser}
-            syncStatus={syncStatus}
-            syncErrorMsg={syncErrorMsg}
-            lastSyncedAt={lastSyncedAt ?? state.syncMeta?.lastSyncedAt}
-            syncWritesToday={syncWritesToday}
+        {isSettingsOpen && (
+          <Suspense fallback={lazyFallback}>
+            <SettingsView
+              state={state}
+              activeSection={settingsSection}
+              onChangeSection={setSettingsSection}
+              amoled={amoled}
+              onToggleAmoled={handleToggleAmoled}
+              todayKey={todayKey}
+              isOnline={isOnline}
+              authUser={authUser}
+              syncStatus={syncStatus}
+              syncErrorMsg={syncErrorMsg}
+              lastSyncedAt={lastSyncedAt ?? state.syncMeta?.lastSyncedAt}
+              syncWritesToday={syncWritesToday}
+              onNewDDay={() => setModal({ type: 'dday' })}
+              onEditDDay={(id) => setModal({ type: 'dday', id })}
             onOpenProfileModal={() => {
               setProfilePromptReason(undefined);
               setShowProfileModal(true);
@@ -2774,106 +3131,45 @@ export default function App() {
                 showToast('Invalid Deep Hours JSON backup file');
               }
             }}
-            onRequestReset={() => setModal({ type: 'confirmReset' })}
-          />
+              onRequestReset={() => setModal({ type: 'confirmReset' })}
+            />
+          </Suspense>
         )}
-      </main>
+        </main>
+      </AppShell>
 
-      {/* Bottom Navigation Bar */}
-      <nav aria-label="Main">
-        <button
-          type="button"
-          className={tab === 'today' ? 'on' : ''}
-          title={`Today Study Progress: ${fmtHMShort(todayStudyProg.studiedMs)} / ${fmtHMShort(todayStudyProg.goalMs)} (${todayStudyProg.pct}%)`}
-          onClick={() => {
-            setTab('today');
-            window.scrollTo(0, 0);
-          }}
-        >
-          <span className="nav-today-icon-wrap">
-            <svg
-              className="nav-today-ring-svg"
-              viewBox="0 0 28 28"
-              aria-hidden="true"
-            >
-              <circle
-                className="nav-today-ring-track"
-                cx="14"
-                cy="14"
-                r={navRingR}
-              />
-              <circle
-                className="nav-today-ring-prog"
-                cx="14"
-                cy="14"
-                r={navRingR}
-                strokeDasharray={navRingCirc.toFixed(1)}
-                strokeDashoffset={navRingOffset.toFixed(1)}
-              />
-            </svg>
-            <b>⚡</b>
-          </span>
-          Today
-        </button>
-        <button
-          type="button"
-          className={tab === 'prep' ? 'on' : ''}
-          onClick={() => {
-            setTab('prep');
-            window.scrollTo(0, 0);
-          }}
-        >
-          <b>🎯</b>Prep
-        </button>
-        <button
-          type="button"
-          className="fab"
-          aria-label="Log study session manually"
-          onClick={() => setModal({ type: 'manualSession' })}
-        >
-          +
-        </button>
-        <button
-          type="button"
-          className={tab === 'focus' ? 'on' : ''}
-          onClick={() => {
-            setTab('focus');
-            window.scrollTo(0, 0);
-          }}
-        >
-          <b>⏱️</b>Focus PiP
-        </button>
-        <button
-          type="button"
-          className={tab === 'groups' ? 'on' : ''}
-          onClick={() => {
-            setTab('groups');
-            window.scrollTo(0, 0);
-          }}
-        >
-          <b>🏆</b>Groups
-        </button>
-        <button
-          type="button"
-          className={tab === 'stats' ? 'on' : ''}
-          onClick={() => {
-            setTab('stats');
-            window.scrollTo(0, 0);
-          }}
-        >
-          <b>📊</b>Summary
-        </button>
-        <button
-          type="button"
-          className={tab === 'more' ? 'on' : ''}
-          onClick={() => {
-            setTab('more');
-            window.scrollTo(0, 0);
-          }}
-        >
-          <b>⚙️</b>More
-        </button>
-      </nav>
+      <QuickActionsSheet
+        open={quickActionsOpen}
+        onClose={() => setQuickActionsOpen(false)}
+        onAction={handleQuickAction}
+      />
+
+      <CommandPalette
+        open={commandPaletteOpen}
+        state={state}
+        onClose={() => setCommandPaletteOpen(false)}
+        onSelectTab={(nextTab) => {
+          switchTabWithTransition(nextTab);
+          window.scrollTo(0, 0);
+        }}
+        onSelectPrepSubTab={setPrepSubTab}
+        onSelectStatsSubTab={setStatsSubTab}
+        onOpenSettings={() => {
+          setSettingsSection(null);
+          setSettingsOpen(true);
+        }}
+        onQuickAction={handleQuickAction}
+        onStartChapterFocus={(subjectId, chapterId, chapterName) => {
+          switchTabWithTransition('focus');
+          startTimer(subjectId, chapterName, undefined, undefined, chapterId);
+        }}
+        onOpenShortcutsHelp={() => setShortcutsHelpOpen(true)}
+      />
+
+      <KeyboardShortcutsSheet
+        open={shortcutsHelpOpen}
+        onClose={() => setShortcutsHelpOpen(false)}
+      />
 
       {/* Modals */}
       <Modals
@@ -2910,38 +3206,7 @@ export default function App() {
           }));
           setModal({ type: 'none' });
         }}
-        onDeleteHabit={(id) => {
-          // F1: Restore only deleted habit + its habit log at original index
-          const prev = stateRef.current;
-          const index = prev.habits.findIndex((x) => x.id === id);
-          if (index === -1) return;
-          const record: DeletedEntityRecord = {
-            kind: 'habit',
-            item: JSON.parse(JSON.stringify(prev.habits[index])),
-            index,
-            logEntries: prev.log[id]
-              ? JSON.parse(JSON.stringify(prev.log[id]))
-              : undefined,
-          };
-          updateAndSave((cur) => {
-            const withTomb = addTombstone(cur, id);
-            const nextLog = cloneLog(cur.log);
-            delete nextLog[id];
-            return {
-              ...withTomb,
-              habits: cur.habits.filter((x) => x.id !== id),
-              log: nextLog,
-            };
-          });
-          setModal({ type: 'none' });
-          showToast('Habit deleted', () => {
-            const cur = stateRef.current;
-            const restored = restoreDeletedItem(cur, record);
-            const curToday = logicalKey(new Date(), restored.set.dayResetHour ?? 0);
-            syncStudyHabitsForDays(restored, [sel, curToday], curToday);
-            saveNextState(restored);
-          });
-        }}
+        onDeleteHabit={handleDeleteHabit}
         onSubmitReflection={(subjectId, heading, rating, note, chapterId) => {
           const prev = stateRef.current;
           const { next } = commitSliceInState(prev, Date.now(), {
@@ -3242,41 +3507,13 @@ export default function App() {
 
       {/* Toast Notification (supports Undo or Service Worker tap-to-reload) */}
       {toastState && (
-        <div
-          id="toast"
-          role="status"
-          style={toastState.onTap ? { cursor: 'pointer' } : undefined}
-          onClick={() => {
-            if (toastState.onTap) {
-              toastState.onTap();
-            }
-          }}
-        >
-          <span>{toastState.msg}</span>
-          {toastState.undoFn && (
-            <button
-              type="button"
-              onClick={(e) => {
-                e.stopPropagation();
-                toastState.undoFn?.();
-                setToastState(null);
-              }}
-            >
-              Undo
-            </button>
-          )}
-          {toastState.onTap && (
-            <button
-              type="button"
-              onClick={(e) => {
-                e.stopPropagation();
-                toastState.onTap?.();
-              }}
-            >
-              {toastState.actionLabel || 'Reload'}
-            </button>
-          )}
-        </div>
+        <Toast
+          message={toastState.msg}
+          onUndo={toastState.undoFn}
+          actionLabel={toastState.actionLabel}
+          onAction={toastState.onTap}
+          onDismiss={() => setToastState(null)}
+        />
       )}
 
       {/* Hidden offscreen Canvas & Video for Android Chrome PiP Stream (16:9 480x270) */}

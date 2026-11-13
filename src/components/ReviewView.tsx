@@ -1,4 +1,5 @@
 import React, { useMemo, useState } from 'react';
+import { ChevronLeft, ChevronRight, Copy, Moon } from 'lucide-react';
 import { PulseHabitState } from '../types';
 import {
   computeWeeklyReview,
@@ -6,6 +7,12 @@ import {
   getWeekStartKey,
 } from '../utils/insights';
 import { addD, fmtDuration } from '../utils/studyLogic';
+import { Button } from './ui/Button';
+import { Card } from './ui/Card';
+import { IconButton } from './ui/IconButton';
+import { Meter } from './ui/Meter';
+import { SectionHeader } from './ui/SectionHeader';
+import { Stat } from './ui/Stat';
 
 interface ReviewViewProps {
   state: PulseHabitState;
@@ -31,353 +38,236 @@ export const ReviewView: React.FC<ReviewViewProps> = ({
     const text = formatWeeklyReviewClipboard(review);
     try {
       await navigator.clipboard.writeText(text);
-      onToast('Weekly review copied to clipboard', '📋');
+      onToast('Weekly review copied to clipboard');
     } catch {
-      onToast('Could not copy to clipboard', '⚠️');
+      onToast('Could not copy to clipboard');
     }
   };
 
   return (
-    <div style={{ display: 'flex', flexDirection: 'column', gap: 14 }}>
-      {/* Week Picker & Copy Summary Header */}
-      <div className="card" style={{ marginBottom: 0 }}>
-        <div
-          style={{
-            display: 'flex',
-            justifyContent: 'space-between',
-            alignItems: 'center',
-            gap: 10,
-            flexWrap: 'wrap',
-          }}
-        >
-          <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
-            <button
-              type="button"
-              className="btn-ghost"
-              style={{ width: 'auto', padding: '6px 11px', fontSize: '0.78rem' }}
+    <div className="space-y-4">
+      {/* Week Picker & Copy Summary */}
+      <Card>
+        <div className="split flex-wrap gap-3">
+          <div className="flex items-center gap-2">
+            <IconButton
+              label="Previous week"
               onClick={() => setSelectedWeekStart(addD(selectedWeekStart, -7))}
-              title="Previous Week"
             >
-              ◀
-            </button>
+              <ChevronLeft size={18} />
+            </IconButton>
             <div>
-              <div style={{ fontSize: '0.88rem', fontWeight: 900, color: '#f8fafc' }}>
+              <div className="tnum text-[15px] font-semibold text-[var(--tx)]">
                 {review.weekStartKey} → {review.weekEndKey}
               </div>
-              <div style={{ fontSize: '0.7rem', color: 'var(--muted)', fontWeight: 700 }}>
-                {selectedWeekStart === currentWeekStart ? 'Current Week' : 'Past Week Review'}
+              <div className="text-[12px] text-[var(--tx-2)]">
+                {selectedWeekStart === currentWeekStart
+                  ? 'Current week review'
+                  : 'Past week review'}
               </div>
             </div>
-            <button
-              type="button"
-              className="btn-ghost"
-              style={{ width: 'auto', padding: '6px 11px', fontSize: '0.78rem' }}
+            <IconButton
+              label="Next week"
               disabled={selectedWeekStart >= currentWeekStart}
               onClick={() => setSelectedWeekStart(addD(selectedWeekStart, 7))}
-              title="Next Week"
             >
-              ▶
-            </button>
+              <ChevronRight size={18} />
+            </IconButton>
             {selectedWeekStart !== currentWeekStart && (
-              <button
-                type="button"
-                className="btn-ghost"
-                style={{ width: 'auto', padding: '5px 10px', fontSize: '0.7rem' }}
+              <Button
+                variant="secondary"
+                size="sm"
                 onClick={() => setSelectedWeekStart(currentWeekStart)}
               >
-                This Week
-              </button>
+                This week
+              </Button>
             )}
           </div>
 
-          <button
-            type="button"
-            className="btn-main"
-            style={{ width: 'auto', padding: '8px 14px', fontSize: '0.75rem' }}
+          <Button
+            variant="primary"
+            size="sm"
+            icon={<Copy size={15} />}
             onClick={handleCopySummary}
           >
-            📋 Copy summary
-          </button>
+            Copy summary
+          </Button>
         </div>
-      </div>
+      </Card>
 
       {/* Key Weekly KPIs */}
-      <div
-        style={{
-          display: 'grid',
-          gridTemplateColumns: 'repeat(auto-fit, minmax(135px, 1fr))',
-          gap: 10,
-        }}
-      >
-        <div className="card" style={{ marginBottom: 0, padding: '12px 14px' }}>
-          <div style={{ fontSize: '0.68rem', fontWeight: 800, color: 'var(--muted)' }}>
-            TOTAL FOCUS
-          </div>
-          <div
-            style={{
-              fontSize: '1.2rem',
-              fontWeight: 900,
-              color: '#a5b4fc',
-              fontFamily: 'var(--mono)',
-              marginTop: 2,
-            }}
-          >
-            {fmtDuration(review.totalStudyMs)}
-          </div>
-        </div>
-
-        <div className="card" style={{ marginBottom: 0, padding: '12px 14px' }}>
-          <div style={{ fontSize: '0.68rem', fontWeight: 800, color: 'var(--muted)' }}>
-            MIN DAYS MET
-          </div>
-          <div
-            style={{
-              fontSize: '1.2rem',
-              fontWeight: 900,
-              color: '#10b981',
-              fontFamily: 'var(--mono)',
-              marginTop: 2,
-            }}
-          >
-            {review.daysMeetingMin}/7
-          </div>
-          {review.restDaysUsedInWeek > 0 && (
-            <div style={{ fontSize: '0.66rem', color: 'var(--muted)' }}>
-              Includes {review.restDaysUsedInWeek} rest pass
-            </div>
-          )}
-        </div>
-
-        <div className="card" style={{ marginBottom: 0, padding: '12px 14px' }}>
-          <div style={{ fontSize: '0.68rem', fontWeight: 800, color: 'var(--muted)' }}>
-            CONSISTENCY
-          </div>
-          <div
-            style={{
-              fontSize: '1.2rem',
-              fontWeight: 900,
-              color: '#38bdf8',
-              fontFamily: 'var(--mono)',
-              marginTop: 2,
-            }}
-          >
-            {review.consistencyScore !== null ? `${review.consistencyScore}/100` : '-'}
-          </div>
-        </div>
-
-        <div className="card" style={{ marginBottom: 0, padding: '12px 14px' }}>
-          <div style={{ fontSize: '0.68rem', fontWeight: 800, color: 'var(--muted)' }}>
-            REVISIONS
-          </div>
-          <div
-            style={{
-              fontSize: '1.2rem',
-              fontWeight: 900,
-              color: '#f59e0b',
-              fontFamily: 'var(--mono)',
-              marginTop: 2,
-            }}
-          >
-            {review.revisionsDone}{' '}
-            <span style={{ fontSize: '0.72rem', color: 'var(--muted)' }}>
-              ({review.revisionsOnTime} on time)
-            </span>
-          </div>
-        </div>
+      <div className="grid grid-cols-2 gap-3 sm:grid-cols-4">
+        <Card>
+          <Stat
+            label="Total focus"
+            value={fmtDuration(review.totalStudyMs)}
+            sub="Logged this week"
+          />
+        </Card>
+        <Card>
+          <Stat
+            label="Min days met"
+            value={`${review.daysMeetingMin}/7`}
+            sub={
+              review.restDaysUsedInWeek > 0
+                ? `Includes ${review.restDaysUsedInWeek} rest pass`
+                : 'Daily minimum target'
+            }
+          />
+        </Card>
+        <Card>
+          <Stat
+            label="Consistency"
+            value={
+              review.consistencyScore !== null
+                ? `${review.consistencyScore}/100`
+                : '—'
+            }
+            sub="14-day composite"
+          />
+        </Card>
+        <Card>
+          <Stat
+            label="Revisions"
+            value={String(review.revisionsDone)}
+            sub={`${review.revisionsOnTime} completed on time`}
+          />
+        </Card>
       </div>
 
-      {/* Hours per Subject vs Weekly Targets */}
-      <div className="card" style={{ marginBottom: 0 }}>
-        <div
-          style={{
-            fontSize: '0.82rem',
-            fontWeight: 900,
-            color: '#f8fafc',
-            marginBottom: 10,
-          }}
-        >
-          📚 Hours per Subject vs Weekly Targets
-        </div>
-        <div style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
+      {/* Subject Hours vs Weekly Targets */}
+      <Card>
+        <SectionHeader
+          title="Hours per subject vs weekly targets"
+          subtitle="Progress toward your subject-wise weekly study allocation"
+        />
+        <div className="mt-3 space-y-3">
           {review.subjectRows.map((row) => {
             const actualHrs = (row.weeklyActualMins / 60).toFixed(1);
             const targetHrs =
-              row.weeklyTargetMins > 0 ? (row.weeklyTargetMins / 60).toFixed(1) : null;
+              row.weeklyTargetMins > 0
+                ? (row.weeklyTargetMins / 60).toFixed(1)
+                : null;
+            const pct =
+              row.weeklyTargetMins > 0
+                ? row.weeklyPct
+                : Math.min(100, Math.round((row.weeklyActualMins / 600) * 100));
             return (
               <div key={row.subjectId}>
-                <div
-                  style={{
-                    display: 'flex',
-                    justifyContent: 'space-between',
-                    alignItems: 'center',
-                    fontSize: '0.78rem',
-                    fontWeight: 800,
-                    marginBottom: 4,
-                  }}
-                >
-                  <span style={{ color: '#e2e8f0' }}>
+                <div className="split mb-1 text-[13px]">
+                  <span className="flex items-center gap-2 font-medium text-[var(--tx)]">
+                    <span
+                      className="h-2.5 w-2.5 rounded-full"
+                      style={{ background: row.color }}
+                    />
                     {row.subjectEmoji} {row.subjectName}
                   </span>
-                  <span style={{ fontFamily: 'var(--mono)', color: row.color }}>
+                  <span className="tnum text-[var(--tx-2)]">
                     {actualHrs}h{targetHrs ? ` / ${targetHrs}h (${row.weeklyPct}%)` : ''}
                   </span>
                 </div>
-                <div
-                  style={{
-                    height: 7,
-                    borderRadius: 999,
-                    background: 'rgba(255,255,255,0.07)',
-                    overflow: 'hidden',
-                  }}
-                >
-                  <div
-                    style={{
-                      width: `${
-                        row.weeklyTargetMins > 0
-                          ? row.weeklyPct
-                          : Math.min(100, (row.weeklyActualMins / 600) * 100)
-                      }%`,
-                      height: '100%',
-                      borderRadius: 999,
-                      background: row.color,
-                      transition: 'width 0.3s ease',
-                    }}
-                  />
-                </div>
+                <Meter value={pct} max={100} color={row.color} />
               </div>
             );
           })}
         </div>
-      </div>
+      </Card>
 
-      {/* Tasks, Mocks, Mistakes & Best/Worst Day */}
-      <div
-        className="card"
-        style={{
-          marginBottom: 0,
-          display: 'grid',
-          gridTemplateColumns: 'repeat(auto-fit, minmax(200px, 1fr))',
-          gap: 12,
-        }}
-      >
-        <div>
-          <div style={{ fontSize: '0.7rem', fontWeight: 800, color: 'var(--muted)' }}>
-            ✅ TASKS COMPLETED
+      {/* Secondary Weekly Metrics */}
+      <Card>
+        <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-4">
+          <div className="rounded-xl border border-[var(--line)] bg-[var(--sf-2)] p-3">
+            <span className="block text-[12px] text-[var(--tx-2)]">Tasks completed</span>
+            <strong className="tnum mt-1 block text-[15px] text-[var(--tx)]">
+              {review.tasksDone} / {review.tasksTotal} tasks done
+            </strong>
           </div>
-          <div style={{ fontSize: '0.92rem', fontWeight: 800, color: '#f8fafc', marginTop: 2 }}>
-            {review.tasksDone} / {review.tasksTotal} tasks done
+          <div className="rounded-xl border border-[var(--line)] bg-[var(--sf-2)] p-3">
+            <span className="block text-[12px] text-[var(--tx-2)]">Mock score trend</span>
+            <strong className="tnum mt-1 block text-[15px] text-[var(--tx)]">
+              {review.mockScoreTrendLabel}
+            </strong>
+          </div>
+          <div className="rounded-xl border border-[var(--line)] bg-[var(--sf-2)] p-3">
+            <span className="block text-[12px] text-[var(--tx-2)]">Mistakes logged</span>
+            <strong className="tnum mt-1 block text-[15px] text-[var(--tx)]">
+              {review.mistakesAdded} added · {review.mistakesResolved} resolved
+            </strong>
+          </div>
+          <div className="rounded-xl border border-[var(--line)] bg-[var(--sf-2)] p-3">
+            <span className="block text-[12px] text-[var(--tx-2)]">Best &amp; lightest day</span>
+            <div className="tnum mt-1 text-[12.5px] text-[var(--tx)]">
+              <div>
+                Best:{' '}
+                {review.bestDay
+                  ? `${review.bestDay.dayKey} (${fmtDuration(review.bestDay.ms)})`
+                  : '—'}
+              </div>
+              <div className="text-[var(--tx-2)]">
+                Lightest:{' '}
+                {review.worstDay
+                  ? `${review.worstDay.dayKey} (${fmtDuration(review.worstDay.ms)})`
+                  : '—'}
+              </div>
+            </div>
           </div>
         </div>
+      </Card>
 
-        <div>
-          <div style={{ fontSize: '0.7rem', fontWeight: 800, color: 'var(--muted)' }}>
-            🧪 MOCK SCORE TREND
-          </div>
-          <div style={{ fontSize: '0.88rem', fontWeight: 800, color: '#f8fafc', marginTop: 2 }}>
-            {review.mockScoreTrendLabel}
-          </div>
-        </div>
-
-        <div>
-          <div style={{ fontSize: '0.7rem', fontWeight: 800, color: 'var(--muted)' }}>
-            🎯 MISTAKES LOGGED / RESOLVED
-          </div>
-          <div style={{ fontSize: '0.88rem', fontWeight: 800, color: '#f8fafc', marginTop: 2 }}>
-            {review.mistakesAdded} added • {review.mistakesResolved} resolved
-          </div>
-        </div>
-
-        <div>
-          <div style={{ fontSize: '0.7rem', fontWeight: 800, color: 'var(--muted)' }}>
-            ⚡ BEST & LIGHTEST DAY
-          </div>
-          <div style={{ fontSize: '0.78rem', fontWeight: 700, color: '#e2e8f0', marginTop: 2 }}>
-            Best: {review.bestDay ? `${review.bestDay.dayKey} (${fmtDuration(review.bestDay.ms)})` : '-'}
-            <br />
-            Lightest:{' '}
-            {review.worstDay ? `${review.worstDay.dayKey} (${fmtDuration(review.worstDay.ms)})` : '-'}
-          </div>
-        </div>
-      </div>
-
-      {/* Next Week Focus (from top 3 Study-next chapters) */}
-      <div className="card" style={{ marginBottom: 0 }}>
-        <div
-          style={{
-            fontSize: '0.82rem',
-            fontWeight: 900,
-            color: '#f8fafc',
-            marginBottom: 8,
-          }}
-        >
-          🧭 Next Week Focus (Top 3 Priority Chapters)
-        </div>
+      {/* Next Week Priority Chapters */}
+      <Card>
+        <SectionHeader
+          title="Next week priority focus"
+          subtitle="Top 3 chapters recommended from your syllabus queue"
+        />
         {review.nextWeekFocus.length === 0 ? (
-          <div style={{ fontSize: '0.76rem', color: 'var(--muted)' }}>
+          <p className="mt-2 text-[13px] text-[var(--tx-2)]">
             Add chapters in Prep &gt; Syllabus to generate your priority focus queue.
-          </div>
+          </p>
         ) : (
-          <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
+          <div className="mt-2 space-y-2">
             {review.nextWeekFocus.map((item, idx) => (
               <div
                 key={item.chapter.id}
-                style={{
-                  display: 'flex',
-                  justifyContent: 'space-between',
-                  alignItems: 'center',
-                  gap: 10,
-                  padding: '8px 12px',
-                  borderRadius: 10,
-                  background: 'rgba(15, 23, 42, 0.65)',
-                  border: `1px solid ${item.subjectColor}33`,
-                }}
+                className="flex items-center justify-between gap-3 rounded-xl border border-[var(--line)] bg-[var(--sf-2)] px-3.5 py-2.5"
               >
-                <div>
-                  <div style={{ fontSize: '0.8rem', fontWeight: 800, color: '#f8fafc' }}>
-                    {idx + 1}. {item.subjectEmoji} {item.chapter.name}
+                <div className="min-w-0 flex-1">
+                  <div className="flex items-center gap-2">
+                    <span
+                      className="h-2.5 w-2.5 shrink-0 rounded-full"
+                      style={{ background: item.subjectColor }}
+                    />
+                    <span className="truncate text-[14px] font-semibold text-[var(--tx)]">
+                      {idx + 1}. {item.subjectEmoji} {item.chapter.name}
+                    </span>
                   </div>
-                  <div style={{ fontSize: '0.7rem', color: 'var(--muted)', fontWeight: 700 }}>
-                    {item.reasons.join(' • ')}
-                  </div>
+                  <p className="mt-0.5 text-[12px] text-[var(--tx-2)]">
+                    {item.reasons.join(' · ')}
+                  </p>
                 </div>
-                <span
-                  style={{
-                    fontSize: '0.7rem',
-                    fontWeight: 800,
-                    color: item.subjectColor,
-                    fontFamily: 'var(--mono)',
-                  }}
-                >
+                <span className="tnum rounded-md bg-[var(--sf-1)] px-2.5 py-1 text-[12px] font-medium text-[var(--tx-2)]">
                   Conf {item.confidence}/5
                 </span>
               </div>
             ))}
           </div>
         )}
-      </div>
+      </Card>
 
       {/* Sleep vs Focus Insight */}
-      <div className="card" style={{ marginBottom: 0 }}>
-        <div
-          style={{
-            fontSize: '0.82rem',
-            fontWeight: 900,
-            color: '#f8fafc',
-            marginBottom: 4,
-          }}
-        >
-          😴 Sleep & Focus Insight
+      <Card>
+        <div className="flex items-center gap-2.5">
+          <Moon size={18} className="shrink-0 text-[var(--ac)]" />
+          <div>
+            <h4 className="text-[14px] font-semibold text-[var(--tx)]">
+              Sleep &amp; focus correlation
+            </h4>
+            <p className="text-[13px] text-[var(--tx-2)]">
+              {review.sleepInsight.summaryText}
+            </p>
+          </div>
         </div>
-        <div
-          style={{
-            fontSize: '0.78rem',
-            fontWeight: 700,
-            color: review.sleepInsight.available ? '#a5b4fc' : 'var(--muted)',
-          }}
-        >
-          {review.sleepInsight.summaryText}
-        </div>
-      </div>
+      </Card>
     </div>
   );
 };

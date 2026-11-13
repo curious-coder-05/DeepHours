@@ -436,6 +436,8 @@ export function createBlankState(): PulseHabitState {
       revisionIntervals: [1, 3, 7, 21],
       revisionSuggestDays: [1, 3, 7, 21],
       avatarEmoji: '🩺',
+      defaultsVersion: 2,
+      ui3d: 'auto',
       targets: {
         dailyMinutes: {},
         weeklyMinutes: {},
@@ -562,6 +564,7 @@ export function norm(raw: unknown): PulseHabitState {
     /^\d{4}-\d{2}-\d{2}$/.test(s.set.burnoutDismissedUntil)
       ? s.set.burnoutDismissedUntil
       : undefined;
+  s.set.ui3d = s.set.ui3d === 'on' || s.set.ui3d === 'off' ? s.set.ui3d : 'auto';
   s.set.updatedAt = Number.isFinite(s.set.updatedAt) ? Number(s.set.updatedAt) : 0;
 
   // Subjects: preserve existing user subjects if non-empty
@@ -1332,6 +1335,88 @@ export function norm(raw: unknown): PulseHabitState {
       consentAccepted: false,
       joined: [],
     };
+  }
+
+  // One-time v1 -> v2 defaults migration for existing saved devices/cloud profiles:
+  // Upgrades old default 4:00 reset -> 00:00, 200m full mock -> 180m, and old 4 subjects -> 6 NEET subjects.
+  // Once defaultsVersion >= 2 is stamped, future manual edits back to 4, 200, or custom subjects are untouched.
+  const rawSet =
+    src.set && typeof src.set === 'object' ? (src.set as Record<string, unknown>) : {};
+  const prevDefaultsVersion = Number(rawSet.defaultsVersion) || 0;
+  if (prevDefaultsVersion < 2) {
+    let migratedChanged = false;
+    const migTs = Math.max((s.set.updatedAt || 0) + 1, Date.now());
+
+    if (rawSet.dayResetHour === 4 && s.set.dayResetHour === 4) {
+      s.set.dayResetHour = 0;
+      migratedChanged = true;
+    }
+    if (rawSet.fullMockMins === 200 && s.set.fullMockMins === 200) {
+      s.set.fullMockMins = 180;
+      migratedChanged = true;
+    }
+
+    const hasLegacyChem = s.subjects.some(
+      (sub) => sub.id === 'sub_chem' && sub.name.trim().toLowerCase() === 'chemistry'
+    );
+    const hasAnyNewChem = s.subjects.some(
+      (sub) => sub.id === 'sub_pchem' || sub.id === 'sub_ichem' || sub.id === 'sub_ochem'
+    );
+    const newChemTombstoned =
+      s.del.includes('sub_pchem') ||
+      s.del.includes('sub_ichem') ||
+      s.del.includes('sub_ochem');
+
+    if (hasLegacyChem && !hasAnyNewChem && !newChemTombstoned) {
+      const newChemIds = ['sub_pchem', 'sub_ichem', 'sub_ochem'];
+      const newChemDefs = DEFAULT_SUBJECTS.filter((sub) =>
+        newChemIds.includes(sub.id)
+      ).map((sub) => ({
+        ...sub,
+        todos: [],
+        updatedAt: migTs,
+      }));
+
+      const byId = new Map(s.subjects.map((sub) => [sub.id, sub]));
+      const canonicalIds = ['sub_phy', 'sub_bot', 'sub_zoo'];
+      const migratedSubjects: Subject[] = [];
+
+      for (const cid of canonicalIds) {
+        const existing = byId.get(cid);
+        if (existing) {
+          migratedSubjects.push(
+            cid === 'sub_bot' && existing.e === '🌿'
+              ? { ...existing, e: '🌱', updatedAt: Math.max(existing.updatedAt || 0, migTs) }
+              : existing
+          );
+        }
+      }
+      migratedSubjects.push(...newChemDefs);
+
+      const handledIds = new Set([...canonicalIds, 'sub_chem', ...newChemIds]);
+      for (const existing of s.subjects) {
+        if (!handledIds.has(existing.id)) {
+          migratedSubjects.push(existing);
+        }
+      }
+
+      s.subjects = migratedSubjects;
+      if (!s.del.includes('sub_chem')) {
+        s.del.push('sub_chem');
+      }
+      s.delAt = {
+        ...(s.delAt || {}),
+        sub_chem: Math.max(s.delAt?.sub_chem || 0, migTs),
+      };
+      migratedChanged = true;
+    }
+
+    s.set.defaultsVersion = 2;
+    if (migratedChanged) {
+      s.set.updatedAt = migTs;
+    }
+  } else {
+    s.set.defaultsVersion = Math.floor(prevDefaultsVersion);
   }
 
   return s;
