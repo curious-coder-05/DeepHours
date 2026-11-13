@@ -49,7 +49,7 @@ export const PlannerView: React.FC<PlannerViewProps> = ({
   const [selectedSlot, setSelectedSlot] = useState<number | null>(null);
   const [filterHeading, setFilterHeading] = useState<string | null>(null);
 
-  const resetHr = state.set.dayResetHour ?? 4;
+  const resetHr = state.set.dayResetHour ?? 0;
   const hours = [...Array(24)].map((_, i) => (resetHr + i) % 24);
   const daySessions = state.sessions
     .filter((s) => s.dayKey === sel)

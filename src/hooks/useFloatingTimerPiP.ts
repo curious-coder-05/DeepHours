@@ -65,7 +65,7 @@ export function useFloatingTimerPiP(
     const curState = stateRef.current;
     const aesthetic = curState.set.timerAesthetic || 'neon';
     const now = Date.now();
-    const todayKey = logicalKey(now, curState.set.dayResetHour ?? 4);
+    const todayKey = logicalKey(now, curState.set.dayResetHour ?? 0);
     const m = getTimerMetrics(curState, now);
     const isRunning = Boolean(m && m.status === 'running');
     const isPaused = Boolean(m && m.status === 'paused');
@@ -366,7 +366,7 @@ export function useFloatingTimerPiP(
     try {
       const curState = stateRef.current;
       const now = Date.now();
-      const todayKey = logicalKey(now, curState.set.dayResetHour ?? 4);
+      const todayKey = logicalKey(now, curState.set.dayResetHour ?? 0);
       const m = getTimerMetrics(curState, now);
       const sub = m ? m.subject : getSubject(curState);
       const heading = m ? m.heading : sub.name || 'Deep Study Session';

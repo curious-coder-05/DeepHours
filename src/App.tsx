@@ -225,7 +225,7 @@ export default function App() {
       const curState = stateRef.current;
       const joined = curState.groupsConfig?.joined?.find((j) => j.groupId === groupId);
       if (!joined) return;
-      const curToday = logicalKey(new Date(), curState.set.dayResetHour ?? 4);
+      const curToday = logicalKey(new Date(), curState.set.dayResetHour ?? 0);
       await publishMyEntryToGroup({
         groupId,
         state: curState,
@@ -246,7 +246,7 @@ export default function App() {
   const waitingSwRef = useRef<ServiceWorker | null>(null);
   const swReloadRequestedRef = useRef(false);
 
-  const todayKey = logicalKey(new Date(), state.set.dayResetHour ?? 4);
+  const todayKey = logicalKey(new Date(), state.set.dayResetHour ?? 0);
   const prevTodayKeyRef = useRef(todayKey);
 
   const showToast = useCallback(
@@ -294,7 +294,7 @@ export default function App() {
       if (authUserRef.current && groupBudgetRef.current) {
         const joinedList = stamped.groupsConfig?.joined || [];
         if (joinedList.length > 0) {
-          const curToday = logicalKey(new Date(), stamped.set.dayResetHour ?? 4);
+          const curToday = logicalKey(new Date(), stamped.set.dayResetHour ?? 0);
           for (const g of joinedList) {
             const entry = buildMyMemberEntry(stamped, curToday, {
               joinedAt: g.joinedAt,
@@ -318,7 +318,7 @@ export default function App() {
         ...draft,
         log: cloneLog(draft.log),
       };
-      const curToday = logicalKey(new Date(), next.set.dayResetHour ?? 4);
+      const curToday = logicalKey(new Date(), next.set.dayResetHour ?? 0);
       syncStudyHabitsInPlace(next, curToday, curToday);
       saveNextState(next);
     },
@@ -330,7 +330,7 @@ export default function App() {
       ...loaded,
       log: cloneLog(loaded.log),
     };
-    const curToday = logicalKey(new Date(), next.set.dayResetHour ?? 4);
+    const curToday = logicalKey(new Date(), next.set.dayResetHour ?? 0);
     syncStudyHabitsInPlace(next, curToday, curToday);
     readyRef.current = true;
     stateRef.current = next;
@@ -597,7 +597,7 @@ export default function App() {
         if (res.status === 'synced' || res.pulledDocs > 0) {
           const curToday = logicalKey(
             new Date(),
-            res.mergedState.set.dayResetHour ?? 4
+            res.mergedState.set.dayResetHour ?? 0
           );
           const syncedState: PulseHabitState = {
             ...res.mergedState,
@@ -737,7 +737,7 @@ export default function App() {
     const pushLiveToGroups = () => {
       if (!groupBudgetRef.current || !authUserRef.current) return;
       const curState = stateRef.current;
-      const curToday = logicalKey(new Date(), curState.set.dayResetHour ?? 4);
+      const curToday = logicalKey(new Date(), curState.set.dayResetHour ?? 0);
       for (const g of curState.groupsConfig?.joined || []) {
         if (!g.sh.l || g.paused) continue;
         void publishMyEntryToGroup({
@@ -836,7 +836,7 @@ export default function App() {
           : m === 'countdown'
             ? customTargetMins || prev.set.countdownMins || 45
             : m === 'fullMock'
-              ? customTargetMins || prev.set.fullMockMins || 200
+              ? customTargetMins || prev.set.fullMockMins || 180
               : 0;
       const now = Date.now();
 
@@ -1032,7 +1032,7 @@ export default function App() {
       subjectId: finalSubjectId,
       chapterId: finalChapterId,
       heading: finalHeading,
-      dayKey: logicalKey(t.sliceStartTs, prev.set.dayResetHour ?? 4),
+      dayKey: logicalKey(t.sliceStartTs, prev.set.dayResetHour ?? 0),
       startTs: t.sliceStartTs,
       endTs: now,
       activeMs: sliceActiveMs,
@@ -1053,7 +1053,7 @@ export default function App() {
       sessions: [...prev.sessions, entry],
       bonus: (prev.bonus || 0) + Math.max(5, Math.round(sliceActiveMs / 60000)),
     };
-    const curToday = logicalKey(now, next.set.dayResetHour ?? 4);
+    const curToday = logicalKey(now, next.set.dayResetHour ?? 0);
     syncStudyHabitsInPlace(next, entry.dayKey, curToday, now);
     return { next, savedEntry: entry };
   };
@@ -1100,7 +1100,7 @@ export default function App() {
           pauseStartTs: t.status === 'paused' ? now : null,
         },
       };
-      const curToday = logicalKey(now, updated.set.dayResetHour ?? 4);
+      const curToday = logicalKey(now, updated.set.dayResetHour ?? 0);
       syncStudyHabitsInPlace(updated, curToday, curToday, now);
       saveNextState(updated);
 
@@ -1162,7 +1162,7 @@ export default function App() {
       });
       setModal({
         type: 'mock',
-        prefillDayKey: logicalKey(now, cur.set.dayResetHour ?? 4),
+        prefillDayKey: logicalKey(now, cur.set.dayResetHour ?? 0),
         prefillDurationMins: Math.max(1, Math.round(m.totalActiveMs / 60000)),
         prefillNote: splitsSummary,
       });
@@ -1215,7 +1215,7 @@ export default function App() {
         fiveMinWarnFired: false,
       },
     };
-    const curToday = logicalKey(now, updated.set.dayResetHour ?? 4);
+    const curToday = logicalKey(now, updated.set.dayResetHour ?? 0);
     syncStudyHabitsInPlace(updated, curToday, curToday, now);
     saveNextState(updated);
   }, [saveNextState]);
@@ -1278,7 +1278,7 @@ export default function App() {
         );
       }
 
-      const curToday = logicalKey(now, prev.set.dayResetHour ?? 4);
+      const curToday = logicalKey(now, prev.set.dayResetHour ?? 0);
       const draft: PulseHabitState = {
         ...prev,
         log: cloneLog(prev.log),
@@ -1324,7 +1324,7 @@ export default function App() {
       if (!cur.set.notif) return;
       const n = new Date();
       const hm = `${pad(n.getHours())}:${pad(n.getMinutes())}`;
-      const tKey = logicalKey(n, cur.set.dayResetHour ?? 4);
+      const tKey = logicalKey(n, cur.set.dayResetHour ?? 0);
       cur.habits
         .filter((h) => !h.arch)
         .forEach((h) => {
@@ -1366,7 +1366,7 @@ export default function App() {
       if (dayKey < nextH.created) nextH.created = dayKey;
       const nowDone = done(next, nextH, dayKey);
 
-      const curToday = logicalKey(new Date(), next.set.dayResetHour ?? 4);
+      const curToday = logicalKey(new Date(), next.set.dayResetHour ?? 0);
       syncStudyHabitsInPlace(next, curToday, curToday);
       saveNextState(next);
 
@@ -1446,7 +1446,7 @@ export default function App() {
       showToast('Session deleted', () => {
         const cur = stateRef.current;
         const restored = restoreDeletedItem(cur, record);
-        const curToday = logicalKey(new Date(), restored.set.dayResetHour ?? 4);
+        const curToday = logicalKey(new Date(), restored.set.dayResetHour ?? 0);
         syncStudyHabitsForDays(restored, [target.dayKey, sel, curToday], curToday);
         saveNextState(restored);
       });
@@ -1655,6 +1655,26 @@ export default function App() {
       showToast('Subject deleted', () => {
         updateAndSave((cur) => restoreDeletedItem(cur, record));
       });
+    },
+    [showToast, updateAndSave]
+  );
+
+  const handleUpdateSubject = useCallback(
+    (subjectId: string, patch: { name: string; e: string; color: string }) => {
+      const cleanName = patch.name.trim().slice(0, 40);
+      if (!cleanName) return;
+      const cleanEmoji = patch.e.trim().slice(0, 8) || '📘';
+      const cleanColor = patch.color.trim() || '#3b82f6';
+      const now = Date.now();
+      updateAndSave((cur) => ({
+        ...cur,
+        subjects: cur.subjects.map((s) =>
+          s.id === subjectId
+            ? { ...s, name: cleanName, e: cleanEmoji, color: cleanColor, updatedAt: now }
+            : s
+        ),
+      }));
+      showToast(`Updated subject "${cleanName}"`);
     },
     [showToast, updateAndSave]
   );
@@ -2308,7 +2328,7 @@ export default function App() {
                     : m === 'countdown'
                       ? prev.set.countdownMins || 45
                       : m === 'fullMock'
-                        ? prev.set.fullMockMins || 200
+                        ? prev.set.fullMockMins || 180
                         : 0;
                 return {
                   ...prev,
@@ -2563,6 +2583,7 @@ export default function App() {
               }));
               showToast(`Added subject "${name}"`);
             }}
+            onUpdateSubject={handleUpdateSubject}
             onDeleteSubject={handleDeleteSubject}
             onUpdateSetting={async <K extends keyof AppSettings>(
               key: K,
@@ -2673,7 +2694,7 @@ export default function App() {
               (cur.doubts || []).forEach((d) => {
                 const sub = cur.subjects.find((x) => x.id === d.subjectId);
                 const subName = sub ? sub.name : 'Subject';
-                const dateStr = logicalKey(d.createdAt, cur.set.dayResetHour ?? 4);
+                const dateStr = logicalKey(d.createdAt, cur.set.dayResetHour ?? 0);
                 rows.push(
                   `doubt,${dateStr},${escCsv(subName)},${escCsv(d.text)},${
                     d.resolved ? 1 : 0
@@ -2916,7 +2937,7 @@ export default function App() {
           showToast('Habit deleted', () => {
             const cur = stateRef.current;
             const restored = restoreDeletedItem(cur, record);
-            const curToday = logicalKey(new Date(), restored.set.dayResetHour ?? 4);
+            const curToday = logicalKey(new Date(), restored.set.dayResetHour ?? 0);
             syncStudyHabitsForDays(restored, [sel, curToday], curToday);
             saveNextState(restored);
           });
@@ -3015,6 +3036,7 @@ export default function App() {
         }}
         onDeleteMock={handleDeleteMock}
         onSaveTimerConfig={(pomoWork, pomoBreak, countdownMins, fullMockMins) => {
+          const now = Date.now();
           updateAndSave((prev) => ({
             ...prev,
             set: {
@@ -3022,7 +3044,8 @@ export default function App() {
               pomoWork,
               pomoBreak,
               countdownMins,
-              fullMockMins: fullMockMins ?? prev.set.fullMockMins ?? 200,
+              fullMockMins: fullMockMins ?? prev.set.fullMockMins ?? 180,
+              updatedAt: now,
             },
           }));
           setModal({ type: 'none' });
@@ -3090,7 +3113,7 @@ export default function App() {
 
           const next: PulseHabitState = {
             ...prev,
-            set: { ...prev.set, dayResetHour: newHour },
+            set: { ...prev.set, dayResetHour: newHour, updatedAt: Date.now() },
             log: cloneLog(prev.log),
             sessions: updatedSessions,
           };
@@ -3098,7 +3121,9 @@ export default function App() {
           saveNextState(next);
           setSel(newToday);
           setModal({ type: 'none' });
-          showToast(`Day reset hour set to ${pad(newHour)}:00 AM`);
+          showToast(
+            `Day reset hour set to ${pad(newHour)}:00${newHour === 0 ? ' (Midnight)' : ' AM'}`
+          );
         }}
         onConfirmReset={() => {
           // F1 & A6: Keep whole-state snapshot for "Erase all data"

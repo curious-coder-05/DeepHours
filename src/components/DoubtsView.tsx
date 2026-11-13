@@ -273,7 +273,7 @@ export const DoubtsView: React.FC<DoubtsViewProps> = ({
             const ch = d.chapterId
               ? state.chapters.find((c) => c.id === d.chapterId)
               : undefined;
-            const dateStr = logicalKey(d.createdAt, state.set.dayResetHour ?? 4);
+            const dateStr = logicalKey(d.createdAt, state.set.dayResetHour ?? 0);
 
             return (
               <div

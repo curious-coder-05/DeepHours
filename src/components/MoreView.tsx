@@ -1,6 +1,6 @@
 import React, { useRef, useState } from 'react';
 import type { AppSettings, PulseHabitState, SubjectTargets, SyncStatus } from '../types';
-import { ACS, logicalKey, pad } from '../utils/studyLogic';
+import { ACS, SUB_COLORS, logicalKey, pad } from '../utils/studyLogic';
 import { usePWAInstall } from '../hooks/usePWAInstall';
 import { DAILY_WRITE_CAP } from '../utils/cloudSync';
 import {
@@ -10,12 +10,18 @@ import {
   computeTotalXp,
 } from '../utils/xp';
 
+const SUBJECT_COLOR_OPTIONS = Array.from(new Set([...SUB_COLORS, ...ACS]));
+
 interface MoreViewProps {
   state: PulseHabitState;
   onNewHabit: () => void;
   onEditHabit: (id: string) => void;
   onOpenManualSession: () => void;
   onAddSubject?: (name: string, emoji: string, color: string) => void;
+  onUpdateSubject?: (
+    subjectId: string,
+    patch: { name: string; e: string; color: string }
+  ) => void;
   onDeleteSubject?: (subjectId: string) => void;
   onUpdateSetting: <K extends keyof AppSettings>(key: K, val: AppSettings[K]) => void;
   onUpdateTargets?: (patch: Partial<SubjectTargets>) => void;
@@ -49,6 +55,7 @@ export const MoreView: React.FC<MoreViewProps> = ({
   onEditHabit,
   onOpenManualSession,
   onAddSubject,
+  onUpdateSubject,
   onDeleteSubject,
   onUpdateSetting,
   onSelectAvatarEmoji,
@@ -72,7 +79,7 @@ export const MoreView: React.FC<MoreViewProps> = ({
   onOpenProfileModal,
 }) => {
   const effectiveTodayKey =
-    todayKeyProp || logicalKey(new Date(), state.set?.dayResetHour ?? 4);
+    todayKeyProp || logicalKey(new Date(), state.set?.dayResetHour ?? 0);
   const todayBreakdown = computeDayXpBreakdown(state, effectiveTodayKey);
   const totalXp = computeTotalXp(state, effectiveTodayKey);
   const levelInfo = computeLevelInfo(totalXp);
@@ -83,7 +90,11 @@ export const MoreView: React.FC<MoreViewProps> = ({
   const [showIOSGuide, setShowIOSGuide] = useState(false);
   const [newSubName, setNewSubName] = useState('');
   const [newSubEmoji, setNewSubEmoji] = useState('📘');
-  const [newSubColor, setNewSubColor] = useState(ACS[0]);
+  const [newSubColor, setNewSubColor] = useState(SUBJECT_COLOR_OPTIONS[0]);
+  const [editingSubId, setEditingSubId] = useState<string | null>(null);
+  const [editSubName, setEditSubName] = useState('');
+  const [editSubEmoji, setEditSubEmoji] = useState('📘');
+  const [editSubColor, setEditSubColor] = useState(SUBJECT_COLOR_OPTIONS[0]);
   const [confirmDeleteCloud, setConfirmDeleteCloud] = useState(false);
   const [intervalsInput, setIntervalsInput] = useState(
     (state.set.revisionIntervals || [1, 3, 7, 21]).join(', ')
@@ -508,11 +519,11 @@ export const MoreView: React.FC<MoreViewProps> = ({
               type="number"
               min={30}
               max={360}
-              value={set.fullMockMins ?? 200}
+              value={set.fullMockMins ?? 180}
               onChange={(e) =>
                 onUpdateSetting(
                   'fullMockMins',
-                  Math.max(30, Math.min(360, Number(e.target.value) || 200))
+                  Math.max(30, Math.min(360, Number(e.target.value) || 180))
                 )
               }
             />
@@ -671,33 +682,131 @@ export const MoreView: React.FC<MoreViewProps> = ({
 
       <h2>Subjects</h2>
       <div className="card" style={{ display: 'grid', gap: '8px' }}>
-        {activeSubjects.map((sub) => (
-          <div
-            key={sub.id}
-            className="row sp"
-            style={{
-              background: 'var(--c2)',
-              padding: '8px 12px',
-              borderRadius: '12px',
-              borderLeft: `3px solid ${sub.color}`,
-            }}
-          >
-            <div className="row" style={{ gap: '8px' }}>
-              <span style={{ fontSize: '18px' }}>{sub.e}</span>
-              <b>{sub.name}</b>
-            </div>
-            {onDeleteSubject && activeSubjects.length > 1 && (
+        {activeSubjects.map((sub) =>
+          editingSubId === sub.id ? (
+            <form
+              key={sub.id}
+              className="row wrap"
+              style={{
+                background: 'var(--c2)',
+                padding: '8px 12px',
+                borderRadius: '12px',
+                borderLeft: `3px solid ${editSubColor}`,
+                gap: '6px',
+              }}
+              onSubmit={(e) => {
+                e.preventDefault();
+                const clean = editSubName.trim();
+                if (!clean || !onUpdateSubject) return;
+                onUpdateSubject(sub.id, {
+                  name: clean,
+                  e: editSubEmoji.trim() || '📘',
+                  color: editSubColor,
+                });
+                setEditingSubId(null);
+              }}
+            >
+              <input
+                type="text"
+                value={editSubEmoji}
+                onChange={(e) => setEditSubEmoji(e.target.value)}
+                style={{ width: '56px', textAlign: 'center' }}
+                maxLength={4}
+                aria-label={`Edit emoji for ${sub.name}`}
+              />
+              <input
+                type="text"
+                value={editSubName}
+                onChange={(e) => setEditSubName(e.target.value)}
+                placeholder="Subject name..."
+                style={{ flex: '1 1 140px' }}
+                maxLength={40}
+                aria-label={`Edit name for ${sub.name}`}
+              />
+              <select
+                value={
+                  SUBJECT_COLOR_OPTIONS.includes(editSubColor)
+                    ? editSubColor
+                    : SUBJECT_COLOR_OPTIONS[0]
+                }
+                onChange={(e) => setEditSubColor(e.target.value)}
+                style={{ width: '96px' }}
+                aria-label={`Edit color for ${sub.name}`}
+              >
+                {SUBJECT_COLOR_OPTIONS.map((c) => (
+                  <option key={c} value={c}>
+                    {c}
+                  </option>
+                ))}
+              </select>
+              <button
+                type="submit"
+                className="s pri"
+                aria-label={`Save subject ${sub.name}`}
+              >
+                Save
+              </button>
               <button
                 type="button"
-                className="s dg"
-                aria-label={`Delete subject ${sub.name}`}
-                onClick={() => onDeleteSubject(sub.id)}
+                className="s"
+                onClick={() => setEditingSubId(null)}
               >
-                Delete
+                Cancel
               </button>
-            )}
-          </div>
-        ))}
+            </form>
+          ) : (
+            <div
+              key={sub.id}
+              className="row sp"
+              style={{
+                background: 'var(--c2)',
+                padding: '8px 12px',
+                borderRadius: '12px',
+                borderLeft: `3px solid ${sub.color}`,
+                gap: '8px',
+              }}
+            >
+              <div className="row" style={{ gap: '8px' }}>
+                <span style={{ fontSize: '18px' }}>{sub.e}</span>
+                <b>{sub.name}</b>
+              </div>
+              <div className="row" style={{ gap: '6px' }}>
+                {onUpdateSubject && (
+                  <button
+                    type="button"
+                    className="s"
+                    aria-label={`Edit subject ${sub.name}`}
+                    onClick={() => {
+                      setEditingSubId(sub.id);
+                      setEditSubName(sub.name);
+                      setEditSubEmoji(sub.e || '📘');
+                      setEditSubColor(
+                        SUBJECT_COLOR_OPTIONS.includes(sub.color)
+                          ? sub.color
+                          : SUBJECT_COLOR_OPTIONS[0]
+                      );
+                    }}
+                  >
+                    Edit
+                  </button>
+                )}
+                {onDeleteSubject && activeSubjects.length > 1 && (
+                  <button
+                    type="button"
+                    className="s dg"
+                    aria-label={`Delete subject ${sub.name}`}
+                    onClick={() => {
+                      if (editingSubId === sub.id) setEditingSubId(null);
+                      onDeleteSubject(sub.id);
+                    }}
+                  >
+                    Delete
+                  </button>
+                )}
+              </div>
+            </div>
+          )
+        )}
         {onAddSubject && (
           <form
             className="row wrap"
@@ -733,7 +842,7 @@ export const MoreView: React.FC<MoreViewProps> = ({
               style={{ width: '96px' }}
               aria-label="New subject color"
             >
-              {ACS.map((c) => (
+              {SUBJECT_COLOR_OPTIONS.map((c) => (
                 <option key={c} value={c}>
                   {c}
                 </option>
@@ -751,12 +860,12 @@ export const MoreView: React.FC<MoreViewProps> = ({
         <label>
           Night-Owl Day Reset Hour (Sessions before this belong to previous day)
           <select
-            value={set.dayResetHour}
+            value={set.dayResetHour ?? 0}
             onChange={(e) => onUpdateSetting('dayResetHour', Number(e.target.value))}
           >
             {[0, 1, 2, 3, 4, 5, 6].map((h) => (
               <option key={h} value={h}>
-                {pad(h)}:00 AM
+                {h === 0 ? '00:00 (Midnight)' : `${pad(h)}:00 AM`}
               </option>
             ))}
           </select>

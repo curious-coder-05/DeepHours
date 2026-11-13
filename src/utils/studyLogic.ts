@@ -180,18 +180,9 @@ export const DEFAULT_SUBJECTS: Subject[] = [
     todos: [],
   },
   {
-    id: 'sub_chem',
-    name: 'Chemistry',
-    e: '🧪',
-    color: '#f59e0b',
-    dailyGoalMins: 0,
-    arch: 0,
-    todos: [],
-  },
-  {
     id: 'sub_bot',
     name: 'Botany',
-    e: '🌿',
+    e: '🌱',
     color: '#10b981',
     dailyGoalMins: 0,
     arch: 0,
@@ -206,9 +197,37 @@ export const DEFAULT_SUBJECTS: Subject[] = [
     arch: 0,
     todos: [],
   },
+  {
+    id: 'sub_pchem',
+    name: 'Physical chemistry',
+    e: '🧪',
+    color: '#f59e0b',
+    dailyGoalMins: 0,
+    arch: 0,
+    todos: [],
+  },
+  {
+    id: 'sub_ichem',
+    name: 'Inorganic chemistry',
+    e: '⚗️',
+    color: '#6366f1',
+    dailyGoalMins: 0,
+    arch: 0,
+    todos: [],
+  },
+  {
+    id: 'sub_ochem',
+    name: 'Organic chemistry',
+    e: '⌬',
+    color: '#14b8a6',
+    dailyGoalMins: 0,
+    arch: 0,
+    todos: [],
+  },
 ];
 
 const LEGACY_SUBJECT_FALLBACKS: Record<string, { name: string; e: string; color: string }> = {
+  sub_chem: { name: 'Chemistry', e: '🧪', color: '#f59e0b' },
   sub_code: { name: 'Coding & CS', e: '💻', color: '#6366f1' },
   sub_math: { name: 'Mathematics', e: '📐', color: '#10b981' },
   sub_lec: { name: 'Lectures', e: '🎧', color: '#f59e0b' },
@@ -224,7 +243,7 @@ export function keyFromDate(d: Date): string {
   return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}`;
 }
 
-export function logicalKey(tsOrDate: number | Date = new Date(), dayResetHour = 4): string {
+export function logicalKey(tsOrDate: number | Date = new Date(), dayResetHour = 0): string {
   const d = new Date(tsOrDate);
   d.setHours(d.getHours() - dayResetHour);
   return keyFromDate(d);
@@ -402,7 +421,7 @@ export function createBlankState(): PulseHabitState {
       snd: 1,
       ws: 1,
       notif: 0,
-      dayResetHour: 4,
+      dayResetHour: 0,
       pomoWork: 25,
       pomoBreak: 5,
       countdownMins: 45,
@@ -413,7 +432,7 @@ export function createBlankState(): PulseHabitState {
       soundVol: 0.35,
       targetMockScore: 650,
       revisionBufferDays: 30,
-      fullMockMins: 200,
+      fullMockMins: 180,
       revisionIntervals: [1, 3, 7, 21],
       revisionSuggestDays: [1, 3, 7, 21],
       avatarEmoji: '🩺',
@@ -432,7 +451,7 @@ export function createDefaultState(): PulseHabitState {
   return createBlankState();
 }
 
-export function mkHabit(p: Partial<Habit>, todayKey = logicalKey(new Date(), 4)): Habit {
+export function mkHabit(p: Partial<Habit>, todayKey = logicalKey(new Date(), 0)): Habit {
   const isAuto = Boolean(p.subjectId || p.autoMins);
   const rawTarget = Number(p.autoMins || p.tn) || (isAuto ? 60 : 1);
   const targetVal = Math.max(1, rawTarget);
@@ -472,7 +491,7 @@ export function norm(raw: unknown): PulseHabitState {
   ) {
     s.set.timerAesthetic = 'neon';
   }
-  if (!Number.isFinite(s.set.dayResetHour)) s.set.dayResetHour = 4;
+  if (!Number.isFinite(s.set.dayResetHour)) s.set.dayResetHour = 0;
   if (!Number.isFinite(s.set.targetMockScore)) s.set.targetMockScore = 650;
   s.set.revisionBufferDays = Number.isFinite(s.set.revisionBufferDays)
     ? Math.max(0, Math.floor(Number(s.set.revisionBufferDays)))
@@ -480,7 +499,7 @@ export function norm(raw: unknown): PulseHabitState {
   s.set.fullMockMins =
     Number.isFinite(s.set.fullMockMins) && Number(s.set.fullMockMins) >= 10
       ? Math.floor(Number(s.set.fullMockMins))
-      : 200;
+      : 180;
   const rawRevInts = Array.isArray(s.set.revisionIntervals)
     ? s.set.revisionIntervals
     : Array.isArray(s.set.revisionSuggestDays)
@@ -1529,9 +1548,9 @@ export function syncStudyHabitsForDays(
  * so late-night times (e.g. 00:30) average properly with evening times (e.g. 22:00),
  * and rounds total minutes BEFORE modulo 60 so "xx:60" can never occur (A2).
  */
-export function computeAvgClockTime(tsList: number[], dayResetHour = 4): string {
+export function computeAvgClockTime(tsList: number[], dayResetHour = 0): string {
   if (!tsList.length) return '--:--';
-  const resetMins = (Number.isFinite(dayResetHour) ? dayResetHour : 4) * 60;
+  const resetMins = (Number.isFinite(dayResetHour) ? dayResetHour : 0) * 60;
   const avgOffset =
     tsList.reduce((acc, ts) => {
       const d = new Date(ts);
@@ -1615,7 +1634,7 @@ export function computeStudySummary(
   todayKey: string,
   now = Date.now()
 ): StudySummaryReport {
-  const dayResetHour = state.set.dayResetHour ?? 4;
+  const dayResetHour = state.set.dayResetHour ?? 0;
   const todayMs = getDayTotalStudyMs(state, todayKey, todayKey, now);
 
   // Last 7 days (this week window)
@@ -2789,7 +2808,7 @@ export function insertAtIndex<T extends { id: string }>(
 export function restoreDeletedItem(
   currentState: PulseHabitState,
   record: DeletedEntityRecord,
-  todayKey = logicalKey(new Date(), currentState.set.dayResetHour ?? 4)
+  todayKey = logicalKey(new Date(), currentState.set.dayResetHour ?? 0)
 ): PulseHabitState {
   const nextLog = cloneLog(currentState.log);
   const { del, delAt } = removeTombstone(currentState, record.item.id);

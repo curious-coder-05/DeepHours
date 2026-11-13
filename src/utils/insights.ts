@@ -290,7 +290,7 @@ export function computeConsistencyScore(
   todayKey: string
 ): ConsistencyBreakdown {
   const minDayMinutes = Math.max(15, state.set.targets?.minDayMinutes ?? 240);
-  const resetHr = state.set.dayResetHour ?? 4;
+  const resetHr = state.set.dayResetHour ?? 0;
 
   const last14Days: string[] = [];
   for (let i = 0; i < 14; i++) {

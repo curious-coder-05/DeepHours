@@ -169,7 +169,7 @@ export const PrepView: React.FC<PrepViewProps> = ({
       baseDate,
       intervals,
       existingDates,
-      state.set.dayResetHour ?? 4
+      state.set.dayResetHour ?? 0
     );
     setSuggestedRevDrafts((prev) => ({
       ...prev,

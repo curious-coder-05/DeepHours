@@ -211,7 +211,7 @@ export const Modals: React.FC<ModalsProps> = ({
   const [cfgPomoWork, setCfgPomoWork] = useState(state.set.pomoWork || 25);
   const [cfgPomoBreak, setCfgPomoBreak] = useState(state.set.pomoBreak || 5);
   const [cfgCountdown, setCfgCountdown] = useState(state.set.countdownMins || 45);
-  const [cfgFullMock, setCfgFullMock] = useState(state.set.fullMockMins || 200);
+  const [cfgFullMock, setCfgFullMock] = useState(state.set.fullMockMins || 180);
 
   // D-Day state
   const existingDDay =
@@ -327,7 +327,7 @@ export const Modals: React.FC<ModalsProps> = ({
       setCfgPomoWork(curState.set.pomoWork || 25);
       setCfgPomoBreak(curState.set.pomoBreak || 5);
       setCfgCountdown(curState.set.countdownMins || 45);
-      setCfgFullMock(curState.set.fullMockMins || 200);
+      setCfgFullMock(curState.set.fullMockMins || 180);
     } else if (curModal.type === 'dday') {
       const d = curModal.id
         ? curState.ddays.find((x) => x.id === curModal.id)
@@ -733,7 +733,7 @@ export const Modals: React.FC<ModalsProps> = ({
             const safeSh = Number.isFinite(sh) ? sh : 9;
             const safeSm = Number.isFinite(sm) ? sm : 0;
             const [yr, mo, dy] = msDayKey.split('-').map(Number);
-            const resetHr = state.set.dayResetHour ?? 4;
+            const resetHr = state.set.dayResetHour ?? 0;
             const dayOffset = safeSh < resetHr ? 1 : 0;
             const startTs = new Date(
               yr,
@@ -1332,7 +1332,7 @@ export const Modals: React.FC<ModalsProps> = ({
                   Math.max(5, Number(cfgPomoWork) || 25),
                   Math.max(1, Number(cfgPomoBreak) || 5),
                   Math.max(5, Number(cfgCountdown) || 45),
-                  Math.max(10, Number(cfgFullMock) || 200)
+                  Math.max(10, Number(cfgFullMock) || 180)
                 );
               }}
             >
@@ -1515,7 +1515,10 @@ export const Modals: React.FC<ModalsProps> = ({
 
       {modal.type === 'confirmResetHour' && (
         <div style={{ display: 'grid', gap: '12px' }}>
-          <h3>Change Day Reset Hour to {pad(modal.newHour)}:00 AM?</h3>
+          <h3>
+            Change Day Reset Hour to {pad(modal.newHour)}:00
+            {modal.newHour === 0 ? ' (Midnight)' : ' AM'}?
+          </h3>
           <small>
             This will recompute the logical study date for all existing study
             sessions and re-sync your auto-study habits across affected days.

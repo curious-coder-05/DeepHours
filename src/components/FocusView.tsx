@@ -170,7 +170,7 @@ export const FocusView: React.FC<FocusViewProps> = ({
           mode === 'countdown'
             ? customCountdownMins
             : mode === 'fullMock'
-              ? state.set.fullMockMins || 200
+              ? state.set.fullMockMins || 180
               : undefined,
           selectedChapterId || undefined
         );
@@ -201,7 +201,7 @@ export const FocusView: React.FC<FocusViewProps> = ({
       : mode === 'countdown'
         ? customCountdownMins * 60000
         : mode === 'fullMock'
-          ? (state.set.fullMockMins || 200) * 60000
+          ? (state.set.fullMockMins || 180) * 60000
           : 0;
   const clockVal = fmtHMS(clockMs);
   const aesthetic = state.set.timerAesthetic || 'neon';
@@ -262,7 +262,7 @@ export const FocusView: React.FC<FocusViewProps> = ({
     } else if (mode === 'countdown') {
       rawTargetMs = (customCountdownMins || state.set.countdownMins || 45) * 60000;
     } else if (mode === 'fullMock') {
-      rawTargetMs = (state.set.fullMockMins || 200) * 60000;
+      rawTargetMs = (state.set.fullMockMins || 180) * 60000;
     } else {
       // Stopwatch pace reference (next 30m/60m milestone)
       const baseMins = Math.max(60, Math.ceil((elapsedMins + 0.1) / 30) * 30);
@@ -526,7 +526,7 @@ export const FocusView: React.FC<FocusViewProps> = ({
               marginBottom: '4px',
             }}
           >
-            NEET Full Mock Exam Mode ({state.set.fullMockMins || 200}m countdown + section split tracker)
+            NEET Full Mock Exam Mode ({state.set.fullMockMins || 180}m countdown + section split tracker)
           </small>
         )}
 
@@ -918,7 +918,7 @@ export const FocusView: React.FC<FocusViewProps> = ({
                   mode === 'countdown'
                     ? customCountdownMins
                     : mode === 'fullMock'
-                      ? state.set.fullMockMins || 200
+                      ? state.set.fullMockMins || 180
                       : undefined,
                   selectedChapterId || undefined
                 )
@@ -930,7 +930,7 @@ export const FocusView: React.FC<FocusViewProps> = ({
                 : mode === 'countdown'
                   ? 'Countdown'
                   : mode === 'fullMock'
-                    ? `Full Mock (${state.set.fullMockMins || 200}m)`
+                    ? `Full Mock (${state.set.fullMockMins || 180}m)`
                     : 'Pomodoro'}
             </button>
           ) : (

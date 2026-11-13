@@ -219,7 +219,7 @@ export function buildDayArchiveRecord(
   const mocks = (state.mocks || []).filter((m) => m.dayKey === dayKey);
   const pyqEntries = (state.pyq || []).filter((p) => p.dayKey === dayKey);
   const mistakes = (state.mistakes || []).filter((m) => m.dayKey === dayKey);
-  const resetHour = state.set.dayResetHour ?? 4;
+  const resetHour = state.set.dayResetHour ?? 0;
   const doubtsCreated = (state.doubts || []).filter(
     (d) => logicalKey(d.createdAt, resetHour) === dayKey
   );

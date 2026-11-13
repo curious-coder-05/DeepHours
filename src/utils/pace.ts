@@ -457,14 +457,14 @@ export function suggestRevisionDates(
   baseDateOrChapter: string | Chapter,
   intervalsOrBaseDate: number[] | string = [1, 3, 7, 21],
   existingDatesOrIntervals: string[] | number[] | number = [],
-  dayResetHour = 4
+  dayResetHour = 0
 ): string[] {
   const resolvedResetHour =
     typeof existingDatesOrIntervals === 'number' && Number.isFinite(existingDatesOrIntervals)
       ? existingDatesOrIntervals
       : typeof dayResetHour === 'number' && Number.isFinite(dayResetHour)
         ? dayResetHour
-        : 4;
+        : 0;
   let baseDateKey: string;
   let intervals: number[];
   let existingDates: string[];

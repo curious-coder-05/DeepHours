@@ -20,12 +20,14 @@ import {
   computeStudySummary,
   createBlankState,
   createDailyTask,
+  DEFAULT_SUBJECTS,
   getChapterPYQStats,
   getDailyStudyGoalProgress,
   getDayProgress,
   getDueAndOverdueRevisions,
   getSortedChapterRevisions,
   getStudyQuoteForTimer,
+  getSubject,
   getTimerMetrics,
   logicalKey,
   mkHabit,
@@ -130,8 +132,9 @@ describe('Part C: Deep Hours NEET Study & Habit Logger Unit Tests', () => {
     assert.equal(avgRounding, '11:00');
     assert.ok(!avgRounding.endsWith(':60'));
 
-    // Full computeStudySummary integration check
+    // Full computeStudySummary integration check (explicit 04:00 AM night-owl reset)
     const state = createBlankState();
+    state.set.dayResetHour = 4;
     state.sessions = [
       {
         id: 'ses_1',
@@ -1170,7 +1173,8 @@ describe('Part C: Deep Hours NEET Study & Habit Logger Unit Tests', () => {
     assert.deepEqual(restored.wellbeing, {});
     assert.deepEqual(restored.delAt, {});
     assert.equal(restored.set.revisionBufferDays, 30);
-    assert.equal(restored.set.fullMockMins, 200);
+    assert.equal(restored.set.dayResetHour, 0);
+    assert.equal(restored.set.fullMockMins, 180);
     assert.deepEqual(restored.set.revisionSuggestDays, [1, 3, 7, 21]);
     assert.equal(restored.set.targets?.minDayMinutes, 240);
     assert.equal(restored.set.targets?.restPassesPerMonth, 4);
@@ -2465,5 +2469,42 @@ describe('Part C: Deep Hours NEET Study & Habit Logger Unit Tests', () => {
     assert.equal(mergedNewerWins.restDays.includes(dk), true);
     assert.equal(mergedNewerWins.delAt?.[`rest:${dk}`], undefined);
   });
-});
 
+  it('32. Default settings & subjects: 00:00 day reset, 180m full mock, and 6 NEET subjects with legacy/override preservation', () => {
+    const fresh = createBlankState();
+    assert.equal(fresh.set.dayResetHour, 0);
+    assert.equal(fresh.set.fullMockMins, 180);
+    assert.equal(fresh.subjects.length, 6);
+    assert.deepEqual(
+      fresh.subjects.map((s) => ({ name: s.name, e: s.e })),
+      [
+        { name: 'Physics', e: '⚛️' },
+        { name: 'Botany', e: '🌱' },
+        { name: 'Zoology', e: '🧬' },
+        { name: 'Physical chemistry', e: '🧪' },
+        { name: 'Inorganic chemistry', e: '⚗️' },
+        { name: 'Organic chemistry', e: '⌬' },
+      ]
+    );
+    assert.equal(DEFAULT_SUBJECTS.length, 6);
+
+    // logicalKey uses 00:00 (calendar midnight) by default when dayResetHour is omitted
+    const twoThirtyAm = new Date(2026, 9, 25, 2, 30, 0, 0);
+    assert.equal(logicalKey(twoThirtyAm), '2026-10-25');
+
+    // norm() preserves explicit user edits/overrides and legacy sub_chem fallback still resolves
+    const customState = norm({
+      set: { dayResetHour: 4, fullMockMins: 210 },
+      subjects: [
+        { id: 'sub_custom', name: 'Biochemistry', e: '🧬', color: '#38bdf8', arch: 0, todos: [] },
+      ],
+    });
+    assert.equal(customState.set.dayResetHour, 4);
+    assert.equal(customState.set.fullMockMins, 210);
+    assert.equal(customState.subjects.length, 1);
+    assert.equal(customState.subjects[0].name, 'Biochemistry');
+    const legacyChem = getSubject(fresh, 'sub_chem');
+    assert.equal(legacyChem.name, 'Chemistry');
+    assert.equal(legacyChem.e, '🧪');
+  });
+});

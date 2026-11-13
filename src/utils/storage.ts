@@ -171,7 +171,7 @@ async function readValidBackups(): Promise<DailyBackupSnapshot[]> {
  */
 async function maybeWriteDailyBackup(state: PulseHabitState): Promise<void> {
   try {
-    const dayKey = logicalKey(new Date(), state.set?.dayResetHour ?? 4);
+    const dayKey = logicalKey(new Date(), state.set?.dayResetHour ?? 0);
     if (lastBackupDayKey === dayKey) return;
 
     const existing = await readValidBackups();
@@ -204,7 +204,7 @@ async function maybeWriteDailyBackup(state: PulseHabitState): Promise<void> {
  */
 export async function writeSafetyBackupSnapshot(state: PulseHabitState): Promise<void> {
   try {
-    const dayKey = logicalKey(new Date(), state?.set?.dayResetHour ?? 4);
+    const dayKey = logicalKey(new Date(), state?.set?.dayResetHour ?? 0);
     const snapshot: DailyBackupSnapshot = {
       dayKey,
       savedAt: Date.now(),
