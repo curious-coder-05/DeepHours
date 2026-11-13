@@ -270,23 +270,30 @@ function isNonEmptySerializedPayload(str: string | null | undefined): str is str
  * Never returns an empty "{}" string; returns null if nothing is found.
  */
 export async function readRawSavedDataForDownload(): Promise<string | null> {
-  // 1. Try IndexedDB key "s"
+  const candidates: Array<{ ts: number; priority: number; payload: string }> = [];
+
+  // 1. Check IndexedDB key "s"
   try {
     const idbState = await kv('get', 's');
     if (typeof idbState === 'string' && isNonEmptySerializedPayload(idbState)) {
-      return idbState;
-    }
-    if (isPlainStateRecord(idbState) && Object.keys(idbState).length > 0) {
+      let ts = 0;
+      try {
+        ts = getSavedAt(JSON.parse(idbState));
+      } catch {
+        // leave ts = 0
+      }
+      candidates.push({ ts, priority: 3, payload: idbState });
+    } else if (isPlainStateRecord(idbState) && Object.keys(idbState).length > 0) {
       const serialized = JSON.stringify(idbState, null, 2);
       if (isNonEmptySerializedPayload(serialized)) {
-        return serialized;
+        candidates.push({ ts: getSavedAt(idbState), priority: 3, payload: serialized });
       }
     }
   } catch {
-    // Fall through to backup
+    // ignore IndexedDB error
   }
 
-  // 2. Try latest IndexedDB "backup" snapshot
+  // 2. Check latest IndexedDB "backup" snapshot
   try {
     const validBackups = await readValidBackups();
     if (validBackups.length > 0) {
@@ -294,31 +301,46 @@ export async function readRawSavedDataForDownload(): Promise<string | null> {
       if (isPlainStateRecord(latestState) && Object.keys(latestState).length > 0) {
         const serialized = JSON.stringify(latestState, null, 2);
         if (isNonEmptySerializedPayload(serialized)) {
-          return serialized;
+          candidates.push({ ts: getSavedAt(latestState), priority: 2, payload: serialized });
         }
       }
     }
   } catch {
-    // Fall through to localStorage
+    // ignore backup read error
   }
 
-  // 3. Try localStorage "dh" then "ph"
+  // 3. Check localStorage "dh" then "ph"
   try {
     if (typeof localStorage !== 'undefined') {
       const dh = localStorage.getItem('dh');
       if (isNonEmptySerializedPayload(dh)) {
-        return dh;
-      }
-      const ph = localStorage.getItem('ph');
-      if (isNonEmptySerializedPayload(ph)) {
-        return ph;
+        let ts = 0;
+        try {
+          ts = getSavedAt(JSON.parse(dh));
+        } catch {
+          // leave ts = 0
+        }
+        candidates.push({ ts, priority: 4, payload: dh });
+      } else {
+        const ph = localStorage.getItem('ph');
+        if (isNonEmptySerializedPayload(ph)) {
+          let ts = 0;
+          try {
+            ts = getSavedAt(JSON.parse(ph));
+          } catch {
+            // leave ts = 0
+          }
+          candidates.push({ ts, priority: 1, payload: ph });
+        }
       }
     }
   } catch {
     // ignore localStorage read error
   }
 
-  return null;
+  if (candidates.length === 0) return null;
+  candidates.sort((a, b) => b.ts - a.ts || b.priority - a.priority);
+  return candidates[0].payload;
 }
 
 export async function loadInitialState(): Promise<PulseHabitState> {
@@ -457,7 +479,6 @@ const bc =
 
 export function persistState(state: PulseHabitState, onSaved?: () => void): void {
   const now = Date.now();
-  state.savedAt = now;
   const stamped: PulseHabitState = {
     ...state,
     savedAt: now,

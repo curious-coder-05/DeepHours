@@ -237,10 +237,6 @@ export function getMemberTimeOfDayBadge(
 ): TimeOfDayBadgeInfo | null {
   if (!entry || entry.paused) return null;
 
-  const hasLoggedStudy =
-    Boolean(entry.live && entry.live.since > 0) ||
-    Object.values(entry.days || {}).some((mins) => (Number(mins) || 0) > 0);
-
   const candidateTs =
     typeof latestSessionTs === 'number' &&
     Number.isFinite(latestSessionTs) &&
@@ -250,12 +246,7 @@ export function getMemberTimeOfDayBadge(
           Number.isFinite(entry.live.since) &&
           entry.live.since > 0
         ? entry.live.since
-        : hasLoggedStudy &&
-            typeof entry.updatedAt === 'number' &&
-            Number.isFinite(entry.updatedAt) &&
-            entry.updatedAt > 0
-          ? entry.updatedAt
-          : 0;
+        : 0;
 
   if (!candidateTs || candidateTs <= 0) return null;
 
@@ -1095,7 +1086,7 @@ export const GroupsView: React.FC<GroupsViewProps> = ({
       );
       if (mins <= 0) continue;
       timerMinsByDay[ses.dayKey] = Math.min(
-        1440,
+        960,
         (timerMinsByDay[ses.dayKey] || 0) + mins
       );
     }
@@ -1626,6 +1617,10 @@ export const GroupsView: React.FC<GroupsViewProps> = ({
     emoji: CheerEmoji
   ) => {
     if (!activeGroupId || !myUid) return;
+    if (sentCheersLocal[`${activeGroupId}_${toUid}_${todayKey}`]) {
+      showToast(`You already cheered ${toNick} today.`);
+      return;
+    }
     if (!groupBudget.canSendCheer()) {
       showToast('Daily cheer limit (10/day) reached.');
       return;

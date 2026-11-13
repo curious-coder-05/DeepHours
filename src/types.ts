@@ -8,7 +8,7 @@ export type PiPPreference = 'video' | 'doc';
 export type TimerAesthetic = 'neon' | 'minimal' | 'retro';
 export type AppTab = 'today' | 'prep' | 'focus' | 'groups' | 'stats' | 'more' | 'planner';
 export type PrepSubTab = 'syllabus' | 'mocks' | 'mistakes' | 'doubts';
-export type StatsSubTab = 'summary' | 'timeline' | 'review';
+export type StatsSubTab = 'summary' | 'history' | 'timeline' | 'review';
 export type ChapterStatus = 'notStarted' | 'inProgress' | 'completed';
 export type MistakeReason = 'concept' | 'silly' | 'time' | 'guess' | 'forgot';
 export type SyncStatus =
@@ -322,10 +322,13 @@ export interface PulseHabitState {
   doubts: Doubt[];
   pyq: PYQEntry[];
   restDays: string[];
+  restDayUpdatedAt?: Record<string, number>;
   wellbeing: Record<string, WellbeingEntry>;
   activeTimer: ActiveTimer | null;
   notes: Record<string, string>;
+  noteUpdatedAt?: Record<string, number>;
   mood: Record<string, number>;
+  moodUpdatedAt?: Record<string, number>;
   bonus: number;
   exp: number;
   ob: number;

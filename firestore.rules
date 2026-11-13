@@ -68,7 +68,7 @@ service cloud.firestore {
         && (!('xpTotal' in m) || (m.xpTotal is int && m.xpTotal >= 0 && m.xpTotal <= 10000000))
         && (!('streak' in m) || (m.streak is int && m.streak >= 0 && m.streak <= 3650))
         && (!('consistency' in m) || (m.consistency is int && m.consistency >= 0 && m.consistency <= 100))
-        && (!('mocks' in m) || (m.mocks is list && m.mocks.size() <= 10))
+        && (!('mocks' in m) || (m.mocks is list && m.mocks.size() <= 10 && (m.mocks.size() == 0 || (m.mocks[0] is map && m.mocks[0].keys().hasOnly(['d', 's', 'm'])))))
         && (!('live' in m) || m.live == null || (
           m.live is map
           && m.live.keys().hasAll(['since','until'])
@@ -171,6 +171,7 @@ service cloud.firestore {
             && request.resource.data.members.diff(resource.data.members).addedKeys().size() == 0
             && request.resource.data.members.diff(resource.data.members).changedKeys().size() == 0
             && request.resource.data.members.diff(resource.data.members).removedKeys().size() <= 1
+            && !(resource.data.ownerUid in request.resource.data.members.diff(resource.data.members).removedKeys())
           )
         );
 

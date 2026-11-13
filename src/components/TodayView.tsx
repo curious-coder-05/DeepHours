@@ -1,4 +1,4 @@
-import React, { useMemo, useRef, useState } from 'react';
+import React, { useEffect, useMemo, useRef, useState } from 'react';
 import type { ActiveTimerMode, AppTab, DailyTask, Habit, HabitCategory, PulseHabitState } from '../types';
 import {
   CATS,
@@ -148,6 +148,19 @@ export const TodayView: React.FC<TodayViewProps> = ({
   const [taskTitleDraft, setTaskTitleDraft] = useState('');
   const [taskSubjectId, setTaskSubjectId] = useState<string>('');
   const lastTaskSubmitRef = useRef<{ title: string; ts: number }>({ title: '', ts: 0 });
+
+  useEffect(() => {
+    if (subjects.length > 0 && !subjects.some((s) => s.id === quickSubjectId)) {
+      setQuickSubjectId(subjects[0].id);
+      setQuickChapterId('');
+    }
+  }, [subjects, quickSubjectId]);
+
+  useEffect(() => {
+    if (taskSubjectId && !subjects.some((s) => s.id === taskSubjectId)) {
+      setTaskSubjectId('');
+    }
+  }, [subjects, taskSubjectId]);
   const [openMenuTaskId, setOpenMenuTaskId] = useState<string | null>(null);
   const [editingTaskId, setEditingTaskId] = useState<string | null>(null);
   const [editingTitleDraft, setEditingTitleDraft] = useState('');
@@ -1004,7 +1017,9 @@ export const TodayView: React.FC<TodayViewProps> = ({
                         type="button"
                         className="s"
                         onClick={() => {
-                          onChangeTaskDate(t.id, addD(t.dayKey, 1));
+                          const targetTomorrow =
+                            t.dayKey < todayKey ? addD(todayKey, 1) : addD(t.dayKey, 1);
+                          onChangeTaskDate(t.id, targetTomorrow);
                           setOpenMenuTaskId(null);
                         }}
                       >
@@ -1343,7 +1358,9 @@ export const TodayView: React.FC<TodayViewProps> = ({
                           setReschedulingRevId((prev) =>
                             prev === item.revisionId ? null : item.revisionId
                           );
-                          setRescheduleDateDraft(addD(sel, 1));
+                          setRescheduleDateDraft(
+                            sel < todayKey ? addD(todayKey, 1) : addD(sel, 1)
+                          );
                         }}
                       >
                         📅 Reschedule

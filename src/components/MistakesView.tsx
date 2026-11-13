@@ -1,4 +1,4 @@
-import React, { useMemo, useState } from 'react';
+import React, { useEffect, useMemo, useState } from 'react';
 import { MistakeEntry, MistakeReason, PulseHabitState } from '../types';
 import { addD, getSubject } from '../utils/studyLogic';
 
@@ -79,6 +79,19 @@ export const MistakesView: React.FC<MistakesViewProps> = ({
   const [filterSub, setFilterSub] = useState<string>('all');
   const [filterReason, setFilterReason] = useState<MistakeReason | 'all'>('all');
   const [filterStatus, setFilterStatus] = useState<'open' | 'resolved' | 'all'>('open');
+
+  useEffect(() => {
+    if (activeSubjects.length > 0 && !activeSubjects.some((s) => s.id === formSubId)) {
+      setFormSubId(activeSubjects[0].id);
+      setFormChapId('');
+    }
+  }, [activeSubjects, formSubId]);
+
+  useEffect(() => {
+    if (filterSub !== 'all' && !activeSubjects.some((s) => s.id === filterSub)) {
+      setFilterSub('all');
+    }
+  }, [activeSubjects, filterSub]);
 
   // Schedule revision inline picker state: mistakeId -> date
   const [schedulingMistakeId, setSchedulingMistakeId] = useState<string | null>(null);

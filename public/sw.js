@@ -1,4 +1,4 @@
-const CACHE_NAME = 'deep-hours-v5';
+const CACHE_NAME = 'deep-hours-v6';
 const ASSETS = [
   '/',
   '/index.html',
@@ -33,6 +33,8 @@ self.addEventListener('install', event => {
           const html = await res.clone().text();
           await cache.put('/index.html', res.clone());
           await cache.put('/', res.clone());
+          urlsToCache.delete('/index.html');
+          urlsToCache.delete('/');
           const assetUrls = extractSameOriginAssetUrls(html, self.location.origin);
           for (const assetUrl of assetUrls) {
             urlsToCache.add(assetUrl);
@@ -111,7 +113,7 @@ self.addEventListener('fetch', event => {
             }
             return response;
           })
-          .catch(() => cached);
+          .catch(() => cached || new Response('Offline', { status: 503, statusText: 'Offline' }));
         return cached || networkFetch;
       })
     )

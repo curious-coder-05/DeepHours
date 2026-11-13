@@ -222,6 +222,7 @@ export interface MetaCoreDoc {
   subjects: Record<string, Subject>;
   ddays: Record<string, DDay>;
   restDays: string[];
+  restDayUpdatedAt?: Record<string, number>;
   del: Record<string, number>; // id -> deletedAt timestamp
   bonus: number;
   exp: number;
@@ -242,7 +243,9 @@ export interface MonthlyDataDoc {
   sessions: Record<string, StudySession>;
   log: Record<string, Record<string, HabitLogDay>>; // habitId -> { dayKey -> HabitLogDay }
   notes: Record<string, string>; // dayKey -> note
+  noteUpdatedAt?: Record<string, number>; // dayKey -> updatedAt timestamp
   mood: Record<string, number>; // dayKey -> mood
+  moodUpdatedAt?: Record<string, number>; // dayKey -> updatedAt timestamp
   wellbeing: Record<string, WellbeingEntry>; // dayKey -> WellbeingEntry
   plans: Record<string, DayPlanSlots>; // dayKey -> slot map
   tasks: Record<string, DailyTask>; // taskId -> DailyTask
@@ -492,6 +495,8 @@ export function partitionStateToCloudDocs(
 
   const maxTombstoneTs = Math.max(0, ...Object.values(prunedDel));
 
+  const maxRestTs = Math.max(0, ...Object.values(state.restDayUpdatedAt || {}));
+
   const coreUpdatedAt = Math.max(
     state.set.updatedAt || 0,
     state.profile?.updatedAt || 0,
@@ -499,17 +504,22 @@ export function partitionStateToCloudDocs(
     maxUpdatedAt(state.subjects, 0),
     maxUpdatedAt(state.ddays, 0),
     maxTombstoneTs,
+    maxRestTs,
     state.exp || 0,
     1
   );
 
   // Strip local-only timer state; never sync activeTimer
   const cleanSet = sanitizeForFirestore({ ...state.set });
+  const hasRestDayTs = Object.keys(state.restDayUpdatedAt || {}).length > 0;
   const coreDoc: MetaCoreDoc = {
     set: cleanSet,
     subjects: sanitizeForFirestore(arrayToIdMap(state.subjects)),
     ddays: sanitizeForFirestore(arrayToIdMap(state.ddays)),
     restDays: [...(state.restDays || [])],
+    ...(hasRestDayTs
+      ? { restDayUpdatedAt: sanitizeForFirestore(state.restDayUpdatedAt || {}) }
+      : {}),
     del: prunedDel,
     bonus: state.bonus || 0,
     exp: state.exp || 0,
@@ -556,7 +566,7 @@ export function partitionStateToCloudDocs(
   // Group time-based data by YYYY-MM
   const monthsMap: Record<string, MonthlyDataDoc> = {};
   const ensureMonth = (ym: string): MonthlyDataDoc => {
-    const cleanYm = /^\d{4}-\d{2}$/.test(ym) ? ym : new Date(now).toISOString().slice(0, 7);
+    const cleanYm = /^\d{4}-\d{2}$/.test(ym) ? ym : getLocalCalendarDateKey(now).slice(0, 7);
     if (!monthsMap[cleanYm]) {
       monthsMap[cleanYm] = {
         month: cleanYm,
@@ -596,9 +606,26 @@ export function partitionStateToCloudDocs(
     mDoc.notes[dayKey] = note;
   }
 
+  for (const [dayKey, ts] of Object.entries(state.noteUpdatedAt || {})) {
+    if (!Number.isFinite(ts) || ts <= 0) continue;
+    const mDoc = ensureMonth(dayKey.slice(0, 7));
+    if (!mDoc.noteUpdatedAt) mDoc.noteUpdatedAt = {};
+    mDoc.noteUpdatedAt[dayKey] = ts;
+    if (ts > mDoc.updatedAt) mDoc.updatedAt = ts;
+  }
+
   for (const [dayKey, mVal] of Object.entries(state.mood || {})) {
+    if (!Number.isFinite(mVal) || mVal <= 0) continue;
     const mDoc = ensureMonth(dayKey.slice(0, 7));
     mDoc.mood[dayKey] = mVal;
+  }
+
+  for (const [dayKey, ts] of Object.entries(state.moodUpdatedAt || {})) {
+    if (!Number.isFinite(ts) || ts <= 0) continue;
+    const mDoc = ensureMonth(dayKey.slice(0, 7));
+    if (!mDoc.moodUpdatedAt) mDoc.moodUpdatedAt = {};
+    mDoc.moodUpdatedAt[dayKey] = ts;
+    if (ts > mDoc.updatedAt) mDoc.updatedAt = ts;
   }
 
   for (const [dayKey, wb] of Object.entries(state.wellbeing || {})) {
@@ -890,7 +917,13 @@ export function mergeStateWithCloudDocs(
   const remoteTasksMap: Record<string, DailyTask> = collectChunkedItems<DailyTask>('meta/tasks');
   const mergedLog = cloneLog(localState.log);
   const mergedNotes: Record<string, string> = { ...(localState.notes || {}) };
+  const mergedNoteUpdatedAt: Record<string, number> = {
+    ...(localState.noteUpdatedAt || {}),
+  };
   const mergedMood: Record<string, number> = { ...(localState.mood || {}) };
+  const mergedMoodUpdatedAt: Record<string, number> = {
+    ...(localState.moodUpdatedAt || {}),
+  };
   const mergedWellbeing: Record<string, WellbeingEntry> = { ...(localState.wellbeing || {}) };
   const mergedPlans: Record<string, DayPlanSlots> = { ...(localState.plans || {}) };
 
@@ -922,18 +955,53 @@ export function mergeStateWithCloudDocs(
         }
       }
     }
-    if (mDoc.notes && typeof mDoc.notes === 'object') {
-      for (const [dk, txt] of Object.entries(mDoc.notes)) {
-        if (!mergedNotes[dk] && typeof txt === 'string') {
-          mergedNotes[dk] = txt;
+    const noteDays = new Set([
+      ...Object.keys(mDoc.notes && typeof mDoc.notes === 'object' ? mDoc.notes : {}),
+      ...Object.keys(
+        mDoc.noteUpdatedAt && typeof mDoc.noteUpdatedAt === 'object' ? mDoc.noteUpdatedAt : {}
+      ),
+    ]);
+    for (const dk of noteDays) {
+      if (!/^\d{4}-\d{2}-\d{2}$/.test(dk)) continue;
+      const rTxt = typeof mDoc.notes?.[dk] === 'string' ? mDoc.notes[dk] : '';
+      const rTs = Number(mDoc.noteUpdatedAt?.[dk]) || 0;
+      const lTs = mergedNoteUpdatedAt[dk] || 0;
+      if (rTs > 0 || lTs > 0) {
+        if (rTs > lTs) {
+          mergedNoteUpdatedAt[dk] = rTs;
+          if (rTxt) {
+            mergedNotes[dk] = rTxt;
+          } else {
+            delete mergedNotes[dk];
+          }
         }
+      } else if (!mergedNotes[dk] && rTxt) {
+        mergedNotes[dk] = rTxt;
       }
     }
-    if (mDoc.mood && typeof mDoc.mood === 'object') {
-      for (const [dk, mVal] of Object.entries(mDoc.mood)) {
-        if (mergedMood[dk] === undefined && typeof mVal === 'number') {
-          mergedMood[dk] = mVal;
+    const moodDays = new Set([
+      ...Object.keys(mDoc.mood && typeof mDoc.mood === 'object' ? mDoc.mood : {}),
+      ...Object.keys(
+        mDoc.moodUpdatedAt && typeof mDoc.moodUpdatedAt === 'object' ? mDoc.moodUpdatedAt : {}
+      ),
+    ]);
+    for (const dk of moodDays) {
+      if (!/^\d{4}-\d{2}-\d{2}$/.test(dk)) continue;
+      const rawRVal = mDoc.mood?.[dk];
+      const rVal = typeof rawRVal === 'number' && Number.isFinite(rawRVal) ? rawRVal : 0;
+      const rTs = Number(mDoc.moodUpdatedAt?.[dk]) || 0;
+      const lTs = mergedMoodUpdatedAt[dk] || 0;
+      if (rTs > 0 || lTs > 0) {
+        if (rTs > lTs) {
+          mergedMoodUpdatedAt[dk] = rTs;
+          if (rVal > 0) {
+            mergedMood[dk] = rVal;
+          } else {
+            delete mergedMood[dk];
+          }
         }
+      } else if (mergedMood[dk] === undefined && rVal > 0) {
+        mergedMood[dk] = rVal;
       }
     }
     if (mDoc.wellbeing && typeof mDoc.wellbeing === 'object') {
@@ -974,9 +1042,34 @@ export function mergeStateWithCloudDocs(
     }
   }
 
+  const mergedRestDayUpdatedAt: Record<string, number> = {
+    ...(localState.restDayUpdatedAt || {}),
+  };
+  if (remoteCore?.restDayUpdatedAt && typeof remoteCore.restDayUpdatedAt === 'object') {
+    for (const [dk, ts] of Object.entries(remoteCore.restDayUpdatedAt)) {
+      const numTs = Number(ts) || 0;
+      if (/^\d{4}-\d{2}-\d{2}$/.test(dk) && numTs > (mergedRestDayUpdatedAt[dk] || 0)) {
+        mergedRestDayUpdatedAt[dk] = numTs;
+      }
+    }
+  }
   const mergedRestDays = Array.from(
     new Set([...(localState.restDays || []), ...(remoteCore?.restDays || [])])
-  ).sort();
+  )
+    .filter((dk) => {
+      const tombKey = `rest:${dk}`;
+      const tombTs = mergedTombstones[tombKey];
+      const addTs = mergedRestDayUpdatedAt[dk] || 0;
+      if (tombTs !== undefined && tombTs >= addTs) {
+        delete mergedRestDayUpdatedAt[dk];
+        return false;
+      }
+      if (tombTs !== undefined && addTs > tombTs) {
+        delete mergedTombstones[tombKey];
+      }
+      return true;
+    })
+    .sort();
 
   // Merge profile (LWW by updatedAt, fallback to non-empty nick)
   let mergedProfile = {
@@ -1050,9 +1143,12 @@ export function mergeStateWithCloudDocs(
     doubts: mergedDoubts,
     pyq: mergedPyq,
     restDays: mergedRestDays,
+    restDayUpdatedAt: mergedRestDayUpdatedAt,
     wellbeing: mergedWellbeing,
     notes: mergedNotes,
+    noteUpdatedAt: mergedNoteUpdatedAt,
     mood: mergedMood,
+    moodUpdatedAt: mergedMoodUpdatedAt,
     bonus: Math.max(localState.bonus || 0, remoteCore?.bonus || 0),
     exp: Math.max(localState.exp || 0, remoteCore?.exp || 0),
     ob: localState.ob || remoteCore?.ob ? 1 : 0,
@@ -1325,6 +1421,13 @@ export class SyncBudgetController {
     this.scheduleFlush();
   }
 
+  resetOutbox(): void {
+    this.dispose();
+    this.meta.dirtyDocs = [];
+    this.meta.knownRemoteDocTs = {};
+    this.notifyMeta();
+  }
+
   scheduleFlush(): void {
     if (this.timerId) {
       clearTimeout(this.timerId);
@@ -1531,7 +1634,9 @@ export function detectDirtyDocKeys(
     prevState.subjects !== nextState.subjects ||
     prevState.ddays !== nextState.ddays ||
     prevState.restDays !== nextState.restDays ||
+    prevState.restDayUpdatedAt !== nextState.restDayUpdatedAt ||
     prevState.del !== nextState.del ||
+    prevState.delAt !== nextState.delAt ||
     prevState.bonus !== nextState.bonus ||
     prevState.exp !== nextState.exp ||
     prevState.ob !== nextState.ob ||
@@ -1570,7 +1675,13 @@ export function detectDirtyDocKeys(
     const prevIds = new Map((prevState.tasks || []).map((t) => [t.id, t]));
     const nextIds = new Map((nextState.tasks || []).map((t) => [t.id, t]));
     for (const [id, t] of nextIds) {
-      if (prevIds.get(id) !== t) addYm(t.dayKey);
+      const prevT = prevIds.get(id);
+      if (prevT !== t) {
+        addYm(t.dayKey);
+        if (prevT && prevT.dayKey !== t.dayKey) {
+          addYm(prevT.dayKey);
+        }
+      }
     }
     for (const [id, t] of prevIds) {
       if (!nextIds.has(id)) addYm(t.dayKey);
@@ -1599,25 +1710,35 @@ export function detectDirtyDocKeys(
     }
   }
 
-  if (prevState.notes !== nextState.notes) {
+  if (prevState.notes !== nextState.notes || prevState.noteUpdatedAt !== nextState.noteUpdatedAt) {
     const allDays = new Set([
       ...Object.keys(prevState.notes || {}),
       ...Object.keys(nextState.notes || {}),
+      ...Object.keys(prevState.noteUpdatedAt || {}),
+      ...Object.keys(nextState.noteUpdatedAt || {}),
     ]);
     for (const dk of allDays) {
-      if ((prevState.notes?.[dk] || '') !== (nextState.notes?.[dk] || '')) {
+      if (
+        (prevState.notes?.[dk] || '') !== (nextState.notes?.[dk] || '') ||
+        prevState.noteUpdatedAt?.[dk] !== nextState.noteUpdatedAt?.[dk]
+      ) {
         addYm(dk);
       }
     }
   }
 
-  if (prevState.mood !== nextState.mood) {
+  if (prevState.mood !== nextState.mood || prevState.moodUpdatedAt !== nextState.moodUpdatedAt) {
     const allDays = new Set([
       ...Object.keys(prevState.mood || {}),
       ...Object.keys(nextState.mood || {}),
+      ...Object.keys(prevState.moodUpdatedAt || {}),
+      ...Object.keys(nextState.moodUpdatedAt || {}),
     ]);
     for (const dk of allDays) {
-      if (prevState.mood?.[dk] !== nextState.mood?.[dk]) {
+      if (
+        prevState.mood?.[dk] !== nextState.mood?.[dk] ||
+        prevState.moodUpdatedAt?.[dk] !== nextState.moodUpdatedAt?.[dk]
+      ) {
         addYm(dk);
       }
     }
@@ -1684,7 +1805,9 @@ export async function performCloudSyncCycle(
     uid = uidOrOptions;
     localState = localStateArg!;
     const partitionedNow = partitionStateToCloudDocs(localState);
-    dirtyDocKeys = Object.keys(partitionedNow.docs);
+    dirtyDocKeys = extraOpts?.dirtyDocKeys
+      ? [...extraOpts.dirtyDocKeys]
+      : Object.keys(partitionedNow.docs);
     forcePullAll = Boolean(extraOpts?.forcePull);
   } else {
     uid = uidOrOptions.uid;
@@ -2006,7 +2129,6 @@ export async function performCloudSyncCycle(
 export async function deleteAllUserCloudData(uid: string): Promise<number> {
   const indexRef = doc(db, 'users', uid, 'meta', 'index');
   const snap = await getDoc(indexRef);
-  const batch = writeBatch(db);
   let deletedCount = 0;
 
   const docKeys = new Set<string>([
@@ -2027,29 +2149,31 @@ export async function deleteAllUserCloudData(uid: string): Promise<number> {
     }
   }
 
-  for (const docKey of docKeys) {
-    const parts = docKey.split('/');
-    if (parts.length === 2) {
-      batch.delete(doc(db, 'users', uid, parts[0], parts[1]));
-      deletedCount += 1;
-    }
-  }
-  batch.delete(indexRef);
-  deletedCount += 1;
-
-  await batch.commit();
-
-  // Sweep the entire users/{uid}/meta and users/{uid}/months collections and delete every document found in batches of at most 400
+  // Sweep the entire users/{uid}/meta and users/{uid}/months collections plus known keys in batches of at most 400
   const [metaSnap, monthsSnap] = await Promise.all([
     getDocs(collection(db, 'users', uid, 'meta')),
     getDocs(collection(db, 'users', uid, 'months')),
   ]);
-  const allFoundDocs = [...metaSnap.docs, ...monthsSnap.docs];
-  for (let i = 0; i < allFoundDocs.length; i += 400) {
-    const chunk = allFoundDocs.slice(i, i + 400);
+
+  const refMap = new Map<string, ReturnType<typeof doc>>();
+  refMap.set(indexRef.path, indexRef);
+  for (const docKey of docKeys) {
+    const parts = docKey.split('/');
+    if (parts.length === 2) {
+      const ref = doc(db, 'users', uid, parts[0], parts[1]);
+      refMap.set(ref.path, ref);
+    }
+  }
+  for (const d of [...metaSnap.docs, ...monthsSnap.docs]) {
+    refMap.set(d.ref.path, d.ref);
+  }
+
+  const allRefs = Array.from(refMap.values());
+  for (let i = 0; i < allRefs.length; i += 400) {
+    const chunk = allRefs.slice(i, i + 400);
     const cleanupBatch = writeBatch(db);
-    for (const d of chunk) {
-      cleanupBatch.delete(d.ref);
+    for (const ref of chunk) {
+      cleanupBatch.delete(ref);
       deletedCount += 1;
     }
     await cleanupBatch.commit();

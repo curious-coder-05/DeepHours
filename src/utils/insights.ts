@@ -120,15 +120,26 @@ export function canUseRestDay(state: PulseHabitState, dayKey: string): boolean {
 
 export function toggleRestDay(
   state: PulseHabitState,
-  dayKey: string
+  dayKey: string,
+  now = Date.now()
 ): { nextState: PulseHabitState; toggledOn: boolean; allowed: boolean; reason?: string } {
   const current = state.restDays || [];
   const exists = current.includes(dayKey);
+  const tombKey = `rest:${dayKey}`;
   if (exists) {
+    const nextRestUpdatedAt = { ...(state.restDayUpdatedAt || {}) };
+    delete nextRestUpdatedAt[dayKey];
+    const nextDel = (state.del || []).includes(tombKey)
+      ? [...(state.del || [])]
+      : [...(state.del || []), tombKey];
+    const nextDelAt = { ...(state.delAt || {}), [tombKey]: now };
     return {
       nextState: {
         ...state,
         restDays: current.filter((d) => d !== dayKey),
+        restDayUpdatedAt: nextRestUpdatedAt,
+        del: nextDel,
+        delAt: nextDelAt,
       },
       toggledOn: false,
       allowed: true,
@@ -142,10 +153,19 @@ export function toggleRestDay(
       reason: 'Monthly rest pass limit reached',
     };
   }
+  const nextDel = (state.del || []).filter((id) => id !== tombKey);
+  const nextDelAt = { ...(state.delAt || {}) };
+  delete nextDelAt[tombKey];
   return {
     nextState: {
       ...state,
       restDays: [...current, dayKey].sort(),
+      restDayUpdatedAt: {
+        ...(state.restDayUpdatedAt || {}),
+        [dayKey]: now,
+      },
+      del: nextDel,
+      delAt: nextDelAt,
     },
     toggledOn: true,
     allowed: true,

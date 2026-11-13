@@ -7,6 +7,7 @@ import {
   getDocs,
   limit,
   query,
+  runTransaction,
   setDoc,
   updateDoc,
   where,
@@ -511,7 +512,7 @@ export function buildMyMemberEntry(
       dayMsMap[ses.dayKey] = (dayMsMap[ses.dayKey] || 0) + Math.max(0, Number(ses.activeMs) || 0);
     }
     for (const [dk, ms] of Object.entries(dayMsMap)) {
-      const mins = clampInt(Math.floor(ms / 60000), 0, 1440, 0);
+      const mins = clampInt(Math.floor(ms / 60000), 0, 960, 0);
       if (mins > 0) {
         days[dk] = mins;
       }
@@ -526,7 +527,7 @@ export function buildMyMemberEntry(
     for (const [dk, entry] of Object.entries(byDay)) {
       if (dk > todayKey) continue;
       if (dk >= minDayKey && entry.total > 0) {
-        xpDays[dk] = clampInt(entry.total, 0, 3000, 0);
+        xpDays[dk] = clampInt(entry.total, 0, 2000, 0);
       }
     }
     xpTotal = clampInt(computeTotalXp(state, todayKey), 0, 10_000_000, 0);
@@ -1671,53 +1672,58 @@ export async function joinGroupInCloud(params: {
   }
 
   const ref = doc(db, 'groups', groupId);
-  const snap = await getDoc(ref);
+  const { updatedGroup, myEntry } = await runTransaction(db, async (tx) => {
+    const snap = await tx.get(ref);
+    if (!snap.exists()) {
+      throw new Error('No study group found with that invite code.');
+    }
+
+    const remoteGroup = sanitizeRemoteGroupDoc(snap.data(), params.todayKey);
+    if (!remoteGroup) {
+      throw new Error('This study group document could not be loaded.');
+    }
+
+    const existingMember = remoteGroup.members[user.uid];
+    const currentCount = Object.keys(remoteGroup.members).length;
+    if (!existingMember && currentCount >= remoteGroup.memberCap) {
+      throw new Error(`This group is full (${currentCount}/${remoteGroup.memberCap} members).`);
+    }
+
+    const now = Date.now();
+    const entry = buildMyMemberEntry(params.state, params.todayKey, {
+      joinedAt: existingMember?.joinedAt || now,
+      sh: params.sh,
+      groupId,
+      existingWeeks: existingMember?.weeks,
+      now,
+    });
+
+    tx.update(ref, {
+      [`members.${user.uid}`]: sanitizeForFirestore(entry),
+      updatedAt: now,
+    });
+
+    return {
+      myEntry: entry,
+      updatedGroup: {
+        ...remoteGroup,
+        updatedAt: now,
+        members: {
+          ...remoteGroup.members,
+          [user.uid]: entry,
+        },
+      } as GroupDoc,
+    };
+  });
+
   params.budget.recordRead(1);
-
-  if (!snap.exists()) {
-    throw new Error('No study group found with that invite code.');
-  }
-
-  const remoteGroup = sanitizeRemoteGroupDoc(snap.data(), params.todayKey);
-  if (!remoteGroup) {
-    throw new Error('This study group document could not be loaded.');
-  }
-
-  const existingMember = remoteGroup.members[user.uid];
-  const currentCount = Object.keys(remoteGroup.members).length;
-  if (!existingMember && currentCount >= remoteGroup.memberCap) {
-    throw new Error(`This group is full (${currentCount}/${remoteGroup.memberCap} members).`);
-  }
-
-  const now = Date.now();
-  const myEntry = buildMyMemberEntry(params.state, params.todayKey, {
-    joinedAt: existingMember?.joinedAt || now,
-    sh: params.sh,
-    groupId,
-    existingWeeks: existingMember?.weeks,
-    now,
-  });
-
-  await updateDoc(ref, {
-    [`members.${user.uid}`]: sanitizeForFirestore(myEntry),
-    updatedAt: now,
-  });
   params.budget.recordWrite(1);
   params.budget.commitEntryHash(groupId, myEntry);
-
-  const updatedGroup: GroupDoc = {
-    ...remoteGroup,
-    updatedAt: now,
-    members: {
-      ...remoteGroup.members,
-      [user.uid]: myEntry,
-    },
-  };
 
   saveCachedGroupSnapshot({
     groupId,
     doc: updatedGroup,
-    fetchedAt: now,
+    fetchedAt: updatedGroup.updatedAt,
     receivedCheers: [],
   });
 
@@ -1951,16 +1957,32 @@ export async function sendCheerInCloud(params: {
   }
 
   const cheerId = makeCheerId(params.dayKey, user.uid, params.toUid);
+  const cheerRef = doc(db, 'groups', params.groupId, 'cheers', cheerId);
+  if (params.budget.canRead(1)) {
+    const existing = await getDoc(cheerRef);
+    params.budget.recordRead(1);
+    if (existing.exists()) {
+      throw new Error('You have already cheered this member today.');
+    }
+  }
   const now = Date.now();
-  await setDoc(doc(db, 'groups', params.groupId, 'cheers', cheerId), {
-    from: user.uid,
-    to: params.toUid,
-    fromNick: sanitizePlainText(params.fromNick, 20, 'Member'),
-    dayKey: params.dayKey,
-    e: params.emoji,
-    ts: now,
-  });
-  params.budget.recordCheerSent();
+  try {
+    await setDoc(cheerRef, {
+      from: user.uid,
+      to: params.toUid,
+      fromNick: sanitizePlainText(params.fromNick, 20, 'Member'),
+      dayKey: params.dayKey,
+      e: params.emoji,
+      ts: now,
+    });
+    params.budget.recordCheerSent();
+  } catch (err) {
+    const code = (err as { code?: string })?.code || '';
+    if (code === 'permission-denied' || /permission/i.test(String(err))) {
+      throw new Error('Already cheered this member today or no longer a group member.');
+    }
+    throw err;
+  }
 }
 
 /**
@@ -2046,6 +2068,9 @@ export async function ownerUpdateGroupSettings(params: {
     }
   }
   if (params.removeMemberUid) {
+    if (params.removeMemberUid === user.uid) {
+      throw new Error('You cannot remove yourself as owner. Use Close Group instead.');
+    }
     patch[`members.${params.removeMemberUid}`] = deleteField();
   }
 
@@ -2059,6 +2084,9 @@ export async function ownerCloseGroupInCloud(params: {
 }): Promise<void> {
   const user = auth?.currentUser;
   if (!user || !db) throw new Error('Not signed in.');
+  if (!params.budget.canWrite(1)) {
+    throw new Error('Daily group write limit reached.');
+  }
 
   await deleteDoc(doc(db, 'groups', params.groupId));
   params.budget.recordWrite(1);

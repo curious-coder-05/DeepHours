@@ -18,6 +18,15 @@ interface PlannerViewProps {
   onToast?: (msg: string) => void;
 }
 
+interface SlotTopicEntry {
+  topicKey: string;
+  subjectName: string;
+  subjectEmoji: string;
+  heading: string;
+  color: string;
+  mins: number;
+}
+
 interface SlotData {
   slotIndex: number;
   windowLabel: string;
@@ -26,6 +35,7 @@ interface SlotData {
   heading: string;
   color: string;
   mins: number;
+  entries: SlotTopicEntry[];
   isLive?: boolean;
 }
 
@@ -93,8 +103,15 @@ export const PlannerView: React.FC<PlannerViewProps> = ({
     }
     topicTotals[topicKey].activeMs += Math.max(0, activeMs);
 
-    const safeEnd = Math.max(startTs + 1000, endTs);
-    for (let ts = startTs; ts < safeEnd; ts += 60000) {
+    if (activeMs <= 0) return;
+
+    // Distribute only active minutes across the session window so long pauses never inflate slots.
+    const totalActiveMins = Math.max(1, Math.min(1440, Math.round(activeMs / 60000)));
+    const safeEnd = Math.max(startTs + 60000, endTs);
+    const stepMs = (safeEnd - startTs) / totalActiveMins;
+
+    for (let i = 0; i < totalActiveMins; i++) {
+      const ts = startTs + Math.floor(i * stepMs);
       const d = new Date(ts);
       const slotIdx = d.getHours() * 6 + Math.floor(d.getMinutes() / 10);
       if (!actualSlots[slotIdx]) {
@@ -106,16 +123,35 @@ export const PlannerView: React.FC<PlannerViewProps> = ({
           heading: cleanHeading,
           color,
           mins: 0,
+          entries: [],
           isLive,
         };
-      } else {
-        actualSlots[slotIdx].subjectName = sub.name;
-        actualSlots[slotIdx].subjectEmoji = sub.e;
-        actualSlots[slotIdx].heading = cleanHeading;
-        actualSlots[slotIdx].color = color;
-        if (isLive) actualSlots[slotIdx].isLive = true;
       }
-      actualSlots[slotIdx].mins = Math.min(10, actualSlots[slotIdx].mins + 1);
+      const slot = actualSlots[slotIdx];
+      let entry = slot.entries.find((e) => e.topicKey === topicKey);
+      if (!entry) {
+        entry = {
+          topicKey,
+          subjectName: sub.name,
+          subjectEmoji: sub.e,
+          heading: cleanHeading,
+          color,
+          mins: 0,
+        };
+        slot.entries.push(entry);
+      }
+      entry.mins += 1;
+      slot.mins = Math.min(10, slot.mins + 1);
+      if (isLive) slot.isLive = true;
+
+      const dominant = slot.entries.reduce(
+        (best, cur) => (cur.mins > best.mins ? cur : best),
+        slot.entries[0]
+      );
+      slot.subjectName = dominant.subjectName;
+      slot.subjectEmoji = dominant.subjectEmoji;
+      slot.heading = dominant.heading;
+      slot.color = dominant.color;
     }
   };
 
@@ -288,6 +324,15 @@ export const PlannerView: React.FC<PlannerViewProps> = ({
                 />{' '}
                 {inspectedSlot.subjectEmoji} {inspectedSlot.subjectName} · {inspectedSlot.heading}
               </b>
+              {inspectedSlot.entries.length > 1 && (
+                <small className="mu">
+                  (
+                  {inspectedSlot.entries
+                    .map((e) => `${e.subjectEmoji} ${e.heading} ${e.mins}m`)
+                    .join(' + ')}
+                  )
+                </small>
+              )}
               <span className="pill mono" style={{ color: 'var(--em)' }}>
                 {inspectedSlot.mins} / 10 min active
                 {inspectedSlot.isLive ? ' · ● LIVE' : ''}
@@ -346,7 +391,9 @@ export const PlannerView: React.FC<PlannerViewProps> = ({
                   const act = actualSlots[slot];
                   const fillPct = act ? Math.min(100, Math.max(25, act.mins * 10)) : 0;
                   const isDimmed =
-                    Boolean(filterHeading) && act && act.heading !== filterHeading;
+                    Boolean(filterHeading) &&
+                    act &&
+                    !act.entries.some((e) => e.heading === filterHeading);
                   const isInspected = selectedSlot === slot;
                   const windowLbl = getSlotWindowLabel(slot);
 

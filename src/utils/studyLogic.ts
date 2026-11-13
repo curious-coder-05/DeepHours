@@ -374,10 +374,13 @@ export function createBlankState(): PulseHabitState {
     doubts: [],
     pyq: [],
     restDays: [],
+    restDayUpdatedAt: {},
     wellbeing: {},
     activeTimer: null,
     notes: {},
+    noteUpdatedAt: {},
     mood: {},
+    moodUpdatedAt: {},
     bonus: 0,
     exp: 0,
     ob: 0,
@@ -505,6 +508,7 @@ export function norm(raw: unknown): PulseHabitState {
   const cleanDailyMins: Record<string, number> = {};
   if (rawTargets.dailyMinutes && typeof rawTargets.dailyMinutes === 'object') {
     for (const [k, v] of Object.entries(rawTargets.dailyMinutes as Record<string, unknown>)) {
+      if (k === '__proto__' || k === 'constructor' || k === 'prototype') continue;
       const n = Math.floor(Number(v));
       if (Number.isFinite(n) && n >= 0) cleanDailyMins[k] = n;
     }
@@ -512,6 +516,7 @@ export function norm(raw: unknown): PulseHabitState {
   const cleanWeeklyMins: Record<string, number> = {};
   if (rawTargets.weeklyMinutes && typeof rawTargets.weeklyMinutes === 'object') {
     for (const [k, v] of Object.entries(rawTargets.weeklyMinutes as Record<string, unknown>)) {
+      if (k === '__proto__' || k === 'constructor' || k === 'prototype') continue;
       const n = Math.floor(Number(v));
       if (Number.isFinite(n) && n >= 0) cleanWeeklyMins[k] = n;
     }
@@ -1029,6 +1034,19 @@ export function norm(raw: unknown): PulseHabitState {
   }
 
   // Rest Days (1.9)
+  const sanitizeDayTsMap = (raw: unknown): Record<string, number> => {
+    const out: Record<string, number> = {};
+    if (!raw || typeof raw !== 'object') return out;
+    for (const [dk, val] of Object.entries(raw as Record<string, unknown>)) {
+      if (dk === '__proto__' || dk === 'constructor' || dk === 'prototype') continue;
+      if (!/^\d{4}-\d{2}-\d{2}$/.test(dk)) continue;
+      const num = Number(val);
+      if (Number.isFinite(num) && num > 0) {
+        out[dk] = num;
+      }
+    }
+    return out;
+  };
   if (Array.isArray(src.restDays)) {
     const uniqueRest = Array.from(
       new Set(
@@ -1041,6 +1059,7 @@ export function norm(raw: unknown): PulseHabitState {
   } else {
     s.restDays = [];
   }
+  s.restDayUpdatedAt = sanitizeDayTsMap(src.restDayUpdatedAt);
 
   // Wellbeing (1.11)
   if (src.wellbeing && typeof src.wellbeing === 'object') {
@@ -1109,8 +1128,30 @@ export function norm(raw: unknown): PulseHabitState {
     s.activeTimer = null;
   }
 
-  s.notes = src.notes && typeof src.notes === 'object' ? (src.notes as Record<string, string>) : {};
-  s.mood = src.mood && typeof src.mood === 'object' ? (src.mood as Record<string, number>) : {};
+  const cleanNotes: Record<string, string> = {};
+  if (src.notes && typeof src.notes === 'object') {
+    for (const [dk, val] of Object.entries(src.notes as Record<string, unknown>)) {
+      if (dk === '__proto__' || dk === 'constructor' || dk === 'prototype') continue;
+      if (typeof val === 'string' && val.length > 0) {
+        cleanNotes[dk] = val;
+      }
+    }
+  }
+  s.notes = cleanNotes;
+  s.noteUpdatedAt = sanitizeDayTsMap(src.noteUpdatedAt);
+
+  const cleanMood: Record<string, number> = {};
+  if (src.mood && typeof src.mood === 'object') {
+    for (const [dk, val] of Object.entries(src.mood as Record<string, unknown>)) {
+      if (dk === '__proto__' || dk === 'constructor' || dk === 'prototype') continue;
+      const num = Number(val);
+      if (Number.isFinite(num) && num > 0) {
+        cleanMood[dk] = num;
+      }
+    }
+  }
+  s.mood = cleanMood;
+  s.moodUpdatedAt = sanitizeDayTsMap(src.moodUpdatedAt);
   s.bonus = Number.isFinite(src.bonus) ? Number(src.bonus) : 0;
   s.exp = Number.isFinite(src.exp) ? Number(src.exp) : 0;
   s.ob = src.ob ? 1 : 0;
@@ -1252,10 +1293,13 @@ export function norm(raw: unknown): PulseHabitState {
         if (joined.length >= 3) break;
       }
     }
+    const cleanActiveGid =
+      typeof rawGc.activeGroupId === 'string'
+        ? rawGc.activeGroupId.toUpperCase().replace(/[^A-Z0-9]/g, '')
+        : '';
     const activeGroupId =
-      typeof rawGc.activeGroupId === 'string' &&
-      joined.some((j) => j.groupId === rawGc.activeGroupId)
-        ? rawGc.activeGroupId
+      cleanActiveGid && joined.some((j) => j.groupId === cleanActiveGid)
+        ? cleanActiveGid
         : joined[0]?.groupId;
     const gc: GroupsUserConfig = {
       consentAccepted: Boolean(rawGc.consentAccepted),
@@ -1591,7 +1635,9 @@ export function computeStudySummary(
       dayName: d.toLocaleDateString(undefined, { weekday: 'short' }),
       shortDate: d.toLocaleDateString(undefined, { month: 'short', day: 'numeric' }),
       ms,
-      sessionsCount: daySessions.length,
+      sessionsCount:
+        daySessions.length +
+        (k === todayKey && state.activeTimer && state.activeTimer.phase !== 'break' ? 1 : 0),
     });
   }
 

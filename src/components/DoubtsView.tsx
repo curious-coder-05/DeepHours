@@ -1,4 +1,4 @@
-import React, { useMemo, useState } from 'react';
+import React, { useEffect, useMemo, useState } from 'react';
 import { PulseHabitState } from '../types';
 import { getSubject, logicalKey } from '../utils/studyLogic';
 
@@ -26,6 +26,19 @@ export const DoubtsView: React.FC<DoubtsViewProps> = ({
 
   const [filterSub, setFilterSub] = useState<string>('all');
   const [filterStatus, setFilterStatus] = useState<'open' | 'resolved' | 'all'>('open');
+
+  useEffect(() => {
+    if (activeSubjects.length > 0 && !activeSubjects.some((s) => s.id === formSubId)) {
+      setFormSubId(activeSubjects[0].id);
+      setFormChapId('');
+    }
+  }, [activeSubjects, formSubId]);
+
+  useEffect(() => {
+    if (filterSub !== 'all' && !activeSubjects.some((s) => s.id === filterSub)) {
+      setFilterSub('all');
+    }
+  }, [activeSubjects, filterSub]);
 
   const availableChapters = useMemo(
     () => state.chapters.filter((ch) => ch.subjectId === formSubId),

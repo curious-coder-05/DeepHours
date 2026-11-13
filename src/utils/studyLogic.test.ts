@@ -95,6 +95,7 @@ import {
   validateNickname,
 } from './groups.ts';
 import { getLocalDownloadDate } from '../components/ErrorBoundary.tsx';
+import { buildDayArchiveRecord } from '../components/DayHistoryView.tsx';
 
 describe('Part C: Deep Hours NEET Study & Habit Logger Unit Tests', () => {
   it('1. logicalKey around midnight and the reset hour (04:00 AM)', () => {
@@ -2255,6 +2256,214 @@ describe('Part C: Deep Hours NEET Study & Habit Logger Unit Tests', () => {
 
     budgetFull.dispose();
     budgetTight.dispose();
+  });
+
+  it('30. Pre-ship regression fixes: cross-month task moves, clamp alignment, norm hygiene, DayHistoryView 240m & future date rules, and summary session count consistency', () => {
+    // 1. Moving a task from 2026-10-31 to 2026-11-01 marks both month docs dirty
+    const prevState = createBlankState();
+    prevState.tasks = [
+      {
+        id: 't_move',
+        title: 'Revise Organic Chemistry',
+        dayKey: '2026-10-31',
+        done: false,
+        createdAt: 1000,
+        updatedAt: 1000,
+      },
+    ];
+    const nextState: typeof prevState = {
+      ...prevState,
+      tasks: [
+        {
+          ...prevState.tasks[0],
+          dayKey: '2026-11-01',
+          updatedAt: 2000,
+        },
+      ],
+    };
+    const dirty = detectDirtyDocKeys(prevState, nextState);
+    assert.ok(dirty.includes('meta/tasks'));
+    assert.ok(dirty.includes('months/2026-10'));
+    assert.ok(dirty.includes('months/2026-11'));
+
+    // 2. buildMyMemberEntry matches sanitizeRemoteMemberEntry clamps (960m/day, 2000 XP/day)
+    const heavyState = createBlankState();
+    heavyState.profile = { nick: 'Marathon', emoji: '🩺' };
+    heavyState.sessions = [
+      {
+        id: 's_1200',
+        subjectId: 'sub_phy',
+        heading: 'Marathon',
+        dayKey: '2026-10-30',
+        startTs: 1000,
+        endTs: 1000 + 1200 * 60000,
+        activeMs: 1200 * 60000,
+        pausedMs: 0,
+        pauseCount: 0,
+        overtimeMs: 0,
+        purity: 100,
+        mode: 'pomo',
+        source: 'timer',
+        rating: 5,
+        note: '',
+        updatedAt: 2000,
+      },
+    ];
+    for (let i = 0; i < 30; i++) {
+      heavyState.tasks.push({
+        id: `t_heavy_${i}`,
+        title: `T${i}`,
+        dayKey: '2026-10-30',
+        done: true,
+        createdAt: 1000,
+        updatedAt: 1000,
+      });
+    }
+    const myEntry = buildMyMemberEntry(heavyState, '2026-10-30', {
+      joinedAt: 1000,
+      sh: { t: true, x: true, s: true, m: false, l: false },
+      now: 5000,
+    });
+    assert.equal(myEntry.days?.['2026-10-30'], 960);
+    assert.ok((myEntry.xpDays?.['2026-10-30'] || 0) <= 2000);
+
+    // 3. norm() rejects __proto__ / constructor keys and normalizes activeGroupId
+    const dirtyDailyTargets = JSON.parse(
+      '{"__proto__":999,"constructor":888,"sub_phy":120}'
+    );
+    const normed = norm({
+      set: {
+        targets: {
+          dailyMinutes: dirtyDailyTargets,
+          weeklyMinutes: {},
+          minDayMinutes: 240,
+          restPassesPerMonth: 4,
+        },
+      },
+      groupsConfig: {
+        consentAccepted: true,
+        joined: [{ groupId: 'ABCDE23456', joinedAt: 1000, sh: DEFAULT_SHARING_FLAGS }],
+        activeGroupId: 'abcde-23456',
+      },
+    });
+    assert.equal(Object.hasOwn(normed.set.targets?.dailyMinutes || {}, 'sub_phy'), true);
+    assert.equal(Object.hasOwn(normed.set.targets?.dailyMinutes || {}, 'constructor'), false);
+    assert.equal(normed.groupsConfig?.activeGroupId, 'ABCDE23456');
+
+    // 4. buildDayArchiveRecord uses 240m default target and suppresses missed items on future dates
+    const archiveState = createBlankState();
+    archiveState.set.targets = undefined as unknown as typeof archiveState.set.targets;
+    archiveState.habits = [mkHabit({ id: 'h1', name: 'Read NCERT', tn: 1 }, '2026-10-01')];
+    archiveState.tasks = [
+      {
+        id: 't_future',
+        title: 'Future task',
+        dayKey: '2026-11-05',
+        done: false,
+        createdAt: 1000,
+        updatedAt: 1000,
+      },
+    ];
+    const futureRec = buildDayArchiveRecord(archiveState, '2026-11-05', '2026-10-30');
+    assert.equal(futureRec.minTargetMs, 240 * 60000);
+    assert.equal(futureRec.habitsMissed.length, 0);
+    assert.equal(futureRec.tasksMissed.length, 0);
+    assert.equal(futureRec.revisionsMissed.length, 0);
+
+    // 5. computeStudySummary last7Days & last30Days agree on active timer session count
+    const summaryState = createBlankState();
+    summaryState.activeTimer = {
+      status: 'running',
+      mode: 'pomo',
+      phase: 'work',
+      subjectId: 'sub_phy',
+      heading: 'Physics',
+      startTs: 1000,
+      sliceStartTs: 1000,
+      pauseStartTs: null,
+      pausedDurationMs: 0,
+      slicePausedMs: 0,
+      pauseCount: 0,
+      slicePauseCount: 0,
+      targetMs: 1500000,
+      chimeFired: false,
+      fiveMinWarnFired: false,
+    };
+    const summary = computeStudySummary(summaryState, '2026-10-30', 61000);
+    const today7 = summary.last7Days.find((d) => d.key === '2026-10-30');
+    const today30 = summary.last30Days.find((d) => d.key === '2026-10-30');
+    assert.equal(today7?.sessionsCount, 1);
+    assert.equal(today30?.sessionsCount, 1);
+  });
+
+  it('31. Pre-ship LWW & tombstones: cleared notes, moods, and removed rest days are not resurrected across cloud sync', () => {
+    const dk = '2026-10-25';
+    const t1 = Date.now() - 10_000;
+    const t2 = t1 + 1000;
+    const t3 = t1 + 2000;
+
+    // Remote state created at t1 with note, mood, and rest day
+    let remoteState = createBlankState();
+    remoteState.notes = { [dk]: 'Stale remote note' };
+    remoteState.noteUpdatedAt = { [dk]: t1 };
+    remoteState.mood = { [dk]: 4 };
+    remoteState.moodUpdatedAt = { [dk]: t1 };
+    remoteState = toggleRestDay(remoteState, dk, t1).nextState;
+    assert.deepEqual(remoteState.restDays, [dk]);
+    const remoteDocs = partitionStateToCloudDocs(remoteState, t1);
+
+    // Local state had the same entries at t1, then user cleared all three at t2
+    let localCleared = norm(JSON.parse(JSON.stringify(remoteState)));
+    const prevLocal = localCleared;
+    const afterToggleOff = toggleRestDay(localCleared, dk, t2).nextState;
+    localCleared = {
+      ...afterToggleOff,
+      notes: {},
+      noteUpdatedAt: { [dk]: t2 },
+      mood: {},
+      moodUpdatedAt: { [dk]: t2 },
+    };
+
+    // Dirty detection marks both meta/core and months/2026-10 dirty
+    const dirty = detectDirtyDocKeys(prevLocal, localCleared);
+    assert.ok(dirty.includes('meta/core'));
+    assert.ok(dirty.includes('months/2026-10'));
+
+    // Even on an empty month, cleared note/mood timestamps still emit the month doc
+    const clearedDocs = partitionStateToCloudDocs(localCleared, t2);
+    assert.equal(clearedDocs.monthDocs['2026-10']?.noteUpdatedAt?.[dk], t2);
+    assert.equal(clearedDocs.monthDocs['2026-10']?.moodUpdatedAt?.[dk], t2);
+    assert.equal(clearedDocs.metaDocs.core.del[`rest:${dk}`], t2);
+
+    // Merging localCleared (t2) with older remoteDocs (t1) must NOT resurrect note, mood, or rest day
+    const mergedAfterClear = mergeStateWithCloudDocs(
+      localCleared,
+      { metaDocs: remoteDocs.metaDocs, monthDocs: remoteDocs.monthDocs },
+      t2 + 500
+    );
+    assert.equal(mergedAfterClear.notes[dk], undefined);
+    assert.equal(mergedAfterClear.mood[dk], undefined);
+    assert.equal(mergedAfterClear.restDays.includes(dk), false);
+    assert.equal(mergedAfterClear.delAt?.[`rest:${dk}`], t2);
+
+    // A newer remote edit at t3 wins via LWW and re-added rest day beats older tombstone
+    let newerRemote = toggleRestDay(remoteState, dk, t2 - 500).nextState;
+    newerRemote = toggleRestDay(newerRemote, dk, t3).nextState;
+    newerRemote.notes = { [dk]: 'Updated from second device' };
+    newerRemote.noteUpdatedAt = { [dk]: t3 };
+    newerRemote.mood = { [dk]: 5 };
+    newerRemote.moodUpdatedAt = { [dk]: t3 };
+    const newerRemoteDocs = partitionStateToCloudDocs(newerRemote, t3);
+
+    const mergedNewerWins = mergeStateWithCloudDocs(
+      mergedAfterClear,
+      { metaDocs: newerRemoteDocs.metaDocs, monthDocs: newerRemoteDocs.monthDocs },
+      t3 + 500
+    );
+    assert.equal(mergedNewerWins.notes[dk], 'Updated from second device');
+    assert.equal(mergedNewerWins.mood[dk], 5);
+    assert.equal(mergedNewerWins.restDays.includes(dk), true);
+    assert.equal(mergedNewerWins.delAt?.[`rest:${dk}`], undefined);
   });
 });
 

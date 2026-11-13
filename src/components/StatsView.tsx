@@ -24,6 +24,7 @@ import { computeConsistencyScore } from '../utils/insights';
 import { computeLevelInfo, computeTotalXp } from '../utils/xp';
 import { PlannerView } from './PlannerView';
 import { ReviewView } from './ReviewView';
+import { DayHistoryView } from './DayHistoryView';
 
 interface StatsViewProps {
   state: PulseHabitState;
@@ -33,6 +34,7 @@ interface StatsViewProps {
   onChangeSubTab: (sub: StatsSubTab) => void;
   onOpenManualSession: (defaultSubjectId?: string) => void;
   onEditSession?: (sessionId: string) => void;
+  onSelectDateInToday?: (dayKey: string) => void;
   onToast?: (msg: string) => void;
 }
 
@@ -44,6 +46,7 @@ export const StatsView: React.FC<StatsViewProps> = ({
   onChangeSubTab,
   onOpenManualSession,
   onEditSession,
+  onSelectDateInToday,
   onToast,
 }) => {
   const summary = computeStudySummary(state, todayKey);
@@ -54,6 +57,7 @@ export const StatsView: React.FC<StatsViewProps> = ({
   );
   const chapterBreakdown = useMemo(() => computeChapterBreakdown(state), [state]);
   const [selectedCalDayKey, setSelectedCalDayKey] = useState<string | null>(todayKey);
+  const [historyDateKey, setHistoryDateKey] = useState<string>(todayKey);
   const selectedCalDay: ConsistencyDay | null =
     (selectedCalDayKey
       ? consistencyCal.days.find((d) => d.key === selectedCalDayKey)
@@ -135,6 +139,20 @@ export const StatsView: React.FC<StatsViewProps> = ({
           </button>
           <button
             type="button"
+            className={subTab === 'history' ? 'on' : ''}
+            style={{
+              padding: '6px 12px',
+              fontSize: '12.5px',
+              borderRadius: '10px',
+              whiteSpace: 'nowrap',
+              flex: '1 0 auto',
+            }}
+            onClick={() => onChangeSubTab('history')}
+          >
+            📅 Day History
+          </button>
+          <button
+            type="button"
             className={subTab === 'timeline' ? 'on' : ''}
             style={{
               padding: '6px 12px',
@@ -164,7 +182,17 @@ export const StatsView: React.FC<StatsViewProps> = ({
         </div>
       </div>
 
-      {subTab === 'timeline' ? (
+      {subTab === 'history' ? (
+        <DayHistoryView
+          key={historyDateKey}
+          state={state}
+          todayKey={todayKey}
+          initialDateKey={historyDateKey}
+          onSelectDateInToday={onSelectDateInToday}
+          onEditSession={onEditSession}
+          onOpenManualSession={onOpenManualSession}
+        />
+      ) : subTab === 'timeline' ? (
         <PlannerView
           state={state}
           sel={sel}
@@ -851,6 +879,8 @@ export const StatsView: React.FC<StatsViewProps> = ({
                   background: 'var(--c2)',
                   borderRadius: '12px',
                   fontSize: '12px',
+                  flexWrap: 'wrap',
+                  gap: '8px',
                 }}
               >
                 <span>
@@ -859,13 +889,33 @@ export const StatsView: React.FC<StatsViewProps> = ({
                   </b>{' '}
                   <small className="mono">({selectedCalDay.key})</small>
                 </span>
-                <span>
-                  Habits:{' '}
-                  <b className="mono" style={{ color: 'var(--em)' }}>
-                    {selectedCalDay.doneCount}/{selectedCalDay.dueCount} ({selectedCalDay.pct}%)
-                  </b>{' '}
-                  · Study: <b className="mono">{fmtHMShort(selectedCalDay.studyMs)}</b>
-                </span>
+                <div className="row" style={{ gap: '8px', flexWrap: 'wrap' }}>
+                  <span>
+                    Habits:{' '}
+                    <b className="mono" style={{ color: 'var(--em)' }}>
+                      {selectedCalDay.doneCount}/{selectedCalDay.dueCount} ({selectedCalDay.pct}%)
+                    </b>{' '}
+                    · Study: <b className="mono">{fmtHMShort(selectedCalDay.studyMs)}</b>
+                  </span>
+                  <button
+                    type="button"
+                    style={{
+                      padding: '4px 10px',
+                      fontSize: '11px',
+                      borderRadius: '8px',
+                      background: 'rgba(99, 102, 241, 0.14)',
+                      color: 'var(--ac)',
+                      border: '1px solid rgba(99, 102, 241, 0.35)',
+                      fontWeight: 700,
+                    }}
+                    onClick={() => {
+                      setHistoryDateKey(selectedCalDay.key);
+                      onChangeSubTab('history');
+                    }}
+                  >
+                    📅 Open Full Day Record →
+                  </button>
+                </div>
               </div>
             )}
 

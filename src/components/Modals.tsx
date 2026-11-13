@@ -718,11 +718,12 @@ export const Modals: React.FC<ModalsProps> = ({
               msHeading.trim() ||
               chosenChapter?.name ||
               (sub ? `${sub.name} Study` : 'Deep Study Session');
-            const totalDurationMins = Math.max(
-              1,
-              (Number(msHours) || 0) * 60 + (Number(msMins) || 0)
+            const totalDurationMins = Math.min(
+              1440,
+              Math.max(1, (Number(msHours) || 0) * 60 + (Number(msMins) || 0))
             );
             const activeMs = totalDurationMins * 60000;
+            if (!/^\d{4}-\d{2}-\d{2}$/.test(msDayKey)) return;
 
             // A1: Use Number.isFinite so 00:xx is preserved as hour 0.
             // Times earlier than dayResetHour belong to the NEXT calendar date of the selected logical day.

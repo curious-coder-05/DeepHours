@@ -78,7 +78,9 @@ import {
   deleteAllUserCloudData,
   detectDirtyDocKeys,
   getSyncTodayWrites,
+  loadSyncOutboxMeta,
   performCloudSyncCycle,
+  saveSyncOutboxMeta,
   signInWithGoogleAccount,
   signOutGoogleAccount,
   subscribeToAuthChanges,
@@ -186,7 +188,6 @@ export default function App() {
     actionLabel?: string;
     onTap?: () => void;
   } | null>(null);
-  const [waitingSw, setWaitingSw] = useState<ServiceWorker | null>(null);
   const [perfectDayBanner, setPerfectDayBanner] = useState(false);
   const [, setTickCounter] = useState(0);
 
@@ -242,6 +243,7 @@ export default function App() {
   const perfectDayTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const firedRemindersRef = useRef<Set<string>>(new Set());
   const wakeLockRef = useRef<WakeLockSentinel | null>(null);
+  const waitingSwRef = useRef<ServiceWorker | null>(null);
   const swReloadRequestedRef = useRef(false);
 
   const todayKey = logicalKey(new Date(), state.set.dayResetHour ?? 4);
@@ -363,7 +365,7 @@ export default function App() {
   // F6: Apply waiting Service Worker only when tapped and no timer is running
   const handleApplyWaitingSw = useCallback(
     (worker?: ServiceWorker | null) => {
-      const targetSw = worker || waitingSw;
+      const targetSw = worker || waitingSwRef.current;
       if (!targetSw) return;
       if (stateRef.current.activeTimer?.status === 'running') {
         showToast('Pause or finish your running timer before reloading');
@@ -384,7 +386,7 @@ export default function App() {
         }
       }, 600);
     },
-    [showToast, waitingSw]
+    [showToast]
   );
 
   // A3, F4, F6: Load initial state and register Service Worker with update detection
@@ -429,7 +431,7 @@ export default function App() {
           if (!mounted) return;
           const notifyWaiting = (sw: ServiceWorker) => {
             if (!mounted) return;
-            setWaitingSw(sw);
+            waitingSwRef.current = sw;
             showToast('New version ready, tap to reload', undefined, {
               durationMs: 0,
               actionLabel: 'Reload',
@@ -628,8 +630,23 @@ export default function App() {
   }, [ready, authUser, runCloudSync]);
 
   useEffect(() => {
-    const controller = new SyncBudgetController(async (dirtyDocKeys) => {
-      await runCloudSync({ forcePull: false, dirtyDocKeys });
+    const controller = new SyncBudgetController({
+      initialMeta: loadSyncOutboxMeta(),
+      onFlushDocs: async (dirtyDocKeys) => {
+        await runCloudSync({ forcePull: false, dirtyDocKeys });
+        return { writesUsed: 0 };
+      },
+      onMetaChanged: (m) => {
+        const stored = loadSyncOutboxMeta();
+        saveSyncOutboxMeta({
+          ...stored,
+          dirtyDocs: m.dirtyDocs,
+          lastPushTs: m.lastPushTs,
+          dailyWritesDayKey: m.dailyWritesDayKey,
+          dailyWritesCount: m.dailyWritesCount,
+          quotaPausedUntilDayKey: m.quotaPausedUntilDayKey,
+        });
+      },
     });
     syncControllerRef.current = controller;
 
@@ -1102,9 +1119,6 @@ export default function App() {
     if (!t) return;
     const now = Date.now();
     const m = getTimerMetrics(cur, now);
-    if (t.status === 'running') {
-      pauseTimer();
-    }
     if (!m || m.sliceActiveMs < 1000 || t.phase === 'break') {
       updateAndSave((prev) => ({ ...prev, activeTimer: null }));
       return;
@@ -1156,6 +1170,9 @@ export default function App() {
       return;
     }
 
+    if (t.status === 'running') {
+      pauseTimer();
+    }
     setModal({ type: 'reflect', metrics: m });
   }, [pauseTimer, saveNextState, showToast, updateAndSave]);
 
@@ -1219,8 +1236,9 @@ export default function App() {
   });
 
   // 500ms Zero-Drift Timer Loop backed by an unthrottled Web Worker + fallback setInterval
+  const hasActiveTimer = Boolean(state.activeTimer);
   useEffect(() => {
-    if (!state.activeTimer) return;
+    if (!hasActiveTimer) return;
 
     const handleTick = () => {
       setTickCounter((c) => c + 1);
@@ -1297,7 +1315,7 @@ export default function App() {
       if (worker) worker.terminate();
       if (workerUrl) URL.revokeObjectURL(workerUrl);
     };
-  }, [renderTick, saveNextState, showToast, state.activeTimer]);
+  }, [hasActiveTimer, renderTick, saveNextState, showToast]);
 
   // Scheduled Habit Reminders check
   useEffect(() => {
@@ -1820,7 +1838,7 @@ export default function App() {
   const handleToggleRestDay = useCallback(
     (dayKey: string) => {
       const prev = stateRef.current;
-      const res = toggleRestDay(prev, dayKey);
+      const res = toggleRestDay(prev, dayKey, Date.now());
       if (!res.allowed) {
         showToast(res.reason || 'Monthly rest pass limit reached');
         return;
@@ -2183,19 +2201,43 @@ export default function App() {
             onDismissBurnout={handleDismissBurnout}
             onUpdateWellbeing={handleUpdateWellbeing}
             onSetMood={(v) => {
-              updateAndSave((prev) => ({
-                ...prev,
-                mood: {
-                  ...prev.mood,
-                  [sel]: prev.mood[sel] === v ? 0 : v,
-                },
-              }));
+              const now = Date.now();
+              updateAndSave((prev) => {
+                const nextVal = prev.mood[sel] === v ? 0 : v;
+                const nextMood = { ...prev.mood };
+                if (nextVal > 0) {
+                  nextMood[sel] = nextVal;
+                } else {
+                  delete nextMood[sel];
+                }
+                return {
+                  ...prev,
+                  mood: nextMood,
+                  moodUpdatedAt: {
+                    ...(prev.moodUpdatedAt || {}),
+                    [sel]: now,
+                  },
+                };
+              });
             }}
             onSetNote={(txt) => {
-              updateAndSave((prev) => ({
-                ...prev,
-                notes: { ...prev.notes, [sel]: txt },
-              }));
+              const now = Date.now();
+              updateAndSave((prev) => {
+                const nextNotes = { ...prev.notes };
+                if (txt) {
+                  nextNotes[sel] = txt;
+                } else {
+                  delete nextNotes[sel];
+                }
+                return {
+                  ...prev,
+                  notes: nextNotes,
+                  noteUpdatedAt: {
+                    ...(prev.noteUpdatedAt || {}),
+                    [sel]: now,
+                  },
+                };
+              });
             }}
           />
         )}
@@ -2399,6 +2441,11 @@ export default function App() {
             onChangeSubTab={setStatsSubTab}
             onEditSession={(sesId) => setModal({ type: 'manualSession', id: sesId })}
             onOpenManualSession={() => setModal({ type: 'manualSession' })}
+            onSelectDateInToday={(dayKey) => {
+              setSel(dayKey);
+              setTab('today');
+              window.scrollTo(0, 0);
+            }}
             onToast={showToast}
           />
         )}
@@ -2446,16 +2493,28 @@ export default function App() {
               if (!authUser) return;
               try {
                 setSyncStatus('syncing');
-                await cleanupUserGroupsOnCloudDelete(stateRef.current);
+                await cleanupUserGroupsOnCloudDelete(
+                  stateRef.current,
+                  groupBudgetRef.current || undefined
+                );
                 await deleteAllUserCloudData(authUser.uid);
-                updateAndSave((prev) => ({
+                syncControllerRef.current?.resetOutbox();
+                const prev = stateRef.current;
+                const cleanedState: PulseHabitState = {
                   ...prev,
+                  log: cloneLog(prev.log),
+                  syncMeta: undefined,
                   groupsConfig: {
                     consentAccepted: Boolean(prev.groupsConfig?.consentAccepted),
                     joined: [],
                     updatedAt: Date.now(),
                   },
-                }));
+                  savedAt: Date.now(),
+                };
+                stateRef.current = cleanedState;
+                setState(cleanedState);
+                persistState(cleanedState);
+                setLastSyncedAt(undefined);
                 setSyncWritesToday(getSyncTodayWrites());
                 setSyncStatus('synced');
                 showToast('Deleted all your cloud data and study group entries');
@@ -2547,7 +2606,7 @@ export default function App() {
             onExportCsv={() => {
               const cur = stateRef.current;
               const escCsv = (val: string): string => {
-                const safe = /^[=+\-@]/.test(val) ? `'${val}` : val;
+                const safe = /^[ \t\r\n\u0000-\u001f]*[=+\-@]/.test(val) ? `'${val}` : val;
                 return `"${safe.replace(/"/g, '""')}"`;
               };
               const rows = [
@@ -2648,16 +2707,15 @@ export default function App() {
               (cur.restDays || []).forEach((dk) => {
                 rows.push(`rest_day,${dk},"Rest Pass","Protected Rest Day",1,100,""`);
               });
-              rows.push('date,task,done,subject');
               (cur.tasks || []).forEach((t) => {
                 const sub = t.subjectId
                   ? cur.subjects.find((x) => x.id === t.subjectId)
                   : undefined;
-                const subName = sub ? sub.name : '';
+                const subName = sub ? sub.name : 'General';
                 rows.push(
-                  `${t.dayKey},${escCsv(t.title)},${
-                    t.done ? 'true' : 'false'
-                  },${escCsv(subName)}`
+                  `daily_task,${t.dayKey},${escCsv(subName)},${escCsv(t.title)},${
+                    t.done ? 1 : 0
+                  },100,"${t.done ? 'done' : 'pending'}"`
                 );
               });
               downloadFile(

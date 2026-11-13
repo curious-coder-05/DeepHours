@@ -1,4 +1,4 @@
-import React, { useMemo, useState } from 'react';
+import React, { useEffect, useMemo, useState } from 'react';
 import type {
   Chapter,
   ChapterStatus,
@@ -92,6 +92,21 @@ export const PrepView: React.FC<PrepViewProps> = ({
 
   const [selectedSubjectFilter, setSelectedSubjectFilter] = useState<string>('all');
   const [addSubjectId, setAddSubjectId] = useState<string>(defaultSubId);
+
+  useEffect(() => {
+    if (subjects.length > 0 && !subjects.some((s) => s.id === addSubjectId)) {
+      setAddSubjectId(subjects[0].id);
+    }
+  }, [subjects, addSubjectId]);
+
+  useEffect(() => {
+    if (
+      selectedSubjectFilter !== 'all' &&
+      !subjects.some((s) => s.id === selectedSubjectFilter)
+    ) {
+      setSelectedSubjectFilter('all');
+    }
+  }, [subjects, selectedSubjectFilter]);
   const [bulkMode, setBulkMode] = useState(false);
   const [singleName, setSingleName] = useState('');
   const [bulkText, setBulkText] = useState('');
