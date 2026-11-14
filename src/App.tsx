@@ -1475,6 +1475,8 @@ export default function App() {
     onResume: resumeTimer,
     onTogglePause: toggleTimerPause,
     onStopAndReflect: stopTimerAndReflect,
+    onExtendTarget: extendTimerTarget,
+    onNextMockSection: handleNextMockSection,
     onToast: showToast,
   });
 
@@ -3698,12 +3700,12 @@ export default function App() {
         />
       )}
 
-      {/* Hidden offscreen Canvas & Video for Android Chrome PiP Stream (16:9 480x270) */}
+      {/* Hidden offscreen High-DPI 2x Canvas & Video for Android Chrome PiP Stream (16:9 960x540) */}
       <canvas
         id="pipCanvas"
         ref={canvasRef}
-        width={480}
-        height={270}
+        width={960}
+        height={540}
         style={{
           position: 'fixed',
           left: '-9999px',
