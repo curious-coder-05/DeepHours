@@ -800,7 +800,7 @@ describe('Part C: Deep Hours NEET Study & Habit Logger Unit Tests', () => {
     const zeroRep = computePaceReport(state, todayKey);
     assert.equal(zeroRep.overall.total, 0);
     assert.equal(zeroRep.overall.remaining, 0);
-    assert.equal(zeroRep.overall.status, 'ahead');
+    assert.equal(zeroRep.overall.status, 'no-chapters');
 
     // Case B: No history (remaining chapters > 0, 0 completed in last 28 days) -> behind
     state.chapters = [
@@ -2354,7 +2354,7 @@ describe('Part C: Deep Hours NEET Study & Habit Logger Unit Tests', () => {
     assert.equal(Object.hasOwn(normed.set.targets?.dailyMinutes || {}, 'constructor'), false);
     assert.equal(normed.groupsConfig?.activeGroupId, 'ABCDE23456');
 
-    // 4. buildDayArchiveRecord uses 240m default target and suppresses missed items on future dates
+    // 4. buildDayArchiveRecord uses 360m default target and suppresses missed items on future dates
     const archiveState = createBlankState();
     archiveState.set.targets = undefined as unknown as typeof archiveState.set.targets;
     archiveState.habits = [mkHabit({ id: 'h1', name: 'Read NCERT', tn: 1 }, '2026-10-01')];
@@ -2369,7 +2369,7 @@ describe('Part C: Deep Hours NEET Study & Habit Logger Unit Tests', () => {
       },
     ];
     const futureRec = buildDayArchiveRecord(archiveState, '2026-11-05', '2026-10-30');
-    assert.equal(futureRec.minTargetMs, 240 * 60000);
+    assert.equal(futureRec.minTargetMs, 360 * 60000);
     assert.equal(futureRec.habitsMissed.length, 0);
     assert.equal(futureRec.tasksMissed.length, 0);
     assert.equal(futureRec.revisionsMissed.length, 0);

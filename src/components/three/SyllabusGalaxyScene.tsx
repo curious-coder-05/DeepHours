@@ -98,8 +98,48 @@ export const SyllabusGalaxyScene: React.FC<SyllabusGalaxySceneProps> = ({
   );
 
   const starNodes = layout.nodes;
+  const previewConstellation = useMemo(() => {
+    if (chapters.length > 0) {
+      return {
+        stars: [] as Array<{ pos: [number, number, number]; color: string; scale: number }>,
+        links: [] as Array<{ from: [number, number, number]; to: [number, number, number]; color: string }>,
+      };
+    }
+    const armSubs = activeSubjects.length > 0
+      ? activeSubjects
+      : [{ id: 'preview', color: '#F5C451' }];
+    const starsPerArm = 6;
+    const stars: Array<{ pos: [number, number, number]; color: string; scale: number }> = [];
+    const links: Array<{ from: [number, number, number]; to: [number, number, number]; color: string }> = [];
+    armSubs.forEach((sub, sIdx) => {
+      const armBaseAngle = (sIdx / armSubs.length) * Math.PI * 2;
+      let prevPos: [number, number, number] | null = null;
+      for (let k = 0; k < starsPerArm; k++) {
+        const radius = 0.8 + k * 0.44;
+        const theta = armBaseAngle + radius * 0.84;
+        const pos: [number, number, number] = [
+          Math.cos(theta) * radius,
+          Math.sin(k * 0.9 + sIdx) * 0.16,
+          Math.sin(theta) * radius,
+        ];
+        stars.push({
+          pos,
+          color: sub.color || '#F5C451',
+          scale: 0.72 + (k % 2) * 0.14,
+        });
+        if (prevPos) {
+          links.push({ from: prevPos, to: pos, color: sub.color || '#F5C451' });
+        }
+        prevPos = pos;
+      }
+    });
+    return { stars, links };
+  }, [chapters.length, activeSubjects]);
+
   const layoutRef = useRef(layout);
   layoutRef.current = layout;
+  const previewRef = useRef(previewConstellation);
+  previewRef.current = previewConstellation;
 
   const activeSubjectIdRef = useRef(activeSubjectId);
   activeSubjectIdRef.current = activeSubjectId;
@@ -186,6 +226,7 @@ export const SyllabusGalaxyScene: React.FC<SyllabusGalaxySceneProps> = ({
         <div className="flex items-center gap-1.5">
           <span className="tnum mr-1 text-[13px] text-[var(--tx-2)]">
             {starNodes.length} {starNodes.length === 1 ? 'chapter' : 'chapters'}
+            {chapters.length === 0 ? ' · Preview' : ''}
           </span>
           <button
             type="button"
@@ -404,10 +445,6 @@ export const SyllabusGalaxyScene: React.FC<SyllabusGalaxySceneProps> = ({
               const nodes = curLayout.nodes;
               const links = curLayout.links;
               const subFilter = activeSubjectIdRef.current;
-              const count = Math.min(maxStars, nodes.length);
-
-              instancedStars.count = count;
-              instancedHalos.count = count;
 
               // Inverse galaxy Y rotation so billboarded halos still face camera cleanly
               const invRotY = new THREE.Quaternion().setFromAxisAngle(
@@ -415,6 +452,64 @@ export const SyllabusGalaxyScene: React.FC<SyllabusGalaxySceneProps> = ({
                 -galaxyGroup.rotation.y
               );
               const billboardQuat = invRotY.multiply(camera.quaternion);
+
+              if (nodes.length === 0) {
+                const preview = previewRef.current;
+                const pCount = Math.min(maxStars, preview.stars.length);
+                instancedStars.count = pCount;
+                instancedHalos.count = pCount;
+
+                for (let i = 0; i < pCount; i++) {
+                  const ps = preview.stars[i];
+                  dummyPos.set(ps.pos[0], ps.pos[1], ps.pos[2]);
+                  const breathe = 1 + Math.sin(elapsed * 1.4 + i * 0.7) * 0.08;
+                  dummyScale.setScalar(ps.scale * 0.78 * breathe);
+                  dummyMat.compose(dummyPos, dummyQuat.set(0, 0, 0, 1), dummyScale);
+                  instancedStars.setMatrixAt(i, dummyMat);
+
+                  dummyScale.setScalar(ps.scale * 0.92 * breathe);
+                  dummyMat.compose(dummyPos, billboardQuat, dummyScale);
+                  instancedHalos.setMatrixAt(i, dummyMat);
+
+                  cColor.set(ps.color).lerp(dimBg, 0.38);
+                  haloColor.set(ps.color).lerp(dimBg, 0.3);
+                  instancedStars.setColorAt(i, cColor);
+                  instancedHalos.setColorAt(i, haloColor);
+                }
+
+                instancedStars.instanceMatrix.needsUpdate = true;
+                instancedHalos.instanceMatrix.needsUpdate = true;
+                if (instancedStars.instanceColor) instancedStars.instanceColor.needsUpdate = true;
+                if (instancedHalos.instanceColor) instancedHalos.instanceColor.needsUpdate = true;
+
+                const pLinks = Math.min(MAX_LINKS_HIGH, preview.links.length);
+                for (let i = 0; i < pLinks; i++) {
+                  const lk = preview.links[i];
+                  const vIdx = i * 6;
+                  linkPositions[vIdx] = lk.from[0];
+                  linkPositions[vIdx + 1] = lk.from[1];
+                  linkPositions[vIdx + 2] = lk.from[2];
+                  linkPositions[vIdx + 3] = lk.to[0];
+                  linkPositions[vIdx + 4] = lk.to[1];
+                  linkPositions[vIdx + 5] = lk.to[2];
+
+                  cColor.set(lk.color).lerp(dimBg, 0.52);
+                  linkColors[vIdx] = cColor.r;
+                  linkColors[vIdx + 1] = cColor.g;
+                  linkColors[vIdx + 2] = cColor.b;
+                  linkColors[vIdx + 3] = cColor.r;
+                  linkColors[vIdx + 4] = cColor.g;
+                  linkColors[vIdx + 5] = cColor.b;
+                }
+                linkGeo.setDrawRange(0, pLinks * 2);
+                linkPosAttr.needsUpdate = true;
+                linkColAttr.needsUpdate = true;
+                return;
+              }
+
+              const count = Math.min(maxStars, nodes.length);
+              instancedStars.count = count;
+              instancedHalos.count = count;
 
               for (let i = 0; i < count; i++) {
                 const n = nodes[i];
@@ -562,7 +657,7 @@ export const SyllabusGalaxyScene: React.FC<SyllabusGalaxySceneProps> = ({
             const pointerNdc = new THREE.Vector2();
 
             const pickStar = (clientX: number, clientY: number): number | null => {
-              if (instancedStars.count === 0) return null;
+              if (layoutRef.current.nodes.length === 0 || instancedStars.count === 0) return null;
               const rect = canvas.getBoundingClientRect();
               if (rect.width <= 0 || rect.height <= 0) return null;
               pointerNdc.x = ((clientX - rect.left) / rect.width) * 2 - 1;

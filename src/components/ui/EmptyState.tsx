@@ -23,11 +23,13 @@ export const EmptyState: React.FC<EmptyStateProps> = ({
       background: 'var(--sf-1)',
       border: '1px solid var(--line)',
       borderRadius: '16px',
-      padding: compact ? '16px 16px' : '24px 20px',
+      padding: compact ? '18px 16px' : '36px 24px',
+      minHeight: compact ? undefined : '220px',
       textAlign: 'center',
       display: 'grid',
-      gap: '8px',
+      gap: '10px',
       justifyItems: 'center',
+      alignContent: 'center',
     }}
   >
     {illustration ? (

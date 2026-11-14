@@ -128,7 +128,9 @@ export const AppShell: React.FC<AppShellProps> = ({
           onOpenSyncSettings={onOpenSyncSettings}
         />
 
-        <div className="dh-stage">{children}</div>
+        <div className={showMiniTimer ? 'dh-stage has-mini-timer' : 'dh-stage'}>
+          {children}
+        </div>
       </div>
 
       {/* Mini Active Timer Bar when away from Focus */}

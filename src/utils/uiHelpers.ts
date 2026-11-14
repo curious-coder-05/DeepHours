@@ -1,6 +1,6 @@
 import type { DDay, PulseHabitState } from '../types.ts';
 import { computePaceReport, type PaceReport } from './pace.ts';
-import { ACS } from './studyLogic.ts';
+import { ACS, getDayTotalStudyMs } from './studyLogic.ts';
 
 export const LUMEN_ACCENT = '#F5C451';
 export const LUMEN_ACCENT_ON = '#1A1400';
@@ -178,6 +178,39 @@ export function computeUiPaceReport(
     ),
   };
   return computePaceReport(patchedState, todayKey);
+}
+
+export const DEFAULT_MIN_DAY_MINUTES = 360;
+
+/**
+ * Single source of truth for UI daily study goal minutes, derived from
+ * `settings.targets.minDayMinutes` (defaulting to 360m / 6h 0m when unset).
+ */
+export function getUiDailyGoalMinutes(
+  state: Pick<PulseHabitState, 'set'>
+): number {
+  const raw = Number(state.set?.targets?.minDayMinutes);
+  if (Number.isFinite(raw) && raw > 0) {
+    return Math.max(15, Math.min(960, Math.round(raw)));
+  }
+  return DEFAULT_MIN_DAY_MINUTES;
+}
+
+/**
+ * Computes daily study progress against `settings.targets.minDayMinutes`
+ * (never overridden by auto-study habits such as Deep Study 3 hrs).
+ */
+export function getUiDailyStudyGoalProgress(
+  state: PulseHabitState,
+  dayKey: string,
+  todayKey: string,
+  now = Date.now()
+): { studiedMs: number; goalMs: number; pct: number; goalMins: number } {
+  const studiedMs = getDayTotalStudyMs(state, dayKey, todayKey, now);
+  const goalMins = getUiDailyGoalMinutes(state);
+  const goalMs = goalMins * 60000;
+  const pct = Math.min(100, Math.max(0, Math.round((studiedMs / goalMs) * 100)));
+  return { studiedMs, goalMs, pct, goalMins };
 }
 
 export function getTimerStyleDisplayLabel(

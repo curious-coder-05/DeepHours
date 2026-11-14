@@ -168,7 +168,7 @@ export const StatusRow: React.FC<StatusRowProps> = ({
           </div>
           <Meter
             value={minStreakInfo.todayStudiedMins}
-            max={minStreakInfo.minDayMinutes || 240}
+            max={minStreakInfo.minDayMinutes || 360}
             color={minStreakInfo.todayMetMinimum ? 'var(--ok)' : 'var(--ac)'}
             label="Minimum daily study goal"
           />

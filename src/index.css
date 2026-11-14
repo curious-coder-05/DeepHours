@@ -12,8 +12,8 @@
   --line: rgba(255, 255, 255, 0.10);
   --line-strong: rgba(255, 255, 255, 0.18);
   --tx: #ECEFF4;
-  --tx-2: #B0B8C5;
-  --tx-3: #8F98A8;
+  --tx-2: #A3ABB8;
+  --tx-3: #8E97A6;
   --sf-highlight: inset 0 1px 0 rgba(255, 255, 255, 0.06);
   --shadow-card: 0 8px 24px rgba(0, 0, 0, 0.24);
   --r-card: 16px;
@@ -244,8 +244,12 @@ body {
   width: 100%;
   max-width: 1120px;
   margin: 0 auto;
-  padding: 16px 20px calc(var(--tabbar-h) + var(--sb) + 84px);
+  padding: 16px 20px calc(var(--tabbar-h, 64px) + var(--sb) + 32px);
   min-width: 0;
+}
+
+.dh-stage.has-mini-timer {
+  padding-bottom: calc(var(--tabbar-h, 64px) + var(--sb) + 76px);
 }
 
 .dh-stage > #v,
@@ -406,7 +410,11 @@ body {
   }
 
   .dh-stage {
-    padding: 20px 32px 96px;
+    padding: 20px 32px 64px;
+  }
+
+  .dh-stage.has-mini-timer {
+    padding-bottom: 116px;
   }
 }
 

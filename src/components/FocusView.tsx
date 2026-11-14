@@ -467,7 +467,11 @@ export const FocusView: React.FC<FocusViewProps> = ({
               position: 'relative',
               zIndex: 2,
               pointerEvents: 'none',
-              padding: '0 8px',
+              padding: show3dCore ? '20px 30px' : '0 8px',
+              borderRadius: show3dCore ? '999px' : undefined,
+              background: show3dCore
+                ? 'radial-gradient(ellipse at center, color-mix(in srgb, var(--bg) 78%, transparent) 0%, color-mix(in srgb, var(--bg) 44%, transparent) 52%, transparent 76%)'
+                : undefined,
             }}
           >
             {aesthetic === 'retro' ? (

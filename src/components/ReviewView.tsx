@@ -108,11 +108,12 @@ export const ReviewView: React.FC<ReviewViewProps> = ({
           <Stat
             label="Min days met"
             value={`${review.daysMeetingMin}/7`}
-            sub={
-              review.restDaysUsedInWeek > 0
-                ? `Includes ${review.restDaysUsedInWeek} rest pass`
-                : 'Daily minimum target'
-            }
+            sub={(() => {
+              const goalMs = Math.max(15, Number(state.set.targets?.minDayMinutes) || 360) * 60000;
+              return review.restDaysUsedInWeek > 0
+                ? `${fmtDuration(goalMs)}/d · ${review.restDaysUsedInWeek} rest pass`
+                : `Goal ${fmtDuration(goalMs)}/day`;
+            })()}
           />
         </Card>
         <Card>

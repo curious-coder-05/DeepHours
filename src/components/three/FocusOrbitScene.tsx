@@ -78,12 +78,12 @@ const CORE_FRAGMENT_SHADER = `
   void main() {
     vec3 n = normalize(vNormal);
     vec3 v = normalize(vViewPos);
-    float fresnel = pow(1.0 - max(0.0, dot(n, v)), 2.25);
+    float fresnel = pow(1.0 - max(0.0, dot(n, v)), 1.85);
     float shimmer = clamp(0.5 + vDisp * 6.0, 0.0, 1.0);
-    vec3 col = mix(uBaseColor, uGlowColor, fresnel * 0.85 + shimmer * 0.18);
-    col += uGlowColor * fresnel * (0.55 * uIntensity);
-    col += vec3(1.0, 0.96, 0.85) * clamp(vRipple * 1.4, 0.0, 0.75);
-    float alpha = clamp(0.76 + fresnel * 0.24 + vRipple * 0.12, 0.0, 1.0) * clamp(uIntensity, 0.35, 1.15);
+    vec3 col = mix(uBaseColor, uGlowColor, fresnel * 0.92 + shimmer * 0.22);
+    col += uGlowColor * fresnel * (0.95 * uIntensity);
+    col += vec3(1.0, 0.96, 0.85) * clamp(vRipple * 1.5, 0.0, 0.82);
+    float alpha = clamp(0.78 + fresnel * 0.22 + vRipple * 0.12, 0.0, 1.0) * clamp(uIntensity, 0.38, 1.18);
     gl_FragColor = vec4(col, alpha);
   }
 `;
@@ -316,7 +316,7 @@ export const FocusOrbitScene: React.FC<FocusOrbitSceneProps> = ({
         continuous={!ambientPaused}
         height={height}
         fov={42}
-        cameraPosition={[0, 0.25, 6.4]}
+        cameraPosition={[0, 0.25, 6.75]}
         className="w-full select-none"
         setup={(ctx: Scene3DContext) => {
           const { THREE, scene, canvas, resolution } = ctx;
@@ -367,12 +367,12 @@ export const FocusOrbitScene: React.FC<FocusOrbitSceneProps> = ({
             map: haloTexture,
             color: initialAccent.clone(),
             transparent: true,
-            opacity: 0.42,
+            opacity: 0.56,
             blending: THREE.AdditiveBlending,
             depthWrite: false,
           });
           const haloSprite = new THREE.Sprite(haloMat);
-          haloSprite.scale.set(3.6, 3.6, 1);
+          haloSprite.scale.set(4.5, 4.5, 1);
           coreGroup.add(haloSprite);
 
           // 3. Outer Wire Lattice & Equatorial Gimbal Ring
@@ -468,7 +468,7 @@ export const FocusOrbitScene: React.FC<FocusOrbitSceneProps> = ({
           const dummyEuler = new THREE.Euler();
           const dimTrackColor = new THREE.Color('#232A35');
 
-          const arcRadius = 2.04;
+          const arcRadius = 2.22;
           for (let i = 0; i < ARC_SEGMENTS; i++) {
             const angle = Math.PI / 2 - (i / ARC_SEGMENTS) * Math.PI * 2;
             dummyPos.set(Math.cos(angle) * arcRadius, Math.sin(angle) * arcRadius, 0);
@@ -763,11 +763,11 @@ export const FocusOrbitScene: React.FC<FocusOrbitSceneProps> = ({
                 }
               }
 
-              haloMat.opacity = (0.38 + pulseBoost * 0.28) * currentDim;
-              shellMat.opacity = 0.28 * currentDim;
-              gimbalMat.opacity = 0.56 * currentDim;
+              haloMat.opacity = (0.52 + pulseBoost * 0.32) * currentDim;
+              shellMat.opacity = 0.32 * currentDim;
+              gimbalMat.opacity = 0.62 * currentDim;
               particleMat.opacity = 0.72 * currentDim;
-              segMat.opacity = 0.9 * currentDim;
+              segMat.opacity = 0.92 * currentDim;
 
               // Press-and-hold 4-4-4 Breathe Scale
               let breatheScale = 1.0;
@@ -793,7 +793,7 @@ export const FocusOrbitScene: React.FC<FocusOrbitSceneProps> = ({
                 }
               }
 
-              const targetScale = breatheScale + pulseBoost * 0.14;
+              const targetScale = 1.3 * (breatheScale + pulseBoost * 0.14);
               coreGroup.scale.setScalar(targetScale);
 
               // Drag inertia + pointer/gyroscope parallax
@@ -831,7 +831,7 @@ export const FocusOrbitScene: React.FC<FocusOrbitSceneProps> = ({
               satInstanced.count = satCount;
               for (let i = 0; i < satCount; i++) {
                 const orbitAngle = elapsed * 0.42 + (i / Math.max(1, satCount)) * Math.PI * 2;
-                const satR = 2.38;
+                const satR = 2.52;
                 dummyPos.set(
                   Math.cos(orbitAngle) * satR,
                   Math.sin(orbitAngle * 2) * 0.24,

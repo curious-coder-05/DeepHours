@@ -158,7 +158,7 @@ export function buildDayArchiveRecord(
   const studyMs = getTodaySubjectMs(state, 'any', dayKey, todayKey);
   const minTargetMins = Math.max(
     15,
-    Number(state.set.targets?.minDayMinutes) || 240
+    Number(state.set.targets?.minDayMinutes) || 360
   );
   const minTargetMs = minTargetMins * 60000;
   const metMinStudyTarget = studyMs >= minTargetMs;

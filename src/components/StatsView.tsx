@@ -200,7 +200,7 @@ export const StatsView: React.FC<StatsViewProps> = ({
   const consistencyPct = Math.round((summary.monthActiveDays / 30) * 100);
   const minDailyTargetMins = Math.max(
     15,
-    Number(state.set.targets?.minDayMinutes) || 240
+    Number(state.set.targets?.minDayMinutes) || 360
   );
 
   const totalXp = computeTotalXp(state, todayKey);
@@ -278,7 +278,7 @@ export const StatsView: React.FC<StatsViewProps> = ({
                   Study city
                 </h3>
                 <p className="text-[13px] text-[var(--tx-2)]">
-                  Stacked subject towers across 12 weeks or 30 days · Lit floors &amp; peak beacon
+                  Stacked subject towers across 12 weeks or 30 days · Lit floors &amp; peak ring
                 </p>
               </div>
               {runtime3d.enabled && (
@@ -386,7 +386,7 @@ export const StatsView: React.FC<StatsViewProps> = ({
                   color: d.key === todayKey ? 'var(--ac)' : 'var(--ok)',
                 }))}
                 goalValue={minDailyTargetMins}
-                goalLabel="Daily target"
+                goalLabel={`Goal ${fmtHMShort(minDailyTargetMins * 60000)}`}
                 valueFormatter={(mins) => fmtHMShort(Math.round(mins * 60000))}
                 ariaLabel="7-day daily study breakdown"
               />
@@ -757,7 +757,7 @@ export const StatsView: React.FC<StatsViewProps> = ({
                   hint: p.formatted,
                 }))}
                 goalValue={Number((minDailyTargetMins / 60).toFixed(2))}
-                goalLabel="Daily goal"
+                goalLabel={`Goal ${fmtHMShort(minDailyTargetMins * 60000)}`}
                 valueFormatter={(h) => `${h.toFixed(1)}h`}
                 ariaLabel="Deep Work Frequency 30-Day Area Chart"
               />

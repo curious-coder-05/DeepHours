@@ -1,4 +1,4 @@
-const CACHE_NAME = 'deep-hours-v11';
+const CACHE_NAME = 'deep-hours-v13';
 const ASSETS = [
   '/',
   '/index.html',

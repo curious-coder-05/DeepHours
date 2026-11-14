@@ -49,7 +49,6 @@ import {
   fmtDuration,
   fmtHMShort,
   getDailyFocusTip,
-  getDailyStudyGoalProgress,
   getDayProgress,
   getDayTotalStudyMs,
   getDueAndOverdueRevisions,
@@ -70,7 +69,10 @@ import {
   getSubjectTargetProgress,
 } from '../utils/insights';
 import { computeStudyNext } from '../utils/pace';
-import { computeUiPaceReport } from '../utils/uiHelpers';
+import {
+  computeUiPaceReport,
+  getUiDailyStudyGoalProgress,
+} from '../utils/uiHelpers';
 import { StatusRow, ExamCountdownCard } from './StatusRow';
 import {
   Button,
@@ -272,7 +274,7 @@ export const TodayView: React.FC<TodayViewProps> = ({
   );
 
   const studyProg = useMemo(
-    () => getDailyStudyGoalProgress(state, sel, todayKey),
+    () => getUiDailyStudyGoalProgress(state, sel, todayKey),
     [state, sel, todayKey]
   );
 
@@ -448,7 +450,15 @@ export const TodayView: React.FC<TodayViewProps> = ({
 
     const metaParts: string[] = [];
     if (h.sch === 'week') metaParts.push(`${w}/${h.n} wk`);
-    if (h.tn > 1) metaParts.push(`${cur}/${h.tn} ${h.tu || ''}`.trim());
+    if (autoStudy) {
+      metaParts.push(
+        h.tn > 1
+          ? `Deep Study habit · ${cur}/${h.tn} ${h.tu || 'min'}`.trim()
+          : 'Deep Study habit'
+      );
+    } else if (h.tn > 1) {
+      metaParts.push(`${cur}/${h.tn} ${h.tu || ''}`.trim());
+    }
     metaParts.push(`${r}% 30d`);
     if (isSk) metaParts.push('Skipped');
 
@@ -564,7 +574,7 @@ export const TodayView: React.FC<TodayViewProps> = ({
                 value={Math.min(100, (cur / h.tn) * 100)}
                 color={isD ? 'var(--ok)' : 'var(--ac)'}
                 height={6}
-                label={`${h.name} progress`}
+                label={autoStudy ? 'Deep Study habit progress' : `${h.name} progress`}
               />
             </div>
           )}

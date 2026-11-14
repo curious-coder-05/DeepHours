@@ -45,9 +45,11 @@ export const OnboardingSheet: React.FC<OnboardingSheetProps> = ({
   const [step, setStep] = useState<1 | 2 | 3>(1);
   const [examTitle, setExamTitle] = useState('');
   const [examDate, setExamDate] = useState('');
-  const [minDayMinutes, setMinDayMinutes] = useState(
-    () => state.set.targets?.minDayMinutes || 360
-  );
+  const initialMinGoal =
+    state.set.updatedAt === 0 && (!state.set.targets?.minDayMinutes || state.set.targets.minDayMinutes === 240)
+      ? 360
+      : state.set.targets?.minDayMinutes || 360;
+  const [minDayMinutes, setMinDayMinutes] = useState(() => initialMinGoal);
   const [selectedSubjectIds, setSelectedSubjectIds] = useState<string[]>(() => {
     const active = state.subjects.filter((s) => !s.arch).map((s) => s.id);
     return active.length > 0 ? active : state.subjects.map((s) => s.id);
@@ -56,10 +58,10 @@ export const OnboardingSheet: React.FC<OnboardingSheetProps> = ({
   useEffect(() => {
     if (!open) return;
     setStep(1);
-    setMinDayMinutes(state.set.targets?.minDayMinutes || 360);
+    setMinDayMinutes(initialMinGoal);
     const active = state.subjects.filter((s) => !s.arch).map((s) => s.id);
     setSelectedSubjectIds(active.length > 0 ? active : state.subjects.map((s) => s.id));
-  }, [open, state.set.targets?.minDayMinutes, state.subjects]);
+  }, [open, initialMinGoal, state.subjects]);
 
   const examPresets = useMemo(
     () => [

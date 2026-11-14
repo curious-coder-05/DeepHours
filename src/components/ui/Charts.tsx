@@ -540,6 +540,8 @@ export interface DonutSegment {
   label: string;
   value: number;
   color: string;
+  detail?: string;
+  progressPct?: number;
 }
 
 export interface DonutChartProps {
@@ -656,41 +658,74 @@ export const DonutChart: React.FC<DonutChartProps> = ({
         </div>
       </div>
 
-      <div style={{ flex: '1 1 150px', display: 'grid', gap: '6px', minWidth: 0 }}>
+      <div style={{ flex: '1 1 180px', display: 'grid', gap: '6px', minWidth: 0 }}>
         {segments.map((seg, idx) => (
           <button
             key={`${seg.label}-${idx}`}
             type="button"
             onClick={() => setActiveIdx((cur) => (cur === idx ? null : idx))}
             style={{
-              display: 'flex',
-              alignItems: 'center',
-              justifyContent: 'space-between',
-              gap: '8px',
-              padding: '6px 10px',
-              minHeight: '36px',
+              display: 'grid',
+              gap: seg.progressPct !== undefined ? '6px' : '0px',
+              padding: '8px 10px',
+              minHeight: '38px',
               background: activeIdx === idx ? 'var(--sf-3)' : 'var(--sf-2)',
               border: '1px solid var(--line)',
               borderRadius: '10px',
               fontSize: '13px',
+              textAlign: 'left',
             }}
           >
-            <span style={{ display: 'flex', alignItems: 'center', gap: '8px', minWidth: 0 }}>
-              <span
+            <div
+              style={{
+                display: 'flex',
+                alignItems: 'center',
+                justifyContent: 'space-between',
+                gap: '8px',
+                minWidth: 0,
+              }}
+            >
+              <span style={{ display: 'flex', alignItems: 'center', gap: '8px', minWidth: 0 }}>
+                <span
+                  aria-hidden="true"
+                  style={{
+                    width: 9,
+                    height: 9,
+                    borderRadius: '50%',
+                    background: seg.color,
+                    flexShrink: 0,
+                  }}
+                />
+                <span style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                  {seg.label}
+                </span>
+              </span>
+              <strong className="tabular-nums" style={{ flexShrink: 0, fontWeight: 600 }}>
+                {seg.detail ?? valueFormatter(seg.value)}
+              </strong>
+            </div>
+            {typeof seg.progressPct === 'number' && (
+              <div
                 aria-hidden="true"
                 style={{
-                  width: 9,
-                  height: 9,
-                  borderRadius: '50%',
-                  background: seg.color,
-                  flexShrink: 0,
+                  width: '100%',
+                  height: '5px',
+                  borderRadius: '99px',
+                  background: 'color-mix(in srgb, var(--tx) 12%, var(--sf-1))',
+                  overflow: 'hidden',
                 }}
-              />
-              <span style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
-                {seg.label}
-              </span>
-            </span>
-            <strong className="tabular-nums">{valueFormatter(seg.value)}</strong>
+              >
+                <div
+                  style={{
+                    width: `${Math.max(0, Math.min(100, seg.progressPct))}%`,
+                    height: '100%',
+                    borderRadius: '99px',
+                    background: seg.color,
+                    transition: 'width 220ms var(--ease-out)',
+                  }}
+                />
+              </div>
+            )}
           </button>
         ))}
       </div>

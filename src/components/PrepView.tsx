@@ -427,35 +427,16 @@ export const PrepView: React.FC<PrepViewProps> = ({
                 label: `${row.subject.e} ${row.subject.name}`,
                 value: row.completed,
                 color: row.subject.color,
+                detail: `${row.completed}/${row.total} (${row.pct}%)${
+                  row.inProgress > 0 ? ` · ${row.inProgress} active` : ''
+                }`,
+                progressPct: row.pct,
               }))}
               centerLabel={`${syllabusMetrics.pct}%`}
               centerSublabel={`${syllabusMetrics.completed}/${syllabusMetrics.total}`}
               valueFormatter={(v) => `${v} ch`}
               ariaLabel="Syllabus completion breakdown by subject"
             />
-
-            <div className="space-y-2.5 border-t border-[var(--line)] pt-3">
-              {syllabusMetrics.bySubject.map((row) => (
-                <div key={row.subject.id} className="space-y-1">
-                  <div className="split text-[13px]">
-                    <span className="flex items-center gap-2 font-medium text-[var(--tx)]">
-                      <span
-                        className="h-2.5 w-2.5 rounded-full"
-                        style={{ background: row.subject.color }}
-                      />
-                      <span>
-                        {row.subject.e} {row.subject.name}
-                      </span>
-                    </span>
-                    <span className="tnum text-[13px] text-[var(--tx-2)]">
-                      {row.completed}/{row.total} ({row.pct}%)
-                      {row.inProgress > 0 ? ` · ${row.inProgress} active` : ''}
-                    </span>
-                  </div>
-                  <Meter value={row.pct} max={100} color={row.subject.color} />
-                </div>
-              ))}
-            </div>
           </Card>
 
           {/* Study Next Recommender */}

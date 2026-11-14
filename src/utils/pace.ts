@@ -105,7 +105,7 @@ function evaluateGroupPace(
       projectedFinishDate: null,
       projectedDaysDelta: null,
       behindByChapters: 0,
-      status: 'ahead',
+      status: 'no-chapters',
     };
   }
 

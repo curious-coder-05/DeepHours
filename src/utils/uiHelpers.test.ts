@@ -10,9 +10,11 @@ import {
   getReadableAccentText,
   getReadableOnColor,
   getTimerStyleDisplayLabel,
+  getUiDailyGoalMinutes,
+  getUiDailyStudyGoalProgress,
   resolveUiExam,
 } from './uiHelpers.ts';
-import { createBlankState } from './studyLogic.ts';
+import { createBlankState, mkHabit } from './studyLogic.ts';
 
 describe('UI Helpers — contrast, D-Day pace fallback, display labels', () => {
   it('computes WCAG AA contrast on Lumen accent and legacy yellow/sky accents', () => {
@@ -254,5 +256,63 @@ describe('UI Helpers — contrast, D-Day pace fallback, display labels', () => {
     assert.ok(mid.endIndex < 149);
     assert.ok(mid.topSpacerPx > 0);
     assert.ok(mid.bottomSpacerPx > 0);
+  });
+
+  it('returns no-chapters pace status when totalChapters is 0 and derives unified daily goal from minDayMinutes', () => {
+    const state = createBlankState();
+    state.ddays = [
+      {
+        id: 'dd_neet',
+        title: 'NEET UG',
+        date: '2026-12-20',
+        e: '🩺',
+        color: '#F5C451',
+        primary: true,
+      },
+    ];
+    state.chapters = [];
+
+    const pace = computeUiPaceReport(state, '2026-11-01');
+    assert.equal(pace.totalChapters, 0);
+    assert.equal(pace.status, 'no-chapters');
+    assert.equal(pace.overall.status, 'no-chapters');
+
+    // When minDayMinutes is unset, defaults to 360m (6h 0m) even if Deep Study (3 hrs) habit exists
+    state.set.targets = undefined;
+    state.habits = [
+      mkHabit({ id: 'h_deep', name: 'Deep Study (3 hrs)', subjectId: 'any', autoMins: 180, tn: 180, tu: 'min' }, '2026-11-01'),
+    ];
+    assert.equal(getUiDailyGoalMinutes(state), 360);
+
+    state.set.targets = {
+      dailyMinutes: {},
+      weeklyMinutes: {},
+      minDayMinutes: 360,
+      restPassesPerMonth: 4,
+    };
+    state.sessions = [
+      {
+        id: 's_1',
+        subjectId: 'sub_phy',
+        heading: 'Optics',
+        dayKey: '2026-11-01',
+        startTs: 1000,
+        endTs: 1000 + 180 * 60000,
+        activeMs: 180 * 60000,
+        pausedMs: 0,
+        pauseCount: 0,
+        overtimeMs: 0,
+        purity: 100,
+        mode: 'stopwatch',
+        source: 'timer',
+        rating: 5,
+        note: '',
+        updatedAt: 2000,
+      },
+    ];
+    const prog = getUiDailyStudyGoalProgress(state, '2026-11-01', '2026-11-01');
+    assert.equal(prog.goalMins, 360);
+    assert.equal(prog.goalMs, 360 * 60000);
+    assert.equal(prog.pct, 50);
   });
 });

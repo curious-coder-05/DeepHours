@@ -89,10 +89,10 @@ function createLitWindowsTexture(
         if (lit) {
           bCtx.fillStyle = '#FFFFFF';
           bCtx.fillRect(x, y, w, h);
-          eCtx.fillStyle = hash > 7 ? '#F8E3A3' : '#C8D6EA';
+          eCtx.fillStyle = hash > 7 ? '#FFF2BF' : '#DCE8FA';
           eCtx.fillRect(x, y, w, h);
         } else {
-          bCtx.fillStyle = '#7B8494';
+          bCtx.fillStyle = '#9BA7BA';
           bCtx.fillRect(x, y, w, h);
         }
       }
@@ -224,12 +224,14 @@ export const StudySkylineScene: React.FC<StudySkylineSceneProps> = ({
     ((idx: number | null, progressRatio: number | null) => void) | null
   >(null);
   const labelUpdateRef = useRef<((mode: '12w' | '30d') => void) | null>(null);
+  const fitRangeRef = useRef<((mode: '12w' | '30d') => void) | null>(null);
 
   const selectedDay =
     selectedIdx !== null && cityDays[selectedIdx] ? cityDays[selectedIdx] : null;
 
   useEffect(() => {
     labelUpdateRef.current?.(rangeMode);
+    fitRangeRef.current?.(rangeMode);
   }, [rangeMode]);
 
   useEffect(() => {
@@ -409,8 +411,8 @@ export const StudySkylineScene: React.FC<StudySkylineSceneProps> = ({
 
             const deckGeo = new THREE.BoxGeometry(9.4, 0.22, 6.0);
             const deckMat = new THREE.MeshStandardMaterial({
-              color: 0x161c26,
-              roughness: 0.55,
+              color: 0x1e2636,
+              roughness: 0.5,
               metalness: 0.22,
             });
             const deckMesh = new THREE.Mesh(deckGeo, deckMat);
@@ -419,7 +421,7 @@ export const StudySkylineScene: React.FC<StudySkylineSceneProps> = ({
 
             const rimGeo = new THREE.BoxGeometry(9.65, 0.08, 6.25);
             const rimMat = new THREE.MeshStandardMaterial({
-              color: 0x2a3344,
+              color: 0x364359,
               roughness: 0.35,
               metalness: 0.42,
             });
@@ -453,8 +455,8 @@ export const StudySkylineScene: React.FC<StudySkylineSceneProps> = ({
             padGeo.translate(0, 0.03, 0);
             const padMat = new THREE.MeshStandardMaterial({
               color: 0xffffff,
-              roughness: 0.6,
-              metalness: 0.15,
+              roughness: 0.46,
+              metalness: 0.18,
             });
             const padInstanced = new THREE.InstancedMesh(padGeo, padMat, MAX_PAD_INSTANCES);
             padInstanced.frustumCulled = false;
@@ -469,33 +471,33 @@ export const StudySkylineScene: React.FC<StudySkylineSceneProps> = ({
               map: windowTextures.map,
               emissive: new THREE.Color('#F5C451'),
               emissiveMap: windowTextures.emissiveMap,
-              emissiveIntensity: 0.42,
-              roughness: 0.28,
-              metalness: 0.2,
+              emissiveIntensity: 0.68,
+              roughness: 0.26,
+              metalness: 0.18,
             });
             const towerInstanced = new THREE.InstancedMesh(segGeo, segMat, MAX_TOWER_SEGMENTS);
             towerInstanced.frustumCulled = false;
             worldGroup.add(towerInstanced);
 
-            // 5. Best-day vertical beacon + Today's crown halo
-            const beaconGeo = new THREE.CylinderGeometry(0.035, 0.16, 4.4, 12);
-            beaconGeo.translate(0, 2.2, 0);
-            const beaconMat = new THREE.MeshBasicMaterial({
+            // 5. Best-day compact pulsing ground halo ring + Today's crown halo
+            const peakHaloGeo = new THREE.TorusGeometry(0.36, 0.03, 10, 36);
+            const peakHaloMat = new THREE.MeshBasicMaterial({
               color: 0xf5c451,
               transparent: true,
-              opacity: 0.24,
+              opacity: 0.78,
               blending: THREE.AdditiveBlending,
               depthWrite: false,
             });
-            const beaconMesh = new THREE.Mesh(beaconGeo, beaconMat);
-            beaconMesh.visible = false;
-            worldGroup.add(beaconMesh);
+            const peakHaloMesh = new THREE.Mesh(peakHaloGeo, peakHaloMat);
+            peakHaloMesh.rotation.x = Math.PI / 2;
+            peakHaloMesh.visible = false;
+            worldGroup.add(peakHaloMesh);
 
             const todayCrownGeo = new THREE.TorusGeometry(0.32, 0.024, 8, 28);
             const todayCrownMat = new THREE.MeshBasicMaterial({
               color: 0x4ade80,
               transparent: true,
-              opacity: 0.72,
+              opacity: 0.76,
               blending: THREE.AdditiveBlending,
               depthWrite: false,
             });
@@ -513,8 +515,8 @@ export const StudySkylineScene: React.FC<StudySkylineSceneProps> = ({
             const dummyScale = new THREE.Vector3();
             const tempColor = new THREE.Color();
             const highlightGold = new THREE.Color('#F5C451');
-            const futureColor = new THREE.Color('#1B212C');
-            const idlePadColor = new THREE.Color('#273040');
+            const futureColor = new THREE.Color('#273244');
+            const idlePadColor = new THREE.Color('#3B4962');
 
             const rebuildCity = (
               activeIdx: number | null,
@@ -593,7 +595,7 @@ export const StudySkylineScene: React.FC<StudySkylineSceneProps> = ({
 
                 if (d.isBestDay) {
                   bestFound = true;
-                  beaconMesh.position.set(x, yCursor * 0.4, z);
+                  peakHaloMesh.position.set(x, 0.09, z);
                 }
                 if (d.isToday) {
                   todayFound = true;
@@ -609,16 +611,19 @@ export const StudySkylineScene: React.FC<StudySkylineSceneProps> = ({
               towerInstanced.instanceMatrix.needsUpdate = true;
               if (towerInstanced.instanceColor) towerInstanced.instanceColor.needsUpdate = true;
 
-              beaconMesh.visible = bestFound && progressRatio === null;
+              peakHaloMesh.visible = bestFound && progressRatio === null;
               todayCrownMesh.visible = todayFound;
             };
 
             rebuildCityRef.current = rebuildCity;
             rebuildCity(selectedIdx, replayProgressRef.current);
 
+            const getFittedRadius = (mode: '12w' | '30d') =>
+              mode === '30d' ? 8.6 : 11.4;
+
             // Intro camera fly-in + drag orbit + 2-finger pinch zoom (pan-y safe!)
-            let radius = 14.8;
-            let targetRadius = 11.4;
+            let targetRadius = getFittedRadius(rangeModeRef.current);
+            let radius = targetRadius + 3.4;
             let azimuth = -0.82;
             let targetAzimuth = -0.34;
             let polar = 0.62;
@@ -630,6 +635,11 @@ export const StudySkylineScene: React.FC<StudySkylineSceneProps> = ({
               azimuth = targetAzimuth;
               polar = targetPolar;
             }
+
+            fitRangeRef.current = (nextMode: '12w' | '30d') => {
+              targetRadius = getFittedRadius(nextMode);
+              ctx.requestRender();
+            };
 
             const activePointers = new Map<number, { x: number; y: number }>();
             let prevPinchDist: number | null = null;
@@ -744,7 +754,7 @@ export const StudySkylineScene: React.FC<StudySkylineSceneProps> = ({
               introActive = false;
               targetAzimuth = -0.34;
               targetPolar = 0.88;
-              targetRadius = 11.4;
+              targetRadius = getFittedRadius(rangeModeRef.current);
               ctx.requestRender();
             };
 
@@ -774,10 +784,13 @@ export const StudySkylineScene: React.FC<StudySkylineSceneProps> = ({
 
                 if (todayCrownMesh.visible) {
                   todayCrownMesh.position.y = todayCrownBaseY + Math.sin(elapsed * 2.4) * 0.05;
-                  todayCrownMat.opacity = 0.55 + Math.sin(elapsed * 2.4) * 0.2;
+                  todayCrownMat.opacity = 0.58 + Math.sin(elapsed * 2.4) * 0.2;
                 }
-                if (beaconMesh.visible) {
-                  beaconMat.opacity = 0.18 + Math.sin(elapsed * 1.9) * 0.08;
+                if (peakHaloMesh.visible) {
+                  const basePad = rangeModeRef.current === '30d' ? 1.32 : 1.0;
+                  const pulse = 1 + Math.sin(elapsed * 2.6) * 0.08;
+                  peakHaloMesh.scale.set(basePad * pulse, basePad * pulse, 1);
+                  peakHaloMat.opacity = 0.56 + Math.sin(elapsed * 2.6) * 0.24;
                 }
 
                 if (
@@ -791,6 +804,7 @@ export const StudySkylineScene: React.FC<StudySkylineSceneProps> = ({
               onDispose: () => {
                 sceneCtxRef.current = null;
                 labelUpdateRef.current = null;
+                fitRangeRef.current = null;
                 canvas.removeEventListener('pointerdown', onPointerDown);
                 window.removeEventListener('pointermove', onPointerMove);
                 window.removeEventListener('pointerup', onPointerUp);

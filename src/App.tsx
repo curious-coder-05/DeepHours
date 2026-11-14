@@ -46,7 +46,6 @@ import {
   ent,
   fmtHMS,
   fmtHMShort,
-  getDailyStudyGoalProgress,
   getSessionHeading,
   getSortedChapterRevisions,
   getTimerMetrics,
@@ -89,6 +88,7 @@ import {
   getAmoledPref,
   getReadableAccentText,
   getReadableOnColor,
+  getUiDailyStudyGoalProgress,
   setAmoledPref,
 } from './utils/uiHelpers';
 import { AppShell } from './components/AppShell';
@@ -2202,7 +2202,7 @@ export default function App() {
             ...(cur.set.targets || {
               dailyMinutes: {},
               weeklyMinutes: {},
-              minDayMinutes: 240,
+              minDayMinutes: 360,
               restPassesPerMonth: 4,
             }),
             ...patch,
@@ -2589,7 +2589,7 @@ export default function App() {
     );
   }
 
-  const todayStudyProg = getDailyStudyGoalProgress(state, todayKey, todayKey);
+  const todayStudyProg = getUiDailyStudyGoalProgress(state, todayKey, todayKey);
   const activeMetrics = state.activeTimer ? getTimerMetrics(state, Date.now()) : null;
   const isSettingsOpen = settingsOpen || tab === 'more';
   const selDateFormatted = parseKey(sel).toLocaleDateString('en-US', {

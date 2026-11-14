@@ -274,9 +274,11 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
   const targets = set.targets || {
     dailyMinutes: {},
     weeklyMinutes: {},
-    minDayMinutes: 240,
+    minDayMinutes: 360,
     restPassesPerMonth: 4,
   };
+  const minDayMins = Math.max(15, Number(targets.minDayMinutes) || 360);
+  const minDayFormatted = `${Math.floor(minDayMins / 60)}h ${minDayMins % 60}m`;
   const currentAvatar = set.cloudAccount?.avatarEmoji || set.avatarEmoji || '🧑‍⚕️';
   const currentAccentSwatch = UI_ACCENT_SWATCHES.find(
     (sw) => sw.hex.toLowerCase() === (set.ac || '').toLowerCase()
@@ -322,7 +324,7 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
 
   if (!activeSection) {
     return (
-      <div style={{ display: 'grid', gap: '20px' }}>
+      <div style={{ display: 'grid', gap: '22px', paddingBottom: '20px' }}>
         <ListGroup aria-label="Profile and sync settings">
           <ListRow
             leading={<User size={20} strokeWidth={1.75} aria-hidden="true" />}
@@ -361,7 +363,7 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
           <ListRow
             leading={<Target size={20} strokeWidth={1.75} aria-hidden="true" />}
             title="Goals and targets"
-            subtitle={`Min ${targets.minDayMinutes ?? 240}m/day · Full mock ${set.fullMockMins ?? 180}m · Target ${set.targetMockScore ?? 650}`}
+            subtitle={`Goal ${minDayFormatted}/day (${minDayMins}m) · Full mock ${set.fullMockMins ?? 180}m · Target ${set.targetMockScore ?? 650}`}
             chevron
             onClick={() => setSection('targets')}
           />
@@ -434,7 +436,7 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
   const meta = SECTION_META[activeSection];
 
   return (
-    <div style={{ display: 'grid', gap: '16px' }}>
+    <div style={{ display: 'grid', gap: '20px', paddingBottom: '20px' }}>
       {/* Sub-view Header */}
       <div
         style={{
@@ -841,17 +843,21 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
               gap: '10px',
             }}
           >
-            <Field label="Min study day (mins)" htmlFor="setMinDayMins">
+            <Field
+              label="Daily study goal (mins)"
+              htmlFor="setMinDayMins"
+              hint={`${minDayFormatted} — synced across Today, History, Insights & Review`}
+            >
               <input
                 id="setMinDayMins"
                 type="number"
                 min={15}
                 max={960}
-                value={targets.minDayMinutes ?? 240}
+                value={targets.minDayMinutes ?? 360}
                 onChange={(e) =>
                   onUpdateSetting('targets', {
                     ...targets,
-                    minDayMinutes: Math.max(15, Math.min(960, Number(e.target.value) || 240)),
+                    minDayMinutes: Math.max(15, Math.min(960, Number(e.target.value) || 360)),
                   })
                 }
               />
