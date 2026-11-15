@@ -634,82 +634,99 @@ export const TodayView: React.FC<TodayViewProps> = ({
       />
 
       {/* 2. Exam Countdown + Syllabus Pace Row */}
-      <div
-        className="row"
-        style={{
-          gap: 10,
-          flexWrap: 'wrap',
-          marginBottom: 10,
-          alignItems: 'stretch',
-        }}
-      >
-        <div style={{ flex: '1 1 250px', minWidth: 0 }}>
-          <ExamCountdownCard
-            state={state}
-            todayKey={todayKey}
-            onManageExams={onManageExams || (() => onSwitchTab('more'))}
-            onAddExam={onNewDDay}
-          />
-        </div>
-
-        {paceReport.exam && !paceReport.pastExam && paceReport.totalChapters > 0 && (
-          <button
-            type="button"
-            onClick={() => onSwitchTab('prep')}
+      {(() => {
+        const showPaceCard = Boolean(
+          paceReport.exam && !paceReport.pastExam && paceReport.totalChapters > 0
+        );
+        return (
+          <div
+            className={
+              showPaceCard
+                ? 'grid grid-cols-2 gap-2 w-full max-w-full min-w-0'
+                : 'w-full max-w-full min-w-0'
+            }
             style={{
-              flex: '1 1 220px',
-              margin: '6px 0 10px',
-              padding: '12px 14px',
-              borderRadius: 14,
-              background: 'var(--sf-1)',
-              border: '1px solid var(--line)',
-              display: 'flex',
-              alignItems: 'center',
-              justifyContent: 'space-between',
-              gap: 10,
-              textAlign: 'left',
-              minHeight: 52,
-              cursor: 'pointer',
+              marginBottom: 10,
+              alignItems: 'stretch',
             }}
           >
-            <div style={{ minWidth: 0 }}>
-              <span
-                style={{
-                  display: 'block',
-                  fontSize: 13,
-                  color: 'var(--tx-2)',
-                  fontWeight: 500,
-                }}
-              >
-                Syllabus pace
-              </span>
-              <span
-                style={{
-                  display: 'block',
-                  fontSize: 13,
-                  fontWeight: 600,
-                  color:
-                    paceReport.status === 'ahead'
-                      ? 'var(--ok-ink)'
-                      : paceReport.status === 'behind'
-                        ? 'var(--warn-ink)'
-                        : 'var(--ac-ink)',
-                  overflow: 'hidden',
-                  textOverflow: 'ellipsis',
-                  whiteSpace: 'nowrap',
-                }}
-              >
-                {paceReport.compactSummary}
-              </span>
+            <div className="min-w-0 max-w-full">
+              <ExamCountdownCard
+                state={state}
+                todayKey={todayKey}
+                onManageExams={onManageExams || (() => onSwitchTab('more'))}
+                onAddExam={onNewDDay}
+              />
             </div>
-            <ArrowRight
-              size={16}
-              strokeWidth={1.75}
-              style={{ color: 'var(--tx-3)', flexShrink: 0 }}
-            />
-          </button>
-        )}
-      </div>
+
+            {showPaceCard && (
+              <button
+                type="button"
+                className="w-full max-w-full min-w-0 box-border"
+                onClick={() => onSwitchTab('prep')}
+                style={{
+                  height: '100%',
+                  minWidth: 0,
+                  maxWidth: '100%',
+                  boxSizing: 'border-box',
+                  margin: 0,
+                  padding: '10px 11px',
+                  borderRadius: 14,
+                  background: 'var(--sf-1)',
+                  border: '1px solid var(--line)',
+                  display: 'flex',
+                  alignItems: 'center',
+                  justifyContent: 'space-between',
+                  gap: 6,
+                  textAlign: 'left',
+                  minHeight: 52,
+                  cursor: 'pointer',
+                }}
+              >
+                <div style={{ flex: 1, minWidth: 0 }}>
+                  <span
+                    style={{
+                      display: 'block',
+                      fontSize: 13,
+                      color: 'var(--tx-2)',
+                      fontWeight: 500,
+                      lineHeight: 1.3,
+                    }}
+                  >
+                    Syllabus pace
+                  </span>
+                  <span
+                    style={{
+                      display: '-webkit-box',
+                      WebkitLineClamp: 2,
+                      WebkitBoxOrient: 'vertical',
+                      overflow: 'hidden',
+                      fontSize: 13,
+                      fontWeight: 600,
+                      lineHeight: 1.3,
+                      whiteSpace: 'normal',
+                      overflowWrap: 'break-word',
+                      color:
+                        paceReport.status === 'ahead'
+                          ? 'var(--ok-ink)'
+                          : paceReport.status === 'behind'
+                            ? 'var(--warn-ink)'
+                            : 'var(--ac-ink)',
+                    }}
+                  >
+                    {paceReport.compactSummary}
+                  </span>
+                </div>
+                <ArrowRight
+                  size={15}
+                  strokeWidth={1.75}
+                  style={{ color: 'var(--tx-3)', flexShrink: 0 }}
+                />
+              </button>
+            )}
+          </div>
+        );
+      })()}
 
       {/* 3. Gentle Pace & Wellbeing Check-In (when visible) */}
       {burnoutStatus.visible && (

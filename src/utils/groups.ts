@@ -6,6 +6,7 @@ import {
   getDoc,
   getDocs,
   limit,
+  onSnapshot,
   query,
   runTransaction,
   setDoc,
@@ -18,7 +19,15 @@ import type {
   GroupWeekHistoryEntry,
   PulseHabitState,
 } from '../types';
-import { auth, db, ensureValidAuthToken, sanitizeForFirestore } from './cloudSync';
+import {
+  auth,
+  db,
+  ensureValidAuthToken,
+  handleFirestoreError,
+  isOfflineOrTokenError,
+  OperationType,
+  sanitizeForFirestore,
+} from './cloudSync';
 import {
   computeConsistencyScore,
   computeMinDayStreak,
@@ -34,14 +43,14 @@ export const MAX_GROUP_MEMBER_CAP = 50;
 export const GROUP_WRITE_DAILY_CAP = 60;
 export const GROUP_READ_DAILY_CAP = 150;
 export const GROUP_CHEER_DAILY_CAP = 10;
-export const GROUP_PUBLISH_DEBOUNCE_MS = 2 * 60_000; // 2 minutes
-export const GROUP_PUBLISH_MIN_INTERVAL_MS = 5 * 60_000; // 5 minutes per group
+export const GROUP_PUBLISH_DEBOUNCE_MS = 6_000; // 6 seconds debounce for fast live/stat updates
+export const GROUP_PUBLISH_MIN_INTERVAL_MS = 10_000; // 10 seconds minimum interval per group
 export const GROUP_CACHE_STALE_MS = 5 * 60_000; // 5 minutes
-export const GROUP_AUTO_REFRESH_MS = 3 * 60_000; // 3 minutes while visible
+export const GROUP_AUTO_REFRESH_MS = 3 * 60_000; // legacy constant kept for exports
 export const GROUP_MANUAL_REFRESH_COOLDOWN_MS = 60_000; // 60 seconds
 export const GROUP_LIVE_DURATION_MS = 60 * 60_000; // 60 minutes
 export const GROUP_LIVE_REFRESH_MS = 45 * 60_000; // 45 minutes
-export const GROUP_LIVE_PAUSE_CLEAR_MS = 5 * 60_000; // 5 minutes
+export const GROUP_LIVE_PAUSE_CLEAR_MS = 6_000; // 6 seconds
 export const GROUP_LIVE_FETCH_MAX_AGE_MS = 15 * 60_000; // 15 minutes
 
 export type CheerEmoji = '👏' | '🔥' | '💪';
@@ -1278,10 +1287,10 @@ export function isQuotaError(err: unknown): boolean {
 
 /**
  * Testable rate-limiter and debouncer for Group publishing & reading:
- * - Debounced 2 minutes after a change
- * - At most 1 write per group per 5 minutes
- * - Flush once when app goes to background
- * - Skip when entry hash is unchanged
+ * - Debounced 6s after a change (configurable)
+ * - At most 1 automatic write per group per 10s (configurable)
+ * - Flush once when app goes to background or via flushNow() on timer start/stop
+ * - Skip when entry hash (excluding updatedAt) is unchanged (0 writes used)
  * - Cap at 60 group writes/user/day (stats + studying-now)
  * - Cap at 150 board reads/user/day
  * - Cap at 10 cheers/user/day
@@ -1292,8 +1301,12 @@ export class GroupPublishBudgetController {
   private debounceTimer: ReturnType<typeof setTimeout> | null = null;
   private lastWriteTsByGroup: Map<string, number> = new Map();
   private lastHashByGroup: Map<string, string> = new Map();
+  private pendingEntryByGroup: Map<string, MemberEntry> = new Map();
   private pendingGroups: Set<string> = new Set();
   private queuedOfflineGroups: Set<string> = new Set();
+  private debounceMs: number;
+  private minIntervalMs: number;
+  private dailyWriteCap: number;
   private dayKey: string;
   private writesToday = 0;
   private readsToday = 0;
@@ -1304,9 +1317,23 @@ export class GroupPublishBudgetController {
 
   constructor(
     onFlushGroup: (groupId: string) => Promise<void>,
-    options?: { initialOnline?: boolean }
+    options?: {
+      initialOnline?: boolean;
+      debounceMs?: number;
+      minIntervalMs?: number;
+      dailyWriteCap?: number;
+    }
   ) {
     this.onFlushGroup = onFlushGroup;
+    this.debounceMs = Math.max(0, options?.debounceMs ?? GROUP_PUBLISH_DEBOUNCE_MS);
+    this.minIntervalMs = Math.max(
+      0,
+      options?.minIntervalMs ?? GROUP_PUBLISH_MIN_INTERVAL_MS
+    );
+    this.dailyWriteCap = Math.max(
+      1,
+      options?.dailyWriteCap ?? GROUP_WRITE_DAILY_CAP
+    );
     this.dayKey = getUtcDayKey();
     const persisted = loadBudgetState();
     this.dayKey = persisted.dayKey;
@@ -1360,19 +1387,19 @@ export class GroupPublishBudgetController {
 
   public isPausedForToday(): boolean {
     this.syncDayRollover();
-    return this.pausedForQuota || this.writesToday >= GROUP_WRITE_DAILY_CAP;
+    return this.pausedForQuota || this.writesToday >= this.dailyWriteCap;
   }
 
   public canWrite(count = 1): boolean {
     this.syncDayRollover();
     if (this.pausedForQuota) return false;
-    return this.writesToday + count <= GROUP_WRITE_DAILY_CAP;
+    return this.writesToday + count <= this.dailyWriteCap;
   }
 
   public recordWrite(count = 1): void {
     this.syncDayRollover();
     this.writesToday += Math.max(0, count);
-    if (this.writesToday >= GROUP_WRITE_DAILY_CAP) {
+    if (this.writesToday >= this.dailyWriteCap) {
       this.pausedForQuota = true;
     }
     this.persist();
@@ -1435,8 +1462,14 @@ export class GroupPublishBudgetController {
 
   public markGroupDirty(groupId: string, entry?: MemberEntry): void {
     this.syncDayRollover();
-    if (entry && !this.hasEntryChanged(groupId, entry)) {
-      return;
+    if (entry) {
+      if (!this.hasEntryChanged(groupId, entry)) {
+        this.pendingGroups.delete(groupId);
+        this.queuedOfflineGroups.delete(groupId);
+        this.pendingEntryByGroup.delete(groupId);
+        return;
+      }
+      this.pendingEntryByGroup.set(groupId, entry);
     }
     if (!this.isOnline) {
       this.queuedOfflineGroups.add(groupId);
@@ -1445,7 +1478,20 @@ export class GroupPublishBudgetController {
     if (this.isPausedForToday()) return;
 
     this.pendingGroups.add(groupId);
-    this.scheduleFlush(GROUP_PUBLISH_DEBOUNCE_MS);
+    this.scheduleFlush(this.debounceMs);
+  }
+
+  public async flushNow(groupIds?: string[]): Promise<void> {
+    if (groupIds) {
+      for (const gid of groupIds) {
+        if (gid) this.pendingGroups.add(gid);
+      }
+    }
+    if (this.debounceTimer) {
+      clearTimeout(this.debounceTimer);
+      this.debounceTimer = null;
+    }
+    await this.flushReadyGroups(true);
   }
 
   private scheduleFlush(baseDelayMs: number): void {
@@ -1453,16 +1499,17 @@ export class GroupPublishBudgetController {
       clearTimeout(this.debounceTimer);
       this.debounceTimer = null;
     }
+    if (this.pendingGroups.size === 0) return;
     const now = Date.now();
     let maxWaitForMinInterval = 0;
     for (const gid of this.pendingGroups) {
       const lastTs = this.lastWriteTsByGroup.get(gid) || 0;
       if (lastTs > 0) {
         const elapsed = now - lastTs;
-        if (elapsed < GROUP_PUBLISH_MIN_INTERVAL_MS) {
+        if (elapsed < this.minIntervalMs) {
           maxWaitForMinInterval = Math.max(
             maxWaitForMinInterval,
-            GROUP_PUBLISH_MIN_INTERVAL_MS - elapsed
+            this.minIntervalMs - elapsed
           );
         }
       }
@@ -1498,9 +1545,14 @@ export class GroupPublishBudgetController {
     const stillThrottled: string[] = [];
 
     for (const gid of this.pendingGroups) {
+      const pendingEntry = this.pendingEntryByGroup.get(gid);
+      if (pendingEntry && !this.hasEntryChanged(gid, pendingEntry)) {
+        this.pendingEntryByGroup.delete(gid);
+        continue;
+      }
       const lastTs = this.lastWriteTsByGroup.get(gid) || 0;
       const elapsed = now - lastTs;
-      if (!forceBackground && lastTs > 0 && elapsed < GROUP_PUBLISH_MIN_INTERVAL_MS) {
+      if (!forceBackground && lastTs > 0 && elapsed < this.minIntervalMs) {
         stillThrottled.push(gid);
       } else {
         toFlush.push(gid);
@@ -1513,7 +1565,13 @@ export class GroupPublishBudgetController {
     }
 
     for (const gid of toFlush) {
+      const pendingEntry = this.pendingEntryByGroup.get(gid);
+      if (pendingEntry && !this.hasEntryChanged(gid, pendingEntry)) {
+        this.pendingEntryByGroup.delete(gid);
+        continue;
+      }
       if (!this.canWrite(1)) break;
+      this.pendingEntryByGroup.delete(gid);
       try {
         await this.onFlushGroup(gid);
       } catch (err) {
@@ -1525,7 +1583,7 @@ export class GroupPublishBudgetController {
     }
 
     if (this.pendingGroups.size > 0 && !this.isPausedForToday()) {
-      this.scheduleFlush(GROUP_PUBLISH_DEBOUNCE_MS);
+      this.scheduleFlush(this.debounceMs);
     }
   }
 
@@ -1600,7 +1658,7 @@ export function removeCachedGroupSnapshot(groupId: string): void {
 }
 
 // ============================================================================
-// Firestore Group Operations (getDoc / setDoc / updateDoc / deleteDoc only — NO onSnapshot)
+// Firestore Group Operations (single-doc getDoc/setDoc/updateDoc/deleteDoc/onSnapshot — NO list)
 // ============================================================================
 
 export async function createGroupInCloud(params: {
@@ -1852,8 +1910,15 @@ export async function publishMyEntryToGroup(params: {
     now,
   });
 
-  if (!params.force && !params.budget.hasEntryChanged(params.groupId, myEntry)) {
-    return myEntry;
+  if (!params.force) {
+    if (!params.budget.hasEntryChanged(params.groupId, myEntry)) {
+      return myEntry;
+    }
+    const cachedSelf = cached?.doc?.members?.[user.uid];
+    if (cachedSelf && hashMemberEntry(cachedSelf) === hashMemberEntry(myEntry)) {
+      params.budget.commitEntryHash(params.groupId, myEntry);
+      return myEntry;
+    }
   }
 
   await updateDoc(doc(db, 'groups', params.groupId), {
@@ -1878,6 +1943,51 @@ export async function publishMyEntryToGroup(params: {
   }
 
   return myEntry;
+}
+
+/**
+ * Subscribes to a SINGLE group document (`groups/{groupId}`) via Firestore `onSnapshot`.
+ * Never uses collection queries (`list` is forbidden in `firestore.rules`).
+ */
+export function subscribeToGroupDoc(params: {
+  groupId: string;
+  todayKey: string;
+  onUpdate: (snapshot: CachedGroupSnapshot) => void;
+  onMissing?: () => void;
+  onError?: (err: unknown) => void;
+}): () => void {
+  if (!params.groupId || !db || !auth?.currentUser) {
+    return () => {};
+  }
+
+  const ref = doc(db, 'groups', params.groupId);
+  return onSnapshot(
+    ref,
+    (snap) => {
+      if (!snap.exists()) {
+        removeCachedGroupSnapshot(params.groupId);
+        params.onMissing?.();
+        return;
+      }
+      const parsed = sanitizeRemoteGroupDoc(snap.data(), params.todayKey);
+      if (!parsed) return;
+      const existingCached = loadCachedGroupSnapshots()[params.groupId];
+      const cachedSnap: CachedGroupSnapshot = {
+        groupId: params.groupId,
+        doc: parsed,
+        fetchedAt: Date.now(),
+        receivedCheers: existingCached?.receivedCheers || [],
+      };
+      saveCachedGroupSnapshot(cachedSnap);
+      params.onUpdate(cachedSnap);
+    },
+    (err) => {
+      if (!isOfflineOrTokenError(err)) {
+        handleFirestoreError(err, OperationType.GET, `groups/${params.groupId}`);
+      }
+      params.onError?.(err);
+    }
+  );
 }
 
 export async function fetchGroupSnapshotFromCloud(params: {

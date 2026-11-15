@@ -66,7 +66,7 @@ User subject colors stay intact and are used exclusively as **dots, thin progres
 
 ## 3. Typography
 - **UI Typeface**: `Geist Variable` (self-hosted `@fontsource-variable/geist`) with `font-variant-numeric: tabular-nums` on numeric counters and tables.
-- **Monospace Typeface**: `Geist Mono Variable` (self-hosted `@fontsource-variable/geist-mono`) used **exclusively** on study timers (`FocusView`, `MiniTimerBar`, active counters) and the `10m Timeline` clock grid.
+- **Monospace Typeface**: `Geist Mono Variable` (self-hosted `@fontsource-variable/geist-mono`) used **exclusively** on study timers (`FocusView`, `MiniTimerBar`, active counters), the `10m Timeline` clock grid, and the `20px` revealed Answer chip inside Question Vault & Revision Deck cards.
 - **Type Scale** (minimum UI font size `13px`; zero `<13px` text in shell/cards):
   - Display: `46px` (`font-weight: 700`, `line-height: 1.02`, `letter-spacing: -0.025em`)
   - Title: `30px` phone / `32px` desktop (`font-weight: 700`, `line-height: 1.15`, `letter-spacing: -0.02em`)
@@ -107,7 +107,7 @@ User subject colors stay intact and are used exclusively as **dots, thin progres
 - `Select` (button trigger opening a searchable/scrollable `Sheet` option picker instead of native `<select>`)
 - `Sheet` (drag handle pill mobile bottom sheet / centered modal desktop, backdrop & Escape dismiss, focus trap)
 - `Dialog` (confirmation & prompt dialog with focus return)
-- `ProgressRing`, `ConcentricProgressRing`, `Meter`, `Stat`, `CountUp`, `EmptyState`, `Illustration` (`noSyllabus` | `noSessions` | `noTasks` | `signedOutCommunity` | `noMocks` | `noMistakes` | `noDoubts` | `noPyqs`), `Skeleton`, `Toast`, `TopBar`, `BrandLogo`, `SectionHeader`, `OnboardingSheet` (`localStorage` `'dh_onboarded_v2'`)
+- `ProgressRing`, `ConcentricProgressRing`, `Meter`, `Stat`, `CountUp`, `EmptyState`, `Illustration` (`noSyllabus` | `noSessions` | `noTasks` | `signedOutCommunity` | `noMocks` | `noMistakes` | `noDoubts` | `noPyqs` | `noVault`), `Skeleton`, `Toast`, `TopBar`, `BrandLogo`, `SectionHeader`, `OnboardingSheet` (`localStorage` `'dh_onboarded_v2'`)
 - **Custom SVG Chart Kit (`src/components/ui/Charts.tsx`)**: `Sparkline`, `AreaLineChart`, `BarChart`, `DonutChart`, `RadialClock24h`, `HeatmapGrid`, `SemiCircleGauge` — crisp zero-dependency interactive SVG charts (no `recharts` dependency) using `--tx-3` `13px` labels, horizontal hairlines (`--line`), smooth pointer tooltips, and explicit `EmptyState` fallbacks.
 - **Hero & Surface Elevation**: Hero Lumen cards (`.dh-hero-lumen`) carry an ambient radial Lumen wash above crisp top inner-edge highlights (`--sf-highlight`), and are never applied directly onto `Scene3D` WebGL containers.
 

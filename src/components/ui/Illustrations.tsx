@@ -8,7 +8,8 @@ export type IllustrationName =
   | 'noMocks'
   | 'noMistakes'
   | 'noDoubts'
-  | 'noPyqs';
+  | 'noPyqs'
+  | 'noVault';
 
 export interface IllustrationProps {
   name: IllustrationName;
@@ -174,6 +175,26 @@ export const Illustration: React.FC<IllustrationProps> = ({
           <rect x="44" y="44" width="18" height="6" rx="3" fill="var(--ac)" />
           <line x1="44" y1="56" x2="78" y2="56" stroke={strokeSoft} strokeWidth="1.6" />
           <circle cx="84" cy="22" r="3" fill="var(--ac)" />
+        </g>
+      )}
+
+      {name === 'noVault' && (
+        <g strokeLinecap="round" strokeLinejoin="round">
+          <rect
+            x="30"
+            y="24"
+            width="64"
+            height="46"
+            rx="10"
+            fill="var(--sf-2)"
+            stroke={strokeBase}
+            strokeWidth="1.75"
+          />
+          <path d="M40 24 L44 18 H60 L64 24" stroke={strokeBase} strokeWidth="1.6" />
+          <circle cx="62" cy="47" r="11" fill="var(--sf-1)" stroke="var(--ac)" strokeWidth="1.9" />
+          <circle cx="62" cy="47" r="4.5" fill="var(--ac)" />
+          <path d="M36 33 H41" stroke={strokeSoft} strokeWidth="1.8" />
+          <path d="M77 32 H85 M81 28 V36" stroke="var(--ac)" strokeWidth="1.75" />
         </g>
       )}
     </svg>

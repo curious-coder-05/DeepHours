@@ -1,5 +1,5 @@
 import React, { useEffect, useMemo, useRef, useState } from 'react';
-import { AlertTriangle, Star } from 'lucide-react';
+import { AlertTriangle, Minus, Plus, Star } from 'lucide-react';
 import type {
   DDay,
   Habit,
@@ -24,6 +24,16 @@ import {
   mkHabit,
   pad,
 } from '../utils/studyLogic';
+import {
+  BLEEDING_CATEGORIES,
+  computeCleanScore,
+  createEmptyBleedingTally,
+  getMockDiagnostic,
+  normalizeSubjectMinutes,
+  type BleedingCategory,
+  type MockBleedingTally,
+  type MockDiagnosticsEntry,
+} from '../utils/mockDiagnostics';
 import { Button, Chip, Dialog, Field, Select, type SelectOption, Sheet, Stat, Switch } from './ui';
 
 export type ModalState =
@@ -78,7 +88,8 @@ interface ModalsProps {
     id: string | undefined,
     mock: Omit<MockTest, 'id'>,
     queuedMistakes?: QueuedMockMistake[],
-    openMistakesTab?: boolean
+    openVaultAfter?: boolean,
+    diagnostics?: MockDiagnosticsEntry
   ) => void;
   onDeleteMock: (id: string) => void;
   onSaveTimerConfig: (
@@ -89,7 +100,7 @@ interface ModalsProps {
   ) => void;
   onSaveDDay: (id: string | undefined, data: Omit<DDay, 'id'>) => void;
   onDeleteDDay: (id: string) => void;
-  onConfirmReset: () => void;
+  onConfirmReset: (eraseVault: boolean) => void;
   onConfirmResetHour: (newHour: number) => void;
 }
 
@@ -246,11 +257,15 @@ export const Modals: React.FC<ModalsProps> = ({
   const [mockMaxMarks, setMockMaxMarks] = useState<number>(720);
   const [mockScores, setMockScores] = useState<Record<string, MockSubjectScore>>({});
   const [mockNote, setMockNote] = useState('');
+  const [mockBleeding, setMockBleeding] = useState<MockBleedingTally>(createEmptyBleedingTally);
+  const [mockSubjectMinutes, setMockSubjectMinutes] = useState<Record<string, string>>({});
   const [queuedMistakes, setQueuedMistakes] = useState<QueuedMockMistake[]>([]);
   const [mkMisSubId, setMkMisSubId] = useState(activeSubjects[0]?.id || 'sub_phy');
   const [mkMisChapId, setMkMisChapId] = useState('');
   const [mkMisReason, setMkMisReason] = useState<MistakeReason>('concept');
   const [mkMisNote, setMkMisNote] = useState('');
+  const openVaultAfterRef = useRef(false);
+  const [eraseVault, setEraseVault] = useState(false);
 
   // Timer Config state
   const [cfgPomoWork, setCfgPomoWork] = useState(state.set.pomoWork || 25);
@@ -357,11 +372,24 @@ export const Modals: React.FC<ModalsProps> = ({
       });
       setMockScores(initScores);
       setMockNote(ex?.note || curModal.prefillNote || '');
+      const existingDiag = curModal.id ? getMockDiagnostic(curModal.id) : null;
+      setMockBleeding(
+        existingDiag ? { ...existingDiag.bleeding } : createEmptyBleedingTally()
+      );
+      const initSplit: Record<string, string> = {};
+      curState.subjects.forEach((s) => {
+        const mins = existingDiag?.subjectMinutes?.[s.id];
+        initSplit[s.id] = mins && mins > 0 ? String(mins) : '';
+      });
+      setMockSubjectMinutes(initSplit);
       setQueuedMistakes([]);
       setMkMisSubId(curActiveSubjects[0]?.id || 'sub_phy');
       setMkMisChapId('');
       setMkMisReason('concept');
       setMkMisNote('');
+      openVaultAfterRef.current = false;
+    } else if (curModal.type === 'confirmReset') {
+      setEraseVault(false);
     } else if (curModal.type === 'timerConfig') {
       setCfgPomoWork(curState.set.pomoWork || 25);
       setCfgPomoBreak(curState.set.pomoBreak || 5);
@@ -413,6 +441,30 @@ export const Modals: React.FC<ModalsProps> = ({
   const exceedsMaxQuestions =
     expectedMaxQuestions > 0 &&
     previewMockStats.totalQuestions > expectedMaxQuestions;
+
+  const liveCleanScore = computeCleanScore(
+    previewMockStats.totalScore,
+    mockMaxMarks,
+    mockBleeding
+  );
+
+  const loggedSplitMinutes = activeSubjects.reduce((sum, sub) => {
+    const val = Number(mockSubjectMinutes[sub.id]);
+    if (!Number.isFinite(val) || val <= 0) return sum;
+    return sum + Math.round(val);
+  }, 0);
+  const targetDurationNum = Number(mockDurationMins);
+  const hasTargetDuration =
+    mockDurationMins.trim() !== '' &&
+    Number.isFinite(targetDurationNum) &&
+    targetDurationNum > 0;
+
+  const stepBleeding = (key: BleedingCategory, delta: number) => {
+    setMockBleeding((prev) => ({
+      ...prev,
+      [key]: Math.max(0, Math.min(200, prev[key] + delta)),
+    }));
+  };
 
   const autoSubjectOptions: SelectOption<string>[] = [
     { value: 'any', label: 'All subjects combined' },
@@ -1038,6 +1090,10 @@ export const Modals: React.FC<ModalsProps> = ({
                   unattempted: Math.max(0, Math.floor(Number(sc?.unattempted) || 0)),
                 };
               }
+              const diagnosticsPayload: MockDiagnosticsEntry = {
+                bleeding: mockBleeding,
+                subjectMinutes: normalizeSubjectMinutes(mockSubjectMinutes),
+              };
               onSaveMock(
                 modal.id,
                 {
@@ -1059,8 +1115,11 @@ export const Modals: React.FC<ModalsProps> = ({
                   note: mockNote.trim(),
                   updatedAt: Date.now(),
                 },
-                queuedMistakes
+                queuedMistakes,
+                openVaultAfterRef.current,
+                diagnosticsPayload
               );
+              openVaultAfterRef.current = false;
             }}
           >
             <Field label="Test name / series">
@@ -1301,6 +1360,302 @@ export const Modals: React.FC<ModalsProps> = ({
               })}
             </div>
 
+            {/* 1. Error Bleeding Tally */}
+            <div
+              style={{
+                border: '1px solid var(--line)',
+                borderRadius: '12px',
+                padding: '12px',
+                display: 'grid',
+                gap: '10px',
+                background: 'var(--sf-2)',
+                minWidth: 0,
+                maxWidth: '100%',
+                boxSizing: 'border-box',
+              }}
+            >
+              <div
+                style={{
+                  display: 'flex',
+                  justifyContent: 'space-between',
+                  alignItems: 'center',
+                  gap: '8px',
+                  flexWrap: 'wrap',
+                }}
+              >
+                <span style={{ fontSize: '13px', fontWeight: 600, color: 'var(--tx)' }}>
+                  Error bleeding tally
+                </span>
+                <span className="tabular-nums" style={{ fontSize: '13px', color: 'var(--tx-2)' }}>
+                  {liveCleanScore.totalLostQuestions} Q tagged
+                </span>
+              </div>
+
+              <div
+                style={{
+                  display: 'grid',
+                  gridTemplateColumns: 'repeat(2, minmax(0, 1fr))',
+                  gap: '8px',
+                  minWidth: 0,
+                }}
+              >
+                {BLEEDING_CATEGORIES.map((cat) => {
+                  const count = mockBleeding[cat.key];
+                  return (
+                    <div
+                      key={cat.key}
+                      style={{
+                        border: '1px solid var(--line)',
+                        borderRadius: '10px',
+                        padding: '8px',
+                        background: 'var(--sf-1)',
+                        display: 'grid',
+                        gap: '6px',
+                        minWidth: 0,
+                      }}
+                    >
+                      <div
+                        style={{
+                          display: 'flex',
+                          alignItems: 'center',
+                          justifyContent: 'space-between',
+                          gap: '4px',
+                          minWidth: 0,
+                        }}
+                      >
+                        <span
+                          style={{
+                            fontSize: '13px',
+                            fontWeight: 600,
+                            color: 'var(--tx)',
+                            overflow: 'hidden',
+                            textOverflow: 'ellipsis',
+                            whiteSpace: 'nowrap',
+                          }}
+                        >
+                          {cat.label}
+                        </span>
+                        <span
+                          className="tabular-nums"
+                          style={{
+                            fontSize: '13px',
+                            color: count > 0 ? cat.color : 'var(--tx-3)',
+                            flexShrink: 0,
+                          }}
+                        >
+                          {count > 0 ? `-${count * 5}` : '0'}
+                        </span>
+                      </div>
+
+                      <div
+                        style={{
+                          display: 'flex',
+                          alignItems: 'center',
+                          justifyContent: 'space-between',
+                          gap: '4px',
+                        }}
+                      >
+                        <button
+                          type="button"
+                          onClick={() => stepBleeding(cat.key, -1)}
+                          disabled={count <= 0}
+                          aria-label={`Decrease ${cat.label}`}
+                          style={{
+                            width: '44px',
+                            height: '48px',
+                            minWidth: '44px',
+                            minHeight: '48px',
+                            padding: 0,
+                            borderRadius: '10px',
+                            border: '1px solid var(--line)',
+                            background: 'var(--sf-2)',
+                            color: count <= 0 ? 'var(--tx-3)' : 'var(--tx)',
+                            display: 'inline-flex',
+                            alignItems: 'center',
+                            justifyContent: 'center',
+                          }}
+                        >
+                          <Minus size={16} strokeWidth={1.75} aria-hidden="true" />
+                        </button>
+                        <span
+                          className="tabular-nums"
+                          style={{
+                            fontSize: '16px',
+                            fontWeight: 700,
+                            color: 'var(--tx)',
+                            textAlign: 'center',
+                            minWidth: '24px',
+                          }}
+                        >
+                          {count}
+                        </span>
+                        <button
+                          type="button"
+                          onClick={() => stepBleeding(cat.key, 1)}
+                          aria-label={`Increase ${cat.label}`}
+                          style={{
+                            width: '44px',
+                            height: '48px',
+                            minWidth: '44px',
+                            minHeight: '48px',
+                            padding: 0,
+                            borderRadius: '10px',
+                            border: '1px solid var(--line)',
+                            background: 'var(--sf-2)',
+                            color: 'var(--tx)',
+                            display: 'inline-flex',
+                            alignItems: 'center',
+                            justifyContent: 'center',
+                          }}
+                        >
+                          <Plus size={16} strokeWidth={1.75} aria-hidden="true" />
+                        </button>
+                      </div>
+                    </div>
+                  );
+                })}
+              </div>
+
+              <div
+                className="tabular-nums"
+                style={{
+                  padding: '8px 10px',
+                  borderRadius: '10px',
+                  background: 'var(--sf-1)',
+                  border: '1px solid var(--line)',
+                  fontSize: '13px',
+                  fontWeight: 500,
+                  color: 'var(--tx)',
+                  lineHeight: 1.4,
+                }}
+              >
+                <span style={{ color: 'var(--tx-2)' }}>Clean Score: </span>
+                <strong style={{ color: liveCleanScore.recoverableMarks > 0 ? 'var(--ok-ink)' : 'var(--tx)' }}>
+                  {liveCleanScore.cleanScore} / {mockMaxMarks}
+                </strong>
+                {liveCleanScore.recoverableMarks > 0 ? (
+                  <span style={{ color: 'var(--tx-2)' }}>
+                    {' '}
+                    (+{liveCleanScore.recoverableMarks} recoverable from silly/NCERT/time)
+                  </span>
+                ) : (
+                  <span style={{ color: 'var(--tx-3)' }}>
+                    {' '}
+                    · Tag silly, NCERT, or time losses above to project recoverable marks
+                  </span>
+                )}
+              </div>
+            </div>
+
+            {/* 2. Optional Subject Time Split */}
+            <div
+              style={{
+                border: '1px solid var(--line)',
+                borderRadius: '12px',
+                padding: '12px',
+                display: 'grid',
+                gap: '10px',
+                background: 'var(--sf-2)',
+                minWidth: 0,
+                maxWidth: '100%',
+                boxSizing: 'border-box',
+              }}
+            >
+              <div
+                style={{
+                  display: 'flex',
+                  justifyContent: 'space-between',
+                  alignItems: 'center',
+                  gap: '8px',
+                  flexWrap: 'wrap',
+                }}
+              >
+                <span style={{ fontSize: '13px', fontWeight: 600, color: 'var(--tx)' }}>
+                  Subject time split (min)
+                </span>
+                <span
+                  className="tabular-nums"
+                  style={{
+                    fontSize: '13px',
+                    fontWeight: 600,
+                    color:
+                      hasTargetDuration && loggedSplitMinutes > targetDurationNum
+                        ? 'var(--warn-ink)'
+                        : loggedSplitMinutes > 0
+                          ? 'var(--ac-ink)'
+                          : 'var(--tx-3)',
+                  }}
+                >
+                  {hasTargetDuration
+                    ? `${loggedSplitMinutes}m / ${Math.round(targetDurationNum)}m logged`
+                    : `${loggedSplitMinutes}m logged`}
+                </span>
+              </div>
+
+              <div
+                style={{
+                  display: 'grid',
+                  gridTemplateColumns: 'repeat(auto-fit, minmax(128px, 1fr))',
+                  gap: '8px',
+                  minWidth: 0,
+                }}
+              >
+                {activeSubjects.map((sub) => (
+                  <label
+                    key={sub.id}
+                    style={{
+                      display: 'grid',
+                      gap: '4px',
+                      margin: 0,
+                      fontSize: '13px',
+                      color: 'var(--tx-2)',
+                      minWidth: 0,
+                    }}
+                  >
+                    <span
+                      style={{
+                        display: 'inline-flex',
+                        alignItems: 'center',
+                        gap: '6px',
+                        minWidth: 0,
+                        overflow: 'hidden',
+                        textOverflow: 'ellipsis',
+                        whiteSpace: 'nowrap',
+                      }}
+                    >
+                      <span
+                        aria-hidden="true"
+                        style={{
+                          width: '8px',
+                          height: '8px',
+                          borderRadius: '99px',
+                          background: sub.color,
+                          flexShrink: 0,
+                        }}
+                      />
+                      {sub.name}
+                    </span>
+                    <input
+                      type="number"
+                      min={0}
+                      max={600}
+                      step={1}
+                      placeholder="min"
+                      aria-label={`${sub.name} minutes spent`}
+                      value={mockSubjectMinutes[sub.id] ?? ''}
+                      onChange={(e) =>
+                        setMockSubjectMinutes((prev) => ({
+                          ...prev,
+                          [sub.id]: e.target.value,
+                        }))
+                      }
+                      style={{ minHeight: '48px', padding: '8px 10px' }}
+                    />
+                  </label>
+                ))}
+              </div>
+            </div>
+
             <Field label="Mistakes & analysis note">
               <textarea
                 rows={3}
@@ -1430,11 +1785,28 @@ export const Modals: React.FC<ModalsProps> = ({
               )}
             </div>
 
-            <div style={{ display: 'flex', gap: '8px', marginTop: '4px' }}>
-              <Button variant="secondary" onClick={onClose} style={{ flex: 1 }}>
+            <div style={{ display: 'flex', flexWrap: 'wrap', gap: '8px', marginTop: '4px' }}>
+              <Button variant="secondary" onClick={onClose} style={{ minWidth: '88px' }}>
                 Cancel
               </Button>
-              <Button variant="primary" type="submit" style={{ flex: 2 }}>
+              <Button
+                variant="secondary"
+                type="submit"
+                onClick={() => {
+                  openVaultAfterRef.current = true;
+                }}
+                style={{ flex: '1 1 150px' }}
+              >
+                Save &amp; add to Vault
+              </Button>
+              <Button
+                variant="primary"
+                type="submit"
+                onClick={() => {
+                  openVaultAfterRef.current = false;
+                }}
+                style={{ flex: '1 1 150px' }}
+              >
                 Save Mock Test
               </Button>
             </div>
@@ -1709,11 +2081,39 @@ export const Modals: React.FC<ModalsProps> = ({
           This resets all study sessions, habits, syllabus chapters, and mock tests on this
           device to a clean slate. Export a JSON backup first if you want to keep your records.
         </p>
+        <label
+          style={{
+            display: 'flex',
+            alignItems: 'flex-start',
+            gap: '10px',
+            padding: '12px',
+            borderRadius: '12px',
+            background: 'var(--sf-2)',
+            border: '1px solid var(--line)',
+            cursor: 'pointer',
+            marginTop: '4px',
+          }}
+        >
+          <input
+            type="checkbox"
+            checked={eraseVault}
+            onChange={(e) => setEraseVault(e.target.checked)}
+            style={{ width: '18px', height: '18px', marginTop: '2px', flexShrink: 0 }}
+          />
+          <span style={{ display: 'grid', gap: '2px' }}>
+            <span style={{ fontSize: '14px', fontWeight: 600, color: 'var(--tx)' }}>
+              Also erase my Vault on this device
+            </span>
+            <span style={{ fontSize: '13px', color: 'var(--tx-3)', lineHeight: 1.4 }}>
+              Permanently removes local question photos (cannot be undone)
+            </span>
+          </span>
+        </label>
         <div style={{ display: 'flex', gap: '8px', marginTop: '4px' }}>
           <Button variant="secondary" onClick={onClose} style={{ flex: 1 }}>
             Cancel
           </Button>
-          <Button variant="danger" onClick={onConfirmReset} style={{ flex: 1 }}>
+          <Button variant="danger" onClick={() => onConfirmReset(eraseVault)} style={{ flex: 1 }}>
             Erase Everything
           </Button>
         </div>

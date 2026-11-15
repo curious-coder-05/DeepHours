@@ -1,6 +1,7 @@
-import React, { useEffect, useMemo, useState } from 'react';
+import React, { Suspense, useEffect, useMemo, useState } from 'react';
 import {
   AlertTriangle,
+  Camera,
   Check,
   ChevronDown,
   ChevronRight,
@@ -29,10 +30,19 @@ import {
   getSubject,
 } from '../utils/studyLogic';
 import { computeStudyNext } from '../utils/pace';
+import {
+  BLEEDING_CATEGORIES,
+  aggregateMockDiagnostics,
+  computeCleanScore,
+  formatSubjectTimeSummary,
+  hasBleedingEntries,
+  loadAllMockDiagnostics,
+} from '../utils/mockDiagnostics';
 import { computeUiPaceReport } from '../utils/uiHelpers';
-import { MistakesView } from './MistakesView';
-import { DoubtsView } from './DoubtsView';
+import { computeVaultCounts } from '../utils/vaultLogic';
+import { listVaultItems } from '../utils/vaultStore';
 import { PYQView } from './PYQView';
+import type { VaultCaptureRequest } from './VaultView';
 import { SyllabusGalaxyScene } from './three/SyllabusGalaxyScene';
 import {
   AreaLineChart,
@@ -48,15 +58,24 @@ import {
   Segmented,
   Select,
   Sheet,
+  Skeleton,
   Stat,
   WindowedList,
 } from './ui';
+
+const VaultView = React.lazy(() =>
+  import('./VaultView').then((m) => ({ default: m.VaultView }))
+);
 
 interface PrepViewProps {
   state: PulseHabitState;
   todayKey: string;
   subTab: PrepSubTab;
   pyqJumpNonce?: number;
+  vaultCaptureRequest?: VaultCaptureRequest | null;
+  activeTimerText?: string | null;
+  onNotify?: (msg: string, undo?: () => void) => void;
+  onOpenDriveSettings?: () => void;
   onChangeSubTab: (sub: PrepSubTab) => void;
   onAddChapters: (subjectId: string, names: string[]) => void;
   onUpdateChapter: (chapterId: string, patch: Partial<Chapter>) => void;
@@ -69,12 +88,12 @@ interface PrepViewProps {
   onEditMock: (mockId: string) => void;
   onDeleteMock: (mockId: string) => void;
   onUpdateTargetScore: (nextTarget: number) => void;
-  onAddMistake: (
+  onAddMistake?: (
     entry: Omit<MistakeEntry, 'id' | 'createdAt' | 'updatedAt' | 'resolved'>
   ) => void;
   onToggleMistakeResolved: (id: string) => void;
   onDeleteMistake: (id: string) => void;
-  onAddDoubt: (doubt: Omit<Doubt, 'id' | 'createdAt' | 'resolved'>) => void;
+  onAddDoubt?: (doubt: Omit<Doubt, 'id' | 'createdAt' | 'resolved'>) => void;
   onToggleDoubtResolved: (id: string) => void;
   onDeleteDoubt: (id: string) => void;
   onAddPYQ: (entry: {
@@ -91,7 +110,7 @@ interface PrepViewProps {
   ) => void;
 }
 
-type PrepUiTab = PrepSubTab | 'pyqs';
+export type PrepUiTab = 'syllabus' | 'mocks' | 'vault' | 'pyqs';
 
 const STATUS_OPTIONS: Array<{ value: ChapterStatus; label: string }> = [
   { value: 'notStarted', label: 'Not started' },
@@ -104,6 +123,10 @@ export const PrepView: React.FC<PrepViewProps> = ({
   todayKey,
   subTab,
   pyqJumpNonce,
+  vaultCaptureRequest,
+  activeTimerText,
+  onNotify,
+  onOpenDriveSettings,
   onChangeSubTab,
   onAddChapters,
   onUpdateChapter,
@@ -116,10 +139,8 @@ export const PrepView: React.FC<PrepViewProps> = ({
   onEditMock,
   onDeleteMock,
   onUpdateTargetScore,
-  onAddMistake,
   onToggleMistakeResolved,
   onDeleteMistake,
-  onAddDoubt,
   onToggleDoubtResolved,
   onDeleteDoubt,
   onAddPYQ,
@@ -127,7 +148,18 @@ export const PrepView: React.FC<PrepViewProps> = ({
   onStartChapterFocus,
 }) => {
   const [showPyqsTab, setShowPyqsTab] = useState<boolean>(false);
-  const activeUiTab: PrepUiTab = showPyqsTab ? 'pyqs' : subTab;
+  const [vaultChapterJump, setVaultChapterJump] = useState<{
+    nonce: number;
+    subjectId: string;
+    chapterId: string;
+  } | null>(null);
+  const [chapterVaultCounts, setChapterVaultCounts] = useState<
+    Record<string, { total: number; active: number }>
+  >({});
+
+  const normalizedSubTab: PrepUiTab =
+    subTab === 'mistakes' || subTab === 'doubts' ? 'vault' : subTab;
+  const activeUiTab: PrepUiTab = showPyqsTab ? 'pyqs' : normalizedSubTab;
 
   useEffect(() => {
     if (pyqJumpNonce && pyqJumpNonce > 0) {
@@ -135,9 +167,31 @@ export const PrepView: React.FC<PrepViewProps> = ({
     }
   }, [pyqJumpNonce]);
 
+  useEffect(() => {
+    if (vaultCaptureRequest && vaultCaptureRequest.nonce > 0) {
+      setShowPyqsTab(false);
+    }
+  }, [vaultCaptureRequest]);
+
+  useEffect(() => {
+    let cancelled = false;
+    void listVaultItems()
+      .then((list) => {
+        if (cancelled) return;
+        setChapterVaultCounts(computeVaultCounts(list).byChapter);
+      })
+      .catch(() => {});
+    return () => {
+      cancelled = true;
+    };
+  }, [activeUiTab]);
+
   const handleSelectUiTab = (next: PrepUiTab) => {
     if (next === 'pyqs') {
       setShowPyqsTab(true);
+    } else if (next === 'vault') {
+      setShowPyqsTab(false);
+      onChangeSubTab('mistakes');
     } else {
       setShowPyqsTab(false);
       onChangeSubTab(next);
@@ -195,6 +249,14 @@ export const PrepView: React.FC<PrepViewProps> = ({
   }, [state]);
 
   const mocksOverview = useMemo(() => computeMocksOverview(state), [state]);
+  const mockDiagnosticsMap = useMemo(
+    () => loadAllMockDiagnostics(),
+    [state.mocks]
+  );
+  const mockDiagnosticsAgg = useMemo(
+    () => aggregateMockDiagnostics(state.mocks, mockDiagnosticsMap),
+    [state.mocks, mockDiagnosticsMap]
+  );
   const paceReport = useMemo(
     () => computeUiPaceReport(state, todayKey),
     [state, todayKey]
@@ -275,7 +337,7 @@ export const PrepView: React.FC<PrepViewProps> = ({
 
   return (
     <div className="space-y-4">
-      {/* Top 5-Option Segmented Navigation */}
+      {/* Top 4-Option Segmented Navigation */}
       <Segmented<PrepUiTab>
         value={activeUiTab}
         onChange={handleSelectUiTab}
@@ -283,8 +345,7 @@ export const PrepView: React.FC<PrepViewProps> = ({
         options={[
           { value: 'syllabus', label: 'Syllabus' },
           { value: 'mocks', label: 'Mocks' },
-          { value: 'mistakes', label: 'Mistakes' },
-          { value: 'doubts', label: 'Doubts' },
+          { value: 'vault', label: 'Vault' },
           { value: 'pyqs', label: 'PYQs' },
         ]}
       />
@@ -688,6 +749,23 @@ export const PrepView: React.FC<PrepViewProps> = ({
                                             PYQ {pyqSummary.correct}/{pyqSummary.attempted} (
                                             {pyqSummary.accuracyPct}%)
                                           </span>
+                                        )}
+                                        {(chapterVaultCounts[ch.id]?.active ?? 0) > 0 && (
+                                          <button
+                                            type="button"
+                                            onClick={() => {
+                                              setVaultChapterJump({
+                                                nonce: Date.now(),
+                                                subjectId: ch.subjectId,
+                                                chapterId: ch.id,
+                                              });
+                                              handleSelectUiTab('vault');
+                                            }}
+                                            className="tnum inline-flex items-center gap-1 rounded-md border border-[var(--line)] bg-[var(--sf-2)] px-2 py-0.5 text-[13px] font-medium text-[var(--tx-2)] hover:border-[var(--ac)]"
+                                          >
+                                            <Camera size={12} strokeWidth={1.75} aria-hidden="true" />
+                                            Vault · {chapterVaultCounts[ch.id].active}
+                                          </button>
                                         )}
                                       </div>
                                       <div className="max-w-[220px]">
@@ -1166,6 +1244,114 @@ export const PrepView: React.FC<PrepViewProps> = ({
             </Card>
           )}
 
+          {/* Error & Pacing Insights Card */}
+          {mockDiagnosticsAgg.mocksWithDiagnosticsCount >= 1 && (
+            <Card>
+              <SectionHeader
+                title="Error & pacing insights"
+                subtitle={`Across ${mockDiagnosticsAgg.mocksWithDiagnosticsCount} diagnosed mock${
+                  mockDiagnosticsAgg.mocksWithDiagnosticsCount === 1 ? '' : 's'
+                } · ${mockDiagnosticsAgg.totalLostMarks} marks lost (${mockDiagnosticsAgg.totalRecoverableMarks} recoverable)`}
+              />
+
+              <div className="mt-3 space-y-4">
+                <div className="space-y-2.5">
+                  <div className="text-[13px] font-semibold text-[var(--tx)]">
+                    Where marks are bleeding
+                  </div>
+                  <div className="grid gap-2.5 sm:grid-cols-2">
+                    {BLEEDING_CATEGORIES.map((cat) => {
+                      const count = mockDiagnosticsAgg.bleedingCounts[cat.key];
+                      const lostMarks = mockDiagnosticsAgg.bleedingMarks[cat.key];
+                      return (
+                        <div
+                          key={cat.key}
+                          className="rounded-xl border border-[var(--line)] bg-[var(--sf-2)] p-2.5"
+                        >
+                          <div className="split mb-1.5 text-[13px]">
+                            <span className="font-medium text-[var(--tx)]">
+                              {cat.label}
+                            </span>
+                            <span className="tnum font-semibold text-[var(--tx)]">
+                              {count} Q · {lostMarks} marks
+                            </span>
+                          </div>
+                          <Meter
+                            value={lostMarks}
+                            max={Math.max(1, mockDiagnosticsAgg.totalLostMarks)}
+                            color={cat.color}
+                            height={7}
+                            label={`${cat.label} lost marks`}
+                          />
+                        </div>
+                      );
+                    })}
+                  </div>
+                </div>
+
+                {mockDiagnosticsAgg.timedMocksCount >= 1 && (
+                  <div className="space-y-2.5 border-t border-[var(--line)] pt-3">
+                    <div className="split flex-wrap gap-1">
+                      <span className="text-[13px] font-semibold text-[var(--tx)]">
+                        Avg subject pacing
+                      </span>
+                      <span className="tnum text-[13px] text-[var(--tx-2)]">
+                        Across {mockDiagnosticsAgg.timedMocksCount} timed mock
+                        {mockDiagnosticsAgg.timedMocksCount === 1 ? '' : 's'}
+                      </span>
+                    </div>
+                    {(() => {
+                      const pacingEntries = Object.values(
+                        mockDiagnosticsAgg.subjectPacing
+                      );
+                      const orderedPacing = state.subjects
+                        .filter((s) => mockDiagnosticsAgg.subjectPacing[s.id])
+                        .map((s) => ({
+                          subject: s,
+                          pacing: mockDiagnosticsAgg.subjectPacing[s.id],
+                        }));
+                      const totalAvgMins = pacingEntries.reduce(
+                        (sum, item) => sum + item.avgMinutes,
+                        0
+                      );
+                      return (
+                        <div className="grid gap-2 sm:grid-cols-2">
+                          {orderedPacing.map(({ subject, pacing }) => (
+                            <div
+                              key={subject.id}
+                              className="rounded-xl border border-[var(--line)] bg-[var(--sf-2)] p-2.5"
+                            >
+                              <div className="split mb-1.5 text-[13px]">
+                                <span className="flex items-center gap-1.5 font-medium text-[var(--tx)]">
+                                  <span
+                                    aria-hidden="true"
+                                    className="h-2.5 w-2.5 rounded-full"
+                                    style={{ background: subject.color }}
+                                  />
+                                  {subject.e} {subject.name}
+                                </span>
+                                <span className="tnum font-semibold text-[var(--tx)]">
+                                  {pacing.avgMinutes}m avg
+                                </span>
+                              </div>
+                              <Meter
+                                value={pacing.avgMinutes}
+                                max={Math.max(1, totalAvgMins)}
+                                color={subject.color}
+                                height={7}
+                                label={`${subject.name} average minutes`}
+                              />
+                            </div>
+                          ))}
+                        </div>
+                      );
+                    })()}
+                  </div>
+                )}
+              </div>
+            </Card>
+          )}
+
           {/* Mock List */}
           {mocksOverview.newestFirst.length === 0 ? (
             <EmptyState
@@ -1191,21 +1377,50 @@ export const PrepView: React.FC<PrepViewProps> = ({
               itemLabel="mocks"
               className="space-y-3"
               getKey={({ mock }) => mock.id}
-              renderItem={({ mock, report }) => (
+              renderItem={({ mock, report }) => {
+                const diag = mockDiagnosticsMap[mock.id];
+                const showCleanBadge = Boolean(
+                  diag && hasBleedingEntries(diag.bleeding)
+                );
+                const cleanInfo = showCleanBadge
+                  ? computeCleanScore(
+                      report.totalScore,
+                      mock.maxMarks,
+                      diag?.bleeding
+                    )
+                  : null;
+                const timeSummary = diag
+                  ? formatSubjectTimeSummary(
+                      diag.subjectMinutes,
+                      state.subjects
+                    )
+                  : '';
+
+                return (
                 <Card>
                   <div className="flex flex-wrap items-start justify-between gap-2">
-                    <div>
-                      <div className="flex items-center gap-2">
+                    <div className="min-w-0 flex-1">
+                      <div className="flex flex-wrap items-center gap-2">
                         <h4 className="text-[15px] font-semibold text-[var(--tx)]">
                           {mock.name}
                         </h4>
                         <span className="tnum rounded-lg bg-[var(--ac-soft)] px-2.5 py-0.5 text-[13px] font-bold text-[var(--ac-ink)]">
                           {report.totalScore} / {mock.maxMarks} ({report.pct}%)
                         </span>
+                        {cleanInfo && (
+                          <span className="tnum rounded-lg border border-[var(--line)] bg-[var(--sf-2)] px-2.5 py-0.5 text-[13px] font-semibold text-[var(--ok-ink)]">
+                            Clean {cleanInfo.cleanScore}
+                          </span>
+                        )}
                       </div>
                       <p className="tnum mt-0.5 text-[13px] text-[var(--tx-2)]">
                         {mock.dayKey} · Accuracy {report.accuracyPct}% · +{report.totalCorrect} correct · −{report.totalWrong} wrong · {report.totalUnattempted} left
                       </p>
+                      {timeSummary && (
+                        <p className="tnum mt-0.5 text-[13px] text-[var(--tx-2)]">
+                          {timeSummary}
+                        </p>
+                      )}
                       {mock.note && (
                         <p className="mt-1 text-[13px] text-[var(--tx-2)]">{mock.note}</p>
                       )}
@@ -1249,40 +1464,42 @@ export const PrepView: React.FC<PrepViewProps> = ({
                       ))}
                   </div>
                 </Card>
-              )}
+                );
+              }}
             />
           )}
         </div>
       )}
 
       {/* ==========================================
-          SUB-VIEW 3: MISTAKES
+          SUB-VIEW 3: QUESTION VAULT (LAZY-LOADED)
           ========================================== */}
-      {activeUiTab === 'mistakes' && (
-        <MistakesView
-          state={state}
-          todayKey={todayKey}
-          onAddMistake={onAddMistake}
-          onToggleResolved={onToggleMistakeResolved}
-          onDeleteMistake={onDeleteMistake}
-          onScheduleRevision={onAddRevision}
-        />
+      {activeUiTab === 'vault' && (
+        <Suspense
+          fallback={
+            <div className="space-y-3">
+              <Skeleton height={88} />
+              <Skeleton height={200} />
+            </div>
+          }
+        >
+          <VaultView
+            state={state}
+            initialChapterFilter={vaultChapterJump}
+            captureRequest={vaultCaptureRequest}
+            activeTimerText={activeTimerText}
+            onNotify={(msg, undo) => onNotify?.(msg, undo)}
+            onOpenDriveSettings={() => onOpenDriveSettings?.()}
+            onToggleMistakeResolved={onToggleMistakeResolved}
+            onDeleteMistake={onDeleteMistake}
+            onToggleDoubtResolved={onToggleDoubtResolved}
+            onDeleteDoubt={onDeleteDoubt}
+          />
+        </Suspense>
       )}
 
       {/* ==========================================
-          SUB-VIEW 4: DOUBTS
-          ========================================== */}
-      {activeUiTab === 'doubts' && (
-        <DoubtsView
-          state={state}
-          onAddDoubt={onAddDoubt}
-          onToggleDoubtResolved={onToggleDoubtResolved}
-          onDeleteDoubt={onDeleteDoubt}
-        />
-      )}
-
-      {/* ==========================================
-          SUB-VIEW 5: PYQ TRACKER
+          SUB-VIEW 4: PYQ TRACKER
           ========================================== */}
       {activeUiTab === 'pyqs' && (
         <PYQView

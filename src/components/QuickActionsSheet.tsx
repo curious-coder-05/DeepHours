@@ -1,12 +1,11 @@
 import React from 'react';
 import {
-  AlertCircle,
   BookOpen,
   CalendarPlus,
+  Camera,
   CheckSquare,
   Clock,
   FileCheck2,
-  HelpCircle,
   Layers,
   Play,
   Repeat,
@@ -20,8 +19,7 @@ export type QuickActionKind =
   | 'addHabit'
   | 'addChapter'
   | 'logMock'
-  | 'addMistake'
-  | 'addDoubt'
+  | 'addVault'
   | 'logPyq'
   | 'addDDay';
 
@@ -70,20 +68,14 @@ const ACTIONS: Array<{
   {
     id: 'logMock',
     title: 'Log mock',
-    subtitle: 'Record a NEET mock test score and mistakes',
+    subtitle: 'Record a NEET mock test score and hard questions',
     Icon: FileCheck2,
   },
   {
-    id: 'addMistake',
-    title: 'Add mistake',
-    subtitle: 'Capture a question error for review',
-    Icon: AlertCircle,
-  },
-  {
-    id: 'addDoubt',
-    title: 'Add doubt',
-    subtitle: 'Save an unresolved topic to your doubt queue',
-    Icon: HelpCircle,
+    id: 'addVault',
+    title: 'Add to Vault',
+    subtitle: 'Snap or upload an unsolved or hard question',
+    Icon: Camera,
   },
   {
     id: 'logPyq',

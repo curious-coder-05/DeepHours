@@ -64,6 +64,14 @@ import {
   updateChapterRevisionDate,
 } from './utils/studyLogic';
 import { toggleRestDay } from './utils/insights';
+import {
+  clearAllMockDiagnostics,
+  deleteMockDiagnostic,
+  getMockDiagnostic,
+  loadAllMockDiagnostics,
+  replaceAllMockDiagnostics,
+  saveMockDiagnostic,
+} from './utils/mockDiagnostics';
 import type {
   GroupLiveStatus,
   GroupPublishBudgetController,
@@ -100,6 +108,8 @@ import { CommandPalette } from './components/CommandPalette';
 import { KeyboardShortcutsSheet } from './components/KeyboardShortcutsSheet';
 import type { OnboardingResult } from './components/OnboardingSheet';
 import type { SettingsSection } from './components/SettingsView';
+import type { VaultCaptureRequest } from './components/VaultView';
+import { clearAllVaultData } from './utils/vaultStore';
 import {
   detectRewardMilestone,
   type RewardMilestonePayload,
@@ -223,6 +233,8 @@ export default function App() {
   const [tab, setTab] = useState<AppTab>('today');
   const [prepSubTab, setPrepSubTab] = useState<PrepSubTab>('syllabus');
   const [pyqJumpNonce, setPyqJumpNonce] = useState<number>(0);
+  const [vaultCaptureRequest, setVaultCaptureRequest] =
+    useState<VaultCaptureRequest | null>(null);
   const [statsSubTab, setStatsSubTab] = useState<StatsSubTab>('summary');
   const [sel, setSel] = useState<string>(() => logicalKey(new Date(), 0));
   const [cat, setCat] = useState<'All' | HabitCategory>('All');
@@ -298,7 +310,48 @@ export default function App() {
   authUserRef.current = authUser;
   const syncControllerRef = useRef<SyncBudgetController | null>(null);
   const liveStatusRef = useRef<GroupLiveStatus | null>(null);
+  const lastActiveLiveRef = useRef<GroupLiveStatus | null>(null);
   const groupBudgetRef = useRef<GroupPublishBudgetController | null>(null);
+
+  const syncLiveStatusForState = useCallback(
+    (targetState: PulseHabitState, liveDurationMs = 60 * 60_000): GroupLiveStatus | null => {
+      const hasLiveGroup = (targetState.groupsConfig?.joined || []).some(
+        (g) => g.sh.l && !g.paused
+      );
+      if (!hasLiveGroup) {
+        liveStatusRef.current = null;
+        return null;
+      }
+      const t = targetState.activeTimer;
+      if (t && t.status === 'running' && t.phase !== 'break') {
+        const now = Date.now();
+        const reusable =
+          liveStatusRef.current?.since === t.startTs
+            ? liveStatusRef.current
+            : lastActiveLiveRef.current?.since === t.startTs
+              ? lastActiveLiveRef.current
+              : null;
+        if (reusable && reusable.until - now > 15 * 60_000) {
+          liveStatusRef.current = reusable;
+          lastActiveLiveRef.current = reusable;
+          return reusable;
+        }
+        const fresh: GroupLiveStatus = {
+          since: t.startTs,
+          until: now + liveDurationMs,
+        };
+        liveStatusRef.current = fresh;
+        lastActiveLiveRef.current = fresh;
+        return fresh;
+      }
+      liveStatusRef.current = null;
+      if (!t || t.phase === 'break') {
+        lastActiveLiveRef.current = null;
+      }
+      return null;
+    },
+    []
+  );
 
   const ensureGroupBudget = useCallback(async (): Promise<GroupPublishBudgetController> => {
     if (groupBudgetRef.current) return groupBudgetRef.current;
@@ -310,6 +363,10 @@ export default function App() {
         const joined = curState.groupsConfig?.joined?.find((j) => j.groupId === groupId);
         if (!joined) return;
         const curToday = logicalKey(new Date(), curState.set.dayResetHour ?? 0);
+        const liveForGroup =
+          joined.sh.l && !joined.paused
+            ? syncLiveStatusForState(curState, gm.GROUP_LIVE_DURATION_MS)
+            : null;
         await gm.publishMyEntryToGroup({
           groupId,
           state: curState,
@@ -317,14 +374,14 @@ export default function App() {
           joinedAt: joined.joinedAt,
           sh: joined.sh,
           paused: joined.paused,
-          live: liveStatusRef.current,
+          live: liveForGroup,
           budget: groupBudgetRef.current,
         });
       });
       setGroupBudgetReady(true);
     }
     return groupBudgetRef.current;
-  }, []);
+  }, [syncLiveStatusForState]);
 
   const toastTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const firedRemindersRef = useRef<Set<string>>(new Set());
@@ -418,36 +475,90 @@ export default function App() {
       if (authUserRef.current) {
         const joinedList = stamped.groupsConfig?.joined || [];
         if (joinedList.length > 0) {
+          const prevActive = prev.activeTimer;
+          const nextActive = stamped.activeTimer;
+          const prevRunning = Boolean(
+            prevActive && prevActive.status === 'running' && prevActive.phase !== 'break'
+          );
+          const nextRunning = Boolean(
+            nextActive && nextActive.status === 'running' && nextActive.phase !== 'break'
+          );
+          const justStartedTimer =
+            nextRunning &&
+            (!prevActive ||
+              prevActive.startTs !== nextActive?.startTs ||
+              (!prevRunning && prevActive.phase === 'break'));
+          const justStoppedTimer = Boolean(
+            prevActive &&
+              prevActive.phase !== 'break' &&
+              (!nextActive || nextActive.phase === 'break')
+          );
+
           const curToday = logicalKey(new Date(), stamped.set.dayResetHour ?? 0);
           if (groupsCache && groupBudgetRef.current) {
+            const nextLive = syncLiveStatusForState(
+              stamped,
+              groupsCache.GROUP_LIVE_DURATION_MS
+            );
+            const immediateGroupIds: string[] = [];
             for (const g of joinedList) {
               const entry = groupsCache.buildMyMemberEntry(stamped, curToday, {
                 joinedAt: g.joinedAt,
                 sh: g.sh,
                 paused: g.paused,
-                live: liveStatusRef.current,
+                live: g.sh.l && !g.paused ? nextLive : null,
                 groupId: g.groupId,
               });
               groupBudgetRef.current.markGroupDirty(g.groupId, entry);
+              if (
+                (justStartedTimer && g.sh.l && !g.paused) ||
+                (justStoppedTimer && !g.paused)
+              ) {
+                immediateGroupIds.push(g.groupId);
+              }
+            }
+            if (immediateGroupIds.length > 0) {
+              void groupBudgetRef.current.flushNow(immediateGroupIds);
             }
           } else {
-            void Promise.all([getGroupsMod(), ensureGroupBudget()]).then(([gm, budget]) => {
-              for (const g of joinedList) {
-                const entry = gm.buildMyMemberEntry(stamped, curToday, {
-                  joinedAt: g.joinedAt,
-                  sh: g.sh,
-                  paused: g.paused,
-                  live: liveStatusRef.current,
-                  groupId: g.groupId,
-                });
-                budget.markGroupDirty(g.groupId, entry);
+            void Promise.all([getGroupsMod(), ensureGroupBudget()]).then(
+              ([gm, budget]) => {
+                const latest = stateRef.current;
+                const latestToday = logicalKey(
+                  new Date(),
+                  latest.set.dayResetHour ?? 0
+                );
+                const nextLive = syncLiveStatusForState(
+                  latest,
+                  gm.GROUP_LIVE_DURATION_MS
+                );
+                const immediateGroupIds: string[] = [];
+                for (const g of latest.groupsConfig?.joined || []) {
+                  const entry = gm.buildMyMemberEntry(latest, latestToday, {
+                    joinedAt: g.joinedAt,
+                    sh: g.sh,
+                    paused: g.paused,
+                    live: g.sh.l && !g.paused ? nextLive : null,
+                    groupId: g.groupId,
+                  });
+                  budget.markGroupDirty(g.groupId, entry);
+                  if (
+                    (justStartedTimer && g.sh.l && !g.paused) ||
+                    (justStoppedTimer && !g.paused)
+                  ) {
+                    immediateGroupIds.push(g.groupId);
+                  }
+                }
+                if (immediateGroupIds.length > 0) {
+                  void budget.flushNow(immediateGroupIds);
+                }
               }
-            });
+            );
           }
         }
       }
     }
-  }, [ensureGroupBudget]);
+  }, [ensureGroupBudget, syncLiveStatusForState]);
 
   const updateAndSave = useCallback(
     (updater: (prev: PulseHabitState) => PulseHabitState) => {
@@ -950,7 +1061,7 @@ export default function App() {
     };
   }, [ensureGroupBudget, runCloudSync]);
 
-  // Milestone 2.1: Studying Now live status publishing (when sh.l is ON)
+  // Milestone 2.1: Studying Now live status hydration & 45m keepalive (when sh.l is ON)
   useEffect(() => {
     if (!ready || !authUser) return;
     const joinedLiveGroups = (state.groupsConfig?.joined || []).filter(
@@ -963,78 +1074,73 @@ export default function App() {
 
     let cancelled = false;
     let refreshIv: ReturnType<typeof setInterval> | null = null;
-    let pauseClearTimer: ReturnType<typeof setTimeout> | null = null;
 
     void Promise.all([getGroupsMod(), ensureGroupBudget()]).then(([gm, budget]) => {
       if (cancelled) return;
-      const pushLiveToGroups = () => {
-        if (!authUserRef.current) return;
-        const curState = stateRef.current;
-        const curToday = logicalKey(new Date(), curState.set.dayResetHour ?? 0);
-        for (const g of curState.groupsConfig?.joined || []) {
-          if (!g.sh.l || g.paused) continue;
-          void gm
-            .publishMyEntryToGroup({
-              groupId: g.groupId,
-              state: curState,
-              todayKey: curToday,
-              joinedAt: g.joinedAt,
-              sh: g.sh,
-              paused: g.paused,
-              live: liveStatusRef.current,
-              budget,
-            })
-            .catch(() => {});
-        }
-      };
-
-      const t = state.activeTimer;
+      const t = stateRef.current.activeTimer;
       if (t && t.status === 'running' && t.phase !== 'break') {
-        const now = Date.now();
-        liveStatusRef.current = {
-          since: t.startTs,
-          until: now + gm.GROUP_LIVE_DURATION_MS,
-        };
-        pushLiveToGroups();
+        const live = syncLiveStatusForState(stateRef.current, gm.GROUP_LIVE_DURATION_MS);
+        const curToday = logicalKey(new Date(), stateRef.current.set.dayResetHour ?? 0);
+        const idsToFlush: string[] = [];
+        for (const g of stateRef.current.groupsConfig?.joined || []) {
+          if (!g.sh.l || g.paused) continue;
+          const entry = gm.buildMyMemberEntry(stateRef.current, curToday, {
+            joinedAt: g.joinedAt,
+            sh: g.sh,
+            paused: g.paused,
+            live,
+            groupId: g.groupId,
+          });
+          if (budget.hasEntryChanged(g.groupId, entry)) {
+            budget.markGroupDirty(g.groupId, entry);
+            idsToFlush.push(g.groupId);
+          }
+        }
+        if (idsToFlush.length > 0) {
+          void budget.flushNow(idsToFlush);
+        }
 
         refreshIv = setInterval(() => {
-          const curTimer = stateRef.current.activeTimer;
+          const curState = stateRef.current;
+          const curTimer = curState.activeTimer;
           if (curTimer && curTimer.status === 'running' && curTimer.phase !== 'break') {
-            liveStatusRef.current = {
+            const nextLive: GroupLiveStatus = {
               since: curTimer.startTs,
               until: Date.now() + gm.GROUP_LIVE_DURATION_MS,
             };
-            pushLiveToGroups();
+            liveStatusRef.current = nextLive;
+            lastActiveLiveRef.current = nextLive;
+            const latestToday = logicalKey(
+              new Date(),
+              curState.set.dayResetHour ?? 0
+            );
+            for (const g of curState.groupsConfig?.joined || []) {
+              if (!g.sh.l || g.paused) continue;
+              const entry = gm.buildMyMemberEntry(curState, latestToday, {
+                joinedAt: g.joinedAt,
+                sh: g.sh,
+                paused: g.paused,
+                live: nextLive,
+                groupId: g.groupId,
+              });
+              budget.markGroupDirty(g.groupId, entry);
+            }
           }
         }, gm.GROUP_LIVE_REFRESH_MS);
-        return;
-      }
-
-      if (t && t.status === 'paused' && t.phase !== 'break') {
-        pauseClearTimer = setTimeout(() => {
-          if (liveStatusRef.current) {
-            liveStatusRef.current = null;
-            pushLiveToGroups();
-          }
-        }, gm.GROUP_LIVE_PAUSE_CLEAR_MS);
-        return;
-      }
-
-      if (liveStatusRef.current) {
-        liveStatusRef.current = null;
-        pushLiveToGroups();
+      } else {
+        syncLiveStatusForState(stateRef.current, gm.GROUP_LIVE_DURATION_MS);
       }
     });
 
     return () => {
       cancelled = true;
       if (refreshIv) clearInterval(refreshIv);
-      if (pauseClearTimer) clearTimeout(pauseClearTimer);
     };
   }, [
     ready,
     authUser,
     ensureGroupBudget,
+    syncLiveStatusForState,
     state.activeTimer?.status,
     state.activeTimer?.phase,
     state.activeTimer?.startTs,
@@ -1896,17 +2002,22 @@ export default function App() {
       const prev = stateRef.current;
       const index = prev.mocks.findIndex((m) => m.id === mockId);
       if (index === -1) return;
+      const savedDiag = getMockDiagnostic(mockId);
       const record: DeletedEntityRecord = {
         kind: 'mock',
         item: JSON.parse(JSON.stringify(prev.mocks[index])),
         index,
       };
+      deleteMockDiagnostic(mockId);
       updateAndSave((cur) => ({
         ...addTombstone(cur, mockId),
         mocks: cur.mocks.filter((m) => m.id !== mockId),
       }));
       setModal({ type: 'none' });
       showToast('Mock test deleted', () => {
+        if (savedDiag) {
+          saveMockDiagnostic(mockId, savedDiag);
+        }
         updateAndSave((cur) => restoreDeletedItem(cur, record));
       });
     },
@@ -2346,14 +2457,10 @@ export default function App() {
         case 'logMock':
           setModal({ type: 'mock' });
           break;
-        case 'addMistake':
+        case 'addVault':
           setPrepSubTab('mistakes');
           setTab('prep');
-          window.scrollTo(0, 0);
-          break;
-        case 'addDoubt':
-          setPrepSubTab('doubts');
-          setTab('prep');
+          setVaultCaptureRequest({ nonce: Date.now() });
           window.scrollTo(0, 0);
           break;
         case 'logPyq':
@@ -2615,7 +2722,7 @@ export default function App() {
       : tab === 'focus'
         ? 'Timer & ambient sounds'
         : tab === 'prep'
-          ? 'Syllabus pace, mocks, mistakes & doubts'
+          ? 'Syllabus pace, mocks, vault & PYQs'
           : tab === 'stats'
             ? 'Analytics, history & 10m timeline'
             : 'Private study squads & weekly leaderboards';
@@ -2767,6 +2874,18 @@ export default function App() {
               todayKey={todayKey}
               subTab={prepSubTab}
               pyqJumpNonce={pyqJumpNonce}
+              vaultCaptureRequest={vaultCaptureRequest}
+              activeTimerText={
+                activeMetrics
+                  ? `${activeMetrics.status === 'paused' ? 'Paused ' : ''}${fmtHMS(activeMetrics.totalActiveMs)}`
+                  : null
+              }
+              onNotify={showToast}
+              onOpenDriveSettings={() => {
+                setSettingsSection('drive');
+                setSettingsOpen(true);
+                window.scrollTo(0, 0);
+              }}
               onChangeSubTab={setPrepSubTab}
               onAddChapters={handleAddChapters}
               onUpdateChapter={handleUpdateChapter}
@@ -2920,6 +3039,8 @@ export default function App() {
                 todayKey={todayKey}
                 myUid={authUser?.uid || null}
                 isOnline={isOnline}
+                isActive={!isSettingsOpen && tab === 'groups'}
+                liveStatus={liveStatusRef.current}
                 groupBudget={groupBudgetRef.current}
                 onSignIn={async () => {
                   try {
@@ -3002,7 +3123,7 @@ export default function App() {
               syncStatus={syncStatus}
               syncErrorMsg={syncErrorMsg}
               lastSyncedAt={lastSyncedAt ?? state.syncMeta?.lastSyncedAt}
-              dailyWriteCap={cloudSyncCache?.DAILY_WRITE_CAP ?? 150}
+              dailyWriteCap={cloudSyncCache?.DAILY_WRITE_CAP ?? 500}
               syncWritesToday={syncWritesToday}
               onNewDDay={() => setModal({ type: 'dday' })}
               onEditDDay={(id) => setModal({ type: 'dday', id })}
@@ -3153,6 +3274,123 @@ export default function App() {
                 'application/json'
               );
             }}
+            onBuildCsvExport={() => {
+              const cur = stateRef.current;
+              const escCsv = (val: string): string => {
+                const safe = /^[ \t\r\n\u0000-\u001f]*[=+\-@]/.test(val) ? `'${val}` : val;
+                return `"${safe.replace(/"/g, '""')}"`;
+              };
+              const rows = [
+                'type,date,subject,heading_or_title,minutes_or_score,purity_or_accuracy_pct,note',
+              ];
+              cur.sessions.forEach((s) => {
+                const sub = cur.subjects.find((x) => x.id === s.subjectId);
+                const subName = sub ? sub.name : 'General';
+                const heading = getSessionHeading(cur, s);
+                rows.push(
+                  `study_session,${s.dayKey},${escCsv(subName)},${escCsv(heading)},${Math.round(
+                    s.activeMs / 60000
+                  )},${s.purity || 100},${escCsv(s.note || '')}`
+                );
+              });
+              cur.habits.forEach((h) =>
+                Object.entries(cur.log[h.id] || {})
+                  .sort()
+                  .forEach(([k, e]) => {
+                    rows.push(
+                      `habit,${k},"Habit",${escCsv(h.name)},${e.v},100,""`
+                    );
+                  })
+              );
+              cur.mocks.forEach((m) => {
+                const sc = computeMockScore(m, cur.subjects);
+                rows.push(
+                  `mock_test,${m.dayKey},"All Subjects",${escCsv(m.name)},${sc.totalScore},${
+                    sc.accuracyPct
+                  },${escCsv(m.note || '')}`
+                );
+              });
+              cur.chapters.forEach((ch) => {
+                const sub = cur.subjects.find((x) => x.id === ch.subjectId);
+                const subName = sub ? sub.name : 'Subject';
+                const revs = getSortedChapterRevisions(ch);
+                if (revs.length === 0) {
+                  rows.push(
+                    `chapter,${ch.completedOn || ''},${escCsv(subName)},${escCsv(ch.name)},${
+                      ch.confidence || 0
+                    },100,${escCsv(`status:${ch.status}`)}`
+                  );
+                } else {
+                  revs.forEach((r) => {
+                    rows.push(
+                      `chapter_revision,${r.date},${escCsv(subName)},${escCsv(
+                        `${ch.name} (${r.label})`
+                      )},${r.done ? 1 : 0},100,${escCsv(
+                        r.done ? `done:${r.doneOn || r.date}` : 'pending'
+                      )}`
+                    );
+                  });
+                }
+              });
+              (cur.mistakes || []).forEach((m) => {
+                const sub = cur.subjects.find((x) => x.id === m.subjectId);
+                const subName = sub ? sub.name : 'Subject';
+                rows.push(
+                  `mistake,${m.dayKey},${escCsv(subName)},${escCsv(m.reason)},${
+                    m.resolved ? 1 : 0
+                  },100,${escCsv(m.note || '')}`
+                );
+              });
+              (cur.doubts || []).forEach((d) => {
+                const sub = cur.subjects.find((x) => x.id === d.subjectId);
+                const subName = sub ? sub.name : 'Subject';
+                const dateStr = logicalKey(d.createdAt, cur.set.dayResetHour ?? 0);
+                rows.push(
+                  `doubt,${dateStr},${escCsv(subName)},${escCsv(d.text)},${
+                    d.resolved ? 1 : 0
+                  },100,"${d.resolved ? 'resolved' : 'open'}"`
+                );
+              });
+              (cur.pyq || []).forEach((p) => {
+                const ch = cur.chapters.find((c) => c.id === p.chapterId);
+                const sub = ch
+                  ? cur.subjects.find((x) => x.id === ch.subjectId)
+                  : undefined;
+                const subName = sub ? sub.name : 'Subject';
+                const chName = ch ? ch.name : p.chapterId;
+                const acc =
+                  p.attempted > 0 ? Math.round((p.correct / p.attempted) * 100) : 0;
+                rows.push(
+                  `pyq,${p.dayKey},${escCsv(subName)},${escCsv(chName)},${
+                    p.attempted
+                  },${acc},"correct:${p.correct}/${p.attempted}"`
+                );
+              });
+              Object.entries(cur.wellbeing || {})
+                .sort(([a], [b]) => a.localeCompare(b))
+                .forEach(([dk, wb]) => {
+                  rows.push(
+                    `wellbeing,${dk},"Wellbeing","Sleep & Energy",${wb.sleep ?? 0},${
+                      wb.energy ?? 0
+                    },"sleep:${wb.sleep ?? '-'}h energy:${wb.energy ?? '-'}"`
+                  );
+                });
+              (cur.restDays || []).forEach((dk) => {
+                rows.push(`rest_day,${dk},"Rest Pass","Protected Rest Day",1,100,""`);
+              });
+              (cur.tasks || []).forEach((t) => {
+                const sub = t.subjectId
+                  ? cur.subjects.find((x) => x.id === t.subjectId)
+                  : undefined;
+                const subName = sub ? sub.name : 'General';
+                rows.push(
+                  `daily_task,${t.dayKey},${escCsv(subName)},${escCsv(t.title)},${
+                    t.done ? 1 : 0
+                  },100,"${t.done ? 'done' : 'pending'}"`
+                );
+              });
+              return rows.join('\n');
+            }}
             onExportCsv={() => {
               const cur = stateRef.current;
               const escCsv = (val: string): string => {
@@ -3274,6 +3512,45 @@ export default function App() {
                 'text/csv'
               );
             }}
+            onRestoreBackupJson={(jsonText, sourceLabel) => {
+              const snapJson = JSON.stringify(stateRef.current);
+              try {
+                const parsed = JSON.parse(jsonText);
+                if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) {
+                  throw new Error('Invalid schema');
+                }
+                const restored = norm(parsed);
+                const newToday = logicalKey(new Date(), restored.set.dayResetHour);
+                const allDays = new Set<string>([
+                  newToday,
+                  ...restored.sessions.map((s) => s.dayKey),
+                ]);
+                syncStudyHabitsForDays(restored, allDays, newToday);
+                setSel(newToday);
+                saveNextState(restored, { suppressMilestones: true });
+                showToast(
+                  sourceLabel
+                    ? `Restored backup from ${sourceLabel}`
+                    : 'Full backup restored!',
+                  () => {
+                    const reverted = norm(JSON.parse(snapJson));
+                    saveNextState(reverted, { suppressMilestones: true });
+                  }
+                );
+                return true;
+              } catch {
+                showToast('Invalid Deep Hours JSON backup file');
+                return false;
+              }
+            }}
+            onMarkExported={() => {
+              const updated: PulseHabitState = {
+                ...stateRef.current,
+                exp: Date.now(),
+              };
+              saveNextState(updated);
+            }}
+            onNotify={showToast}
             onImportJson={async (file) => {
               if (file.size > 10 * 1024 * 1024) {
                 showToast('Backup file exceeds the 10 MB limit');
@@ -3433,7 +3710,7 @@ export default function App() {
           handleDeleteSession(id);
           setModal({ type: 'none' });
         }}
-        onSaveMock={(id, mockData, queuedMistakes) => {
+        onSaveMock={(id, mockData, queuedMistakes, openVaultAfter, diagnostics) => {
           const now = Date.now();
           const payload: MockTest = {
             id: id || uid('mock'),
@@ -3441,6 +3718,9 @@ export default function App() {
             marksPerWrong: -Math.abs(Number(mockData.marksPerWrong) || 0),
             updatedAt: now,
           };
+          if (diagnostics) {
+            saveMockDiagnostic(payload.id, diagnostics);
+          }
           const newMistakes: MistakeEntry[] = (queuedMistakes || []).map((qm) => ({
             id: uid('mis'),
             subjectId: qm.subjectId,
@@ -3465,11 +3745,32 @@ export default function App() {
           }));
           setModal({ type: 'none' });
           const sc = computeMockScore(payload, stateRef.current.subjects);
-          showToast(
-            `Saved "${payload.name}" (${sc.totalScore}/${payload.maxMarks})${
-              newMistakes.length > 0 ? ` + ${newMistakes.length} mistakes` : ''
-            }`
-          );
+          const openVaultHardCapture = () => {
+            setSettingsOpen(false);
+            setSettingsSection(null);
+            setPrepSubTab('mistakes');
+            setTab('prep');
+            setVaultCaptureRequest({ nonce: Date.now(), kind: 'hard' });
+            window.scrollTo(0, 0);
+          };
+          if (openVaultAfter) {
+            openVaultHardCapture();
+            showToast(
+              `Saved "${payload.name}" (${sc.totalScore}/${payload.maxMarks}) — add hard questions to Vault`
+            );
+          } else {
+            showToast(
+              `Saved "${payload.name}" (${sc.totalScore}/${payload.maxMarks})${
+                newMistakes.length > 0 ? ` + ${newMistakes.length} mistakes` : ''
+              }`,
+              undefined,
+              {
+                durationMs: 6500,
+                actionLabel: 'Add to Vault',
+                onTap: openVaultHardCapture,
+              }
+            );
+          }
         }}
         onDeleteMock={handleDeleteMock}
         onSaveTimerConfig={(pomoWork, pomoBreak, countdownMins, fullMockMins) => {
@@ -3562,18 +3863,29 @@ export default function App() {
             `Day reset hour set to ${pad(newHour)}:00${newHour === 0 ? ' (Midnight)' : ' AM'}`
           );
         }}
-        onConfirmReset={() => {
+        onConfirmReset={(eraseVault) => {
           // F1 & A6: Keep whole-state snapshot for "Erase all data"
           const snapJson = JSON.stringify(stateRef.current);
+          const diagSnap = loadAllMockDiagnostics();
           const fresh = createBlankState();
           const newToday = logicalKey(new Date(), fresh.set.dayResetHour);
           saveNextState(fresh, { suppressMilestones: true });
+          clearAllMockDiagnostics();
           setSel(newToday);
           setModal({ type: 'none' });
-          showToast('All device data reset to a clean slate', () => {
-            const reverted = norm(JSON.parse(snapJson));
-            saveNextState(reverted, { suppressMilestones: true });
-          });
+          if (eraseVault) {
+            void clearAllVaultData();
+          }
+          showToast(
+            eraseVault
+              ? 'All device data and local Vault erased'
+              : 'All device data reset to a clean slate',
+            () => {
+              const reverted = norm(JSON.parse(snapJson));
+              replaceAllMockDiagnostics(diagSnap);
+              saveNextState(reverted, { suppressMilestones: true });
+            }
+          );
         }}
       />
 

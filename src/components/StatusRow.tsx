@@ -44,86 +44,105 @@ export const StatusRow: React.FC<StatusRowProps> = ({
   const todayBreakdown = computeDayXpBreakdown(state, todayKey);
   const isSelRestDay = (state.restDays || []).includes(sel);
 
+  const xpTarget = Math.max(1, levelInfo.xpNeededForNext);
+  const xpProgressPct = Math.min(100, Math.max(0, Math.round((levelInfo.xpIntoLevel / xpTarget) * 100)));
+
   return (
     <>
-      <div className="dh-status-row" role="region" aria-label="Study status">
+      <div className="dh-status-stack" role="region" aria-label="Study status">
         <button
           type="button"
-          className="dh-status-pill"
-          onClick={() => setOpenSheet('streak')}
-          style={{
-            borderColor:
-              minStreakInfo.todayMetMinimum || minStreakInfo.todayIsRestDay
-                ? 'color-mix(in srgb, var(--ok) 48%, var(--line))'
-                : 'var(--line)',
-          }}
-        >
-          <Flame
-            size={16}
-            strokeWidth={1.75}
-            className={minStreakInfo.streak >= 3 ? 'dh-flame-flicker' : undefined}
-            style={{
-              color:
-                minStreakInfo.todayMetMinimum || minStreakInfo.todayIsRestDay
-                  ? 'var(--ok-ink)'
-                  : 'var(--ac-ink)',
-            }}
-            aria-hidden="true"
-          />
-          <span className="dh-status-pill-label">Streak</span>
-          <span className="tabular-nums" style={{ fontWeight: 600 }}>
-            {minStreakInfo.streak}d
-          </span>
-        </button>
-
-        <button
-          type="button"
-          className="dh-status-pill"
-          onClick={() => setOpenSheet('consistency')}
-        >
-          <Activity
-            size={16}
-            strokeWidth={1.75}
-            style={{ color: 'var(--info-ink)' }}
-            aria-hidden="true"
-          />
-          <span className="dh-status-pill-label">Consistency</span>
-          <span className="tabular-nums" style={{ fontWeight: 600 }}>
-            {consistencyInfo.total !== null ? `${consistencyInfo.total}/100` : 'Building'}
-          </span>
-        </button>
-
-        <button
-          type="button"
-          className="dh-status-pill"
+          className="dh-status-level-bar"
           onClick={() => setOpenSheet('level')}
         >
-          <Award
-            size={16}
-            strokeWidth={1.75}
-            style={{ color: 'var(--ac-ink)' }}
-            aria-hidden="true"
-          />
-          <span className="dh-status-pill-label">Level</span>
-          <span className="tabular-nums" style={{ fontWeight: 600 }}>
-            Lv {levelInfo.level} · {totalXp} XP
-          </span>
+          <div className="dh-status-level-row">
+            <span className="dh-status-level-left">
+              <Award
+                size={16}
+                strokeWidth={1.75}
+                style={{ color: 'var(--ac-ink)', flexShrink: 0 }}
+                aria-hidden="true"
+              />
+              <span className="dh-status-pill-label">Level</span>
+              <span className="tabular-nums" style={{ fontWeight: 600, color: 'var(--tx)' }}>
+                · Lv {levelInfo.level} · {totalXp} XP
+              </span>
+            </span>
+            <span
+              className="tabular-nums"
+              style={{ fontSize: '13px', color: 'var(--tx-3)', flexShrink: 0 }}
+            >
+              {levelInfo.xpIntoLevel}/{levelInfo.xpNeededForNext}
+            </span>
+          </div>
+          <div className="dh-status-xp-track" aria-hidden="true">
+            <div
+              className="dh-status-xp-fill"
+              style={{ width: `${xpProgressPct}%` }}
+            />
+          </div>
         </button>
 
-        {isSelRestDay && (
+        <div className="dh-status-grid grid grid-cols-2 gap-2 min-w-0">
           <button
             type="button"
-            className="dh-status-pill"
+            className="dh-status-card min-w-0"
             onClick={() => setOpenSheet('streak')}
             style={{
-              borderColor: 'color-mix(in srgb, var(--ok) 48%, var(--line))',
-              color: 'var(--ok-ink)',
+              borderColor:
+                minStreakInfo.todayMetMinimum || minStreakInfo.todayIsRestDay
+                  ? 'color-mix(in srgb, var(--ok) 48%, var(--line))'
+                  : 'var(--line)',
             }}
           >
-            <BedDouble size={16} strokeWidth={1.75} aria-hidden="true" />
-            <span>Rest day active</span>
+            <span className="dh-status-card-left">
+              <Flame
+                size={15}
+                strokeWidth={1.75}
+                className={minStreakInfo.streak >= 3 ? 'dh-flame-flicker' : undefined}
+                style={{
+                  color:
+                    minStreakInfo.todayMetMinimum || minStreakInfo.todayIsRestDay
+                      ? 'var(--ok-ink)'
+                      : 'var(--ac-ink)',
+                  flexShrink: 0,
+                }}
+                aria-hidden="true"
+              />
+              <span className="dh-status-pill-label">Streak</span>
+              {isSelRestDay && (
+                <BedDouble
+                  size={14}
+                  strokeWidth={1.75}
+                  style={{ color: 'var(--ok-ink)', flexShrink: 0 }}
+                  aria-label="Rest day active"
+                />
+              )}
+            </span>
+            <span className="tabular-nums dh-status-card-val">
+              {minStreakInfo.streak}d
+            </span>
           </button>
-        )}
+
+          <button
+            type="button"
+            className="dh-status-card min-w-0"
+            onClick={() => setOpenSheet('consistency')}
+          >
+            <span className="dh-status-card-left">
+              <Activity
+                size={15}
+                strokeWidth={1.75}
+                style={{ color: 'var(--info-ink)', flexShrink: 0 }}
+                aria-hidden="true"
+              />
+              <span className="dh-status-pill-label">Consistency</span>
+            </span>
+            <span className="tabular-nums dh-status-card-val">
+              {consistencyInfo.total !== null ? `${consistencyInfo.total}/100` : 'Building'}
+            </span>
+          </button>
+        </div>
       </div>
 
       {/* Streak & Rest Pass Sheet */}
@@ -381,31 +400,35 @@ export const ExamCountdownCard: React.FC<ExamCountdownCardProps> = ({
         onClick={onAddExam}
         style={{
           width: '100%',
-          margin: '6px 0 10px',
-          padding: '12px 14px',
+          maxWidth: '100%',
+          height: '100%',
+          minWidth: 0,
+          boxSizing: 'border-box',
+          margin: 0,
+          padding: '10px 11px',
           borderRadius: '14px',
           background: 'var(--sf-1)',
           border: '1px dashed var(--line)',
           display: 'flex',
           alignItems: 'center',
           justifyContent: 'space-between',
-          gap: '10px',
+          gap: '8px',
           textAlign: 'left',
           minHeight: '52px',
         }}
       >
-        <span style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
-          <Calendar size={18} strokeWidth={1.75} style={{ color: 'var(--ac-ink)' }} />
-          <span>
-            <span style={{ display: 'block', fontSize: '14px', fontWeight: 600 }}>
-              Set your exam date
+        <span style={{ display: 'flex', alignItems: 'center', gap: '8px', minWidth: 0 }}>
+          <Calendar size={17} strokeWidth={1.75} style={{ color: 'var(--ac-ink)', flexShrink: 0 }} />
+          <span style={{ minWidth: 0 }}>
+            <span style={{ display: 'block', fontSize: '13px', fontWeight: 600, lineHeight: 1.3 }}>
+              Set exam date
             </span>
-            <span style={{ display: 'block', fontSize: '13px', color: 'var(--tx-2)' }}>
-              Powers Syllabus Pace and daily countdown
+            <span style={{ display: 'block', fontSize: '13px', color: 'var(--tx-2)', lineHeight: 1.3 }}>
+              Powers countdown &amp; pace
             </span>
           </span>
         </span>
-        <ChevronRight size={18} strokeWidth={1.75} style={{ color: 'var(--tx-3)' }} />
+        <ChevronRight size={16} strokeWidth={1.75} style={{ color: 'var(--tx-3)', flexShrink: 0 }} />
       </button>
     );
   }
@@ -426,53 +449,61 @@ export const ExamCountdownCard: React.FC<ExamCountdownCardProps> = ({
       onClick={onManageExams}
       style={{
         width: '100%',
-        margin: '6px 0 10px',
-        padding: '12px 14px',
+        maxWidth: '100%',
+        height: '100%',
+        minWidth: 0,
+        boxSizing: 'border-box',
+        margin: 0,
+        padding: '10px 11px',
         borderRadius: '14px',
         background: 'var(--sf-1)',
         border: '1px solid var(--line)',
         display: 'flex',
         alignItems: 'center',
         justifyContent: 'space-between',
-        gap: '10px',
+        gap: '6px',
         textAlign: 'left',
         minHeight: '52px',
       }}
       aria-label={`Exam countdown: ${headline}. Tap to manage exams in Settings`}
     >
-      <span style={{ display: 'flex', alignItems: 'center', gap: '10px', minWidth: 0 }}>
+      <span style={{ display: 'flex', alignItems: 'flex-start', gap: '8px', minWidth: 0, flex: 1 }}>
         <span
           aria-hidden="true"
           style={{
-            width: '10px',
-            height: '10px',
+            width: '9px',
+            height: '9px',
+            marginTop: '4px',
             borderRadius: '99px',
             background: exam.color || 'var(--ac)',
             flexShrink: 0,
           }}
         />
-        <span style={{ minWidth: 0 }}>
+        <span style={{ minWidth: 0, flex: 1 }}>
           <span
             className="tabular-nums"
             style={{
-              display: 'block',
-              fontSize: '14px',
+              display: '-webkit-box',
+              WebkitLineClamp: 2,
+              WebkitBoxOrient: 'vertical',
+              overflow: 'hidden',
+              fontSize: '13px',
               fontWeight: 600,
               color: 'var(--tx)',
-              overflow: 'hidden',
-              textOverflow: 'ellipsis',
-              whiteSpace: 'nowrap',
+              whiteSpace: 'normal',
+              overflowWrap: 'break-word',
+              lineHeight: 1.3,
             }}
           >
             {headline}
           </span>
-          <span style={{ display: 'block', fontSize: '13px', color: 'var(--tx-2)' }}>
+          <span style={{ display: 'block', fontSize: '13px', color: 'var(--tx-2)', lineHeight: 1.3 }}>
             {exam.date}
-            {state.ddays.length > 1 ? ` · ${state.ddays.length} exams` : ''}
+            {state.ddays.length > 1 ? ` · ${state.ddays.length}` : ''}
           </span>
         </span>
       </span>
-      <ChevronRight size={18} strokeWidth={1.75} style={{ color: 'var(--tx-3)', flexShrink: 0 }} />
+      <ChevronRight size={16} strokeWidth={1.75} style={{ color: 'var(--tx-3)', flexShrink: 0 }} />
     </button>
   );
 };

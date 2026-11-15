@@ -27,10 +27,10 @@ This document inventories every feature, view, subtab, modal, setting, chart, ke
 
 | Feature / Element | Previous Location | New Location | Status |
 | --- | --- | --- | --- |
-| `+` Quick Actions sheet | Center FAB (manual session only) | `TopBar +` opens `QuickActionsSheet`: Start session, Log session, Add task, Add habit, Add chapter, Log mock, Add mistake, Add doubt, Log PYQ, Add D-Day | `[x]` |
-| Streak status chip + explanation + Rest Pass toggle | Top pill (`🔥 Nd min-streak`) + inline button | Labelled `StatusRow` item (`Streak`) -> opens Streak explanation `Sheet` with `minDayMinutes` rule, progress, and Rest Pass toggle (`handleToggleRestDay`) | `[x]` |
-| Consistency status chip + explanation | Top pill (`⚡ N`) without label | Labelled `StatusRow` item (`Consistency`) -> opens Consistency explanation `Sheet` with 0–100 breakdown (minimum days, weekly volume, avg purity, habit completion) | `[x]` |
-| Level & XP chip + explanation | Top pill (`Lv N · X XP`) without tap | Labelled `StatusRow` item (`Level`) -> opens Level & XP explanation `Sheet` with progress meter, today's breakdown, and all 9 XP rules | `[x]` |
+| `+` Quick Actions sheet | Center FAB (manual session only) | `TopBar +` opens `QuickActionsSheet`: Start session, Log session, Add task, Add habit, Add chapter, Log mock, Add to Vault, Log PYQ, Add D-Day | `[x]` |
+| Streak status chip + explanation + Rest Pass toggle | Top pill (`🔥 Nd min-streak`) + inline button | `StatusRow` 2-column grid card (`Streak`) -> opens Streak explanation `Sheet` with `minDayMinutes` rule, progress, and Rest Pass toggle (`handleToggleRestDay`) | `[x]` |
+| Consistency status chip + explanation | Top pill (`⚡ N`) without label | `StatusRow` 2-column grid card (`Consistency`) -> opens Consistency explanation `Sheet` with 0–100 breakdown (minimum days, weekly volume, avg purity, habit completion) | `[x]` |
+| Level & XP chip + explanation | Top pill (`Lv N · X XP`) without tap | Full-width `StatusRow` bar (`Level · Lv X · Y XP` + XP track) -> opens Level & XP explanation `Sheet` with progress meter, today's breakdown, and all 9 XP rules | `[x]` |
 | Exam D-Day strip & Pace fallback | Multi-card horizontal strip + strict `primary` check | Compact `ExamCountdownCard` (`"Exam in N days"` using `primary` or nearest upcoming D-Day fallback); full exam CRUD in `Settings > Exams` | `[x]` |
 
 ---
@@ -70,10 +70,9 @@ This document inventories every feature, view, subtab, modal, setting, chart, ke
 | Syllabus Pace Calculator (D-Day days remaining, chapters/day, revision buffer, status) | Fixed upcoming D-Day fallback (`computeUiPaceReport`) and returns `'no-chapters'` when `totalChapters === 0`; horizontal overflow prevented | M2 / R3 | `[x]` |
 | Chapters CRUD & Subject Completion Donut (single + bulk paste Sheet, status, confidence log 1–5, study focus launch) | `PrepView` subject `DonutChart` legend rows with inline progress bars (zero duplicate subject list), collapsible chapter groups, `Meter` progress, `Select` Sheet pickers, `noSyllabus` `EmptyState` | R3 | `[x]` |
 | Spaced Revisions per chapter (`suggestRevisionDates` editable draft, manual add, done toggle, reschedule, delete) | Preserved with inline date pickers and suggested +1/+3/+7/+21d prompt | M5 / R3 | `[x]` |
-| Dedicated PYQ Tracker subtab (`PYQView`) + inline PYQ logger & per-chapter accuracy breakdown | 5-segment Prep navigation (`Syllabus \| Mocks \| Mistakes \| Doubts \| PYQs`), `Sheet` form, `noPyqs` `EmptyState` | M5 / R3 | `[x]` |
-| Mock Tests log, `AreaLineChart` progression (`>= 2` mocks), target score setting, mock edit/delete + Undo | Redesigned in `PrepView` (`Mocks` subtab) with zero-dep SVG `AreaLineChart` and `noMocks` `EmptyState` | R3 | `[x]` |
-| Mistake Log (`MistakesView`) & filter by reason/subject/resolved + 1-tap `Rev +1d` | Root-cause `Meter` bars, `Select` Sheet filters, `Sheet` modal, unnested `noMistakes` `EmptyState` | M5 / R3 | `[x]` |
-| Doubt Queue (`DoubtsView`) open/resolved toggle & chapter linkage | Inline capture + `Sheet` modal, `Select` Sheet pickers, `noDoubts` `EmptyState` | M5 / R3 | `[x]` |
+| Dedicated PYQ Tracker subtab (`PYQView`) + inline PYQ logger & per-chapter accuracy breakdown | 4-segment Prep navigation (`Syllabus \| Mocks \| Vault \| PYQs`), `Sheet` form, `noPyqs` `EmptyState` | M5 / R3 | `[x]` |
+| Mock Tests log, `AreaLineChart` progression (`>= 2` mocks), target score setting, mock edit/delete + Undo, & Error/Pacing analytics | Redesigned in `PrepView` (`Mocks` subtab) with zero-dep SVG `AreaLineChart`, `noMocks` `EmptyState`, `Clean Score` badges, subject-time summaries, `Where marks are bleeding` `Meter` breakdown, `Avg subject pacing`, and `"Save & add to Vault"` | R3 | `[x]` |
+| Question Vault & Revision Deck (`VaultView`, `VaultCaptureSheet`, `VaultCropper`, `VaultRevisionDeck`, `VaultZoomViewer`, `vaultStore.ts`, `vaultSync.ts`) | Replaces Mistakes & Doubts sub-tabs with photographed **Unsolved** & **Hard / Trap** questions stored in dedicated IndexedDB `deephours-vault`, 3-step capture/crop/enhance pipeline (`<= 150 KB` WebP/JPEG), two-stage Answer/Solution DOM reveal, Mastered + Undo, chapter `"Vault · N"` jump, full-screen swipeable Revision Deck, collapsed `"Older notes"` legacy accordion, and flat Drive folder sync | V2 | `[x]` |
 
 ### Insights (`tab === 'stats'`, formerly "Summary")
 | Feature | Mapping & Notes | Milestone | Status |
@@ -88,7 +87,7 @@ This document inventories every feature, view, subtab, modal, setting, chart, ke
 | --- | --- | --- | --- |
 | `.dh-hero-lumen` signed-out landing card (`signedOutCommunity` illustration, 3 trust points, `"Sign in with Google"` button), consent gate, profile requirement | Redesigned in `GroupsView` | R3 | `[x]` |
 | Create / Join / Leave group with invite code (`XXXX-XXXXXX`), active group chips, privacy sharing `Switch`es (`t`, `x`, `s`, `m`, `l`) | Redesigned in `GroupsView` with `Sheet` modals and `Switch` controls | M5 | `[x]` |
-| Sticky segmented leaderboards (`Today`, `Week`, `XP`, `Streak`, `Mocks`, `History`) + animated top-3 podium + pull-to-refresh + manual refresh | Redesigned in `GroupsView` with overflow-safe podium cards | M5 / R3 | `[x]` |
+| Sticky segmented leaderboards (`Today`, `Week`, `XP`, `Streak`, `Mocks`, `History`) + animated top-3 podium + pull-to-refresh + real-time single-doc `onSnapshot` (`groups/{id}` while active & visible) + diff-checked `~6s` auto-publish & `"Sync my stats"` manual force-sync | Redesigned in `GroupsView` with overflow-safe podium cards | M5 / R3 | `[x]` |
 | Member list with Early Bird / Night Owl badges, hover tooltip for active Studying Now duration, tap member name to expand 7-day SVG consistency chart | Zero-dependency SVG `BarChart` (`Charts.tsx`) replacing `recharts` | R3 | `[x]` |
 | Peer pace target comparison, weekly group goal meter, Cheer modal/cooldown, Owner management drawer | Redesigned in `GroupsView` | M5 | `[x]` |
 
@@ -101,7 +100,8 @@ All old `MoreView` controls map into a grouped navigation stack in `SettingsView
 | Settings Group | Contained Controls & Actions | Status |
 | --- | --- | --- |
 | 1. Profile and level | Avatar emoji grid, Anonymous Study Profile (`ProfileModal`) button, current level & XP summary | `[x]` |
-| 2. Account and cloud sync | Google sign-in / sign-out, Sync Now, today's write budget (`writes / DAILY_WRITE_CAP`), last synced timestamp, online/offline status, Delete All Cloud Data confirmation, privacy note | `[x]` |
+| 2. Account and cloud sync | Google sign-in / sign-out, Sync Now, today's write budget (`writes / DAILY_WRITE_CAP`), last synced timestamp, online/offline status, Delete All Cloud Data confirmation, privacy note, shortcut to Google Drive | `[x]` |
+| 2b. Google Drive | Scoped `drive.file` Drive integration (`GoogleDrivePanel.tsx`, `googleDrive.ts`, `vaultSync.ts`) limited strictly to one flat `"Deep Hours Vault"` folder (auto-migrates legacy `"Deep Hours Backups"`), official `"Sign in with Google"` button, in-memory token caching, single-flight `vault-index.json` + photo sync, JSON & CSV snapshots, `"Restore Vault from Drive"` progress meter, and explicit `<Dialog>` confirmations before Restore or Disconnect | `[x]` |
 | 3. Study | Day reset hour (`Select` Sheet picker -> `confirmResetHour`), Week start (`Segmented` Mon/Sun), Timer style (`Segmented` `Digital \| Mono \| Analog` storing `'neon' \| 'minimal' \| 'retro'`), PiP engine (`Segmented` Video/Document) | `[x]` |
 | 4. Goals and targets | Min streak study minutes/day, monthly Rest Passes, revision buffer days, full mock duration (min, default 180), target mock score, spaced revision intervals (`1, 3, 7, 21`), per-subject daily & weekly minute targets | `[x]` |
 | 5. Exams | Full D-Days list, primary exam toggle, Edit / Remove existing D-Day, `+ Add Exam Countdown` | `[x]` |
@@ -109,8 +109,8 @@ All old `MoreView` controls map into a grouped navigation stack in `SettingsView
 | 7. Habits | `+ New Habit` trigger, active and archived habits list with one-tap edit (`Modals` habit sheet) | `[x]` |
 | 8. Appearance | Theme mode (`Segmented` Auto/Dark/Light), AMOLED true-black (`Switch` persisted in `localStorage` `'dh_amoled'`), Accent swatch picker (including `Lumen #F5C451` + `ACS` with AA labels), 3D scenes (`Segmented` Auto/On/Off persisted in `settings.ui3d`), 3D detail quality (`Segmented` Auto/High/Lite persisted in `settings.ui3dQuality`) | `[x]` |
 | 9. Notifications and sound | Completion sounds & haptics (`Switch`), browser study reminders (`Switch`), PWA Install button & collapsible iOS Safari guide | `[x]` |
-| 10. Data | Last backup date, Export JSON backup, Export CSV spreadsheet, Import JSON backup (10 MB limit, with Undo), Erase All Device Data (`confirmReset`) | `[x]` |
-| 11. About | App version, offline-first storage notes, Focus sounds & Study Logger action notice (moved to `+` Quick Actions) | `[x]` |
+| 10. Data | Last backup date, Export JSON backup, Export CSV spreadsheet, Import JSON backup (10 MB limit, with Undo), `"Delete Vault from Drive"` confirmation `<Dialog>`, Erase All Device Data (`confirmReset` with opt-in `"Also erase my Vault on this device"`) | `[x]` |
+| 11. About | App version, offline-first storage notes, Vault photo revision & `+` Quick Actions notice | `[x]` |
 
 *(Removed `"Study Logger Actions"` card per spec; its Log Session / Add Habit actions live in `TopBar +` Quick Actions and `Settings > Habits`.)*
 
@@ -124,11 +124,11 @@ All old `MoreView` controls map into a grouped navigation stack in `SettingsView
 | `habit` (`#hf`) | `Sheet` with `Select` sheets for Category, Schedule, and Subject | `[x]` |
 | `reflect` (`#reflectForm`) | `Sheet` with `Select` sheet for Chapter, focus star rating, note, discard | `[x]` |
 | `manualSession` (`#manualSesForm`) | `Sheet` with `Select` sheet for Chapter, logical day/start time/duration inputs, delete with Undo | `[x]` |
-| `mock` (`#mockForm`) | `Sheet` preserving `exceedsMaxQuestions` warning, per-subject scoring, and `queuedMistakes` with `Select` sheets | `[x]` |
+| `mock` (`#mockForm`) | `Sheet` preserving `exceedsMaxQuestions` warning, per-subject scoring, `queuedMistakes`, Error Bleeding Tally (`Silly / Calc`, `NCERT Line`, `Concept Gap`, `Time Panic`) with live `Clean Score`, optional subject time splits (`dh_mock_diagnostics_v1`), and `"Save & add to Vault"` button | `[x]` |
 | `timerConfig` (`#cfgTimerForm`) | `Sheet` for Pomodoro work/break, countdown, and Full Mock (default 180m) | `[x]` |
 | `dday` (`#ddayForm`) | `Sheet` with presets, target date, swatch color picker (`Select` / swatches), primary toggle, delete with Undo | `[x]` |
 | `confirmResetHour` | `Dialog` confirmation before recalculating session `dayKey`s | `[x]` |
-| `confirmReset` | `Dialog` confirmation before wiping device data (with Undo toast) | `[x]` |
+| `confirmReset` | `Dialog` confirmation before wiping device data with unchecked `"Also erase my Vault on this device"` option (Undo for app state) | `[x]` |
 | `ProfileModal` | `Sheet` / `Dialog` with nickname validation (`validateNickname`), emoji picker, exam year chips | `[x]` |
 
 ---
@@ -162,9 +162,9 @@ All old `MoreView` controls map into a grouped navigation stack in `SettingsView
 | Capability | Implementation & Location | Status |
 | --- | --- | --- |
 | Build-time precache manifest | `vite.config.ts` (`precacheManifestPlugin`) emits `precache-manifest.json` on build listing all generated JS, CSS, and self-hosted Geist font assets | `[x]` |
-| Service worker offline precaching & reload prompt | `public/sw.js` (`CACHE_NAME = 'deep-hours-v13'`) precaches `precache-manifest.json` entries + `/icon-512.png`, `/icon-192.png`, `/icon-maskable.svg` on `install`, keeps network-first navigation, and applies `SKIP_WAITING` only via user-tapped reload toast | `[x]` |
-| Lazy chunk isolation | `vite.config.ts` (`manualChunks`) + dynamic `import()` / `React.lazy` keep Firebase, `three`, `OnboardingSheet`, and `RewardBurstDialog` out of the entry bundle (`recharts` completely removed) | `[x]` |
-| Lightweight list windowing (>100 rows) | `src/components/ui/WindowedList.tsx` & `computeWindowRange` (`src/utils/uiHelpers.ts`) active on `PrepView` chapters & mocks, `PYQView` summaries & logs, `MistakesView`, `DoubtsView`, `StatsView` session log, `DayHistoryView` sessions, `TodayView` tasks & sessions, and `FocusView` expanded sessions | `[x]` |
+| Service worker offline precaching & reload prompt | `public/sw.js` (`CACHE_NAME = 'deep-hours-v19'`) precaches `precache-manifest.json` entries + `/icon-512.png`, `/icon-192.png`, `/icon-maskable.svg` on `install`, keeps network-first navigation, and applies `SKIP_WAITING` only via user-tapped reload toast | `[x]` |
+| Lazy chunk isolation | `vite.config.ts` (`manualChunks`) + dynamic `import()` / `React.lazy` keep Firebase, `three`, `VaultView`, `VaultRevisionDeck`, `OnboardingSheet`, and `RewardBurstDialog` out of the entry bundle (`recharts` completely removed) | `[x]` |
+| Lightweight list windowing (>100 rows) | `src/components/ui/WindowedList.tsx` & `computeWindowRange` (`src/utils/uiHelpers.ts`) active on `PrepView` chapters & mocks, `PYQView` summaries & logs, `VaultView` (`30`-item pagination + `IntersectionObserver` blob decoding), `StatsView` session log, `DayHistoryView` sessions, `TodayView` tasks & sessions, and `FocusView` expanded sessions | `[x]` |
 | WCAG AA contrast & keyboard focus | `--tx-3` darkened/lightened (`#8E97A6` / `#565E6B`), `-ink` semantic color tokens across Dark, AMOLED, and Light, `:focus-visible` focus rings on all interactive elements, `13px` minimum UI font floor, `Field.tsx` auto-`htmlFor` / `aria-label` coverage, 200% text scaling reflow without clipping, and `prefers-reduced-motion` static/2D fallback | `[x]` |
 | Multi-viewport E2E & 3D V2 QA sign-off (R5) | Verified across `360×800`, `390×844`, `412×915`, `768×1024`, and `1280×800` across `Focus Core`, `Study City`, `Syllabus Galaxy`, `Reward Burst`, `prefers-reduced-motion`, and Dark/AMOLED/Light themes with `0` console errors, `0` horizontal overflow, and `<= 1` active WebGL context | `[x]` |
 

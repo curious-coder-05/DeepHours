@@ -27,9 +27,9 @@ import {
   type CachedGroupSnapshot,
   type CheerEmoji,
   DEFAULT_SHARING_FLAGS,
-  GROUP_AUTO_REFRESH_MS,
   GROUP_CACHE_STALE_MS,
   GROUP_MANUAL_REFRESH_COOLDOWN_MS,
+  type GroupLiveStatus,
   type GroupPublishBudgetController,
   MAX_JOINED_GROUPS,
   type MemberEntry,
@@ -57,6 +57,7 @@ import {
   rankWeekBoard,
   rankXpBoard,
   sendCheerInCloud,
+  subscribeToGroupDoc,
   validateNickname,
 } from '../utils/groups';
 import { addD, isManualStudySession } from '../utils/studyLogic';
@@ -701,6 +702,8 @@ interface GroupsViewProps {
   todayKey: string;
   myUid: string | null;
   isOnline: boolean;
+  isActive?: boolean;
+  liveStatus?: GroupLiveStatus | null;
   groupBudget: GroupPublishBudgetController;
   onSignIn: () => void;
   onOpenProfileModal: (reason?: string) => void;
@@ -721,6 +724,8 @@ export const GroupsView: React.FC<GroupsViewProps> = ({
   todayKey,
   myUid,
   isOnline,
+  isActive = true,
+  liveStatus = null,
   groupBudget,
   onSignIn,
   onOpenProfileModal,
@@ -998,24 +1003,118 @@ export const GroupsView: React.FC<GroupsViewProps> = ({
     ]
   );
 
+  const [isPageVisible, setIsPageVisible] = useState<boolean>(() =>
+    typeof document === 'undefined' ? true : document.visibilityState === 'visible'
+  );
+
   useEffect(() => {
-    if (!myUid || !activeGroupId || !isOnline) return;
+    if (typeof document === 'undefined') return;
+    const onVisibilityChange = () => {
+      setIsPageVisible(document.visibilityState === 'visible');
+    };
+    document.addEventListener('visibilitychange', onVisibilityChange);
+    return () => {
+      document.removeEventListener('visibilitychange', onVisibilityChange);
+    };
+  }, []);
+
+  const onUpdateGroupsConfigRef = useRef(onUpdateGroupsConfig);
+  onUpdateGroupsConfigRef.current = onUpdateGroupsConfig;
+  const onRecordWeekHistoryRef = useRef(onRecordWeekHistory);
+  onRecordWeekHistoryRef.current = onRecordWeekHistory;
+  const groupHistoryRef = useRef(state.groupHistory);
+  groupHistoryRef.current = state.groupHistory;
+
+  // One-time initial hydration for cheers/history if cache is stale (no polling loop)
+  useEffect(() => {
+    if (!isActive || !myUid || !activeGroupId || !isOnline || !isPageVisible) return;
     const cached = loadCachedGroupSnapshots()[activeGroupId];
     const age = cached ? Date.now() - cached.fetchedAt : Infinity;
     if (age > GROUP_CACHE_STALE_MS) {
       void refreshGroup(activeGroupId, false);
     }
-    const interval = setInterval(() => {
-      if (
-        typeof document !== 'undefined' &&
-        document.visibilityState !== 'visible'
-      ) {
-        return;
-      }
-      void refreshGroup(activeGroupId, false);
-    }, GROUP_AUTO_REFRESH_MS);
-    return () => clearInterval(interval);
-  }, [myUid, activeGroupId, isOnline, refreshGroup]);
+  }, [isActive, myUid, activeGroupId, isOnline, isPageVisible, refreshGroup]);
+
+  // Real-time single-document Firestore onSnapshot listener (only while Community is active & visible)
+  useEffect(() => {
+    if (!isActive || !myUid || !activeGroupId || !isOnline || !isPageVisible) {
+      return;
+    }
+
+    const unsubscribe = subscribeToGroupDoc({
+      groupId: activeGroupId,
+      todayKey,
+      onUpdate: (incomingSnap) => {
+        const priorSnap = snapshotsRef.current[activeGroupId];
+        if (priorSnap?.doc) {
+          setPrevGroupDocs((prev) => ({ ...prev, [activeGroupId]: priorSnap.doc }));
+        }
+        const mergedSnap: CachedGroupSnapshot = {
+          ...incomingSnap,
+          receivedCheers:
+            priorSnap?.receivedCheers && priorSnap.receivedCheers.length > 0
+              ? priorSnap.receivedCheers
+              : incomingSnap.receivedCheers,
+        };
+        setSnapshots((prev) => ({ ...prev, [activeGroupId]: mergedSnap }));
+        setNowTick(Date.now());
+
+        onUpdateGroupsConfigRef.current((prev) => {
+          const existing = prev.joined.find((j) => j.groupId === activeGroupId);
+          if (
+            !existing ||
+            (existing.name === mergedSnap.doc.name &&
+              existing.emoji === mergedSnap.doc.emoji)
+          ) {
+            return prev;
+          }
+          return {
+            ...prev,
+            joined: prev.joined.map((j) =>
+              j.groupId === activeGroupId
+                ? {
+                    ...j,
+                    name: mergedSnap.doc.name,
+                    emoji: mergedSnap.doc.emoji,
+                  }
+                : j
+            ),
+          };
+        });
+
+        const completedStanding = computeCompletedWeekStandings(
+          mergedSnap.doc,
+          todayKey
+        );
+        if (
+          completedStanding &&
+          myUid &&
+          completedStanding.standings[myUid]
+        ) {
+          const existingHist =
+            groupHistoryRef.current?.[activeGroupId]?.[completedStanding.weekKey];
+          if (!existingHist) {
+            onRecordWeekHistoryRef.current(
+              activeGroupId,
+              completedStanding.weekKey,
+              completedStanding.standings[myUid]
+            );
+          }
+        }
+      },
+      onMissing: () => {
+        setSnapshots((prev) => {
+          const next = { ...prev };
+          delete next[activeGroupId];
+          return next;
+        });
+      },
+    });
+
+    return () => {
+      unsubscribe();
+    };
+  }, [isActive, myUid, activeGroupId, isOnline, isPageVisible, todayKey]);
 
   // Pull-to-refresh touch handlers
   const handleTouchStart = (e: React.TouchEvent) => {
@@ -1085,6 +1184,7 @@ export const GroupsView: React.FC<GroupsViewProps> = ({
         joinedAt: activeGroupPref.joinedAt,
         sh: activeGroupPref.sh,
         paused: activeGroupPref.paused,
+        live: liveStatus,
         budget: groupBudget,
         force: true,
       });
@@ -1294,6 +1394,7 @@ export const GroupsView: React.FC<GroupsViewProps> = ({
         joinedAt: activeGroupPref.joinedAt,
         sh: nextSh,
         paused: nextPaused,
+        live: nextSh.l && !nextPaused ? liveStatus : null,
         budget: groupBudget,
         force: true,
       });

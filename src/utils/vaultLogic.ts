@@ -1,0 +1,473 @@
+import type { Chapter, Subject } from '../types';
+import {
+  VAULT_LIMITS,
+  type VaultItem,
+  type VaultKind,
+  type VaultManifest,
+  type VaultTombstone,
+} from './vaultTypes';
+
+export function clampVaultText(value: string | undefined, maxLen: number): string | undefined {
+  if (typeof value !== 'string') return undefined;
+  const trimmed = value.trim();
+  if (!trimmed) return undefined;
+  return trimmed.slice(0, maxLen);
+}
+
+export function clampVaultSolutionText(value: string | undefined): string | undefined {
+  if (typeof value !== 'string') return undefined;
+  // Preserve intentional line breaks inside solution text while stripping trailing whitespace
+  const normalized = value.replace(/\r\n/g, '\n').trim();
+  if (!normalized) return undefined;
+  return normalized.slice(0, VAULT_LIMITS.solutionMax);
+}
+
+export function sanitizeVaultItem(raw: VaultItem): VaultItem {
+  return {
+    ...raw,
+    kind: raw.kind === 'hard' ? 'hard' : 'unsolved',
+    mastered: Boolean(raw.mastered),
+    masteredAt: raw.mastered && typeof raw.masteredAt === 'number' ? raw.masteredAt : undefined,
+    answerText: clampVaultText(raw.answerText, VAULT_LIMITS.answerMax),
+    solutionText: clampVaultSolutionText(raw.solutionText),
+    note: clampVaultText(raw.note, VAULT_LIMITS.noteMax),
+    hasSolutionImage: Boolean(raw.hasSolutionImage),
+    qBytes: Math.max(0, Math.round(Number(raw.qBytes) || 0)),
+    width: Math.max(0, Math.round(Number(raw.width) || 0)),
+    height: Math.max(0, Math.round(Number(raw.height) || 0)),
+    mime: raw.mime || 'image/webp',
+    revisionCount: Math.max(0, Math.round(Number(raw.revisionCount) || 0)),
+    syncState:
+      raw.syncState === 'synced' || raw.syncState === 'error' ? raw.syncState : 'pending',
+  };
+}
+
+export interface VaultCountsSummary {
+  total: number;
+  active: number;
+  mastered: number;
+  unsolved: number;
+  hard: number;
+  totalBytes: number;
+  bySubject: Record<string, { total: number; active: number }>;
+  byChapter: Record<string, { total: number; active: number }>;
+}
+
+export function computeVaultCounts(items: readonly VaultItem[]): VaultCountsSummary {
+  const bySubject: Record<string, { total: number; active: number }> = {};
+  const byChapter: Record<string, { total: number; active: number }> = {};
+  let active = 0;
+  let mastered = 0;
+  let unsolved = 0;
+  let hard = 0;
+  let totalBytes = 0;
+
+  for (const item of items) {
+    if (item.deletedAt) continue;
+    totalBytes += Math.max(0, item.qBytes || 0);
+    if (item.mastered) mastered += 1;
+    else active += 1;
+    if (item.kind === 'hard') hard += 1;
+    else unsolved += 1;
+
+    const subBucket = (bySubject[item.subjectId] ||= { total: 0, active: 0 });
+    subBucket.total += 1;
+    if (!item.mastered) subBucket.active += 1;
+
+    const chapKey = item.chapterId || '__unassigned__';
+    const chapBucket = (byChapter[chapKey] ||= { total: 0, active: 0 });
+    chapBucket.total += 1;
+    if (!item.mastered) chapBucket.active += 1;
+  }
+
+  return {
+    total: active + mastered,
+    active,
+    mastered,
+    unsolved,
+    hard,
+    totalBytes,
+    bySubject,
+    byChapter,
+  };
+}
+
+export interface VaultFilterOptions {
+  subjectId: string; // 'all' or subject id
+  chapterId: string; // 'all' or chapter id or '__unassigned__'
+  status: 'active' | 'mastered' | 'all';
+  kind: 'all' | VaultKind;
+}
+
+export function filterVaultItems(
+  items: readonly VaultItem[],
+  filters: VaultFilterOptions
+): VaultItem[] {
+  return items
+    .filter((item) => {
+      if (item.deletedAt) return false;
+      if (filters.subjectId !== 'all' && item.subjectId !== filters.subjectId) {
+        return false;
+      }
+      if (filters.chapterId !== 'all') {
+        if (filters.chapterId === '__unassigned__') {
+          if (item.chapterId) return false;
+        } else if (item.chapterId !== filters.chapterId) {
+          return false;
+        }
+      }
+      if (filters.status === 'active' && item.mastered) return false;
+      if (filters.status === 'mastered' && !item.mastered) return false;
+      if (filters.kind !== 'all' && item.kind !== filters.kind) return false;
+      return true;
+    })
+    .slice()
+    .sort((a, b) => b.createdAt - a.createdAt);
+}
+
+export interface VaultChapterGroup {
+  key: string;
+  chapterId?: string;
+  chapterName: string;
+  subjectId: string;
+  subjectName: string;
+  subjectColor: string;
+  activeCount: number;
+  items: VaultItem[];
+}
+
+export function resolveVaultSubjectLabel(
+  subjects: readonly Subject[],
+  subjectId: string
+): { name: string; emoji: string; color: string } {
+  const found = subjects.find((s) => s.id === subjectId);
+  if (found) {
+    return { name: found.name, emoji: found.e, color: found.color };
+  }
+  return { name: 'Unassigned', emoji: '📘', color: 'var(--tx-3)' };
+}
+
+export function resolveVaultChapterName(
+  chapters: readonly Chapter[],
+  chapterId?: string
+): string {
+  if (!chapterId) return 'Unassigned';
+  const found = chapters.find((c) => c.id === chapterId);
+  return found ? found.name : 'Deleted chapter';
+}
+
+export function groupVaultItemsByChapter(
+  items: readonly VaultItem[],
+  subjects: readonly Subject[],
+  chapters: readonly Chapter[]
+): VaultChapterGroup[] {
+  const groupMap = new Map<string, VaultChapterGroup>();
+
+  for (const item of items) {
+    const key = item.chapterId
+      ? `${item.subjectId}::${item.chapterId}`
+      : `${item.subjectId}::__unassigned__`;
+    let grp = groupMap.get(key);
+    if (!grp) {
+      const sub = resolveVaultSubjectLabel(subjects, item.subjectId);
+      const chapterName = item.chapterId
+        ? resolveVaultChapterName(chapters, item.chapterId)
+        : `${sub.name} · General`;
+      grp = {
+        key,
+        chapterId: item.chapterId,
+        chapterName,
+        subjectId: item.subjectId,
+        subjectName: sub.name,
+        subjectColor: sub.color,
+        activeCount: 0,
+        items: [],
+      };
+      groupMap.set(key, grp);
+    }
+    grp.items.push(item);
+    if (!item.mastered) grp.activeCount += 1;
+  }
+
+  return Array.from(groupMap.values()).sort((a, b) => {
+    if (b.activeCount !== a.activeCount) return b.activeCount - a.activeCount;
+    return a.chapterName.localeCompare(b.chapterName);
+  });
+}
+
+export function orderRevisionDeck(
+  items: readonly VaultItem[],
+  shuffled = false,
+  rng: () => number = Math.random
+): VaultItem[] {
+  const unmastered = items
+    .filter((item) => !item.mastered && !item.deletedAt)
+    .slice()
+    .sort((a, b) => {
+      const aNever = !a.lastRevisedAt;
+      const bNever = !b.lastRevisedAt;
+      if (aNever !== bNever) return aNever ? -1 : 1;
+      const aTime = a.lastRevisedAt ?? a.createdAt;
+      const bTime = b.lastRevisedAt ?? b.createdAt;
+      if (aTime !== bTime) return aTime - bTime;
+      return a.createdAt - b.createdAt;
+    });
+
+  if (!shuffled || unmastered.length <= 1) return unmastered;
+
+  const copy = unmastered.slice();
+  for (let i = copy.length - 1; i > 0; i--) {
+    const j = Math.floor(rng() * (i + 1));
+    const tmp = copy[i];
+    copy[i] = copy[j];
+    copy[j] = tmp;
+  }
+  return copy;
+}
+
+export interface VaultRevealState {
+  answerOpen: boolean;
+  solutionOpen: boolean;
+}
+
+export type VaultRevealAction =
+  | { type: 'toggle_answer' }
+  | { type: 'toggle_solution' }
+  | { type: 'reset' };
+
+export const INITIAL_REVEAL_STATE: VaultRevealState = {
+  answerOpen: false,
+  solutionOpen: false,
+};
+
+export function revealReducer(
+  state: VaultRevealState,
+  action: VaultRevealAction
+): VaultRevealState {
+  switch (action.type) {
+    case 'toggle_answer':
+      return { ...state, answerOpen: !state.answerOpen };
+    case 'toggle_solution':
+      return { ...state, solutionOpen: !state.solutionOpen };
+    case 'reset':
+      return { answerOpen: false, solutionOpen: false };
+    default:
+      return state;
+  }
+}
+
+export function formatRelativeVaultDate(ts: number, now = Date.now()): string {
+  const diffMs = Math.max(0, now - ts);
+  const mins = Math.floor(diffMs / 60000);
+  if (mins < 2) return 'Just now';
+  if (mins < 60) return `${mins}m ago`;
+  const hrs = Math.floor(mins / 60);
+  if (hrs < 24) return `${hrs}h ago`;
+  const days = Math.floor(hrs / 24);
+  if (days === 1) return 'Yesterday';
+  if (days < 14) return `${days}d ago`;
+  return new Date(ts).toLocaleDateString(undefined, {
+    month: 'short',
+    day: 'numeric',
+  });
+}
+
+export function buildVaultManifest(
+  items: readonly VaultItem[],
+  tombstones: readonly VaultTombstone[],
+  now = Date.now()
+): VaultManifest {
+  const activeItems = items
+    .filter((i) => !i.deletedAt)
+    .map((i) => sanitizeVaultItem({ ...i, syncState: 'synced' }));
+  const tombstoneMap = new Map<string, VaultTombstone>();
+  for (const t of tombstones) {
+    const prev = tombstoneMap.get(t.id);
+    if (!prev || t.deletedAt > prev.deletedAt) {
+      tombstoneMap.set(t.id, {
+        id: t.id,
+        deletedAt: t.deletedAt,
+        driveQId: t.driveQId || prev?.driveQId,
+        driveSId: t.driveSId || prev?.driveSId,
+      });
+    }
+  }
+  return {
+    schema: 1,
+    updatedAt: now,
+    items: activeItems,
+    tombstones: Array.from(tombstoneMap.values()),
+  };
+}
+
+export function parseVaultManifest(rawText: string): VaultManifest | null {
+  try {
+    const parsed = JSON.parse(rawText) as Partial<VaultManifest>;
+    if (!parsed || typeof parsed !== 'object' || parsed.schema !== 1) {
+      return null;
+    }
+    const items = Array.isArray(parsed.items)
+      ? parsed.items
+          .filter((x): x is VaultItem => Boolean(x && typeof x.id === 'string'))
+          .map((x) => sanitizeVaultItem(x))
+      : [];
+    const tombstones = Array.isArray(parsed.tombstones)
+      ? parsed.tombstones
+          .filter(
+            (t): t is VaultTombstone =>
+              Boolean(t && typeof t.id === 'string' && typeof t.deletedAt === 'number')
+          )
+          .map((t) => ({
+            id: t.id,
+            deletedAt: t.deletedAt,
+            driveQId: t.driveQId,
+            driveSId: t.driveSId,
+          }))
+      : [];
+    return {
+      schema: 1,
+      updatedAt: typeof parsed.updatedAt === 'number' ? parsed.updatedAt : Date.now(),
+      items,
+      tombstones,
+    };
+  } catch {
+    return null;
+  }
+}
+
+export interface VaultMergeResult {
+  mergedItems: VaultItem[];
+  mergedTombstones: VaultTombstone[];
+  itemsNeedingUpload: VaultItem[];
+  itemsNeedingBlobDownload: VaultItem[];
+  driveFileIdsToDelete: string[];
+}
+
+/**
+ * Per-item last-writer-wins by updatedAt; tombstones beat edits with updatedAt <= deletedAt.
+ */
+export function mergeVaultManifest(
+  localItems: readonly VaultItem[],
+  localTombstones: readonly VaultTombstone[],
+  remoteManifest: VaultManifest | null
+): VaultMergeResult {
+  const tombstoneMap = new Map<string, VaultTombstone>();
+  const registerTombstone = (t: VaultTombstone) => {
+    const prev = tombstoneMap.get(t.id);
+    if (!prev || t.deletedAt > prev.deletedAt) {
+      tombstoneMap.set(t.id, {
+        id: t.id,
+        deletedAt: t.deletedAt,
+        driveQId: t.driveQId || prev?.driveQId,
+        driveSId: t.driveSId || prev?.driveSId,
+      });
+    } else if (prev) {
+      prev.driveQId = prev.driveQId || t.driveQId;
+      prev.driveSId = prev.driveSId || t.driveSId;
+    }
+  };
+
+  for (const t of localTombstones) registerTombstone(t);
+  for (const t of remoteManifest?.tombstones || []) registerTombstone(t);
+
+  const localMap = new Map<string, VaultItem>();
+  for (const item of localItems) {
+    if (item.deletedAt) {
+      registerTombstone({
+        id: item.id,
+        deletedAt: item.deletedAt,
+        driveQId: item.driveQId,
+        driveSId: item.driveSId,
+      });
+    } else {
+      localMap.set(item.id, sanitizeVaultItem(item));
+    }
+  }
+
+  const remoteMap = new Map<string, VaultItem>();
+  for (const item of remoteManifest?.items || []) {
+    if (item.deletedAt) {
+      registerTombstone({
+        id: item.id,
+        deletedAt: item.deletedAt,
+        driveQId: item.driveQId,
+        driveSId: item.driveSId,
+      });
+    } else {
+      remoteMap.set(item.id, sanitizeVaultItem(item));
+    }
+  }
+
+  const allIds = new Set<string>([...localMap.keys(), ...remoteMap.keys()]);
+  const mergedItems: VaultItem[] = [];
+  const itemsNeedingUpload: VaultItem[] = [];
+  const itemsNeedingBlobDownload: VaultItem[] = [];
+  const driveFileIdsToDelete = new Set<string>();
+
+  for (const id of allIds) {
+    const loc = localMap.get(id);
+    const rem = remoteMap.get(id);
+    const tomb = tombstoneMap.get(id);
+
+    const latestEditTs = Math.max(loc?.updatedAt ?? 0, rem?.updatedAt ?? 0);
+    if (tomb && tomb.deletedAt >= latestEditTs) {
+      if (loc?.driveQId) driveFileIdsToDelete.add(loc.driveQId);
+      if (loc?.driveSId) driveFileIdsToDelete.add(loc.driveSId);
+      if (rem?.driveQId) driveFileIdsToDelete.add(rem.driveQId);
+      if (rem?.driveSId) driveFileIdsToDelete.add(rem.driveSId);
+      if (tomb.driveQId) driveFileIdsToDelete.add(tomb.driveQId);
+      if (tomb.driveSId) driveFileIdsToDelete.add(tomb.driveSId);
+      continue;
+    }
+
+    let winner: VaultItem;
+    let cameFromRemote = false;
+    if (loc && rem) {
+      if (rem.updatedAt > loc.updatedAt) {
+        winner = {
+          ...rem,
+          driveQId: rem.driveQId || loc.driveQId,
+          driveSId: rem.driveSId || loc.driveSId,
+        };
+        cameFromRemote = true;
+      } else {
+        winner = {
+          ...loc,
+          driveQId: loc.driveQId || rem.driveQId,
+          driveSId: loc.driveSId || rem.driveSId,
+        };
+      }
+    } else if (rem) {
+      winner = rem;
+      cameFromRemote = true;
+    } else {
+      winner = loc!;
+    }
+
+    if (cameFromRemote && winner.driveQId && !loc) {
+      itemsNeedingBlobDownload.push(winner);
+    } else if (
+      !winner.driveQId ||
+      winner.syncState === 'pending' ||
+      winner.syncState === 'error' ||
+      (winner.hasSolutionImage && !winner.driveSId)
+    ) {
+      itemsNeedingUpload.push(winner);
+    }
+
+    mergedItems.push(winner);
+  }
+
+  for (const tomb of tombstoneMap.values()) {
+    if (tomb.driveQId) driveFileIdsToDelete.add(tomb.driveQId);
+    if (tomb.driveSId) driveFileIdsToDelete.add(tomb.driveSId);
+  }
+
+  return {
+    mergedItems: mergedItems.sort((a, b) => b.createdAt - a.createdAt),
+    mergedTombstones: Array.from(tombstoneMap.values()),
+    itemsNeedingUpload,
+    itemsNeedingBlobDownload,
+    driveFileIdsToDelete: Array.from(driveFileIdsToDelete),
+  };
+}

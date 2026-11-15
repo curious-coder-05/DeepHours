@@ -115,7 +115,7 @@ export const AppShell: React.FC<AppShellProps> = ({
       </aside>
 
       {/* Main Column */}
-      <div className="dh-main-wrap">
+      <div className="dh-main-wrap max-w-full overflow-x-clip">
         <TopBar
           title={topBarTitle}
           subtitle={topBarSubtitle}
@@ -128,7 +128,13 @@ export const AppShell: React.FC<AppShellProps> = ({
           onOpenSyncSettings={onOpenSyncSettings}
         />
 
-        <div className={showMiniTimer ? 'dh-stage has-mini-timer' : 'dh-stage'}>
+        <div
+          className={
+            showMiniTimer
+              ? 'dh-stage max-w-full overflow-x-clip has-mini-timer'
+              : 'dh-stage max-w-full overflow-x-clip'
+          }
+        >
           {children}
         </div>
       </div>

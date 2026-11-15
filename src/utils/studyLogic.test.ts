@@ -1346,7 +1346,7 @@ describe('Part C: Deep Hours NEET Study & Habit Logger Unit Tests', () => {
     assert.equal(review.mistakesAdded, 1);
   });
 
-  it('22. Milestone 3.9: SyncBudgetController debounce (60s), coalescing, 5-min minimum interval, 150/day cap, and pause on quota error with fake timers', async (t) => {
+  it('22. Milestone 3.9: SyncBudgetController debounce (8s), coalescing, 15s minimum interval, 500/day cap, and pause on quota error with fake timers', async (t) => {
     t.mock.timers.enable({ apis: ['Date', 'setTimeout'] });
     t.mock.timers.setTime(new Date('2026-10-30T10:00:00Z').getTime());
 
@@ -1355,32 +1355,32 @@ describe('Part C: Deep Hours NEET Study & Habit Logger Unit Tests', () => {
       flushCalls += 1;
     });
 
-    // Coalesce multiple rapid edits into a single flush after 60s
+    // Coalesce multiple rapid edits into a single flush after 8s
     ctrl.markDirty();
-    t.mock.timers.tick(20_000);
+    t.mock.timers.tick(4_000);
     ctrl.markDirty();
-    t.mock.timers.tick(30_000);
+    t.mock.timers.tick(5_000);
     assert.equal(flushCalls, 0);
 
-    // Advance past 60s from the last markDirty -> triggers 1st flush
-    t.mock.timers.tick(31_000);
+    // Advance past 8s from the last markDirty -> triggers 1st flush
+    t.mock.timers.tick(3_500);
     await Promise.resolve();
     assert.equal(flushCalls, 1);
 
-    // Marking dirty again 30s later must wait until the 5-minute (300_000ms) minimum interval since lastFlushTs
+    // Marking dirty again immediately must wait until the 15s minimum interval since lastFlushTs
     ctrl.markDirty();
-    t.mock.timers.tick(65_000);
+    t.mock.timers.tick(9_000);
     await Promise.resolve();
-    assert.equal(flushCalls, 1); // still throttled by 5m min interval
+    assert.equal(flushCalls, 1); // still throttled by 15s min interval
 
-    t.mock.timers.tick(240_000);
+    t.mock.timers.tick(7_000);
     await Promise.resolve();
     assert.equal(flushCalls, 2);
 
-    // Daily write budget cap at 150 writes/day
-    assert.equal(ctrl.canWrite(100), true);
-    ctrl.recordWrites(150);
-    assert.equal(ctrl.getTodayWrites(), 150);
+    // Daily write budget cap at 500 writes/day
+    assert.equal(ctrl.canWrite(450), true);
+    ctrl.recordWrites(500);
+    assert.equal(ctrl.getTodayWrites(), 500);
     assert.equal(ctrl.isPausedForToday(), true);
     assert.equal(ctrl.canWrite(1), false);
 
@@ -1943,7 +1943,7 @@ describe('Part C: Deep Hours NEET Study & Habit Logger Unit Tests', () => {
     assert.equal(Object.keys(hist['G1' as keyof typeof hist]).length, 12);
   });
 
-  it('27. Milestone 4.4: GroupPublishBudgetController — 2m debounce, 5m interval, unchanged hash skip, 60/day write cap, and pause on quota error with fake timers', async (t) => {
+  it('27. Milestone 4.4: GroupPublishBudgetController — 6s debounce, 10s interval, unchanged hash skip, 60/day write cap, and pause on quota error with fake timers', async (t) => {
     t.mock.timers.enable({ apis: ['Date', 'setTimeout'] });
     t.mock.timers.setTime(new Date('2026-10-30T12:00:00Z').getTime());
 
@@ -1951,7 +1951,7 @@ describe('Part C: Deep Hours NEET Study & Habit Logger Unit Tests', () => {
     const ctrl = new GroupPublishBudgetController(
       async (gid) => {
         flushedGroups.push(gid);
-        ctrl. recordWrite(1);
+        ctrl.recordWrite(1);
       },
       { initialOnline: true }
     );
@@ -1964,12 +1964,12 @@ describe('Part C: Deep Hours NEET Study & Habit Logger Unit Tests', () => {
       now: Date.now(),
     });
 
-    // Mark dirty -> waits 2 minutes (120_000 ms) before flushing
+    // Mark dirty -> waits 6 seconds (6_000 ms) before flushing
     ctrl.markGroupDirty('GRP2345678', e1);
-    t.mock.timers.tick(60_000);
+    t.mock.timers.tick(4_000);
     assert.equal(flushedGroups.length, 0);
 
-    t.mock.timers.tick(61_000);
+    t.mock.timers.tick(2_500);
     await Promise.resolve();
     assert.equal(flushedGroups.length, 1);
     ctrl.commitEntryHash('GRP2345678', e1);
@@ -1978,19 +1978,19 @@ describe('Part C: Deep Hours NEET Study & Habit Logger Unit Tests', () => {
     const e1Same = { ...e1, updatedAt: Date.now() + 5000 };
     assert.equal(hashMemberEntry(e1), hashMemberEntry(e1Same));
     ctrl.markGroupDirty('GRP2345678', e1Same);
-    t.mock.timers.tick(300_000);
+    t.mock.timers.tick(60_000);
     await Promise.resolve();
     assert.equal(flushedGroups.length, 1);
 
-    // Changed entry within 5 minutes of last write -> waits until 5-min minimum interval
+    // Changed entry within 10 seconds of last write -> waits until 10s minimum interval
     const e2 = { ...e1, xpTotal: 500, updatedAt: Date.now() };
     ctrl.commitEntryHash('GRP2345678', e1); // reset lastWriteTs to current mock time
     ctrl.markGroupDirty('GRP2345678', e2);
-    t.mock.timers.tick(130_000); // 2m10s elapsed (< 5m)
+    t.mock.timers.tick(7_000); // 7s elapsed (< 10s)
     await Promise.resolve();
     assert.equal(flushedGroups.length, 1);
 
-    t.mock.timers.tick(180_000); // now > 5m elapsed -> flushes!
+    t.mock.timers.tick(4_000); // now > 10s elapsed -> flushes!
     await Promise.resolve();
     assert.equal(flushedGroups.length, 2);
 
@@ -2152,6 +2152,7 @@ describe('Part C: Deep Hours NEET Study & Habit Logger Unit Tests', () => {
       lastPushTs: 0,
       lastPullTs: 0,
       knownRemoteDocTs: {},
+      lastSyncedSignatures: {},
       dailyWritesDayKey: '2026-10-25',
       dailyWritesCount: 17,
       quotaPausedUntilDayKey: null,

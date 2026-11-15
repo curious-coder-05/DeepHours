@@ -3,6 +3,7 @@ import {
   BarChart3,
   BookOpen,
   Calendar,
+  Camera,
   CheckSquare,
   Clock,
   Command,
@@ -88,7 +89,7 @@ export const CommandPalette: React.FC<CommandPaletteProps> = ({
         id: 'nav-prep',
         group: 'Screens',
         label: 'Go to Prep (Syllabus)',
-        sublabel: 'Syllabus pace, chapters, mocks, mistakes & doubts',
+        sublabel: 'Syllabus pace, chapters, mocks, vault & PYQs',
         shortcut: '2',
         icon: <Compass size={17} strokeWidth={1.75} />,
         onSelect: () => {
@@ -138,24 +139,13 @@ export const CommandPalette: React.FC<CommandPaletteProps> = ({
         },
       },
       {
-        id: 'nav-mistakes',
+        id: 'nav-vault',
         group: 'Screens',
-        label: 'Go to Prep → Mistakes',
-        sublabel: 'Mistake notebook & root-cause analysis',
-        icon: <BookOpen size={17} strokeWidth={1.75} />,
+        label: 'Go to Prep → Vault',
+        sublabel: 'Photographed unsolved & hard questions with revision deck',
+        icon: <Camera size={17} strokeWidth={1.75} />,
         onSelect: () => {
           onSelectPrepSubTab('mistakes');
-          onSelectTab('prep');
-        },
-      },
-      {
-        id: 'nav-doubts',
-        group: 'Screens',
-        label: 'Go to Prep → Doubts',
-        sublabel: 'Doubts & conceptual questions queue',
-        icon: <BookOpen size={17} strokeWidth={1.75} />,
-        onSelect: () => {
-          onSelectPrepSubTab('doubts');
           onSelectTab('prep');
         },
       },
@@ -233,6 +223,14 @@ export const CommandPalette: React.FC<CommandPaletteProps> = ({
         sublabel: 'Record a 720-mark NEET mock test',
         icon: <Plus size={17} strokeWidth={1.75} />,
         onSelect: () => onQuickAction('logMock'),
+      },
+      {
+        id: 'act-add-vault',
+        group: 'Quick actions',
+        label: 'Add question to Vault',
+        sublabel: 'Snap or upload an unsolved or hard question',
+        icon: <Camera size={17} strokeWidth={1.75} />,
+        onSelect: () => onQuickAction('addVault'),
       },
       {
         id: 'act-add-dday',

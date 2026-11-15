@@ -205,9 +205,9 @@ export async function testFirestoreConnection(): Promise<void> {
 
 export const MAX_DOC_BYTES = 700 * 1024; // ~700 KB chunk threshold
 export const TOMBSTONE_TTL_MS = 90 * 86400000; // 90 days
-export const DAILY_WRITE_CAP = 150;
-export const DEBOUNCE_MS = 60 * 1000; // 60s debounce
-export const MIN_SYNC_INTERVAL_MS = 5 * 60 * 1000; // max 1 sync per 5 min
+export const DAILY_WRITE_CAP = 500;
+export const DEBOUNCE_MS = 8 * 1000; // 8s debounce on local edits
+export const MIN_SYNC_INTERVAL_MS = 15 * 1000; // max 1 automatic push per 15s
 export const AUTO_PULL_INTERVAL_MS = 15 * 60 * 1000; // pull on start if > 15 min ago
 
 export interface MetaIndexDoc {
@@ -1200,6 +1200,7 @@ export interface SyncOutboxMeta {
   lastPushTs: number;
   lastPullTs: number;
   knownRemoteDocTs: Record<string, number>;
+  lastSyncedSignatures: Record<string, string>;
   dailyWritesDayKey: string;
   dailyWritesCount: number;
   quotaPausedUntilDayKey: string | null;
@@ -1211,13 +1212,27 @@ const DEFAULT_OUTBOX_META: SyncOutboxMeta = {
   lastPushTs: 0,
   lastPullTs: 0,
   knownRemoteDocTs: {},
+  lastSyncedSignatures: {},
   dailyWritesDayKey: '',
   dailyWritesCount: 0,
   quotaPausedUntilDayKey: null,
   firstSignInMergedUids: [],
 };
 
-let memoryOutboxMeta: SyncOutboxMeta = { ...DEFAULT_OUTBOX_META };
+let memoryOutboxMeta: SyncOutboxMeta = {
+  ...DEFAULT_OUTBOX_META,
+  lastSyncedSignatures: {},
+};
+
+function sanitizeStringRecord(input: unknown): Record<string, string> {
+  const out: Record<string, string> = {};
+  if (!input || typeof input !== 'object' || Array.isArray(input)) return out;
+  for (const [k, v] of Object.entries(input as Record<string, unknown>)) {
+    if (k === '__proto__' || k === 'constructor' || k === 'prototype') continue;
+    if (typeof v === 'string') out[k] = v;
+  }
+  return out;
+}
 
 export function loadSyncOutboxMeta(): SyncOutboxMeta {
   try {
@@ -1226,11 +1241,20 @@ export function loadSyncOutboxMeta(): SyncOutboxMeta {
         ...memoryOutboxMeta,
         dirtyDocs: [...memoryOutboxMeta.dirtyDocs],
         knownRemoteDocTs: { ...memoryOutboxMeta.knownRemoteDocTs },
+        lastSyncedSignatures: { ...memoryOutboxMeta.lastSyncedSignatures },
         firstSignInMergedUids: [...memoryOutboxMeta.firstSignInMergedUids],
       };
     }
     const raw = localStorage.getItem('dh_sync_meta');
-    if (!raw) return { ...DEFAULT_OUTBOX_META };
+    if (!raw) {
+      return {
+        ...DEFAULT_OUTBOX_META,
+        dirtyDocs: [],
+        knownRemoteDocTs: {},
+        lastSyncedSignatures: {},
+        firstSignInMergedUids: [],
+      };
+    }
     const parsed = JSON.parse(raw) as Partial<SyncOutboxMeta>;
     return {
       dirtyDocs: Array.isArray(parsed.dirtyDocs) ? parsed.dirtyDocs : [],
@@ -1240,6 +1264,7 @@ export function loadSyncOutboxMeta(): SyncOutboxMeta {
         parsed.knownRemoteDocTs && typeof parsed.knownRemoteDocTs === 'object'
           ? parsed.knownRemoteDocTs
           : {},
+      lastSyncedSignatures: sanitizeStringRecord(parsed.lastSyncedSignatures),
       dailyWritesDayKey:
         typeof parsed.dailyWritesDayKey === 'string' ? parsed.dailyWritesDayKey : '',
       dailyWritesCount: Number(parsed.dailyWritesCount) || 0,
@@ -1252,24 +1277,122 @@ export function loadSyncOutboxMeta(): SyncOutboxMeta {
         : [],
     };
   } catch {
-    return { ...DEFAULT_OUTBOX_META };
+    return {
+      ...DEFAULT_OUTBOX_META,
+      dirtyDocs: [],
+      knownRemoteDocTs: {},
+      lastSyncedSignatures: {},
+      firstSignInMergedUids: [],
+    };
   }
 }
 
 export function saveSyncOutboxMeta(meta: SyncOutboxMeta): void {
+  const safeSigs = sanitizeStringRecord(meta.lastSyncedSignatures);
   memoryOutboxMeta = {
     ...meta,
     dirtyDocs: [...(meta.dirtyDocs || [])],
     knownRemoteDocTs: { ...(meta.knownRemoteDocTs || {}) },
+    lastSyncedSignatures: safeSigs,
     firstSignInMergedUids: [...(meta.firstSignInMergedUids || [])],
   };
   try {
     if (typeof localStorage !== 'undefined') {
-      localStorage.setItem('dh_sync_meta', JSON.stringify(meta));
+      localStorage.setItem(
+        'dh_sync_meta',
+        JSON.stringify({
+          ...meta,
+          lastSyncedSignatures: safeSigs,
+        })
+      );
     }
   } catch {
     // ignore storage errors
   }
+}
+
+const VOLATILE_SIGNATURE_KEYS = new Set(['updatedAt', 'savedAt', 'lastSyncedAt']);
+
+function stableSerializeForSignature(val: unknown): string {
+  if (val === undefined) return 'null';
+  if (val === null || typeof val !== 'object') {
+    if (typeof val === 'number' && !Number.isFinite(val)) return '0';
+    return JSON.stringify(val);
+  }
+  if (Array.isArray(val)) {
+    return `[${val.map((item) => stableSerializeForSignature(item)).join(',')}]`;
+  }
+  const obj = val as Record<string, unknown>;
+  const keys = Object.keys(obj)
+    .filter((k) => !VOLATILE_SIGNATURE_KEYS.has(k) && obj[k] !== undefined)
+    .sort();
+  return `{${keys
+    .map((k) => `${JSON.stringify(k)}:${stableSerializeForSignature(obj[k])}`)
+    .join(',')}}`;
+}
+
+function fnv1a32(str: string, seed: number): string {
+  let h = seed >>> 0;
+  for (let i = 0; i < str.length; i++) {
+    h ^= str.charCodeAt(i);
+    h = Math.imul(h, 0x01000193) >>> 0;
+  }
+  return h.toString(16).padStart(8, '0');
+}
+
+/**
+ * Computes a deterministic canonical payload signature for a Firestore document
+ * (excluding volatile `updatedAt`, `savedAt`, and `lastSyncedAt` metadata).
+ */
+export function computeCloudDocSignature(payload: unknown): string {
+  const canonical = stableSerializeForSignature(sanitizeForFirestore(payload));
+  const h1 = fnv1a32(canonical, 0x811c9dc5);
+  const h2 = fnv1a32(canonical, 0x9e3779b9);
+  return `v1:${canonical.length}:${h1}${h2}`;
+}
+
+export interface PlannedCloudWrite {
+  docKey: string;
+  signature: string;
+}
+
+/**
+ * Compares candidate partitioned docs against last synced canonical signatures.
+ * Docs with identical canonical payloads are skipped completely (0 Firestore writes).
+ */
+export function planCloudDocWrites(params: {
+  partitionedDocs: Record<string, Record<string, unknown>>;
+  candidateKeys: string[];
+  lastSyncedSignatures: Record<string, string>;
+  knownRemoteDocTs?: Record<string, number>;
+  remoteIndexDocs?: Record<string, number>;
+}): {
+  writes: PlannedCloudWrite[];
+  unchangedKeys: string[];
+} {
+  const writes: PlannedCloudWrite[] = [];
+  const unchangedKeys: string[] = [];
+  const seen = new Set<string>();
+
+  for (const docKey of params.candidateKeys) {
+    if (!docKey || seen.has(docKey)) continue;
+    seen.add(docKey);
+    const docPayload = params.partitionedDocs[docKey];
+    if (!docPayload) continue;
+    const sig = computeCloudDocSignature(docPayload);
+    const prevSig = params.lastSyncedSignatures[docKey];
+    const remoteExists =
+      !params.remoteIndexDocs ||
+      Boolean(params.remoteIndexDocs[docKey]) ||
+      Boolean(params.knownRemoteDocTs?.[docKey]);
+    if (prevSig && prevSig === sig && remoteExists) {
+      unchangedKeys.push(docKey);
+    } else {
+      writes.push({ docKey, signature: sig });
+    }
+  }
+
+  return { writes, unchangedKeys };
 }
 
 export function isQuotaOrResourceExhaustedError(err: unknown): boolean {
@@ -1308,11 +1431,11 @@ export function addDirtyDocsToOutbox(docKeys: string[]): void {
 
 /**
  * Pure/testable SyncBudgetController enforcing:
- * - 60s debounce after last change
- * - max 1 automatic push per 5 min
+ * - 8s debounce after last change (configurable)
+ * - max 1 automatic push per 15s (configurable)
  * - 1 immediate flush on background (visibilitychange / pagehide)
  * - coalescing dirty doc keys
- * - max 150 writes/user/day cap
+ * - max 500 writes/user/day cap (configurable)
  * - pause on quota / resource-exhausted error until next day
  */
 export class SyncBudgetController {
@@ -1320,6 +1443,9 @@ export class SyncBudgetController {
   timerId: ReturnType<typeof setTimeout> | null = null;
   getNow: () => number;
   getDayKey: (now: number) => string;
+  debounceMs: number;
+  minIntervalMs: number;
+  dailyWriteCap: number;
   onFlushDocs: (
     dirtyDocKeys: string[]
   ) => Promise<{ writesUsed: number }>;
@@ -1333,6 +1459,9 @@ export class SyncBudgetController {
           initialMeta?: Partial<SyncOutboxMeta>;
           getNow?: () => number;
           getDayKey?: (now: number) => string;
+          debounceMs?: number;
+          minIntervalMs?: number;
+          dailyWriteCap?: number;
           onFlushDocs: (dirtyDocKeys: string[]) => Promise<{ writesUsed: number }>;
           onMetaChanged?: (meta: SyncOutboxMeta) => void;
         }
@@ -1340,6 +1469,9 @@ export class SyncBudgetController {
     if (typeof optionsOrCallback === 'function') {
       this.getNow = () => Date.now();
       this.getDayKey = (now: number) => getLocalCalendarDateKey(now);
+      this.debounceMs = DEBOUNCE_MS;
+      this.minIntervalMs = MIN_SYNC_INTERVAL_MS;
+      this.dailyWriteCap = DAILY_WRITE_CAP;
       this.onFlushDocs = (dirtyDocKeys: string[]) =>
         Promise.resolve(optionsOrCallback(dirtyDocKeys)).then(() => ({
           writesUsed: 0,
@@ -1347,18 +1479,37 @@ export class SyncBudgetController {
       this.meta = {
         ...DEFAULT_OUTBOX_META,
         dirtyDocs: [],
+        knownRemoteDocTs: {},
+        lastSyncedSignatures: {},
+        firstSignInMergedUids: [],
       };
     } else {
       this.getNow = optionsOrCallback.getNow || (() => Date.now());
       this.getDayKey =
         optionsOrCallback.getDayKey ||
         ((now: number) => getLocalCalendarDateKey(now));
+      this.debounceMs = Math.max(0, optionsOrCallback.debounceMs ?? DEBOUNCE_MS);
+      this.minIntervalMs = Math.max(
+        0,
+        optionsOrCallback.minIntervalMs ?? MIN_SYNC_INTERVAL_MS
+      );
+      this.dailyWriteCap = Math.max(
+        1,
+        optionsOrCallback.dailyWriteCap ?? DAILY_WRITE_CAP
+      );
       this.onFlushDocs = optionsOrCallback.onFlushDocs;
       this.onMetaChanged = optionsOrCallback.onMetaChanged;
       this.meta = {
         ...DEFAULT_OUTBOX_META,
         ...optionsOrCallback.initialMeta,
         dirtyDocs: [...(optionsOrCallback.initialMeta?.dirtyDocs || [])],
+        knownRemoteDocTs: { ...(optionsOrCallback.initialMeta?.knownRemoteDocTs || {}) },
+        lastSyncedSignatures: sanitizeStringRecord(
+          optionsOrCallback.initialMeta?.lastSyncedSignatures
+        ),
+        firstSignInMergedUids: [
+          ...(optionsOrCallback.initialMeta?.firstSignInMergedUids || []),
+        ],
       };
     }
     this.rolloverDayIfNeeded();
@@ -1383,6 +1534,9 @@ export class SyncBudgetController {
     return {
       ...this.meta,
       dirtyDocs: [...this.meta.dirtyDocs],
+      knownRemoteDocTs: { ...this.meta.knownRemoteDocTs },
+      lastSyncedSignatures: { ...this.meta.lastSyncedSignatures },
+      firstSignInMergedUids: [...this.meta.firstSignInMergedUids],
     };
   }
 
@@ -1393,23 +1547,23 @@ export class SyncBudgetController {
 
   getRemainingDailyWrites(): number {
     this.rolloverDayIfNeeded();
-    return Math.max(0, DAILY_WRITE_CAP - this.meta.dailyWritesCount);
+    return Math.max(0, this.dailyWriteCap - this.meta.dailyWritesCount);
   }
 
   canWrite(count = 1): boolean {
     this.rolloverDayIfNeeded();
     if (this.isPausedForToday()) return false;
-    return this.meta.dailyWritesCount + count <= DAILY_WRITE_CAP;
+    return this.meta.dailyWritesCount + count <= this.dailyWriteCap;
   }
 
   recordWrites(count: number): void {
     this.rolloverDayIfNeeded();
     const safeCount = Math.max(0, Math.floor(Number(count) || 0));
     this.meta.dailyWritesCount = Math.min(
-      DAILY_WRITE_CAP,
+      this.dailyWriteCap,
       this.meta.dailyWritesCount + safeCount
     );
-    if (this.meta.dailyWritesCount >= DAILY_WRITE_CAP) {
+    if (this.meta.dailyWritesCount >= this.dailyWriteCap) {
       const tomorrow = this.getDayKey(this.getNow() + 86400000);
       this.meta.quotaPausedUntilDayKey = tomorrow;
     }
@@ -1432,7 +1586,7 @@ export class SyncBudgetController {
     this.rolloverDayIfNeeded();
     return (
       Boolean(this.meta.quotaPausedUntilDayKey) ||
-      this.meta.dailyWritesCount >= DAILY_WRITE_CAP
+      this.meta.dailyWritesCount >= this.dailyWriteCap
     );
   }
 
@@ -1452,6 +1606,7 @@ export class SyncBudgetController {
     this.dispose();
     this.meta.dirtyDocs = [];
     this.meta.knownRemoteDocTs = {};
+    this.meta.lastSyncedSignatures = {};
     this.notifyMeta();
   }
 
@@ -1466,10 +1621,10 @@ export class SyncBudgetController {
     const elapsedSinceLastPush =
       this.meta.lastPushTs > 0 ? now - this.meta.lastPushTs : Infinity;
     const minIntervalWait =
-      elapsedSinceLastPush < MIN_SYNC_INTERVAL_MS
-        ? MIN_SYNC_INTERVAL_MS - elapsedSinceLastPush
+      elapsedSinceLastPush < this.minIntervalMs
+        ? this.minIntervalMs - elapsedSinceLastPush
         : 0;
-    const delay = Math.max(DEBOUNCE_MS, minIntervalWait);
+    const delay = Math.max(this.debounceMs, minIntervalWait);
 
     this.timerId = setTimeout(() => {
       this.timerId = null;
@@ -1538,10 +1693,10 @@ export class SyncBudgetController {
     try {
       const { writesUsed } = await this.onFlushDocs(docsToFlush);
       this.meta.dailyWritesCount = Math.min(
-        DAILY_WRITE_CAP,
+        this.dailyWriteCap,
         this.meta.dailyWritesCount + writesUsed
       );
-      if (this.meta.dailyWritesCount >= DAILY_WRITE_CAP) {
+      if (this.meta.dailyWritesCount >= this.dailyWriteCap) {
         const tomorrow = this.getDayKey(this.getNow() + 86400000);
         this.meta.quotaPausedUntilDayKey = tomorrow;
       }
@@ -2009,8 +2164,21 @@ export async function performCloudSyncCycle(
     },
   };
 
-  // 4. Determine docs to push (first sign-in pushes all non-empty partitioned docs; otherwise dirtyDocKeys)
+  // 4. Determine docs to push (first sign-in checks all partitioned docs; otherwise dirtyDocKeys)
+  // Diff-checked against canonical signatures so identical docs consume 0 Firestore writes.
   const partitioned = partitionStateToCloudDocs(mergedState, now);
+
+  for (const [docKey, remotePayload] of Object.entries(downloadedDocs)) {
+    const localPartitioned = partitioned.docs[docKey];
+    if (localPartitioned) {
+      const remoteSig = computeCloudDocSignature(remotePayload);
+      const mergedSig = computeCloudDocSignature(localPartitioned);
+      if (remoteSig === mergedSig) {
+        meta.lastSyncedSignatures[docKey] = mergedSig;
+      }
+    }
+  }
+
   const isFirstSignIn = !meta.firstSignInMergedUids.includes(uid);
   const explicitDirtySet = new Set([
     ...meta.dirtyDocs,
@@ -2050,23 +2218,38 @@ export async function performCloudSyncCycle(
     }
   }
 
-  const keysToWrite = candidateKeys.filter((k) => {
+  const prefilteredKeys = candidateKeys.filter((k) => {
     if (!partitioned.docs[k]) return false;
     if (isFirstSignIn) return true;
     const docUpdatedAt = Number(partitioned.docs[k].updatedAt) || 0;
     const knownTs = meta.knownRemoteDocTs[k] || 0;
     return docUpdatedAt > knownTs || explicitDirtySet.has(k);
   });
+
+  const plannedWrites = planCloudDocWrites({
+    partitionedDocs: partitioned.docs,
+    candidateKeys: prefilteredKeys,
+    lastSyncedSignatures: meta.lastSyncedSignatures,
+    knownRemoteDocTs: meta.knownRemoteDocTs,
+    remoteIndexDocs: remoteIndex?.docs || {},
+  });
+
+  const unchangedSet = new Set(plannedWrites.unchangedKeys);
+  if (unchangedSet.size > 0) {
+    meta.dirtyDocs = Array.from(explicitDirtySet).filter((k) => !unchangedSet.has(k));
+  }
+
   const remainingBudget = Math.max(0, DAILY_WRITE_CAP - meta.dailyWritesCount);
 
-  if (keysToWrite.length > 0 && remainingBudget > 1) {
-    const allowedDocKeys = keysToWrite.slice(0, remainingBudget - 1);
+  if (plannedWrites.writes.length > 0 && remainingBudget > 1) {
+    const allowedWrites = plannedWrites.writes.slice(0, remainingBudget - 1);
 
     try {
       const batch = writeBatch(db);
       const pendingRemoteTs: Record<string, number> = {};
+      const pendingSigs: Record<string, string> = {};
 
-      for (const docKey of allowedDocKeys) {
+      for (const { docKey, signature } of allowedWrites) {
         const parts = docKey.split('/');
         if (parts.length !== 2) continue;
         const ref = doc(db, 'users', uid, parts[0], parts[1]);
@@ -2083,6 +2266,7 @@ export async function performCloudSyncCycle(
         batch.set(ref, payloadToWrite);
         writesUsed += 1;
         pendingRemoteTs[docKey] = nextUpdatedAt;
+        pendingSigs[docKey] = signature;
       }
 
       const updatedIndex: MetaIndexDoc = sanitizeForFirestore({
@@ -2099,6 +2283,7 @@ export async function performCloudSyncCycle(
 
       await batch.commit();
       Object.assign(meta.knownRemoteDocTs, pendingRemoteTs);
+      Object.assign(meta.lastSyncedSignatures, pendingSigs);
     } catch (err) {
       if (isQuotaOrResourceExhaustedError(err)) {
         meta.quotaPausedUntilDayKey = getLocalCalendarDateKey(now + 86400000);
@@ -2136,8 +2321,10 @@ export async function performCloudSyncCycle(
       };
     }
 
-    const writtenSet = new Set(allowedDocKeys);
-    meta.dirtyDocs = Array.from(explicitDirtySet).filter((k) => !writtenSet.has(k));
+    const writtenSet = new Set(allowedWrites.map((w) => w.docKey));
+    meta.dirtyDocs = Array.from(explicitDirtySet).filter(
+      (k) => !writtenSet.has(k) && !unchangedSet.has(k)
+    );
     meta.dailyWritesCount += writesUsed;
     meta.lastPushTs = now;
     controllerArg?.recordWrites(writesUsed);
@@ -2217,6 +2404,7 @@ export async function deleteAllUserCloudData(uid: string): Promise<number> {
 
   const meta = loadSyncOutboxMeta();
   meta.knownRemoteDocTs = {};
+  meta.lastSyncedSignatures = {};
   meta.dirtyDocs = [];
   saveSyncOutboxMeta(meta);
 
