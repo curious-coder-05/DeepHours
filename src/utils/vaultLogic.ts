@@ -97,12 +97,42 @@ export interface VaultFilterOptions {
   chapterId: string; // 'all' or chapter id or '__unassigned__'
   status: 'active' | 'mastered' | 'all';
   kind: 'all' | VaultKind;
+  query?: string;
+  subjects?: readonly Subject[];
+  chapters?: readonly Chapter[];
+}
+
+export function buildVaultSearchText(
+  item: VaultItem,
+  subjects?: readonly Subject[],
+  chapters?: readonly Chapter[]
+): string {
+  const subjectName = subjects
+    ? resolveVaultSubjectLabel(subjects, item.subjectId).name
+    : item.subjectId;
+  const chapterName = item.chapterId
+    ? chapters
+      ? resolveVaultChapterName(chapters, item.chapterId)
+      : item.chapterId
+    : 'unassigned general';
+  const kindTag = item.kind === 'hard' ? 'hard trap' : 'unsolved';
+  const statusTag = item.mastered ? 'mastered' : 'active';
+
+  return [subjectName, chapterName, kindTag, statusTag, item.note || '']
+    .join(' ')
+    .toLowerCase();
 }
 
 export function filterVaultItems(
   items: readonly VaultItem[],
   filters: VaultFilterOptions
 ): VaultItem[] {
+  const tokens = (filters.query || '')
+    .trim()
+    .toLowerCase()
+    .split(/\s+/)
+    .filter(Boolean);
+
   return items
     .filter((item) => {
       if (item.deletedAt) return false;
@@ -119,6 +149,14 @@ export function filterVaultItems(
       if (filters.status === 'active' && item.mastered) return false;
       if (filters.status === 'mastered' && !item.mastered) return false;
       if (filters.kind !== 'all' && item.kind !== filters.kind) return false;
+
+      if (tokens.length > 0) {
+        const haystack = buildVaultSearchText(item, filters.subjects, filters.chapters);
+        for (const token of tokens) {
+          if (!haystack.includes(token)) return false;
+        }
+      }
+
       return true;
     })
     .slice()

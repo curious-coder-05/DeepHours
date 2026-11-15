@@ -4,18 +4,23 @@ import {
   Camera,
   Check,
   ChevronDown,
+  ChevronLeft,
   ChevronRight,
   Download,
   Edit3,
   Eye,
   EyeOff,
+  Images,
+  Maximize2,
   MoreHorizontal,
   Play,
   Plus,
   RotateCcw,
+  Search,
   SlidersHorizontal,
   Trash2,
   Upload,
+  X,
 } from 'lucide-react';
 import type { Chapter, PulseHabitState, Subject } from '../types';
 import { getSubject } from '../utils/studyLogic';
@@ -206,6 +211,7 @@ interface VaultCardProps {
   onEdit: (item: VaultItem) => void;
   onRequestDelete: (item: VaultItem) => void;
   onZoom: (url: string, item: VaultItem) => void;
+  onQuickView: (item: VaultItem) => void;
 }
 
 const VaultQuestionCard: React.FC<VaultCardProps> = ({
@@ -216,6 +222,7 @@ const VaultQuestionCard: React.FC<VaultCardProps> = ({
   onEdit,
   onRequestDelete,
   onZoom,
+  onQuickView,
 }) => {
   const [reveal, dispatchReveal] = useReducer(revealReducer, INITIAL_REVEAL_STATE);
   const [menuOpen, setMenuOpen] = useState(false);
@@ -467,6 +474,18 @@ const VaultQuestionCard: React.FC<VaultCardProps> = ({
             fullWidth
             onClick={() => {
               setMenuOpen(false);
+              onQuickView(item);
+            }}
+          >
+            <Images size={16} strokeWidth={1.75} aria-hidden="true" />
+            Open in Quick-View
+          </Button>
+          <Button
+            variant="secondary"
+            size="lg"
+            fullWidth
+            onClick={() => {
+              setMenuOpen(false);
               onEdit(item);
             }}
           >
@@ -507,6 +526,515 @@ const VaultQuestionCard: React.FC<VaultCardProps> = ({
   );
 };
 
+export interface VaultQuickViewProps {
+  open: boolean;
+  items: readonly VaultItem[];
+  initialItemId?: string | null;
+  subjects: readonly Subject[];
+  chapters: readonly Chapter[];
+  onClose: () => void;
+  onToggleMastered: (item: VaultItem) => void;
+}
+
+export const VaultQuickView: React.FC<VaultQuickViewProps> = ({
+  open,
+  items,
+  initialItemId,
+  subjects,
+  chapters,
+  onClose,
+  onToggleMastered,
+}) => {
+  const orderedItems = useMemo(
+    () =>
+      items
+        .filter((it) => !it.deletedAt)
+        .slice()
+        .sort((a, b) => b.createdAt - a.createdAt),
+    [items]
+  );
+
+  const [index, setIndex] = useState<number>(0);
+  const [reveal, dispatchReveal] = useReducer(revealReducer, INITIAL_REVEAL_STATE);
+  const [qUrl, setQUrl] = useState<string | null>(null);
+  const [sUrl, setSUrl] = useState<string | null>(null);
+  const [zoomSrc, setZoomSrc] = useState<{ src: string; alt: string; caption?: string } | null>(
+    null
+  );
+  const urlCacheRef = useRef<Map<string, string>>(new Map());
+  const swipeStartRef = useRef<{ x: number; y: number } | null>(null);
+  const thumbStripRef = useRef<HTMLDivElement | null>(null);
+
+  useEffect(() => {
+    if (!open) {
+      for (const u of urlCacheRef.current.values()) {
+        URL.revokeObjectURL(u);
+      }
+      urlCacheRef.current.clear();
+      setQUrl(null);
+      setSUrl(null);
+      setZoomSrc(null);
+      dispatchReveal({ type: 'reset' });
+      return;
+    }
+    const targetIdx =
+      initialItemId && orderedItems.length > 0
+        ? Math.max(
+            0,
+            orderedItems.findIndex((it) => it.id === initialItemId)
+          )
+        : 0;
+    setIndex(targetIdx);
+    dispatchReveal({ type: 'reset' });
+  }, [initialItemId, open, orderedItems.length]);
+
+  // Clamp index if items are deleted/filtered while open
+  useEffect(() => {
+    if (!open) return;
+    if (orderedItems.length === 0) {
+      onClose();
+      return;
+    }
+    if (index >= orderedItems.length) {
+      setIndex(orderedItems.length - 1);
+    }
+  }, [index, onClose, open, orderedItems.length]);
+
+  const currentItem = open && orderedItems[index] ? orderedItems[index] : null;
+  const prevItem = open && index > 0 ? orderedItems[index - 1] : null;
+  const nextItem = open && index + 1 < orderedItems.length ? orderedItems[index + 1] : null;
+
+  const ensureBlobUrl = useCallback(async (itemId: string, slot: 'q' | 's') => {
+    const key = `${itemId}:${slot}`;
+    const cached = urlCacheRef.current.get(key);
+    if (cached) return cached;
+    const blob = await getVaultBlob(itemId, slot);
+    if (!blob) return null;
+    const nextUrl = URL.createObjectURL(blob);
+    urlCacheRef.current.set(key, nextUrl);
+    return nextUrl;
+  }, []);
+
+  useEffect(() => {
+    if (!open || !currentItem) {
+      setQUrl(null);
+      setSUrl(null);
+      return;
+    }
+    let cancelled = false;
+    setSUrl(null);
+    void (async () => {
+      const url = await ensureBlobUrl(currentItem.id, 'q');
+      if (!cancelled) setQUrl(url);
+      if (nextItem) void ensureBlobUrl(nextItem.id, 'q');
+      if (prevItem) void ensureBlobUrl(prevItem.id, 'q');
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [currentItem, ensureBlobUrl, nextItem, open, prevItem]);
+
+  useEffect(() => {
+    if (!open || !currentItem || !reveal.solutionOpen || !currentItem.hasSolutionImage) {
+      return;
+    }
+    let cancelled = false;
+    void (async () => {
+      const url = await ensureBlobUrl(currentItem.id, 's');
+      if (!cancelled) setSUrl(url);
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [currentItem, ensureBlobUrl, open, reveal.solutionOpen]);
+
+  // Keep active thumbnail visible in scrubber strip
+  useEffect(() => {
+    if (!open || !thumbStripRef.current) return;
+    const activeEl = thumbStripRef.current.children[index] as HTMLElement | undefined;
+    if (activeEl && typeof activeEl.scrollIntoView === 'function') {
+      activeEl.scrollIntoView({ behavior: 'smooth', inline: 'center', block: 'nearest' });
+    }
+  }, [index, open]);
+
+  const stepTo = useCallback(
+    (nextIndex: number) => {
+      if (orderedItems.length === 0) return;
+      const bounded = Math.max(0, Math.min(orderedItems.length - 1, nextIndex));
+      if (bounded === index) return;
+      setIndex(bounded);
+      dispatchReveal({ type: 'reset' });
+      setZoomSrc(null);
+    },
+    [index, orderedItems.length]
+  );
+
+  useEffect(() => {
+    if (!open) return;
+    const onKeyDown = (e: KeyboardEvent) => {
+      if (zoomSrc) return;
+      if (e.key === 'Escape') {
+        e.preventDefault();
+        onClose();
+      } else if (e.key === 'ArrowRight') {
+        e.preventDefault();
+        stepTo(index + 1);
+      } else if (e.key === 'ArrowLeft') {
+        e.preventDefault();
+        stepTo(index - 1);
+      } else if (e.key.toLowerCase() === 'a') {
+        e.preventDefault();
+        dispatchReveal({ type: 'toggle_answer' });
+      } else if (e.key.toLowerCase() === 's') {
+        e.preventDefault();
+        dispatchReveal({ type: 'toggle_solution' });
+      }
+    };
+    window.addEventListener('keydown', onKeyDown);
+    return () => window.removeEventListener('keydown', onKeyDown);
+  }, [index, onClose, open, stepTo, zoomSrc]);
+
+  if (!open || !currentItem) return null;
+
+  const subject = resolveVaultSubjectLabel(subjects, currentItem.subjectId);
+  const chapterName = currentItem.chapterId
+    ? resolveVaultChapterName(chapters, currentItem.chapterId)
+    : undefined;
+
+  return (
+    <div
+      role="dialog"
+      aria-modal="true"
+      aria-label="Vault Quick-View"
+      className="dh-vault-quickview"
+    >
+      <div className="dh-vault-quickview-top">
+        <div style={{ display: 'flex', alignItems: 'center', gap: '10px', minWidth: 0 }}>
+          <div style={{ minWidth: 0 }}>
+            <div style={{ fontSize: '15px', fontWeight: 600, color: 'var(--tx)' }}>
+              Vault Quick-View
+            </div>
+            <div className="tabular-nums" style={{ fontSize: '13px', color: 'var(--tx-2)' }}>
+              {index + 1} / {orderedItems.length} · {formatRelativeVaultDate(currentItem.createdAt)}
+            </div>
+          </div>
+        </div>
+
+        <div style={{ display: 'flex', alignItems: 'center', gap: '6px', flexShrink: 0 }}>
+          <Button
+            variant={currentItem.mastered ? 'secondary' : 'ghost'}
+            size="sm"
+            aria-label={currentItem.mastered ? 'Move back to active' : 'Mark mastered'}
+            onClick={() => onToggleMastered(currentItem)}
+            style={{
+              minHeight: '40px',
+              color: currentItem.mastered ? 'var(--ok-ink)' : 'var(--tx-2)',
+            }}
+          >
+            {currentItem.mastered ? (
+              <RotateCcw size={14} strokeWidth={1.75} aria-hidden="true" />
+            ) : (
+              <Check size={15} strokeWidth={1.75} aria-hidden="true" />
+            )}
+            <span>{currentItem.mastered ? 'Mastered' : 'Mark done'}</span>
+          </Button>
+          {qUrl && (
+            <IconButton
+              size={44}
+              label="Zoom study photo"
+              onClick={() =>
+                setZoomSrc({
+                  src: qUrl,
+                  alt: chapterName ? `${chapterName} study photo` : 'Vault study photo',
+                  caption: chapterName || subject.name,
+                })
+              }
+            >
+              <Maximize2 size={18} strokeWidth={1.75} />
+            </IconButton>
+          )}
+          <IconButton size={48} label="Close Vault Quick-View" onClick={onClose}>
+            <X size={20} strokeWidth={1.75} />
+          </IconButton>
+        </div>
+      </div>
+
+      {/* Tag & Subject Strip */}
+      <div className="dh-vault-quickview-meta">
+        <span
+          aria-hidden="true"
+          style={{
+            width: '8px',
+            height: '8px',
+            borderRadius: '99px',
+            background: subject.color,
+            flexShrink: 0,
+          }}
+        />
+        <span style={{ fontSize: '13px', fontWeight: 600, color: 'var(--tx)' }}>
+          {subject.emoji} {subject.name}
+        </span>
+        {chapterName && (
+          <span style={{ fontSize: '13px', color: 'var(--tx-2)' }}>· {chapterName}</span>
+        )}
+        <span
+          style={{
+            padding: '2px 8px',
+            borderRadius: '8px',
+            fontSize: '13px',
+            fontWeight: 600,
+            background:
+              currentItem.kind === 'hard'
+                ? 'color-mix(in srgb, var(--warn) 14%, transparent)'
+                : 'var(--sf-2)',
+            border:
+              currentItem.kind === 'hard'
+                ? '1px solid color-mix(in srgb, var(--warn) 35%, transparent)'
+                : '1px solid var(--line)',
+            color: currentItem.kind === 'hard' ? 'var(--warn-ink)' : 'var(--tx-2)',
+          }}
+        >
+          {currentItem.kind === 'hard' ? 'Hard / Trap' : 'Unsolved'}
+        </span>
+        {currentItem.note && (
+          <span style={{ fontSize: '13px', color: 'var(--tx-2)' }}>· {currentItem.note}</span>
+        )}
+      </div>
+
+      {/* Main Photo Stage (supports left/right horizontal touch swipe) */}
+      <div
+        className="dh-vault-quickview-stage"
+        onTouchStart={(e) => {
+          if (e.touches.length === 1) {
+            swipeStartRef.current = {
+              x: e.touches[0].clientX,
+              y: e.touches[0].clientY,
+            };
+          }
+        }}
+        onTouchEnd={(e) => {
+          if (!swipeStartRef.current || e.changedTouches.length !== 1) return;
+          const dx = e.changedTouches[0].clientX - swipeStartRef.current.x;
+          const dy = e.changedTouches[0].clientY - swipeStartRef.current.y;
+          swipeStartRef.current = null;
+          if (Math.abs(dx) >= 48 && Math.abs(dx) > Math.abs(dy) * 1.25) {
+            if (dx < 0) stepTo(index + 1);
+            else stepTo(index - 1);
+          }
+        }}
+      >
+        {qUrl ? (
+          <img
+            src={qUrl}
+            alt={chapterName ? `${chapterName} question` : 'Vault study photo'}
+            className="dh-vault-quickview-img"
+            onClick={() =>
+              setZoomSrc({
+                src: qUrl,
+                alt: chapterName ? `${chapterName} study photo` : 'Vault study photo',
+                caption: chapterName || subject.name,
+              })
+            }
+          />
+        ) : (
+          <div
+            style={{
+              width: 'min(100%, 420px)',
+              height: '240px',
+              borderRadius: '14px',
+              background: 'var(--sf-2)',
+              border: '1px solid var(--line)',
+            }}
+          />
+        )}
+
+        {(reveal.answerOpen || reveal.solutionOpen) && (
+          <div
+            aria-live="polite"
+            style={{
+              width: 'min(100%, 720px)',
+              display: 'grid',
+              gap: '8px',
+            }}
+          >
+            {reveal.answerOpen && (
+              <div
+                style={{
+                  padding: '10px 12px',
+                  borderRadius: '10px',
+                  background: 'var(--ac-soft)',
+                  border: '1px solid var(--ac-bd)',
+                }}
+              >
+                <div style={{ fontSize: '13px', fontWeight: 600, color: 'var(--ac-ink)' }}>
+                  Answer
+                </div>
+                <div
+                  style={{
+                    marginTop: '2px',
+                    fontFamily: currentItem.answerText ? 'var(--font-mono)' : undefined,
+                    fontSize: currentItem.answerText ? '18px' : '13px',
+                    fontWeight: currentItem.answerText ? 700 : 500,
+                    color: currentItem.answerText ? 'var(--tx)' : 'var(--tx-2)',
+                  }}
+                >
+                  {currentItem.answerText || 'No answer saved'}
+                </div>
+              </div>
+            )}
+            {reveal.solutionOpen && (
+              <div
+                style={{
+                  padding: '10px 12px',
+                  borderRadius: '10px',
+                  background: 'var(--sf-1)',
+                  border: '1px solid var(--line)',
+                  display: 'grid',
+                  gap: '8px',
+                }}
+              >
+                <div style={{ fontSize: '13px', fontWeight: 600, color: 'var(--tx-2)' }}>
+                  Solution
+                </div>
+                {currentItem.solutionText ? (
+                  <div
+                    style={{
+                      fontSize: '14px',
+                      color: 'var(--tx)',
+                      lineHeight: 1.5,
+                      whiteSpace: 'pre-wrap',
+                      wordBreak: 'break-word',
+                    }}
+                  >
+                    {currentItem.solutionText}
+                  </div>
+                ) : !currentItem.hasSolutionImage ? (
+                  <div style={{ fontSize: '13px', color: 'var(--tx-2)' }}>No solution saved</div>
+                ) : null}
+                {currentItem.hasSolutionImage && sUrl && (
+                  <img
+                    src={sUrl}
+                    alt="Solution photo"
+                    onClick={() =>
+                      setZoomSrc({
+                        src: sUrl,
+                        alt: 'Solution photo',
+                        caption: chapterName || subject.name,
+                      })
+                    }
+                    style={{
+                      maxWidth: '100%',
+                      maxHeight: '200px',
+                      objectFit: 'contain',
+                      borderRadius: '10px',
+                      cursor: 'zoom-in',
+                    }}
+                  />
+                )}
+              </div>
+            )}
+          </div>
+        )}
+      </div>
+
+      {/* Recent Photo Filmstrip Scrubber */}
+      {orderedItems.length > 1 && (
+        <div
+          ref={thumbStripRef}
+          className="dh-vault-quickview-strip"
+          role="listbox"
+          aria-label="Recent tagged study photos"
+        >
+          {orderedItems.map((it, idx) => {
+            const sub = resolveVaultSubjectLabel(subjects, it.subjectId);
+            const active = idx === index;
+            return (
+              <button
+                key={it.id}
+                type="button"
+                role="option"
+                aria-selected={active}
+                aria-label={`Photo ${idx + 1}: ${sub.name}${it.note ? ` — ${it.note}` : ''}`}
+                className={`dh-vault-quickview-thumb ${active ? 'active' : ''}`}
+                onClick={() => stepTo(idx)}
+              >
+                <LazyVaultBlobImage
+                  itemId={it.id}
+                  slot="q"
+                  alt=""
+                  className="thumb"
+                  style={{ width: '100%', height: '100%' }}
+                />
+              </button>
+            );
+          })}
+        </div>
+      )}
+
+      {/* Bottom Cycling & Peek Controls */}
+      <div className="dh-vault-quickview-bottom">
+        <Button
+          variant="secondary"
+          size="lg"
+          disabled={index === 0}
+          aria-label="Previous study photo"
+          onClick={() => stepTo(index - 1)}
+        >
+          <ChevronLeft size={18} strokeWidth={1.75} aria-hidden="true" />
+          Prev
+        </Button>
+
+        <Button
+          variant={reveal.answerOpen ? 'primary' : 'secondary'}
+          size="md"
+          style={{ flex: 1, minHeight: '48px' }}
+          onClick={() => dispatchReveal({ type: 'toggle_answer' })}
+        >
+          {reveal.answerOpen ? (
+            <EyeOff size={15} strokeWidth={1.75} aria-hidden="true" />
+          ) : (
+            <Eye size={15} strokeWidth={1.75} aria-hidden="true" />
+          )}
+          Answer
+        </Button>
+
+        <Button
+          variant={reveal.solutionOpen ? 'primary' : 'secondary'}
+          size="md"
+          style={{ flex: 1, minHeight: '48px' }}
+          onClick={() => dispatchReveal({ type: 'toggle_solution' })}
+        >
+          {reveal.solutionOpen ? (
+            <EyeOff size={15} strokeWidth={1.75} aria-hidden="true" />
+          ) : (
+            <Eye size={15} strokeWidth={1.75} aria-hidden="true" />
+          )}
+          Solution
+        </Button>
+
+        <Button
+          variant="primary"
+          size="lg"
+          disabled={index >= orderedItems.length - 1}
+          aria-label="Next study photo"
+          onClick={() => stepTo(index + 1)}
+        >
+          Next
+          <ChevronRight size={18} strokeWidth={1.75} aria-hidden="true" />
+        </Button>
+      </div>
+
+      <VaultZoomViewer
+        open={Boolean(zoomSrc)}
+        src={zoomSrc?.src || null}
+        alt={zoomSrc?.alt || 'Vault study photo'}
+        caption={zoomSrc?.caption}
+        onClose={() => setZoomSrc(null)}
+      />
+    </div>
+  );
+};
+
 export const VaultView: React.FC<VaultViewProps> = ({
   state,
   todayKey,
@@ -526,6 +1054,7 @@ export const VaultView: React.FC<VaultViewProps> = ({
   const [chapterFilter, setChapterFilter] = useState<string>('all');
   const [statusFilter, setStatusFilter] = useState<'active' | 'mastered' | 'all'>('active');
   const [kindFilter, setKindFilter] = useState<'all' | VaultKind>('all');
+  const [searchQuery, setSearchQuery] = useState<string>('');
   const [density, setDensity] = useState<VaultDensity>(() => {
     try {
       const saved =
@@ -561,6 +1090,12 @@ export const VaultView: React.FC<VaultViewProps> = ({
   const [zoomState, setZoomState] = useState<{ src: string; alt: string; caption?: string } | null>(
     null
   );
+
+  // Vault Quick-View overlay
+  const [quickViewState, setQuickViewState] = useState<{
+    open: boolean;
+    initialItemId: string | null;
+  }>({ open: false, initialItemId: null });
 
   // Revision Deck
   const [deckScope, setDeckScope] = useState<{
@@ -658,9 +1193,26 @@ export const VaultView: React.FC<VaultViewProps> = ({
         chapterId: chapterFilter,
         status: statusFilter,
         kind: kindFilter,
+        query: searchQuery,
+        subjects: state.subjects,
+        chapters: state.chapters,
       }),
-    [chapterFilter, items, kindFilter, statusFilter, subjectFilter]
+    [
+      chapterFilter,
+      items,
+      kindFilter,
+      searchQuery,
+      state.chapters,
+      state.subjects,
+      statusFilter,
+      subjectFilter,
+    ]
   );
+
+  const quickViewItems = useMemo(() => {
+    if (filteredItems.length > 0) return filteredItems;
+    return items.filter((i) => !i.deletedAt).slice().sort((a, b) => b.createdAt - a.createdAt);
+  }, [filteredItems, items]);
 
   const pagedItems = useMemo(
     () => filteredItems.slice(0, visibleLimit),
@@ -697,6 +1249,7 @@ export const VaultView: React.FC<VaultViewProps> = ({
     setChapterFilter('all');
     setStatusFilter('active');
     setKindFilter('all');
+    setSearchQuery('');
     setVisibleLimit(PAGE_SIZE);
   };
 
@@ -905,6 +1458,21 @@ export const VaultView: React.FC<VaultViewProps> = ({
           </div>
 
           <div style={{ display: 'flex', alignItems: 'center', gap: '8px', flexWrap: 'wrap' }}>
+            {counts.total > 0 && (
+              <Button
+                variant="secondary"
+                size="md"
+                onClick={() =>
+                  setQuickViewState({
+                    open: true,
+                    initialItemId: quickViewItems[0]?.id ?? null,
+                  })
+                }
+              >
+                <Images size={15} strokeWidth={1.75} aria-hidden="true" />
+                Quick-View
+              </Button>
+            )}
             {counts.active > 0 && (
               <Button
                 variant="secondary"
@@ -947,9 +1515,51 @@ export const VaultView: React.FC<VaultViewProps> = ({
         </div>
       </Card>
 
-      {/* V2 Two-Row Sticky Filter Bar (shown when Vault has at least 1 question) */}
+      {/* V2 Sticky Filter & Search Bar (shown when Vault has at least 1 question) */}
       {counts.total > 0 && (
         <div className="dh-vault-filterbar">
+          {/* Search by tag, note, subject, or chapter */}
+          <div className="dh-vault-search-wrap">
+            <Search
+              size={16}
+              strokeWidth={1.75}
+              aria-hidden="true"
+              style={{ color: 'var(--tx-3)', flexShrink: 0 }}
+            />
+            <input
+              type="search"
+              className="dh-vault-search-input"
+              aria-label="Search Vault by tag, note, or subject"
+              placeholder="Search by tag, note, subject, or chapter…"
+              value={searchQuery}
+              onChange={(e) => {
+                setSearchQuery(e.target.value);
+                setVisibleLimit(PAGE_SIZE);
+              }}
+            />
+            {searchQuery.trim().length > 0 && (
+              <div style={{ display: 'flex', alignItems: 'center', gap: '4px', flexShrink: 0 }}>
+                <span
+                  className="tabular-nums"
+                  style={{ fontSize: '13px', color: 'var(--tx-2)', paddingRight: '2px' }}
+                >
+                  {filteredItems.length}
+                </span>
+                <IconButton
+                  size={40}
+                  variant="ghost"
+                  label="Clear Vault search"
+                  onClick={() => {
+                    setSearchQuery('');
+                    setVisibleLimit(PAGE_SIZE);
+                  }}
+                >
+                  <X size={16} strokeWidth={1.75} />
+                </IconButton>
+              </div>
+            )}
+          </div>
+
           {/* Row A: Horizontal Subject Chips */}
           <div className="dh-vault-chips-scroll" role="region" aria-label="Filter by subject">
             <Chip
@@ -1114,7 +1724,7 @@ export const VaultView: React.FC<VaultViewProps> = ({
             compact
             illustration="noVault"
             title="No questions match these filters"
-            description="Try switching status to All or clearing subject and type filters."
+            description="Try clearing your search, switching status to All, or clearing subject and type filters."
             action={
               <Button variant="secondary" onClick={clearAllFilters}>
                 Clear filters
@@ -1236,6 +1846,9 @@ export const VaultView: React.FC<VaultViewProps> = ({
                             alt: chName ? `${chName} question` : 'Vault question',
                             caption: chName || sub.name,
                           })
+                        }
+                        onQuickView={(it) =>
+                          setQuickViewState({ open: true, initialItemId: it.id })
                         }
                       />
                     );
@@ -1665,6 +2278,10 @@ export const VaultView: React.FC<VaultViewProps> = ({
                   : undefined,
               })
             }
+            onQuickView={(it) => {
+              setCompactDetailItem(null);
+              setQuickViewState({ open: true, initialItemId: it.id });
+            }}
           />
         )}
       </Sheet>
@@ -1693,6 +2310,17 @@ export const VaultView: React.FC<VaultViewProps> = ({
                 : 'Saved to Vault'
           );
         }}
+      />
+
+      {/* Vault Quick-View Overlay */}
+      <VaultQuickView
+        open={quickViewState.open}
+        items={quickViewItems}
+        initialItemId={quickViewState.initialItemId}
+        subjects={state.subjects}
+        chapters={state.chapters}
+        onClose={() => setQuickViewState({ open: false, initialItemId: null })}
+        onToggleMastered={(it) => void handleToggleMastered(it)}
       />
 
       {/* Full-Screen Zoom Viewer */}

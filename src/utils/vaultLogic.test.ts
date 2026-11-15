@@ -1,5 +1,6 @@
 import { describe, it } from 'node:test';
 import assert from 'node:assert/strict';
+import type { Chapter, Subject } from '../types.ts';
 import {
   INITIAL_REVEAL_STATE,
   buildVaultManifest,
@@ -161,6 +162,100 @@ describe('vaultLogic filtering, revision deck, reveal reducer, and Drive LWW mer
     assert.deepEqual(
       merged.itemsNeedingBlobDownload.map((i) => i.id),
       ['new_remote']
+    );
+  });
+
+  it('filters items by tag, note, subject text, and chapter text without leaking hidden answers', () => {
+    const subjects: Subject[] = [
+      { id: 'sub_phy', name: 'Physics', e: '⚛️', color: '#60A5FA', arch: 0, todos: [] },
+      { id: 'sub_chem', name: 'Organic Chemistry', e: '🧪', color: '#34D399', arch: 0, todos: [] },
+    ];
+    const chapters: Chapter[] = [
+      { id: 'ch_rot', subjectId: 'sub_phy', name: 'Rotational Motion', status: 'notStarted', revisions: [] },
+      { id: 'ch_ald', subjectId: 'sub_chem', name: 'Aldehydes & Ketones', status: 'inProgress', revisions: [] },
+    ];
+    const items: VaultItem[] = [
+      makeVaultItem({
+        id: 'phy_hard',
+        subjectId: 'sub_phy',
+        chapterId: 'ch_rot',
+        kind: 'hard',
+        note: 'HC Verma torque trap',
+        answerText: 'secret42',
+      }),
+      makeVaultItem({
+        id: 'chem_unsolved',
+        subjectId: 'sub_chem',
+        chapterId: 'ch_ald',
+        kind: 'unsolved',
+        note: 'NCERT Intext 12.4',
+      }),
+      makeVaultItem({
+        id: 'phy_mastered',
+        subjectId: 'sub_phy',
+        chapterId: undefined,
+        kind: 'hard',
+        createdAt: 2000,
+        mastered: true,
+        masteredAt: 2000,
+        note: 'PYQ 2021',
+      }),
+    ];
+
+    // Match by kind tag ('hard' / 'trap')
+    assert.deepEqual(
+      filterVaultItems(items, {
+        subjectId: 'all',
+        chapterId: 'all',
+        status: 'all',
+        kind: 'all',
+        query: 'trap',
+        subjects,
+        chapters,
+      }).map((x) => x.id),
+      ['phy_mastered', 'phy_hard']
+    );
+
+    // Match by subject text ('organic')
+    assert.deepEqual(
+      filterVaultItems(items, {
+        subjectId: 'all',
+        chapterId: 'all',
+        status: 'all',
+        kind: 'all',
+        query: 'organic',
+        subjects,
+        chapters,
+      }).map((x) => x.id),
+      ['chem_unsolved']
+    );
+
+    // Multi-token match across subject + note/tag ('physics verma')
+    assert.deepEqual(
+      filterVaultItems(items, {
+        subjectId: 'all',
+        chapterId: 'all',
+        status: 'all',
+        kind: 'all',
+        query: 'physics verma',
+        subjects,
+        chapters,
+      }).map((x) => x.id),
+      ['phy_hard']
+    );
+
+    // Does not match hidden answer text so answers remain concealed
+    assert.deepEqual(
+      filterVaultItems(items, {
+        subjectId: 'all',
+        chapterId: 'all',
+        status: 'all',
+        kind: 'all',
+        query: 'secret42',
+        subjects,
+        chapters,
+      }),
+      []
     );
   });
 });
