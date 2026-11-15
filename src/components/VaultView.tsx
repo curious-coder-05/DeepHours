@@ -10,6 +10,8 @@ import {
   Edit3,
   Eye,
   EyeOff,
+  Folder,
+  FolderOpen,
   Images,
   Maximize2,
   MoreHorizontal,
@@ -17,7 +19,6 @@ import {
   Plus,
   RotateCcw,
   Search,
-  SlidersHorizontal,
   Trash2,
   Upload,
   X,
@@ -31,13 +32,18 @@ import {
 } from '../utils/vaultArchive';
 import {
   INITIAL_REVEAL_STATE,
+  buildVaultSubjectFolders,
   computeVaultCounts,
+  filterAndSortChapterQuestions,
   filterVaultItems,
   formatRelativeVaultDate,
-  groupVaultItemsByChapter,
   resolveVaultChapterName,
   resolveVaultSubjectLabel,
   revealReducer,
+  type VaultChapterFolder,
+  type VaultChapterSortOrder,
+  type VaultChapterStatusFilter,
+  type VaultChapterTagFilter,
 } from '../utils/vaultLogic';
 import {
   deleteVaultItemLocal,
@@ -56,9 +62,7 @@ import {
   Chip,
   Dialog,
   EmptyState,
-  Field,
   IconButton,
-  Segmented,
   Sheet,
   Skeleton,
 } from './ui';
@@ -1051,9 +1055,19 @@ export const VaultView: React.FC<VaultViewProps> = ({
   const [loading, setLoading] = useState<boolean>(true);
 
   const [subjectFilter, setSubjectFilter] = useState<string>('all');
-  const [chapterFilter, setChapterFilter] = useState<string>('all');
-  const [statusFilter, setStatusFilter] = useState<'active' | 'mastered' | 'all'>('active');
-  const [kindFilter, setKindFilter] = useState<'all' | VaultKind>('all');
+  const [selectedFolder, setSelectedFolder] = useState<{
+    subjectId: string;
+    chapterId?: string;
+    isUncategorized: boolean;
+  } | null>(null);
+  const [emptyChaptersExpanded, setEmptyChaptersExpanded] = useState<boolean>(false);
+
+  // Per-chapter Question Deck filters & sorting
+  const [chapterStatusFilter, setChapterStatusFilter] =
+    useState<VaultChapterStatusFilter>('active');
+  const [chapterTagFilter, setChapterTagFilter] = useState<VaultChapterTagFilter>('all');
+  const [chapterSort, setChapterSort] = useState<VaultChapterSortOrder>('newest');
+
   const [searchQuery, setSearchQuery] = useState<string>('');
   const [density, setDensity] = useState<VaultDensity>(() => {
     try {
@@ -1066,13 +1080,7 @@ export const VaultView: React.FC<VaultViewProps> = ({
   });
   const [visibleLimit, setVisibleLimit] = useState<number>(PAGE_SIZE);
 
-  // Sticky row B hide-on-scroll-down / show-on-scroll-up
-  const [hideRowB, setHideRowB] = useState<boolean>(false);
-  const lastScrollYRef = useRef<number>(0);
-
   // Modals / Sheets
-  const [chapterPickerOpen, setChapterPickerOpen] = useState<boolean>(false);
-  const [filtersSheetOpen, setFiltersSheetOpen] = useState<boolean>(false);
   const [captureOpen, setCaptureOpen] = useState<boolean>(false);
   const [captureSeed, setCaptureSeed] = useState<{
     subjectId?: string;
@@ -1092,10 +1100,13 @@ export const VaultView: React.FC<VaultViewProps> = ({
   );
 
   // Vault Quick-View overlay
-  const [quickViewState, setQuickViewState] = useState<{
+  const [quickViewConfig, setQuickViewConfig] = useState<{
     open: boolean;
+    scope: 'subject' | 'search' | 'folder';
+    folderSubjectId?: string;
+    folderChapterId?: string;
     initialItemId: string | null;
-  }>({ open: false, initialItemId: null });
+  }>({ open: false, scope: 'subject', initialItemId: null });
 
   // Revision Deck
   const [deckScope, setDeckScope] = useState<{
@@ -1129,9 +1140,21 @@ export const VaultView: React.FC<VaultViewProps> = ({
   // Apply external chapter filter jump (e.g. from Syllabus row chip)
   useEffect(() => {
     if (initialChapterFilter && initialChapterFilter.nonce > 0) {
-      setSubjectFilter(initialChapterFilter.subjectId || 'all');
-      setChapterFilter(initialChapterFilter.chapterId || 'all');
-      setStatusFilter('all');
+      const subId = initialChapterFilter.subjectId || 'all';
+      setSubjectFilter(subId);
+      if (initialChapterFilter.chapterId && initialChapterFilter.chapterId !== 'all') {
+        const isUncat = initialChapterFilter.chapterId === '__unassigned__';
+        setSelectedFolder({
+          subjectId: subId === 'all' ? activeSubjects[0]?.id || 'sub_phy' : subId,
+          chapterId: isUncat ? undefined : initialChapterFilter.chapterId,
+          isUncategorized: isUncat,
+        });
+        setChapterStatusFilter('all');
+        setChapterTagFilter('all');
+      } else {
+        setSelectedFolder(null);
+      }
+      setSearchQuery('');
       setVisibleLimit(PAGE_SIZE);
     }
   }, [initialChapterFilter]);
@@ -1160,96 +1183,151 @@ export const VaultView: React.FC<VaultViewProps> = ({
     }
   }, [density]);
 
-  // Scroll listener for Row B hide/reveal
-  useEffect(() => {
-    if (typeof window === 'undefined') return;
-    lastScrollYRef.current = window.scrollY || 0;
-    const onScroll = () => {
-      const y = window.scrollY || 0;
-      const delta = y - lastScrollYRef.current;
-      if (y <= 64) {
-        setHideRowB(false);
-      } else if (delta > 16) {
-        setHideRowB(true);
-      } else if (delta < -12) {
-        setHideRowB(false);
-      }
-      lastScrollYRef.current = y;
-    };
-    window.addEventListener('scroll', onScroll, { passive: true });
-    return () => window.removeEventListener('scroll', onScroll);
-  }, []);
-
   const counts = useMemo(() => computeVaultCounts(items), [items]);
   const activeSubjects = useMemo(
     () => state.subjects.filter((s) => !s.arch),
     [state.subjects]
   );
 
-  const filteredItems = useMemo(
+  const subjectScopedItems = useMemo(
     () =>
-      filterVaultItems(items, {
-        subjectId: subjectFilter,
-        chapterId: chapterFilter,
-        status: statusFilter,
-        kind: kindFilter,
-        query: searchQuery,
-        subjects: state.subjects,
-        chapters: state.chapters,
-      }),
-    [
-      chapterFilter,
-      items,
-      kindFilter,
-      searchQuery,
-      state.chapters,
-      state.subjects,
-      statusFilter,
-      subjectFilter,
-    ]
+      items
+        .filter((i) => !i.deletedAt && (subjectFilter === 'all' || i.subjectId === subjectFilter))
+        .slice()
+        .sort((a, b) => b.createdAt - a.createdAt),
+    [items, subjectFilter]
   );
+
+  const subjectActiveItems = useMemo(
+    () => subjectScopedItems.filter((i) => !i.mastered),
+    [subjectScopedItems]
+  );
+
+  const subjectMasteredCount = subjectScopedItems.length - subjectActiveItems.length;
+
+  const isGlobalSearchActive = !selectedFolder && searchQuery.trim().length > 0;
+
+  // Global search override across the selected subject
+  const searchMatchingItems = useMemo(() => {
+    if (!isGlobalSearchActive) return [];
+    return filterVaultItems(items, {
+      subjectId: subjectFilter,
+      chapterId: 'all',
+      status: 'all',
+      kind: 'all',
+      query: searchQuery,
+      subjects: state.subjects,
+      chapters: state.chapters,
+    });
+  }, [
+    isGlobalSearchActive,
+    items,
+    searchQuery,
+    state.chapters,
+    state.subjects,
+    subjectFilter,
+  ]);
+
+  const subjectFolders = useMemo(
+    () => buildVaultSubjectFolders(items, state.subjects, state.chapters, subjectFilter),
+    [items, state.chapters, state.subjects, subjectFilter]
+  );
+
+  // Selected Chapter Drill-Down computed data
+  const folderAllItems = useMemo(() => {
+    if (!selectedFolder) return [];
+    return items
+      .filter((i) => {
+        if (i.deletedAt || i.subjectId !== selectedFolder.subjectId) return false;
+        if (selectedFolder.chapterId) return i.chapterId === selectedFolder.chapterId;
+        return !i.chapterId;
+      })
+      .slice()
+      .sort((a, b) => b.createdAt - a.createdAt);
+  }, [items, selectedFolder]);
+
+  const folderCounts = useMemo(() => {
+    let active = 0;
+    let mastered = 0;
+    let hard = 0;
+    for (const it of folderAllItems) {
+      if (it.mastered) mastered += 1;
+      else active += 1;
+      if (it.kind === 'hard') hard += 1;
+    }
+    return { total: folderAllItems.length, active, mastered, hard };
+  }, [folderAllItems]);
+
+  const chapterDeckItems = useMemo(() => {
+    if (!selectedFolder) return [];
+    return filterAndSortChapterQuestions(items, {
+      subjectId: selectedFolder.subjectId,
+      chapterId: selectedFolder.chapterId,
+      status: chapterStatusFilter,
+      tag: chapterTagFilter,
+      sort: chapterSort,
+      subjects: state.subjects,
+      chapters: state.chapters,
+    });
+  }, [
+    chapterSort,
+    chapterStatusFilter,
+    chapterTagFilter,
+    items,
+    selectedFolder,
+    state.chapters,
+    state.subjects,
+  ]);
+
+  const visibleListItems = useMemo(() => {
+    if (selectedFolder) return chapterDeckItems.slice(0, visibleLimit);
+    if (isGlobalSearchActive) return searchMatchingItems.slice(0, visibleLimit);
+    return [];
+  }, [chapterDeckItems, isGlobalSearchActive, searchMatchingItems, selectedFolder, visibleLimit]);
 
   const quickViewItems = useMemo(() => {
-    if (filteredItems.length > 0) return filteredItems;
-    return items.filter((i) => !i.deletedAt).slice().sort((a, b) => b.createdAt - a.createdAt);
-  }, [filteredItems, items]);
+    if (quickViewConfig.scope === 'folder' && quickViewConfig.folderSubjectId) {
+      return items
+        .filter((i) => {
+          if (i.deletedAt || i.subjectId !== quickViewConfig.folderSubjectId) return false;
+          if (quickViewConfig.folderChapterId) {
+            return i.chapterId === quickViewConfig.folderChapterId;
+          }
+          return !i.chapterId;
+        })
+        .slice()
+        .sort((a, b) => b.createdAt - a.createdAt);
+    }
+    if (quickViewConfig.scope === 'search' && searchQuery.trim().length > 0) {
+      return searchMatchingItems;
+    }
+    return subjectScopedItems;
+  }, [
+    items,
+    quickViewConfig.folderChapterId,
+    quickViewConfig.folderSubjectId,
+    quickViewConfig.scope,
+    searchMatchingItems,
+    searchQuery,
+    subjectScopedItems,
+  ]);
 
-  const pagedItems = useMemo(
-    () => filteredItems.slice(0, visibleLimit),
-    [filteredItems, visibleLimit]
-  );
+  const openChapterFolder = useCallback((folder: VaultChapterFolder) => {
+    setSelectedFolder({
+      subjectId: folder.subjectId,
+      chapterId: folder.chapterId,
+      isUncategorized: folder.isUncategorized,
+    });
+    setChapterStatusFilter(folder.activeCount > 0 ? 'active' : 'all');
+    setChapterTagFilter('all');
+    setChapterSort('newest');
+    setVisibleLimit(PAGE_SIZE);
+  }, []);
 
-  const groupedByChapter = useMemo(
-    () => groupVaultItemsByChapter(pagedItems, state.subjects, state.chapters),
-    [pagedItems, state.chapters, state.subjects]
-  );
-
-  const selectedChapterList = useMemo(() => {
-    if (subjectFilter === 'all') return [];
-    const subChapters = state.chapters.filter((c) => c.subjectId === subjectFilter);
-    return subChapters.map((c) => ({
-      chapter: c,
-      count: counts.byChapter[c.id]?.total ?? 0,
-      activeCount: counts.byChapter[c.id]?.active ?? 0,
-    }));
-  }, [counts.byChapter, state.chapters, subjectFilter]);
-
-  const unassignedCountForSelectedSubject = useMemo(() => {
-    if (subjectFilter === 'all') return 0;
-    return items.filter(
-      (i) => !i.deletedAt && i.subjectId === subjectFilter && !i.chapterId
-    ).length;
-  }, [items, subjectFilter]);
-
-  const activeFilterBadgeCount =
-    (kindFilter !== 'all' ? 1 : 0) + (density === 'compact' ? 1 : 0);
-
-  const clearAllFilters = () => {
-    setSubjectFilter('all');
-    setChapterFilter('all');
-    setStatusFilter('active');
-    setKindFilter('all');
-    setSearchQuery('');
+  const clearChapterFilters = () => {
+    setChapterStatusFilter('all');
+    setChapterTagFilter('all');
+    setChapterSort('newest');
     setVisibleLimit(PAGE_SIZE);
   };
 
@@ -1405,25 +1483,293 @@ export const VaultView: React.FC<VaultViewProps> = ({
   const legacyDoubts = state.doubts || [];
   const hasLegacyNotes = legacyMistakes.length > 0 || legacyDoubts.length > 0;
 
-  const selectedChapterLabel =
-    chapterFilter === 'all'
-      ? 'All chapters'
-      : chapterFilter === '__unassigned__'
-        ? 'Unassigned'
-        : resolveVaultChapterName(state.chapters, chapterFilter);
+  const activeSubjectLabel =
+    subjectFilter === 'all'
+      ? 'Vault'
+      : resolveVaultSubjectLabel(state.subjects, subjectFilter).name;
 
-  const singleChapterStats = useMemo(() => {
-    if (chapterFilter === 'all') return null;
-    const allInChapter = items.filter((i) => {
-      if (i.deletedAt) return false;
-      if (subjectFilter !== 'all' && i.subjectId !== subjectFilter) return false;
-      if (chapterFilter === '__unassigned__') return !i.chapterId;
-      return i.chapterId === chapterFilter;
-    });
-    const activeCount = allInChapter.filter((i) => !i.mastered).length;
-    const masteredCount = allInChapter.filter((i) => i.mastered).length;
-    return { allInChapter, activeCount, masteredCount };
-  }, [chapterFilter, items, subjectFilter]);
+  const selectedFolderSubject = selectedFolder
+    ? resolveVaultSubjectLabel(state.subjects, selectedFolder.subjectId)
+    : null;
+
+  const selectedFolderTitle = selectedFolder
+    ? selectedFolder.isUncategorized
+      ? 'General / Uncategorized'
+      : resolveVaultChapterName(state.chapters, selectedFolder.chapterId)
+    : '';
+
+  const renderQuestionList = (list: readonly VaultItem[]) =>
+    density === 'comfortable' ? (
+      <div className="dh-vault-grid">
+        {list.map((item) => {
+          const sub = resolveVaultSubjectLabel(state.subjects, item.subjectId);
+          const chName = item.chapterId
+            ? resolveVaultChapterName(state.chapters, item.chapterId)
+            : 'General / Uncategorized';
+          return (
+            <VaultQuestionCard
+              key={item.id}
+              item={item}
+              subject={sub}
+              chapterName={chName}
+              onToggleMastered={(it) => void handleToggleMastered(it)}
+              onEdit={(it) => {
+                setEditingItem(it);
+                setCaptureSeed(null);
+                setCaptureOpen(true);
+              }}
+              onRequestDelete={(it) => setDeleteTarget(it)}
+              onZoom={(src, it) =>
+                setZoomState({
+                  src,
+                  alt: chName ? `${chName} question` : 'Vault question',
+                  caption: chName || sub.name,
+                })
+              }
+              onQuickView={(it) =>
+                setQuickViewConfig({
+                  open: true,
+                  scope: selectedFolder
+                    ? 'folder'
+                    : isGlobalSearchActive
+                      ? 'search'
+                      : 'subject',
+                  folderSubjectId: selectedFolder?.subjectId,
+                  folderChapterId: selectedFolder?.chapterId,
+                  initialItemId: it.id,
+                })
+              }
+            />
+          );
+        })}
+      </div>
+    ) : (
+      <div style={{ display: 'grid', gap: '8px' }}>
+        {list.map((item) => {
+          const sub = resolveVaultSubjectLabel(state.subjects, item.subjectId);
+          const chName = item.chapterId
+            ? resolveVaultChapterName(state.chapters, item.chapterId)
+            : 'General / Uncategorized';
+          return (
+            <div key={item.id} className="dh-vault-compact-row">
+              <button
+                type="button"
+                onClick={() => setCompactDetailItem(item)}
+                style={{
+                  flex: 1,
+                  minWidth: 0,
+                  display: 'flex',
+                  alignItems: 'center',
+                  gap: '12px',
+                  textAlign: 'left',
+                  background: 'transparent',
+                  border: 'none',
+                  padding: 0,
+                  color: 'inherit',
+                  cursor: 'pointer',
+                }}
+              >
+                <LazyVaultBlobImage
+                  itemId={item.id}
+                  slot="q"
+                  alt={chName}
+                  className="dh-vault-compact-thumb thumb"
+                />
+                <div style={{ minWidth: 0, flex: 1 }}>
+                  <div style={{ display: 'flex', alignItems: 'center', gap: '6px', flexWrap: 'wrap' }}>
+                    <span
+                      style={{
+                        fontSize: '14px',
+                        fontWeight: 600,
+                        color: 'var(--tx)',
+                        overflow: 'hidden',
+                        textOverflow: 'ellipsis',
+                        whiteSpace: 'nowrap',
+                      }}
+                    >
+                      {chName}
+                    </span>
+                    <span
+                      style={{
+                        padding: '1px 7px',
+                        borderRadius: '6px',
+                        fontSize: '13px',
+                        fontWeight: 600,
+                        background:
+                          item.kind === 'hard'
+                            ? 'color-mix(in srgb, var(--warn) 14%, transparent)'
+                            : 'var(--sf-2)',
+                        color: item.kind === 'hard' ? 'var(--warn-ink)' : 'var(--tx-2)',
+                      }}
+                    >
+                      {item.kind === 'hard' ? 'Hard / Trap' : 'Unsolved'}
+                    </span>
+                  </div>
+                  <div
+                    className="tabular-nums"
+                    style={{
+                      fontSize: '13px',
+                      color: 'var(--tx-2)',
+                      overflow: 'hidden',
+                      textOverflow: 'ellipsis',
+                      whiteSpace: 'nowrap',
+                      marginTop: '2px',
+                    }}
+                  >
+                    {item.note || `${sub.emoji} ${sub.name}`} ·{' '}
+                    {formatRelativeVaultDate(item.createdAt)}
+                  </div>
+                </div>
+              </button>
+
+              <Button
+                variant={item.mastered ? 'secondary' : 'ghost'}
+                size="sm"
+                aria-label={item.mastered ? 'Move back to active' : 'Mark mastered'}
+                onClick={() => void handleToggleMastered(item)}
+              >
+                {item.mastered ? (
+                  <RotateCcw size={15} strokeWidth={1.75} />
+                ) : (
+                  <Check size={16} strokeWidth={1.75} />
+                )}
+              </Button>
+            </div>
+          );
+        })}
+      </div>
+    );
+
+  const renderChapterFolderCard = (folder: VaultChapterFolder, emptyMode = false) => {
+    const masteredPct =
+      folder.totalCount > 0 ? Math.round((folder.masteredCount / folder.totalCount) * 100) : 0;
+
+    return (
+      <div key={folder.key} className="dh-vault-folder-card">
+        <button
+          type="button"
+          className="dh-vault-folder-main"
+          onClick={() => openChapterFolder(folder)}
+        >
+          <div style={{ display: 'flex', alignItems: 'center', gap: '8px', minWidth: 0 }}>
+            {emptyMode ? (
+              <Folder size={17} strokeWidth={1.75} aria-hidden="true" style={{ color: 'var(--tx-3)', flexShrink: 0 }} />
+            ) : (
+              <FolderOpen size={17} strokeWidth={1.75} aria-hidden="true" style={{ color: folder.subjectColor, flexShrink: 0 }} />
+            )}
+            <span
+              style={{
+                fontSize: '15px',
+                fontWeight: 600,
+                color: emptyMode ? 'var(--tx-2)' : 'var(--tx)',
+                overflow: 'hidden',
+                textOverflow: 'ellipsis',
+                whiteSpace: 'nowrap',
+              }}
+            >
+              {folder.chapterName}
+            </span>
+          </div>
+
+          <div
+            style={{
+              display: 'flex',
+              alignItems: 'center',
+              gap: '8px',
+              flexWrap: 'wrap',
+              fontSize: '13px',
+              color: 'var(--tx-2)',
+            }}
+          >
+            {(subjectFilter === 'all' || folder.isUncategorized) && (
+              <span style={{ display: 'inline-flex', alignItems: 'center', gap: '5px' }}>
+                <span
+                  aria-hidden="true"
+                  style={{
+                    width: '7px',
+                    height: '7px',
+                    borderRadius: '99px',
+                    background: folder.subjectColor,
+                  }}
+                />
+                <span>{folder.subjectName}</span>
+                <span>·</span>
+              </span>
+            )}
+            <span className="tabular-nums">
+              {emptyMode
+                ? '0 questions'
+                : `${folder.activeCount} active · ${folder.masteredCount} mastered`}
+            </span>
+            {folder.hardCount > 0 && (
+              <span
+                className="tabular-nums"
+                style={{
+                  padding: '1px 7px',
+                  borderRadius: '8px',
+                  fontSize: '13px',
+                  fontWeight: 600,
+                  background: 'color-mix(in srgb, var(--warn) 14%, transparent)',
+                  border: '1px solid color-mix(in srgb, var(--warn) 35%, transparent)',
+                  color: 'var(--warn-ink)',
+                }}
+              >
+                {folder.hardCount} Hard / Trap
+              </span>
+            )}
+          </div>
+
+          {!emptyMode && (
+            <div className="dh-vault-folder-progress" aria-hidden="true">
+              <div
+                className="dh-vault-folder-progress-fill"
+                style={{ width: `${masteredPct}%` }}
+              />
+            </div>
+          )}
+        </button>
+
+        <div style={{ display: 'flex', alignItems: 'center', gap: '4px', flexShrink: 0 }}>
+          {!emptyMode && folder.totalCount > 0 && (
+            <IconButton
+              size={44}
+              label={`Quick-View ${folder.chapterName}`}
+              title={`Quick-View ${folder.chapterName}`}
+              onClick={(e) => {
+                e.stopPropagation();
+                setQuickViewConfig({
+                  open: true,
+                  scope: 'folder',
+                  folderSubjectId: folder.subjectId,
+                  folderChapterId: folder.chapterId,
+                  initialItemId: folder.items[0]?.id ?? null,
+                });
+              }}
+            >
+              <Images size={17} strokeWidth={1.75} />
+            </IconButton>
+          )}
+          {!emptyMode && folder.activeCount > 0 && (
+            <IconButton
+              size={44}
+              variant="primary"
+              label={`Revise ${folder.chapterName}`}
+              title={`Revise ${folder.chapterName}`}
+              onClick={(e) => {
+                e.stopPropagation();
+                launchRevisionForItems(folder.items, folder.chapterName);
+              }}
+            >
+              <Play size={16} strokeWidth={1.75} />
+            </IconButton>
+          )}
+          {emptyMode && (
+            <ChevronRight size={18} strokeWidth={1.75} aria-hidden="true" style={{ color: 'var(--tx-3)' }} />
+          )}
+        </div>
+      </div>
+    );
+  };
 
   return (
     <div style={{ display: 'grid', gap: '14px' }}>
@@ -1435,806 +1781,819 @@ export const VaultView: React.FC<VaultViewProps> = ({
         onChange={(e) => void handleImportVaultFile(e.target.files?.[0])}
       />
 
-      {/* V1 Header */}
-      <Card style={{ margin: 0, display: 'grid', gap: '12px' }}>
-        <div
-          style={{
-            display: 'flex',
-            alignItems: 'center',
-            justifyContent: 'space-between',
-            gap: '12px',
-            flexWrap: 'wrap',
-          }}
-        >
-          <div style={{ minWidth: 0 }}>
-            <h2 style={{ margin: 0, fontSize: '20px', fontWeight: 600, color: 'var(--tx)' }}>
-              Vault
-            </h2>
-            <p className="tabular-nums" style={{ margin: '4px 0 0', fontSize: '13px', color: 'var(--tx-2)' }}>
-              {counts.total === 0
-                ? 'Unsolved and hard questions ready to snap & revise'
-                : `${counts.active} active · ${counts.mastered} mastered`}
-            </p>
-          </div>
-
-          <div style={{ display: 'flex', alignItems: 'center', gap: '8px', flexWrap: 'wrap' }}>
-            {counts.total > 0 && (
-              <Button
-                variant="secondary"
-                size="md"
-                onClick={() =>
-                  setQuickViewState({
-                    open: true,
-                    initialItemId: quickViewItems[0]?.id ?? null,
-                  })
-                }
-              >
-                <Images size={15} strokeWidth={1.75} aria-hidden="true" />
-                Quick-View
-              </Button>
-            )}
-            {counts.active > 0 && (
-              <Button
-                variant="secondary"
-                size="md"
-                onClick={() =>
-                  launchRevisionForItems(
-                    filteredItems,
-                    chapterFilter !== 'all' ? selectedChapterLabel : 'Vault'
-                  )
-                }
-              >
-                <Play size={15} strokeWidth={1.75} aria-hidden="true" />
-                Start revision ({filteredItems.filter((i) => !i.mastered).length})
-              </Button>
-            )}
-            <IconButton
-              size={48}
-              label="Export or import Vault backup"
-              title="Export or import Vault backup"
-              onClick={() => {
-                setArchiveError(null);
-                setBackupSheetOpen(true);
-              }}
-            >
-              <Archive size={18} strokeWidth={1.75} aria-hidden="true" />
-            </IconButton>
-            <Button
-              variant="primary"
-              size="md"
-              onClick={() => {
-                setEditingItem(null);
-                setCaptureSeed(null);
-                setCaptureOpen(true);
-              }}
-            >
-              <Plus size={16} strokeWidth={1.75} aria-hidden="true" />
-              Add question
-            </Button>
-          </div>
-        </div>
-      </Card>
-
-      {/* V2 Sticky Filter & Search Bar (shown when Vault has at least 1 question) */}
-      {counts.total > 0 && (
-        <div className="dh-vault-filterbar">
-          {/* Search by tag, note, subject, or chapter */}
-          <div className="dh-vault-search-wrap">
-            <Search
-              size={16}
-              strokeWidth={1.75}
-              aria-hidden="true"
-              style={{ color: 'var(--tx-3)', flexShrink: 0 }}
-            />
-            <input
-              type="search"
-              className="dh-vault-search-input"
-              aria-label="Search Vault by tag, note, or subject"
-              placeholder="Search by tag, note, subject, or chapter…"
-              value={searchQuery}
-              onChange={(e) => {
-                setSearchQuery(e.target.value);
-                setVisibleLimit(PAGE_SIZE);
-              }}
-            />
-            {searchQuery.trim().length > 0 && (
-              <div style={{ display: 'flex', alignItems: 'center', gap: '4px', flexShrink: 0 }}>
-                <span
-                  className="tabular-nums"
-                  style={{ fontSize: '13px', color: 'var(--tx-2)', paddingRight: '2px' }}
-                >
-                  {filteredItems.length}
-                </span>
-                <IconButton
-                  size={40}
-                  variant="ghost"
-                  label="Clear Vault search"
-                  onClick={() => {
-                    setSearchQuery('');
-                    setVisibleLimit(PAGE_SIZE);
-                  }}
-                >
-                  <X size={16} strokeWidth={1.75} />
-                </IconButton>
-              </div>
-            )}
-          </div>
-
-          {/* Row A: Horizontal Subject Chips */}
-          <div className="dh-vault-chips-scroll" role="region" aria-label="Filter by subject">
-            <Chip
-              selected={subjectFilter === 'all'}
-              onClick={() => {
-                setSubjectFilter('all');
-                setChapterFilter('all');
-                setVisibleLimit(PAGE_SIZE);
-              }}
-            >
-              All ({counts.total})
-            </Chip>
-            {activeSubjects.map((sub: Subject) => {
-              const c = counts.bySubject[sub.id]?.total ?? 0;
-              return (
-                <Chip
-                  key={sub.id}
-                  selected={subjectFilter === sub.id}
-                  colorDot={sub.color}
-                  onClick={() => {
-                    setSubjectFilter(sub.id);
-                    setChapterFilter('all');
-                    setVisibleLimit(PAGE_SIZE);
-                  }}
-                >
-                  {sub.e} {sub.name} ({c})
-                </Chip>
-              );
-            })}
-          </div>
-
-          {/* Row B: Chapter Picker + Status Segmented + Filters Sheet Trigger */}
-          <div className={`dh-vault-filter-rowb ${hideRowB ? 'hidden-scroll' : ''}`}>
-            <Button
-              variant="secondary"
-              size="sm"
-              disabled={subjectFilter === 'all'}
-              onClick={() => setChapterPickerOpen(true)}
+      {/* LEVEL 1 & 2 VIEW: Subject Tabs -> Chapter Folders (or Search Override) */}
+      {!selectedFolder ? (
+        <>
+          {/* Compact Vault Header */}
+          <Card style={{ margin: 0, display: 'grid', gap: '12px' }}>
+            <div
               style={{
-                maxWidth: '170px',
-                overflow: 'hidden',
-                textOverflow: 'ellipsis',
-                whiteSpace: 'nowrap',
+                display: 'flex',
+                alignItems: 'center',
+                justifyContent: 'space-between',
+                gap: '12px',
+                flexWrap: 'wrap',
               }}
             >
-              <span style={{ overflow: 'hidden', textOverflow: 'ellipsis' }}>
-                {subjectFilter === 'all' ? 'All chapters' : selectedChapterLabel}
-              </span>
-              <ChevronDown size={14} strokeWidth={1.75} aria-hidden="true" />
-            </Button>
+              <div style={{ minWidth: 0 }}>
+                <h2 style={{ margin: 0, fontSize: '20px', fontWeight: 600, color: 'var(--tx)' }}>
+                  Vault
+                </h2>
+                <p className="tabular-nums" style={{ margin: '4px 0 0', fontSize: '13px', color: 'var(--tx-2)' }}>
+                  {subjectScopedItems.length === 0
+                    ? `${activeSubjectLabel} · Organize unsolved & hard questions by chapter`
+                    : `${subjectActiveItems.length} active · ${subjectMasteredCount} mastered`}
+                </p>
+              </div>
 
-            <div style={{ flex: '1 1 200px', minWidth: 0 }}>
-              <Segmented<'active' | 'mastered' | 'all'>
-                ariaLabel="Vault question status"
-                value={statusFilter}
-                onChange={(v) => {
-                  setStatusFilter(v);
-                  setVisibleLimit(PAGE_SIZE);
-                }}
-                options={[
-                  { value: 'active', label: `Active (${counts.active})` },
-                  { value: 'mastered', label: `Mastered (${counts.mastered})` },
-                  { value: 'all', label: 'All' },
-                ]}
-              />
-            </div>
-
-            <Button
-              variant="secondary"
-              size="sm"
-              aria-label="More Vault filters and density"
-              onClick={() => setFiltersSheetOpen(true)}
-            >
-              <SlidersHorizontal size={15} strokeWidth={1.75} aria-hidden="true" />
-              <span>Filters</span>
-              {activeFilterBadgeCount > 0 && (
-                <span
-                  className="tabular-nums"
-                  style={{
-                    minWidth: '18px',
-                    height: '18px',
-                    padding: '0 5px',
-                    borderRadius: '99px',
-                    background: 'var(--ac)',
-                    color: 'var(--ac-on)',
-                    fontSize: '12px',
-                    fontWeight: 700,
-                    display: 'inline-flex',
-                    alignItems: 'center',
-                    justifyContent: 'center',
+              <div style={{ display: 'flex', alignItems: 'center', gap: '8px', flexWrap: 'wrap' }}>
+                {subjectScopedItems.length > 0 && (
+                  <Button
+                    variant="secondary"
+                    size="md"
+                    onClick={() =>
+                      setQuickViewConfig({
+                        open: true,
+                        scope: isGlobalSearchActive ? 'search' : 'subject',
+                        initialItemId:
+                          (isGlobalSearchActive ? searchMatchingItems : subjectScopedItems)[0]
+                            ?.id ?? null,
+                      })
+                    }
+                  >
+                    <Images size={15} strokeWidth={1.75} aria-hidden="true" />
+                    Quick-View
+                  </Button>
+                )}
+                {subjectActiveItems.length > 0 && (
+                  <Button
+                    variant="secondary"
+                    size="md"
+                    onClick={() =>
+                      launchRevisionForItems(
+                        subjectActiveItems,
+                        subjectFilter === 'all' ? 'Vault' : activeSubjectLabel
+                      )
+                    }
+                  >
+                    <Play size={15} strokeWidth={1.75} aria-hidden="true" />
+                    Start revision ({subjectActiveItems.length})
+                  </Button>
+                )}
+                <IconButton
+                  size={48}
+                  label="Export or import Vault backup"
+                  title="Export or import Vault backup"
+                  onClick={() => {
+                    setArchiveError(null);
+                    setBackupSheetOpen(true);
                   }}
                 >
-                  {activeFilterBadgeCount}
-                </span>
-              )}
-            </Button>
-          </div>
-        </div>
-      )}
-
-      {/* Main Content */}
-      {loading ? (
-        <div style={{ display: 'grid', gap: '12px' }}>
-          <Skeleton height={180} />
-          <Skeleton height={180} />
-        </div>
-      ) : counts.total === 0 ? (
-        <Card style={{ margin: 0 }}>
-          <EmptyState
-            illustration="noVault"
-            title="Snap it, crop it, revise it"
-            description="Keep photographed physics derivations, tricky organic traps, and unsolved NCERT questions organized by chapter."
-            action={
-              <div style={{ display: 'grid', gap: '10px', justifyItems: 'center' }}>
-                <ul
-                  style={{
-                    margin: '0 0 6px',
-                    padding: 0,
-                    listStyle: 'none',
-                    display: 'grid',
-                    gap: '4px',
-                    fontSize: '13px',
-                    color: 'var(--tx-2)',
-                    textAlign: 'left',
-                  }}
-                >
-                  <li>• Answers &amp; solutions stay hidden until you tap to reveal</li>
-                  <li>• High-contrast B&amp;W scan mode keeps photos under 150 KB</li>
-                  <li>• Stored offline on this device inside IndexedDB</li>
-                </ul>
+                  <Archive size={18} strokeWidth={1.75} aria-hidden="true" />
+                </IconButton>
                 <Button
                   variant="primary"
-                  size="lg"
+                  size="md"
                   onClick={() => {
                     setEditingItem(null);
-                    setCaptureSeed(null);
+                    setCaptureSeed(
+                      subjectFilter !== 'all' ? { subjectId: subjectFilter } : null
+                    );
                     setCaptureOpen(true);
                   }}
                 >
-                  <Camera size={17} strokeWidth={1.75} aria-hidden="true" />
-                  Add your first question
+                  <Plus size={16} strokeWidth={1.75} aria-hidden="true" />
+                  Add question
                 </Button>
-                <Button
-                  variant="secondary"
-                  size="lg"
-                  disabled={archiveBusy !== null}
-                  onClick={() => {
-                    setArchiveError(null);
-                    importInputRef.current?.click();
+              </div>
+            </div>
+          </Card>
+
+          {/* Sticky Subject Tabs + Global Search Bar */}
+          <div className="dh-vault-filterbar">
+            {/* Top Horizontal Subject Tabs (synced with Prep syllabus active subjects) */}
+            <div
+              className="dh-vault-chips-scroll"
+              role="tablist"
+              aria-label="Vault subjects"
+            >
+              <Chip
+                role="tab"
+                aria-selected={subjectFilter === 'all'}
+                selected={subjectFilter === 'all'}
+                onClick={() => {
+                  setSubjectFilter('all');
+                  setVisibleLimit(PAGE_SIZE);
+                }}
+              >
+                <span>All</span>
+                <span
+                  className="tabular-nums"
+                  style={{
+                    padding: '1px 6px',
+                    borderRadius: '99px',
+                    fontSize: '13px',
+                    background: 'var(--sf-3)',
+                    color: subjectFilter === 'all' ? 'var(--ac-ink)' : 'var(--tx-2)',
                   }}
                 >
-                  <Upload size={16} strokeWidth={1.75} aria-hidden="true" />
-                  {archiveBusy === 'import' ? 'Importing Vault…' : 'Import Vault backup'}
-                </Button>
-              </div>
-            }
-          />
-        </Card>
-      ) : filteredItems.length === 0 ? (
-        <Card style={{ margin: 0 }}>
-          <EmptyState
-            compact
-            illustration="noVault"
-            title="No questions match these filters"
-            description="Try clearing your search, switching status to All, or clearing subject and type filters."
-            action={
-              <Button variant="secondary" onClick={clearAllFilters}>
-                Clear filters
-              </Button>
-            }
-          />
-        </Card>
-      ) : (
-        <div style={{ display: 'grid', gap: '16px' }}>
-          {/* V3 Single-chapter header card */}
-          {chapterFilter !== 'all' && singleChapterStats && (
-            <Card style={{ margin: 0, display: 'grid', gap: '10px' }}>
-              <div className="split" style={{ gap: '8px', flexWrap: 'wrap' }}>
-                <div>
-                  <h3 style={{ margin: 0, fontSize: '16px', fontWeight: 600 }}>
-                    {selectedChapterLabel}
-                  </h3>
-                  <div className="tabular-nums" style={{ fontSize: '13px', color: 'var(--tx-2)' }}>
-                    {singleChapterStats.activeCount} active · {singleChapterStats.masteredCount}{' '}
-                    mastered
-                  </div>
-                </div>
-              </div>
-              {singleChapterStats.activeCount > 0 && (
-                <Button
-                  variant="primary"
-                  size="lg"
-                  fullWidth
-                  onClick={() =>
-                    launchRevisionForItems(singleChapterStats.allInChapter, selectedChapterLabel)
-                  }
-                >
-                  <Play size={16} strokeWidth={1.75} aria-hidden="true" />
-                  Start revision ({singleChapterStats.activeCount})
-                </Button>
-              )}
-            </Card>
-          )}
+                  {counts.active}
+                </span>
+              </Chip>
 
-          {/* V3 Grouped by Chapter */}
-          {groupedByChapter.map((group) => (
-            <section key={group.key} style={{ display: 'grid', gap: '10px' }}>
-              {chapterFilter === 'all' && (
-                <div className="dh-vault-group-head">
-                  <div style={{ display: 'flex', alignItems: 'center', gap: '8px', minWidth: 0 }}>
+              {activeSubjects.map((sub: Subject) => {
+                const activeCount = counts.bySubject[sub.id]?.active ?? 0;
+                const isSelected = subjectFilter === sub.id;
+                return (
+                  <Chip
+                    key={sub.id}
+                    role="tab"
+                    aria-selected={isSelected}
+                    selected={isSelected}
+                    colorDot={sub.color}
+                    onClick={() => {
+                      setSubjectFilter(sub.id);
+                      setVisibleLimit(PAGE_SIZE);
+                    }}
+                  >
+                    <span>
+                      {sub.e} {sub.name}
+                    </span>
                     <span
-                      aria-hidden="true"
+                      className="tabular-nums"
                       style={{
-                        width: '10px',
-                        height: '10px',
+                        padding: '1px 6px',
                         borderRadius: '99px',
-                        background: group.subjectColor,
-                        flexShrink: 0,
-                      }}
-                    />
-                    <span
-                      style={{
-                        fontSize: '14px',
-                        fontWeight: 600,
-                        color: 'var(--tx)',
-                        overflow: 'hidden',
-                        textOverflow: 'ellipsis',
-                        whiteSpace: 'nowrap',
+                        fontSize: '13px',
+                        background: 'var(--sf-3)',
+                        color: isSelected ? 'var(--ac-ink)' : 'var(--tx-2)',
                       }}
                     >
-                      {group.chapterName}
+                      {activeCount}
                     </span>
-                    <span className="tabular-nums" style={{ fontSize: '13px', color: 'var(--tx-2)' }}>
-                      · {group.activeCount} active
-                    </span>
-                  </div>
+                  </Chip>
+                );
+              })}
+            </div>
 
-                  {group.activeCount > 0 && (
+            {/* Global Search Override Bar */}
+            {counts.total > 0 && (
+              <div className="dh-vault-search-wrap">
+                <Search
+                  size={16}
+                  strokeWidth={1.75}
+                  aria-hidden="true"
+                  style={{ color: 'var(--tx-3)', flexShrink: 0 }}
+                />
+                <input
+                  type="search"
+                  className="dh-vault-search-input"
+                  aria-label="Search Vault by tag, note, or subject"
+                  placeholder={
+                    subjectFilter === 'all'
+                      ? 'Search across all chapters by tag, note, or subject…'
+                      : `Search inside ${activeSubjectLabel} by tag, note, or chapter…`
+                  }
+                  value={searchQuery}
+                  onChange={(e) => {
+                    setSearchQuery(e.target.value);
+                    setVisibleLimit(PAGE_SIZE);
+                  }}
+                />
+                {searchQuery.trim().length > 0 && (
+                  <div style={{ display: 'flex', alignItems: 'center', gap: '4px', flexShrink: 0 }}>
+                    <span
+                      className="tabular-nums"
+                      style={{ fontSize: '13px', color: 'var(--tx-2)', paddingRight: '2px' }}
+                    >
+                      {searchMatchingItems.length}
+                    </span>
+                    <IconButton
+                      size={40}
+                      variant="ghost"
+                      label="Clear Vault search"
+                      onClick={() => {
+                        setSearchQuery('');
+                        setVisibleLimit(PAGE_SIZE);
+                      }}
+                    >
+                      <X size={16} strokeWidth={1.75} />
+                    </IconButton>
+                  </div>
+                )}
+              </div>
+            )}
+          </div>
+
+          {/* Main Folder / Search Content */}
+          {loading ? (
+            <div style={{ display: 'grid', gap: '12px' }}>
+              <Skeleton height={88} />
+              <Skeleton height={88} />
+            </div>
+          ) : isGlobalSearchActive ? (
+            /* Global Search Override: Show matching question cards directly across selected subject */
+            searchMatchingItems.length === 0 ? (
+              <Card style={{ margin: 0 }}>
+                <EmptyState
+                  compact
+                  illustration="noVault"
+                  title="No matching questions found"
+                  description={`Nothing in ${activeSubjectLabel} matched "${searchQuery.trim()}".`}
+                  action={
+                    <Button variant="secondary" onClick={() => setSearchQuery('')}>
+                      Back to chapter folders
+                    </Button>
+                  }
+                />
+              </Card>
+            ) : (
+              <div style={{ display: 'grid', gap: '12px' }}>
+                <div
+                  style={{
+                    display: 'flex',
+                    alignItems: 'center',
+                    justifyContent: 'space-between',
+                    gap: '10px',
+                    flexWrap: 'wrap',
+                  }}
+                >
+                  <span className="tabular-nums" style={{ fontSize: '13px', color: 'var(--tx-2)' }}>
+                    Showing {searchMatchingItems.length} search match
+                    {searchMatchingItems.length === 1 ? '' : 'es'} across {activeSubjectLabel}
+                  </span>
+                  <Button variant="ghost" size="sm" onClick={() => setSearchQuery('')}>
+                    Clear search
+                  </Button>
+                </div>
+
+                {renderQuestionList(visibleListItems)}
+
+                {searchMatchingItems.length > visibleLimit && (
+                  <div style={{ display: 'flex', justifyContent: 'center', paddingTop: '4px' }}>
                     <Button
                       variant="secondary"
-                      size="sm"
-                      onClick={() =>
-                        launchRevisionForItems(
-                          items.filter(
-                            (i) =>
-                              !i.deletedAt &&
-                              i.subjectId === group.subjectId &&
-                              (group.chapterId ? i.chapterId === group.chapterId : !i.chapterId)
-                          ),
-                          group.chapterName
-                        )
-                      }
+                      size="lg"
+                      onClick={() => setVisibleLimit((n) => n + PAGE_SIZE)}
                     >
-                      <Play size={14} strokeWidth={1.75} aria-hidden="true" />
-                      Start revision
+                      Show more ({searchMatchingItems.length - visibleLimit} remaining)
                     </Button>
+                  </div>
+                )}
+              </div>
+            )
+          ) : (
+            /* Chapter Folder List (Default View per Subject) */
+            <div style={{ display: 'grid', gap: '14px' }}>
+              {counts.total === 0 && (
+                <Card style={{ margin: 0 }}>
+                  <EmptyState
+                    illustration="noVault"
+                    title="Snap it, crop it, revise it"
+                    description="Keep photographed physics derivations, tricky organic traps, and unsolved NCERT questions organized inside Prep chapter folders."
+                    action={
+                      <div style={{ display: 'grid', gap: '10px', justifyItems: 'center' }}>
+                        <Button
+                          variant="primary"
+                          size="lg"
+                          onClick={() => {
+                            setEditingItem(null);
+                            setCaptureSeed(
+                              subjectFilter !== 'all' ? { subjectId: subjectFilter } : null
+                            );
+                            setCaptureOpen(true);
+                          }}
+                        >
+                          <Camera size={17} strokeWidth={1.75} aria-hidden="true" />
+                          Add your first question
+                        </Button>
+                        <Button
+                          variant="secondary"
+                          size="lg"
+                          disabled={archiveBusy !== null}
+                          onClick={() => {
+                            setArchiveError(null);
+                            importInputRef.current?.click();
+                          }}
+                        >
+                          <Upload size={16} strokeWidth={1.75} aria-hidden="true" />
+                          {archiveBusy === 'import'
+                            ? 'Importing Vault…'
+                            : 'Import Vault backup'}
+                        </Button>
+                      </div>
+                    }
+                  />
+                </Card>
+              )}
+
+              {subjectFolders.populatedFolders.length > 0 ? (
+                <div className="dh-vault-folder-grid">
+                  {subjectFolders.populatedFolders.map((folder) =>
+                    renderChapterFolderCard(folder, false)
+                  )}
+                </div>
+              ) : (
+                counts.total > 0 && (
+                  <Card style={{ margin: 0 }}>
+                    <EmptyState
+                      compact
+                      illustration="noVault"
+                      title={`No saved questions in ${activeSubjectLabel} yet`}
+                      description="Select an empty syllabus chapter below or add a new question directly."
+                      action={
+                        <Button
+                          variant="primary"
+                          size="md"
+                          onClick={() => {
+                            setEditingItem(null);
+                            setCaptureSeed(
+                              subjectFilter !== 'all' ? { subjectId: subjectFilter } : null
+                            );
+                            setCaptureOpen(true);
+                          }}
+                        >
+                          <Plus size={16} strokeWidth={1.75} aria-hidden="true" />
+                          Add question to {activeSubjectLabel}
+                        </Button>
+                      }
+                    />
+                  </Card>
+                )
+              )}
+
+              {/* Collapsible Empty Syllabus Chapters */}
+              {subjectFolders.emptyFolders.length > 0 && (
+                <div style={{ display: 'grid', gap: '10px' }}>
+                  <button
+                    type="button"
+                    aria-expanded={emptyChaptersExpanded}
+                    className="dh-vault-empty-toggle"
+                    onClick={() => setEmptyChaptersExpanded((v) => !v)}
+                  >
+                    <span className="tabular-nums">
+                      Empty syllabus chapters ({subjectFolders.emptyFolders.length})
+                    </span>
+                    {emptyChaptersExpanded ? (
+                      <ChevronDown size={18} strokeWidth={1.75} aria-hidden="true" />
+                    ) : (
+                      <ChevronRight size={18} strokeWidth={1.75} aria-hidden="true" />
+                    )}
+                  </button>
+
+                  {emptyChaptersExpanded && (
+                    <div className="dh-vault-folder-grid">
+                      {subjectFolders.emptyFolders.map((folder) =>
+                        renderChapterFolderCard(folder, true)
+                      )}
+                    </div>
                   )}
                 </div>
               )}
+            </div>
+          )}
 
-              {density === 'comfortable' ? (
-                <div className="dh-vault-grid">
-                  {group.items.map((item) => {
-                    const sub = resolveVaultSubjectLabel(state.subjects, item.subjectId);
-                    const chName = item.chapterId
-                      ? resolveVaultChapterName(state.chapters, item.chapterId)
+          {/* V12 Collapsed Older Notes (Legacy Mistakes & Doubts) */}
+          {hasLegacyNotes && !isGlobalSearchActive && (
+            <Card style={{ margin: 0, padding: '12px 16px' }}>
+              <button
+                type="button"
+                aria-expanded={legacyExpanded}
+                onClick={() => setLegacyExpanded((v) => !v)}
+                style={{
+                  width: '100%',
+                  display: 'flex',
+                  alignItems: 'center',
+                  justifyContent: 'space-between',
+                  gap: '8px',
+                  background: 'transparent',
+                  border: 'none',
+                  padding: '6px 0',
+                  color: 'var(--tx-2)',
+                  fontSize: '14px',
+                  fontWeight: 600,
+                  cursor: 'pointer',
+                  textAlign: 'left',
+                }}
+              >
+                <span className="tabular-nums">
+                  Older notes · {legacyMistakes.length} mistake
+                  {legacyMistakes.length === 1 ? '' : 's'}, {legacyDoubts.length} doubt
+                  {legacyDoubts.length === 1 ? '' : 's'}
+                </span>
+                {legacyExpanded ? (
+                  <ChevronDown size={18} strokeWidth={1.75} aria-hidden="true" />
+                ) : (
+                  <ChevronRight size={18} strokeWidth={1.75} aria-hidden="true" />
+                )}
+              </button>
+
+              {legacyExpanded && (
+                <div
+                  style={{
+                    display: 'grid',
+                    gap: '12px',
+                    marginTop: '10px',
+                    paddingTop: '10px',
+                    borderTop: '1px solid var(--line)',
+                  }}
+                >
+                  {legacyMistakes.map((m) => {
+                    const sub = getSubject(state, m.subjectId);
+                    const ch = m.chapterId
+                      ? state.chapters.find((c) => c.id === m.chapterId)
                       : undefined;
                     return (
-                      <VaultQuestionCard
-                        key={item.id}
-                        item={item}
-                        subject={sub}
-                        chapterName={chName}
-                        onToggleMastered={(it) => void handleToggleMastered(it)}
-                        onEdit={(it) => {
-                          setEditingItem(it);
-                          setCaptureSeed(null);
-                          setCaptureOpen(true);
+                      <div
+                        key={m.id}
+                        style={{
+                          display: 'flex',
+                          alignItems: 'center',
+                          justifyContent: 'space-between',
+                          gap: '10px',
+                          padding: '10px 12px',
+                          borderRadius: '12px',
+                          background: 'var(--sf-2)',
+                          border: '1px solid var(--line)',
+                          opacity: m.resolved ? 0.65 : 1,
                         }}
-                        onRequestDelete={(it) => setDeleteTarget(it)}
-                        onZoom={(src, it) =>
-                          setZoomState({
-                            src,
-                            alt: chName ? `${chName} question` : 'Vault question',
-                            caption: chName || sub.name,
-                          })
-                        }
-                        onQuickView={(it) =>
-                          setQuickViewState({ open: true, initialItemId: it.id })
-                        }
-                      />
-                    );
-                  })}
-                </div>
-              ) : (
-                <div style={{ display: 'grid', gap: '8px' }}>
-                  {group.items.map((item) => {
-                    const sub = resolveVaultSubjectLabel(state.subjects, item.subjectId);
-                    const chName = item.chapterId
-                      ? resolveVaultChapterName(state.chapters, item.chapterId)
-                      : `${sub.name} · General`;
-                    return (
-                      <div key={item.id} className="dh-vault-compact-row">
-                        <button
-                          type="button"
-                          onClick={() => setCompactDetailItem(item)}
-                          style={{
-                            flex: 1,
-                            minWidth: 0,
-                            display: 'flex',
-                            alignItems: 'center',
-                            gap: '12px',
-                            textAlign: 'left',
-                            background: 'transparent',
-                            border: 'none',
-                            padding: 0,
-                            color: 'inherit',
-                            cursor: 'pointer',
-                          }}
-                        >
-                          <LazyVaultBlobImage
-                            itemId={item.id}
-                            slot="q"
-                            alt={chName}
-                            className="dh-vault-compact-thumb thumb"
-                          />
-                          <div style={{ minWidth: 0, flex: 1 }}>
-                            <div style={{ display: 'flex', alignItems: 'center', gap: '6px', flexWrap: 'wrap' }}>
-                              <span
-                                style={{
-                                  fontSize: '14px',
-                                  fontWeight: 600,
-                                  color: 'var(--tx)',
-                                  overflow: 'hidden',
-                                  textOverflow: 'ellipsis',
-                                  whiteSpace: 'nowrap',
-                                }}
-                              >
-                                {chName}
-                              </span>
-                              <span
-                                style={{
-                                  padding: '1px 7px',
-                                  borderRadius: '6px',
-                                  fontSize: '13px',
-                                  fontWeight: 600,
-                                  background:
-                                    item.kind === 'hard'
-                                      ? 'color-mix(in srgb, var(--warn) 14%, transparent)'
-                                      : 'var(--sf-2)',
-                                  color:
-                                    item.kind === 'hard' ? 'var(--warn-ink)' : 'var(--tx-2)',
-                                }}
-                              >
-                                {item.kind === 'hard' ? 'Hard / Trap' : 'Unsolved'}
-                              </span>
-                            </div>
+                      >
+                        <div style={{ minWidth: 0, flex: 1 }}>
+                          <div style={{ fontSize: '13px', fontWeight: 600, color: 'var(--tx)' }}>
+                            {sub.e} {sub.name}
+                            {ch ? ` · ${ch.name}` : ''} · {m.reason} ({m.dayKey})
+                          </div>
+                          {m.note && (
                             <div
-                              className="tabular-nums"
                               style={{
                                 fontSize: '13px',
                                 color: 'var(--tx-2)',
-                                overflow: 'hidden',
-                                textOverflow: 'ellipsis',
-                                whiteSpace: 'nowrap',
                                 marginTop: '2px',
+                                textDecoration: m.resolved ? 'line-through' : undefined,
                               }}
                             >
-                              {item.note || `${sub.emoji} ${sub.name}`} ·{' '}
-                              {formatRelativeVaultDate(item.createdAt)}
+                              {m.note}
                             </div>
-                          </div>
-                        </button>
-
-                        <Button
-                          variant={item.mastered ? 'secondary' : 'ghost'}
-                          size="sm"
-                          aria-label={item.mastered ? 'Move back to active' : 'Mark mastered'}
-                          onClick={() => void handleToggleMastered(item)}
-                        >
-                          {item.mastered ? (
-                            <RotateCcw size={15} strokeWidth={1.75} />
-                          ) : (
-                            <Check size={16} strokeWidth={1.75} />
                           )}
-                        </Button>
+                        </div>
+                        <div style={{ display: 'flex', gap: '6px', flexShrink: 0 }}>
+                          <Button
+                            variant="secondary"
+                            size="sm"
+                            onClick={() => onToggleMistakeResolved(m.id)}
+                          >
+                            {m.resolved ? 'Reopen' : 'Resolve'}
+                          </Button>
+                          <IconButton
+                            label="Delete older mistake"
+                            onClick={() => onDeleteMistake(m.id)}
+                          >
+                            <Trash2 size={15} strokeWidth={1.75} />
+                          </IconButton>
+                        </div>
+                      </div>
+                    );
+                  })}
+
+                  {legacyDoubts.map((d) => {
+                    const sub = getSubject(state, d.subjectId);
+                    const ch = d.chapterId
+                      ? state.chapters.find((c) => c.id === d.chapterId)
+                      : undefined;
+                    return (
+                      <div
+                        key={d.id}
+                        style={{
+                          display: 'flex',
+                          alignItems: 'center',
+                          justifyContent: 'space-between',
+                          gap: '10px',
+                          padding: '10px 12px',
+                          borderRadius: '12px',
+                          background: 'var(--sf-2)',
+                          border: '1px solid var(--line)',
+                          opacity: d.resolved ? 0.65 : 1,
+                        }}
+                      >
+                        <div style={{ minWidth: 0, flex: 1 }}>
+                          <div style={{ fontSize: '13px', fontWeight: 600, color: 'var(--tx)' }}>
+                            {sub.e} {sub.name}
+                            {ch ? ` · ${ch.name}` : ''}
+                          </div>
+                          <div
+                            style={{
+                              fontSize: '13px',
+                              color: 'var(--tx-2)',
+                              marginTop: '2px',
+                              textDecoration: d.resolved ? 'line-through' : undefined,
+                            }}
+                          >
+                            {d.text}
+                          </div>
+                        </div>
+                        <div style={{ display: 'flex', gap: '6px', flexShrink: 0 }}>
+                          <Button
+                            variant="secondary"
+                            size="sm"
+                            onClick={() => onToggleDoubtResolved(d.id)}
+                          >
+                            {d.resolved ? 'Reopen' : 'Resolve'}
+                          </Button>
+                          <IconButton
+                            label="Delete older doubt"
+                            onClick={() => onDeleteDoubt(d.id)}
+                          >
+                            <Trash2 size={15} strokeWidth={1.75} />
+                          </IconButton>
+                        </div>
                       </div>
                     );
                   })}
                 </div>
               )}
-            </section>
-          ))}
-
-          {/* Pagination */}
-          {filteredItems.length > visibleLimit && (
-            <div style={{ display: 'flex', justifyContent: 'center', paddingTop: '4px' }}>
+            </Card>
+          )}
+        </>
+      ) : (
+        /* LEVEL 3 VIEW: Dedicated Chapter Question Deck Drill-Down */
+        <>
+          <div className="dh-vault-deck-topbar">
+            {/* Row 1: Back to Subject + Chapter Action Buttons */}
+            <div
+              style={{
+                display: 'flex',
+                alignItems: 'center',
+                justifyContent: 'space-between',
+                gap: '8px',
+                flexWrap: 'wrap',
+              }}
+            >
               <Button
-                variant="secondary"
-                size="lg"
-                onClick={() => setVisibleLimit((n) => n + PAGE_SIZE)}
+                variant="ghost"
+                size="sm"
+                onClick={() => {
+                  setSelectedFolder(null);
+                  setVisibleLimit(PAGE_SIZE);
+                }}
+                style={{ minHeight: '44px', paddingLeft: '6px', paddingRight: '10px' }}
               >
-                Show more ({filteredItems.length - visibleLimit} remaining)
+                <ChevronLeft size={17} strokeWidth={1.75} aria-hidden="true" />
+                Back to {selectedFolderSubject?.name || 'Subject'}
               </Button>
-            </div>
-          )}
-        </div>
-      )}
 
-      {/* V12 Collapsed Older Notes (Legacy Mistakes & Doubts) */}
-      {hasLegacyNotes && (
-        <Card style={{ margin: 0, padding: '12px 16px' }}>
-          <button
-            type="button"
-            aria-expanded={legacyExpanded}
-            onClick={() => setLegacyExpanded((v) => !v)}
-            style={{
-              width: '100%',
-              display: 'flex',
-              alignItems: 'center',
-              justifyContent: 'space-between',
-              gap: '8px',
-              background: 'transparent',
-              border: 'none',
-              padding: '6px 0',
-              color: 'var(--tx-2)',
-              fontSize: '14px',
-              fontWeight: 600,
-              cursor: 'pointer',
-              textAlign: 'left',
-            }}
-          >
-            <span className="tabular-nums">
-              Older notes · {legacyMistakes.length} mistake
-              {legacyMistakes.length === 1 ? '' : 's'}, {legacyDoubts.length} doubt
-              {legacyDoubts.length === 1 ? '' : 's'}
-            </span>
-            {legacyExpanded ? (
-              <ChevronDown size={18} strokeWidth={1.75} aria-hidden="true" />
-            ) : (
-              <ChevronRight size={18} strokeWidth={1.75} aria-hidden="true" />
+              <div style={{ display: 'flex', alignItems: 'center', gap: '8px', flexWrap: 'wrap' }}>
+                {folderAllItems.length > 0 && (
+                  <Button
+                    variant="secondary"
+                    size="sm"
+                    onClick={() =>
+                      setQuickViewConfig({
+                        open: true,
+                        scope: 'folder',
+                        folderSubjectId: selectedFolder.subjectId,
+                        folderChapterId: selectedFolder.chapterId,
+                        initialItemId:
+                          (chapterDeckItems[0] || folderAllItems[0])?.id ?? null,
+                      })
+                    }
+                    style={{ minHeight: '40px' }}
+                  >
+                    <Images size={15} strokeWidth={1.75} aria-hidden="true" />
+                    Quick-View
+                  </Button>
+                )}
+                {folderCounts.active > 0 && (
+                  <Button
+                    variant="secondary"
+                    size="sm"
+                    onClick={() => launchRevisionForItems(folderAllItems, selectedFolderTitle)}
+                    style={{ minHeight: '40px' }}
+                  >
+                    <Play size={14} strokeWidth={1.75} aria-hidden="true" />
+                    Revise chapter ({folderCounts.active})
+                  </Button>
+                )}
+                <Button
+                  variant="primary"
+                  size="sm"
+                  onClick={() => {
+                    setEditingItem(null);
+                    setCaptureSeed({
+                      subjectId: selectedFolder.subjectId,
+                      chapterId: selectedFolder.chapterId,
+                    });
+                    setCaptureOpen(true);
+                  }}
+                  style={{ minHeight: '40px' }}
+                >
+                  <Plus size={15} strokeWidth={1.75} aria-hidden="true" />
+                  Add
+                </Button>
+              </div>
+            </div>
+
+            {/* Row 2: Chapter Title + Progress Meter */}
+            <div style={{ display: 'grid', gap: '6px' }}>
+              <div
+                style={{
+                  display: 'flex',
+                  alignItems: 'center',
+                  justifyContent: 'space-between',
+                  gap: '10px',
+                  flexWrap: 'wrap',
+                }}
+              >
+                <h2
+                  style={{
+                    margin: 0,
+                    fontSize: '20px',
+                    fontWeight: 600,
+                    color: 'var(--tx)',
+                    minWidth: 0,
+                  }}
+                >
+                  {selectedFolderTitle}
+                </h2>
+                <span className="tabular-nums" style={{ fontSize: '13px', color: 'var(--tx-2)' }}>
+                  {folderCounts.active} active · {folderCounts.mastered} mastered
+                </span>
+              </div>
+              {folderCounts.total > 0 && (
+                <div className="dh-vault-folder-progress" aria-hidden="true">
+                  <div
+                    className="dh-vault-folder-progress-fill"
+                    style={{
+                      width: `${Math.round((folderCounts.mastered / folderCounts.total) * 100)}%`,
+                    }}
+                  />
+                </div>
+              )}
+            </div>
+
+            {/* Row 3: Status, Tag & Sort Pills */}
+            {folderAllItems.length > 0 && (
+              <div style={{ display: 'grid', gap: '8px' }}>
+                <div className="dh-vault-pill-strip" role="region" aria-label="Filter chapter questions">
+                  <Chip
+                    selected={chapterStatusFilter === 'active'}
+                    onClick={() => {
+                      setChapterStatusFilter('active');
+                      setVisibleLimit(PAGE_SIZE);
+                    }}
+                  >
+                    Active
+                  </Chip>
+                  <Chip
+                    selected={chapterStatusFilter === 'mastered'}
+                    onClick={() => {
+                      setChapterStatusFilter('mastered');
+                      setVisibleLimit(PAGE_SIZE);
+                    }}
+                  >
+                    Mastered
+                  </Chip>
+                  <Chip
+                    selected={chapterStatusFilter === 'all'}
+                    onClick={() => {
+                      setChapterStatusFilter('all');
+                      setVisibleLimit(PAGE_SIZE);
+                    }}
+                  >
+                    All
+                  </Chip>
+
+                  <Chip
+                    selected={chapterTagFilter === 'hard'}
+                    onClick={() => {
+                      setChapterTagFilter((cur) => (cur === 'hard' ? 'all' : 'hard'));
+                      setVisibleLimit(PAGE_SIZE);
+                    }}
+                  >
+                    Hard
+                  </Chip>
+                  <Chip
+                    selected={chapterTagFilter === 'trap'}
+                    onClick={() => {
+                      setChapterTagFilter((cur) => (cur === 'trap' ? 'all' : 'trap'));
+                      setVisibleLimit(PAGE_SIZE);
+                    }}
+                  >
+                    Trap
+                  </Chip>
+                  <Chip
+                    selected={chapterTagFilter === 'unsolved'}
+                    onClick={() => {
+                      setChapterTagFilter((cur) => (cur === 'unsolved' ? 'all' : 'unsolved'));
+                      setVisibleLimit(PAGE_SIZE);
+                    }}
+                  >
+                    Unsolved
+                  </Chip>
+                </div>
+
+                <div
+                  style={{
+                    display: 'flex',
+                    alignItems: 'center',
+                    justifyContent: 'space-between',
+                    gap: '8px',
+                    flexWrap: 'wrap',
+                  }}
+                >
+                  <div className="dh-vault-pill-strip" role="region" aria-label="Sort chapter questions">
+                    <Chip
+                      selected={chapterSort === 'newest'}
+                      onClick={() => setChapterSort('newest')}
+                    >
+                      Newest
+                    </Chip>
+                    <Chip
+                      selected={chapterSort === 'oldest'}
+                      onClick={() => setChapterSort('oldest')}
+                    >
+                      Oldest
+                    </Chip>
+                    <Chip
+                      selected={chapterSort === 'hardest'}
+                      onClick={() => setChapterSort('hardest')}
+                    >
+                      Hardest first
+                    </Chip>
+                  </div>
+
+                  <Button
+                    variant="ghost"
+                    size="sm"
+                    onClick={() =>
+                      setDensity((d) => (d === 'comfortable' ? 'compact' : 'comfortable'))
+                    }
+                  >
+                    {density === 'comfortable' ? 'Compact view' : 'Card view'}
+                  </Button>
+                </div>
+              </div>
             )}
-          </button>
+          </div>
 
-          {legacyExpanded && (
-            <div style={{ display: 'grid', gap: '12px', marginTop: '10px', paddingTop: '10px', borderTop: '1px solid var(--line)' }}>
-              {legacyMistakes.map((m) => {
-                const sub = getSubject(state, m.subjectId);
-                const ch = m.chapterId
-                  ? state.chapters.find((c) => c.id === m.chapterId)
-                  : undefined;
-                return (
-                  <div
-                    key={m.id}
-                    style={{
-                      display: 'flex',
-                      alignItems: 'center',
-                      justifyContent: 'space-between',
-                      gap: '10px',
-                      padding: '10px 12px',
-                      borderRadius: '12px',
-                      background: 'var(--sf-2)',
-                      border: '1px solid var(--line)',
-                      opacity: m.resolved ? 0.65 : 1,
+          {/* Chapter Question List */}
+          {folderAllItems.length === 0 ? (
+            <Card style={{ margin: 0 }}>
+              <EmptyState
+                illustration="noVault"
+                title={`No questions in ${selectedFolderTitle} yet`}
+                description="Capture an unsolved problem or tricky trap question for this chapter to start building its revision deck."
+                action={
+                  <Button
+                    variant="primary"
+                    size="lg"
+                    onClick={() => {
+                      setEditingItem(null);
+                      setCaptureSeed({
+                        subjectId: selectedFolder.subjectId,
+                        chapterId: selectedFolder.chapterId,
+                      });
+                      setCaptureOpen(true);
                     }}
                   >
-                    <div style={{ minWidth: 0, flex: 1 }}>
-                      <div style={{ fontSize: '13px', fontWeight: 600, color: 'var(--tx)' }}>
-                        {sub.e} {sub.name}
-                        {ch ? ` · ${ch.name}` : ''} · {m.reason} ({m.dayKey})
-                      </div>
-                      {m.note && (
-                        <div
-                          style={{
-                            fontSize: '13px',
-                            color: 'var(--tx-2)',
-                            marginTop: '2px',
-                            textDecoration: m.resolved ? 'line-through' : undefined,
-                          }}
-                        >
-                          {m.note}
-                        </div>
-                      )}
-                    </div>
-                    <div style={{ display: 'flex', gap: '6px', flexShrink: 0 }}>
-                      <Button
-                        variant="secondary"
-                        size="sm"
-                        onClick={() => onToggleMistakeResolved(m.id)}
-                      >
-                        {m.resolved ? 'Reopen' : 'Resolve'}
-                      </Button>
-                      <IconButton
-                        label="Delete older mistake"
-                        onClick={() => onDeleteMistake(m.id)}
-                      >
-                        <Trash2 size={15} strokeWidth={1.75} />
-                      </IconButton>
-                    </div>
-                  </div>
-                );
-              })}
+                    <Camera size={17} strokeWidth={1.75} aria-hidden="true" />
+                    Add question to this chapter
+                  </Button>
+                }
+              />
+            </Card>
+          ) : chapterDeckItems.length === 0 ? (
+            <Card style={{ margin: 0 }}>
+              <EmptyState
+                compact
+                illustration="noVault"
+                title="No questions match these filters"
+                description="Try switching status to All or clearing the Hard / Trap / Unsolved tag filter."
+                action={
+                  <Button variant="secondary" onClick={clearChapterFilters}>
+                    Show all in chapter
+                  </Button>
+                }
+              />
+            </Card>
+          ) : (
+            <div style={{ display: 'grid', gap: '14px' }}>
+              {renderQuestionList(visibleListItems)}
 
-              {legacyDoubts.map((d) => {
-                const sub = getSubject(state, d.subjectId);
-                const ch = d.chapterId
-                  ? state.chapters.find((c) => c.id === d.chapterId)
-                  : undefined;
-                return (
-                  <div
-                    key={d.id}
-                    style={{
-                      display: 'flex',
-                      alignItems: 'center',
-                      justifyContent: 'space-between',
-                      gap: '10px',
-                      padding: '10px 12px',
-                      borderRadius: '12px',
-                      background: 'var(--sf-2)',
-                      border: '1px solid var(--line)',
-                      opacity: d.resolved ? 0.65 : 1,
-                    }}
+              {chapterDeckItems.length > visibleLimit && (
+                <div style={{ display: 'flex', justifyContent: 'center', paddingTop: '4px' }}>
+                  <Button
+                    variant="secondary"
+                    size="lg"
+                    onClick={() => setVisibleLimit((n) => n + PAGE_SIZE)}
                   >
-                    <div style={{ minWidth: 0, flex: 1 }}>
-                      <div style={{ fontSize: '13px', fontWeight: 600, color: 'var(--tx)' }}>
-                        {sub.e} {sub.name}
-                        {ch ? ` · ${ch.name}` : ''}
-                      </div>
-                      <div
-                        style={{
-                          fontSize: '13px',
-                          color: 'var(--tx-2)',
-                          marginTop: '2px',
-                          textDecoration: d.resolved ? 'line-through' : undefined,
-                        }}
-                      >
-                        {d.text}
-                      </div>
-                    </div>
-                    <div style={{ display: 'flex', gap: '6px', flexShrink: 0 }}>
-                      <Button
-                        variant="secondary"
-                        size="sm"
-                        onClick={() => onToggleDoubtResolved(d.id)}
-                      >
-                        {d.resolved ? 'Reopen' : 'Resolve'}
-                      </Button>
-                      <IconButton
-                        label="Delete older doubt"
-                        onClick={() => onDeleteDoubt(d.id)}
-                      >
-                        <Trash2 size={15} strokeWidth={1.75} />
-                      </IconButton>
-                    </div>
-                  </div>
-                );
-              })}
+                    Show more ({chapterDeckItems.length - visibleLimit} remaining)
+                  </Button>
+                </div>
+              )}
             </div>
           )}
-        </Card>
+        </>
       )}
-
-      {/* Chapter Picker Sheet */}
-      <Sheet
-        open={chapterPickerOpen}
-        onClose={() => setChapterPickerOpen(false)}
-        title="Filter by chapter"
-        subtitle={
-          subjectFilter !== 'all'
-            ? resolveVaultSubjectLabel(state.subjects, subjectFilter).name
-            : undefined
-        }
-      >
-        <div style={{ display: 'grid', gap: '8px' }}>
-          <Button
-            variant={chapterFilter === 'all' ? 'primary' : 'secondary'}
-            size="md"
-            fullWidth
-            onClick={() => {
-              setChapterFilter('all');
-              setChapterPickerOpen(false);
-              setVisibleLimit(PAGE_SIZE);
-            }}
-          >
-            All chapters
-          </Button>
-          {unassignedCountForSelectedSubject > 0 && (
-            <Button
-              variant={chapterFilter === '__unassigned__' ? 'primary' : 'secondary'}
-              size="md"
-              fullWidth
-              onClick={() => {
-                setChapterFilter('__unassigned__');
-                setChapterPickerOpen(false);
-                setVisibleLimit(PAGE_SIZE);
-              }}
-            >
-              Unassigned ({unassignedCountForSelectedSubject})
-            </Button>
-          )}
-          {selectedChapterList.map(({ chapter, count }) => (
-            <Button
-              key={chapter.id}
-              variant={chapterFilter === chapter.id ? 'primary' : 'secondary'}
-              size="md"
-              fullWidth
-              onClick={() => {
-                setChapterFilter(chapter.id);
-                setChapterPickerOpen(false);
-                setVisibleLimit(PAGE_SIZE);
-              }}
-            >
-              <span style={{ flex: 1, textAlign: 'left' }}>{chapter.name}</span>
-              <span className="tabular-nums">{count}</span>
-            </Button>
-          ))}
-        </div>
-      </Sheet>
-
-      {/* Filters & Density Sheet */}
-      <Sheet
-        open={filtersSheetOpen}
-        onClose={() => setFiltersSheetOpen(false)}
-        title="Filters & layout"
-      >
-        <div style={{ display: 'grid', gap: '16px' }}>
-          <Field label="Question type">
-            <Segmented<'all' | VaultKind>
-              ariaLabel="Filter by question type"
-              value={kindFilter}
-              onChange={(v) => {
-                setKindFilter(v);
-                setVisibleLimit(PAGE_SIZE);
-              }}
-              options={[
-                { value: 'all', label: 'All' },
-                { value: 'unsolved', label: `Unsolved (${counts.unsolved})` },
-                { value: 'hard', label: `Hard / Trap (${counts.hard})` },
-              ]}
-            />
-          </Field>
-
-          <Field label="View density">
-            <Segmented<VaultDensity>
-              ariaLabel="Vault card density"
-              value={density}
-              onChange={setDensity}
-              options={[
-                { value: 'comfortable', label: 'Comfortable' },
-                { value: 'compact', label: 'Compact' },
-              ]}
-            />
-          </Field>
-
-          <div style={{ display: 'flex', gap: '8px' }}>
-            <Button
-              variant="secondary"
-              style={{ flex: 1 }}
-              onClick={() => {
-                setKindFilter('all');
-                setDensity('comfortable');
-              }}
-            >
-              Reset
-            </Button>
-            <Button
-              variant="primary"
-              style={{ flex: 2 }}
-              onClick={() => setFiltersSheetOpen(false)}
-            >
-              Done
-            </Button>
-          </div>
-        </div>
-      </Sheet>
 
       {/* Compact Row Detail Sheet */}
       <Sheet
@@ -2243,7 +2602,7 @@ export const VaultView: React.FC<VaultViewProps> = ({
         title={
           compactDetailItem?.chapterId
             ? resolveVaultChapterName(state.chapters, compactDetailItem.chapterId)
-            : 'Vault question'
+            : 'General / Uncategorized'
         }
       >
         {compactDetailItem && (
@@ -2253,7 +2612,7 @@ export const VaultView: React.FC<VaultViewProps> = ({
             chapterName={
               compactDetailItem.chapterId
                 ? resolveVaultChapterName(state.chapters, compactDetailItem.chapterId)
-                : undefined
+                : 'General / Uncategorized'
             }
             onToggleMastered={(it) => {
               void handleToggleMastered(it);
@@ -2280,7 +2639,17 @@ export const VaultView: React.FC<VaultViewProps> = ({
             }
             onQuickView={(it) => {
               setCompactDetailItem(null);
-              setQuickViewState({ open: true, initialItemId: it.id });
+              setQuickViewConfig({
+                open: true,
+                scope: selectedFolder
+                  ? 'folder'
+                  : isGlobalSearchActive
+                    ? 'search'
+                    : 'subject',
+                folderSubjectId: selectedFolder?.subjectId,
+                folderChapterId: selectedFolder?.chapterId,
+                initialItemId: it.id,
+              });
             }}
           />
         )}
@@ -2314,12 +2683,14 @@ export const VaultView: React.FC<VaultViewProps> = ({
 
       {/* Vault Quick-View Overlay */}
       <VaultQuickView
-        open={quickViewState.open}
+        open={quickViewConfig.open}
         items={quickViewItems}
-        initialItemId={quickViewState.initialItemId}
+        initialItemId={quickViewConfig.initialItemId}
         subjects={state.subjects}
         chapters={state.chapters}
-        onClose={() => setQuickViewState({ open: false, initialItemId: null })}
+        onClose={() =>
+          setQuickViewConfig((prev) => ({ ...prev, open: false, initialItemId: null }))
+        }
         onToggleMastered={(it) => void handleToggleMastered(it)}
       />
 

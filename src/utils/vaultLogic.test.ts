@@ -4,9 +4,11 @@ import type { Chapter, Subject } from '../types.ts';
 import {
   INITIAL_REVEAL_STATE,
   buildVaultManifest,
+  buildVaultSubjectFolders,
   clampVaultSolutionText,
   clampVaultText,
   computeVaultCounts,
+  filterAndSortChapterQuestions,
   filterVaultItems,
   mergeVaultManifest,
   orderRevisionDeck,
@@ -256,6 +258,86 @@ describe('vaultLogic filtering, revision deck, reveal reducer, and Drive LWW mer
         chapters,
       }),
       []
+    );
+  });
+
+  it('groups subject folders cleanly into populated (active-first + uncategorized) vs empty syllabus chapters', () => {
+    const subjects: Subject[] = [
+      { id: 'sub_phy', name: 'Physics', e: '⚛️', color: '#60A5FA', arch: 0, todos: [] },
+      { id: 'sub_bot', name: 'Botany', e: '🌿', color: '#4ADE80', arch: 0, todos: [] },
+    ];
+    const chapters: Chapter[] = [
+      { id: 'ch_kin', subjectId: 'sub_phy', name: 'Kinematics', status: 'completed', revisions: [] },
+      { id: 'ch_rot', subjectId: 'sub_phy', name: 'Rotational Motion', status: 'inProgress', revisions: [] },
+      { id: 'ch_opt', subjectId: 'sub_phy', name: 'Ray Optics', status: 'notStarted', revisions: [] },
+      { id: 'ch_cell', subjectId: 'sub_bot', name: 'Cell Biology', status: 'notStarted', revisions: [] },
+    ];
+    const items: VaultItem[] = [
+      makeVaultItem({ id: 'q_kin_m', subjectId: 'sub_phy', chapterId: 'ch_kin', mastered: true, masteredAt: 5000, updatedAt: 5000 }),
+      makeVaultItem({ id: 'q_rot_1', subjectId: 'sub_phy', chapterId: 'ch_rot', kind: 'hard', mastered: false, updatedAt: 3000 }),
+      makeVaultItem({ id: 'q_rot_2', subjectId: 'sub_phy', chapterId: 'ch_rot', kind: 'unsolved', mastered: false, updatedAt: 4000 }),
+      makeVaultItem({ id: 'q_uncat', subjectId: 'sub_phy', chapterId: undefined, kind: 'hard', mastered: false, updatedAt: 6000 }),
+      makeVaultItem({ id: 'q_bot', subjectId: 'sub_bot', chapterId: 'ch_cell', mastered: false, updatedAt: 2000 }),
+    ];
+
+    const phyFolders = buildVaultSubjectFolders(items, subjects, chapters, 'sub_phy');
+    assert.deepEqual(
+      phyFolders.populatedFolders.map((f) => f.chapterName),
+      ['Rotational Motion', 'General / Uncategorized', 'Kinematics']
+    );
+    assert.equal(phyFolders.populatedFolders[0].activeCount, 2);
+    assert.equal(phyFolders.populatedFolders[0].hardCount, 1);
+    assert.equal(phyFolders.populatedFolders[1].isUncategorized, true);
+    assert.equal(phyFolders.populatedFolders[2].masteredCount, 1);
+    assert.deepEqual(
+      phyFolders.emptyFolders.map((f) => f.chapterName),
+      ['Ray Optics']
+    );
+  });
+
+  it('filters and sorts per-chapter questions by status, tag (hard/trap/unsolved), and newest/oldest/hardest order', () => {
+    const items: VaultItem[] = [
+      makeVaultItem({ id: 'u_old', subjectId: 'sub_phy', chapterId: 'ch_rot', kind: 'unsolved', createdAt: 1000, note: 'NCERT Ex 7.1' }),
+      makeVaultItem({ id: 'h_mid', subjectId: 'sub_phy', chapterId: 'ch_rot', kind: 'hard', createdAt: 2000, note: 'Angular momentum trap' }),
+      makeVaultItem({ id: 'u_trap_new', subjectId: 'sub_phy', chapterId: 'ch_rot', kind: 'unsolved', createdAt: 3000, note: 'Sign trap' }),
+      makeVaultItem({ id: 'h_mastered', subjectId: 'sub_phy', chapterId: 'ch_rot', kind: 'hard', createdAt: 4000, mastered: true, masteredAt: 4500 }),
+      makeVaultItem({ id: 'other_chap', subjectId: 'sub_phy', chapterId: 'ch_kin', kind: 'hard', createdAt: 5000 }),
+    ];
+
+    // Active sorted hardest first
+    assert.deepEqual(
+      filterAndSortChapterQuestions(items, {
+        subjectId: 'sub_phy',
+        chapterId: 'ch_rot',
+        status: 'active',
+        tag: 'all',
+        sort: 'hardest',
+      }).map((x) => x.id),
+      ['h_mid', 'u_trap_new', 'u_old']
+    );
+
+    // Trap filter matches kind === 'hard' OR 'trap' in note
+    assert.deepEqual(
+      filterAndSortChapterQuestions(items, {
+        subjectId: 'sub_phy',
+        chapterId: 'ch_rot',
+        status: 'all',
+        tag: 'trap',
+        sort: 'oldest',
+      }).map((x) => x.id),
+      ['h_mid', 'u_trap_new', 'h_mastered']
+    );
+
+    // Unsolved filter + newest sort
+    assert.deepEqual(
+      filterAndSortChapterQuestions(items, {
+        subjectId: 'sub_phy',
+        chapterId: 'ch_rot',
+        status: 'active',
+        tag: 'unsolved',
+        sort: 'newest',
+      }).map((x) => x.id),
+      ['u_trap_new', 'u_old']
     );
   });
 });

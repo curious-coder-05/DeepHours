@@ -163,6 +163,214 @@ export function filterVaultItems(
     .sort((a, b) => b.createdAt - a.createdAt);
 }
 
+export interface VaultChapterFolder {
+  key: string;
+  subjectId: string;
+  subjectName: string;
+  subjectEmoji: string;
+  subjectColor: string;
+  chapterId?: string;
+  chapterName: string;
+  isUncategorized: boolean;
+  totalCount: number;
+  activeCount: number;
+  masteredCount: number;
+  hardCount: number;
+  unsolvedCount: number;
+  latestActivityAt: number;
+  items: VaultItem[];
+}
+
+export interface VaultSubjectFoldersResult {
+  populatedFolders: VaultChapterFolder[];
+  emptyFolders: VaultChapterFolder[];
+}
+
+export function buildVaultSubjectFolders(
+  items: readonly VaultItem[],
+  subjects: readonly Subject[],
+  chapters: readonly Chapter[],
+  subjectFilter: string
+): VaultSubjectFoldersResult {
+  const activeSubjects = subjects.filter((s) => !s.arch);
+  const targetSubjectIds =
+    subjectFilter === 'all'
+      ? new Set(activeSubjects.map((s) => s.id))
+      : new Set([subjectFilter]);
+
+  const folderMap = new Map<string, VaultChapterFolder>();
+
+  const makeKey = (subId: string, chapId?: string) =>
+    `${subId}::${chapId ? chapId : '__unassigned__'}`;
+
+  // Seed all syllabus chapters belonging to the selected subject(s)
+  for (const ch of chapters) {
+    if (subjectFilter !== 'all' && ch.subjectId !== subjectFilter) continue;
+    if (subjectFilter === 'all' && !targetSubjectIds.has(ch.subjectId)) continue;
+    const sub = resolveVaultSubjectLabel(subjects, ch.subjectId);
+    const key = makeKey(ch.subjectId, ch.id);
+    if (!folderMap.has(key)) {
+      folderMap.set(key, {
+        key,
+        subjectId: ch.subjectId,
+        subjectName: sub.name,
+        subjectEmoji: sub.emoji,
+        subjectColor: sub.color,
+        chapterId: ch.id,
+        chapterName: ch.name,
+        isUncategorized: false,
+        totalCount: 0,
+        activeCount: 0,
+        masteredCount: 0,
+        hardCount: 0,
+        unsolvedCount: 0,
+        latestActivityAt: 0,
+        items: [],
+      });
+    }
+  }
+
+  // Bucket every non-deleted Vault item matching the selected subject filter
+  for (const rawItem of items) {
+    if (rawItem.deletedAt) continue;
+    if (subjectFilter !== 'all' && rawItem.subjectId !== subjectFilter) continue;
+
+    const item = sanitizeVaultItem(rawItem);
+    const key = makeKey(item.subjectId, item.chapterId);
+    let folder = folderMap.get(key);
+    if (!folder) {
+      const sub = resolveVaultSubjectLabel(subjects, item.subjectId);
+      const isUncat = !item.chapterId;
+      const chapterName = isUncat
+        ? subjectFilter === 'all'
+          ? `${sub.name} · General / Uncategorized`
+          : 'General / Uncategorized'
+        : resolveVaultChapterName(chapters, item.chapterId);
+      folder = {
+        key,
+        subjectId: item.subjectId,
+        subjectName: sub.name,
+        subjectEmoji: sub.emoji,
+        subjectColor: sub.color,
+        chapterId: item.chapterId,
+        chapterName,
+        isUncategorized: isUncat,
+        totalCount: 0,
+        activeCount: 0,
+        masteredCount: 0,
+        hardCount: 0,
+        unsolvedCount: 0,
+        latestActivityAt: 0,
+        items: [],
+      };
+      folderMap.set(key, folder);
+    }
+
+    folder.items.push(item);
+    folder.totalCount += 1;
+    if (item.mastered) folder.masteredCount += 1;
+    else folder.activeCount += 1;
+    if (item.kind === 'hard') folder.hardCount += 1;
+    else folder.unsolvedCount += 1;
+    const itemTs = Math.max(item.updatedAt || 0, item.createdAt || 0);
+    if (itemTs > folder.latestActivityAt) folder.latestActivityAt = itemTs;
+  }
+
+  const populatedFolders: VaultChapterFolder[] = [];
+  const emptyFolders: VaultChapterFolder[] = [];
+
+  for (const folder of folderMap.values()) {
+    if (folder.totalCount > 0) {
+      folder.items.sort((a, b) => b.createdAt - a.createdAt);
+      populatedFolders.push(folder);
+    } else if (!folder.isUncategorized) {
+      emptyFolders.push(folder);
+    }
+  }
+
+  populatedFolders.sort((a, b) => {
+    const aHasActive = a.activeCount > 0 ? 1 : 0;
+    const bHasActive = b.activeCount > 0 ? 1 : 0;
+    if (bHasActive !== aHasActive) return bHasActive - aHasActive;
+    if (b.activeCount !== a.activeCount) return b.activeCount - a.activeCount;
+    if (b.latestActivityAt !== a.latestActivityAt) return b.latestActivityAt - a.latestActivityAt;
+    return a.chapterName.localeCompare(b.chapterName);
+  });
+
+  return { populatedFolders, emptyFolders };
+}
+
+export type VaultChapterStatusFilter = 'active' | 'mastered' | 'all';
+export type VaultChapterTagFilter = 'all' | 'hard' | 'trap' | 'unsolved';
+export type VaultChapterSortOrder = 'newest' | 'oldest' | 'hardest';
+
+export interface VaultChapterDeckQuery {
+  subjectId: string;
+  chapterId?: string; // undefined => General / Uncategorized
+  status: VaultChapterStatusFilter;
+  tag: VaultChapterTagFilter;
+  sort: VaultChapterSortOrder;
+  searchQuery?: string;
+  subjects?: readonly Subject[];
+  chapters?: readonly Chapter[];
+}
+
+export function filterAndSortChapterQuestions(
+  items: readonly VaultItem[],
+  options: VaultChapterDeckQuery
+): VaultItem[] {
+  const tokens = (options.searchQuery || '')
+    .trim()
+    .toLowerCase()
+    .split(/\s+/)
+    .filter(Boolean);
+
+  const filtered = items.filter((item) => {
+    if (item.deletedAt) return false;
+    if (item.subjectId !== options.subjectId) return false;
+    if (options.chapterId) {
+      if (item.chapterId !== options.chapterId) return false;
+    } else if (item.chapterId) {
+      return false;
+    }
+
+    if (options.status === 'active' && item.mastered) return false;
+    if (options.status === 'mastered' && !item.mastered) return false;
+
+    if (options.tag === 'hard' && item.kind !== 'hard') return false;
+    if (options.tag === 'unsolved' && item.kind !== 'unsolved') return false;
+    if (options.tag === 'trap') {
+      const hasTrapNote = (item.note || '').toLowerCase().includes('trap');
+      if (item.kind !== 'hard' && !hasTrapNote) return false;
+    }
+
+    if (tokens.length > 0) {
+      const haystack = buildVaultSearchText(item, options.subjects, options.chapters);
+      for (const token of tokens) {
+        if (!haystack.includes(token)) return false;
+      }
+    }
+
+    return true;
+  });
+
+  return filtered.slice().sort((a, b) => {
+    if (options.sort === 'oldest') {
+      return a.createdAt - b.createdAt;
+    }
+    if (options.sort === 'hardest') {
+      const aKindWeight = a.kind === 'hard' ? 0 : 1;
+      const bKindWeight = b.kind === 'hard' ? 0 : 1;
+      if (aKindWeight !== bKindWeight) return aKindWeight - bKindWeight;
+      const aMasteredWeight = a.mastered ? 1 : 0;
+      const bMasteredWeight = b.mastered ? 1 : 0;
+      if (aMasteredWeight !== bMasteredWeight) return aMasteredWeight - bMasteredWeight;
+      return b.createdAt - a.createdAt;
+    }
+    return b.createdAt - a.createdAt;
+  });
+}
+
 export interface VaultChapterGroup {
   key: string;
   chapterId?: string;
