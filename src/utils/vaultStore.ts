@@ -1,3 +1,10 @@
+import {
+  buildVaultArchiveBundle,
+  decodeVaultBlob,
+  parseVaultArchiveJson,
+  planVaultArchiveImport,
+  type VaultArchiveBundle,
+} from './vaultArchive';
 import { sanitizeVaultItem } from './vaultLogic';
 import type {
   VaultBlobRecord,
@@ -13,7 +20,8 @@ const STORE_BLOBS = 'blobs';
 const STORE_TOMBSTONES = 'tombstones';
 const STORE_META = 'meta';
 
-let persistRequested = false;
+let persistAttempted = false;
+let persistPromise: Promise<boolean> | null = null;
 
 function hasIndexedDb(): boolean {
   return typeof indexedDB !== 'undefined';
@@ -63,16 +71,35 @@ function waitTx(tx: IDBTransaction): Promise<void> {
   });
 }
 
-async function requestPersistentStorageOnce(): Promise<void> {
-  if (persistRequested) return;
-  persistRequested = true;
-  try {
-    if (typeof navigator !== 'undefined' && navigator.storage?.persist) {
-      await navigator.storage.persist();
-    }
-  } catch {
-    // Non-fatal if browser declines persistence prompt
+export async function ensurePersistentStorage(): Promise<boolean> {
+  if (typeof navigator === 'undefined' || !navigator.storage?.persist) {
+    return false;
   }
+  if (persistPromise) {
+    return persistPromise;
+  }
+  persistPromise = (async () => {
+    try {
+      if (typeof navigator.storage.persisted === 'function') {
+        const already = await navigator.storage.persisted();
+        if (already) {
+          persistAttempted = true;
+          return true;
+        }
+      }
+      if (persistAttempted) {
+        return false;
+      }
+      persistAttempted = true;
+      return Boolean(await navigator.storage.persist());
+    } catch {
+      persistAttempted = true;
+      return false;
+    } finally {
+      persistPromise = null;
+    }
+  })();
+  return persistPromise;
 }
 
 export function makeBlobKey(itemId: string, slot: 'q' | 's'): string {
@@ -80,6 +107,7 @@ export function makeBlobKey(itemId: string, slot: 'q' | 's'): string {
 }
 
 export async function listVaultItems(): Promise<VaultItem[]> {
+  void ensurePersistentStorage();
   if (!hasIndexedDb()) return [];
   const db = await openVaultDb();
   try {
@@ -200,7 +228,7 @@ export async function saveVaultItem(
     db.close();
   }
 
-  void requestPersistentStorageOnce();
+  void ensurePersistentStorage();
   return clean;
 }
 
@@ -376,4 +404,73 @@ export async function clearAllVaultData(): Promise<void> {
   } finally {
     db.close();
   }
+}
+
+export async function exportVaultArchiveBundle(): Promise<VaultArchiveBundle> {
+  const items = await listVaultItems();
+  const records = await Promise.all(
+    items.map(async (item) => {
+      const [qRec, sRec] = await Promise.all([
+        getVaultBlobRecord(item.id, 'q'),
+        item.hasSolutionImage ? getVaultBlobRecord(item.id, 's') : Promise.resolve(null),
+      ]);
+      return {
+        item,
+        qImage: qRec
+          ? {
+              blob: qRec.blob,
+              width: qRec.width || item.width,
+              height: qRec.height || item.height,
+              mime: qRec.mime || item.mime || 'image/webp',
+            }
+          : null,
+        sImage: sRec
+          ? {
+              blob: sRec.blob,
+              width: sRec.width || item.width,
+              height: sRec.height || item.height,
+              mime: sRec.mime || 'image/webp',
+            }
+          : null,
+      };
+    })
+  );
+
+  return buildVaultArchiveBundle(records);
+}
+
+export async function importVaultArchiveBundle(rawJson: string): Promise<{
+  addedCount: number;
+  updatedCount: number;
+  skippedCount: number;
+  itemCount: number;
+}> {
+  const bundle = parseVaultArchiveJson(rawJson);
+  const existingItems = await listVaultItems();
+  const plan = planVaultArchiveImport(existingItems, bundle.entries);
+
+  for (const entry of plan.toSave) {
+    const qDecoded = decodeVaultBlob(entry.qImage);
+    const sDecoded = entry.sImage ? decodeVaultBlob(entry.sImage) : null;
+    await saveVaultItem(
+      {
+        ...entry.item,
+        qBytes: qDecoded.blob.size,
+        width: qDecoded.width || entry.item.width,
+        height: qDecoded.height || entry.item.height,
+        mime: qDecoded.mime,
+        hasSolutionImage: Boolean(sDecoded),
+        syncState: 'pending',
+      },
+      qDecoded,
+      sDecoded || 'delete'
+    );
+  }
+
+  return {
+    addedCount: plan.addedCount,
+    updatedCount: plan.updatedCount,
+    skippedCount: plan.skippedCount,
+    itemCount: bundle.itemCount,
+  };
 }

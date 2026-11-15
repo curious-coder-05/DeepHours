@@ -75,7 +75,6 @@ interface PrepViewProps {
   vaultCaptureRequest?: VaultCaptureRequest | null;
   activeTimerText?: string | null;
   onNotify?: (msg: string, undo?: () => void) => void;
-  onOpenDriveSettings?: () => void;
   onChangeSubTab: (sub: PrepSubTab) => void;
   onAddChapters: (subjectId: string, names: string[]) => void;
   onUpdateChapter: (chapterId: string, patch: Partial<Chapter>) => void;
@@ -126,7 +125,6 @@ export const PrepView: React.FC<PrepViewProps> = ({
   vaultCaptureRequest,
   activeTimerText,
   onNotify,
-  onOpenDriveSettings,
   onChangeSubTab,
   onAddChapters,
   onUpdateChapter,
@@ -1485,11 +1483,11 @@ export const PrepView: React.FC<PrepViewProps> = ({
         >
           <VaultView
             state={state}
+            todayKey={todayKey}
             initialChapterFilter={vaultChapterJump}
             captureRequest={vaultCaptureRequest}
             activeTimerText={activeTimerText}
             onNotify={(msg, undo) => onNotify?.(msg, undo)}
-            onOpenDriveSettings={() => onOpenDriveSettings?.()}
             onToggleMistakeResolved={onToggleMistakeResolved}
             onDeleteMistake={onDeleteMistake}
             onToggleDoubtResolved={onToggleDoubtResolved}

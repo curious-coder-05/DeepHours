@@ -109,7 +109,7 @@ import { KeyboardShortcutsSheet } from './components/KeyboardShortcutsSheet';
 import type { OnboardingResult } from './components/OnboardingSheet';
 import type { SettingsSection } from './components/SettingsView';
 import type { VaultCaptureRequest } from './components/VaultView';
-import { clearAllVaultData } from './utils/vaultStore';
+import { clearAllVaultData, ensurePersistentStorage } from './utils/vaultStore';
 import {
   detectRewardMilestone,
   type RewardMilestonePayload,
@@ -672,6 +672,8 @@ export default function App() {
         window.location.reload();
       }
     };
+
+    void ensurePersistentStorage();
 
     if ('serviceWorker' in navigator && location.protocol.startsWith('http')) {
       navigator.serviceWorker.addEventListener('controllerchange', onControllerChange);
@@ -2881,11 +2883,6 @@ export default function App() {
                   : null
               }
               onNotify={showToast}
-              onOpenDriveSettings={() => {
-                setSettingsSection('drive');
-                setSettingsOpen(true);
-                window.scrollTo(0, 0);
-              }}
               onChangeSubTab={setPrepSubTab}
               onAddChapters={handleAddChapters}
               onUpdateChapter={handleUpdateChapter}
@@ -3274,123 +3271,6 @@ export default function App() {
                 'application/json'
               );
             }}
-            onBuildCsvExport={() => {
-              const cur = stateRef.current;
-              const escCsv = (val: string): string => {
-                const safe = /^[ \t\r\n\u0000-\u001f]*[=+\-@]/.test(val) ? `'${val}` : val;
-                return `"${safe.replace(/"/g, '""')}"`;
-              };
-              const rows = [
-                'type,date,subject,heading_or_title,minutes_or_score,purity_or_accuracy_pct,note',
-              ];
-              cur.sessions.forEach((s) => {
-                const sub = cur.subjects.find((x) => x.id === s.subjectId);
-                const subName = sub ? sub.name : 'General';
-                const heading = getSessionHeading(cur, s);
-                rows.push(
-                  `study_session,${s.dayKey},${escCsv(subName)},${escCsv(heading)},${Math.round(
-                    s.activeMs / 60000
-                  )},${s.purity || 100},${escCsv(s.note || '')}`
-                );
-              });
-              cur.habits.forEach((h) =>
-                Object.entries(cur.log[h.id] || {})
-                  .sort()
-                  .forEach(([k, e]) => {
-                    rows.push(
-                      `habit,${k},"Habit",${escCsv(h.name)},${e.v},100,""`
-                    );
-                  })
-              );
-              cur.mocks.forEach((m) => {
-                const sc = computeMockScore(m, cur.subjects);
-                rows.push(
-                  `mock_test,${m.dayKey},"All Subjects",${escCsv(m.name)},${sc.totalScore},${
-                    sc.accuracyPct
-                  },${escCsv(m.note || '')}`
-                );
-              });
-              cur.chapters.forEach((ch) => {
-                const sub = cur.subjects.find((x) => x.id === ch.subjectId);
-                const subName = sub ? sub.name : 'Subject';
-                const revs = getSortedChapterRevisions(ch);
-                if (revs.length === 0) {
-                  rows.push(
-                    `chapter,${ch.completedOn || ''},${escCsv(subName)},${escCsv(ch.name)},${
-                      ch.confidence || 0
-                    },100,${escCsv(`status:${ch.status}`)}`
-                  );
-                } else {
-                  revs.forEach((r) => {
-                    rows.push(
-                      `chapter_revision,${r.date},${escCsv(subName)},${escCsv(
-                        `${ch.name} (${r.label})`
-                      )},${r.done ? 1 : 0},100,${escCsv(
-                        r.done ? `done:${r.doneOn || r.date}` : 'pending'
-                      )}`
-                    );
-                  });
-                }
-              });
-              (cur.mistakes || []).forEach((m) => {
-                const sub = cur.subjects.find((x) => x.id === m.subjectId);
-                const subName = sub ? sub.name : 'Subject';
-                rows.push(
-                  `mistake,${m.dayKey},${escCsv(subName)},${escCsv(m.reason)},${
-                    m.resolved ? 1 : 0
-                  },100,${escCsv(m.note || '')}`
-                );
-              });
-              (cur.doubts || []).forEach((d) => {
-                const sub = cur.subjects.find((x) => x.id === d.subjectId);
-                const subName = sub ? sub.name : 'Subject';
-                const dateStr = logicalKey(d.createdAt, cur.set.dayResetHour ?? 0);
-                rows.push(
-                  `doubt,${dateStr},${escCsv(subName)},${escCsv(d.text)},${
-                    d.resolved ? 1 : 0
-                  },100,"${d.resolved ? 'resolved' : 'open'}"`
-                );
-              });
-              (cur.pyq || []).forEach((p) => {
-                const ch = cur.chapters.find((c) => c.id === p.chapterId);
-                const sub = ch
-                  ? cur.subjects.find((x) => x.id === ch.subjectId)
-                  : undefined;
-                const subName = sub ? sub.name : 'Subject';
-                const chName = ch ? ch.name : p.chapterId;
-                const acc =
-                  p.attempted > 0 ? Math.round((p.correct / p.attempted) * 100) : 0;
-                rows.push(
-                  `pyq,${p.dayKey},${escCsv(subName)},${escCsv(chName)},${
-                    p.attempted
-                  },${acc},"correct:${p.correct}/${p.attempted}"`
-                );
-              });
-              Object.entries(cur.wellbeing || {})
-                .sort(([a], [b]) => a.localeCompare(b))
-                .forEach(([dk, wb]) => {
-                  rows.push(
-                    `wellbeing,${dk},"Wellbeing","Sleep & Energy",${wb.sleep ?? 0},${
-                      wb.energy ?? 0
-                    },"sleep:${wb.sleep ?? '-'}h energy:${wb.energy ?? '-'}"`
-                  );
-                });
-              (cur.restDays || []).forEach((dk) => {
-                rows.push(`rest_day,${dk},"Rest Pass","Protected Rest Day",1,100,""`);
-              });
-              (cur.tasks || []).forEach((t) => {
-                const sub = t.subjectId
-                  ? cur.subjects.find((x) => x.id === t.subjectId)
-                  : undefined;
-                const subName = sub ? sub.name : 'General';
-                rows.push(
-                  `daily_task,${t.dayKey},${escCsv(subName)},${escCsv(t.title)},${
-                    t.done ? 1 : 0
-                  },100,"${t.done ? 'done' : 'pending'}"`
-                );
-              });
-              return rows.join('\n');
-            }}
             onExportCsv={() => {
               const cur = stateRef.current;
               const escCsv = (val: string): string => {
@@ -3512,45 +3392,6 @@ export default function App() {
                 'text/csv'
               );
             }}
-            onRestoreBackupJson={(jsonText, sourceLabel) => {
-              const snapJson = JSON.stringify(stateRef.current);
-              try {
-                const parsed = JSON.parse(jsonText);
-                if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) {
-                  throw new Error('Invalid schema');
-                }
-                const restored = norm(parsed);
-                const newToday = logicalKey(new Date(), restored.set.dayResetHour);
-                const allDays = new Set<string>([
-                  newToday,
-                  ...restored.sessions.map((s) => s.dayKey),
-                ]);
-                syncStudyHabitsForDays(restored, allDays, newToday);
-                setSel(newToday);
-                saveNextState(restored, { suppressMilestones: true });
-                showToast(
-                  sourceLabel
-                    ? `Restored backup from ${sourceLabel}`
-                    : 'Full backup restored!',
-                  () => {
-                    const reverted = norm(JSON.parse(snapJson));
-                    saveNextState(reverted, { suppressMilestones: true });
-                  }
-                );
-                return true;
-              } catch {
-                showToast('Invalid Deep Hours JSON backup file');
-                return false;
-              }
-            }}
-            onMarkExported={() => {
-              const updated: PulseHabitState = {
-                ...stateRef.current,
-                exp: Date.now(),
-              };
-              saveNextState(updated);
-            }}
-            onNotify={showToast}
             onImportJson={async (file) => {
               if (file.size > 10 * 1024 * 1024) {
                 showToast('Backup file exceeds the 10 MB limit');

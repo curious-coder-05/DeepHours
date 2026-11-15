@@ -10,7 +10,6 @@ import {
 } from '../utils/vaultImage';
 import { clampVaultSolutionText, clampVaultText } from '../utils/vaultLogic';
 import { getVaultBlob, saveVaultItem } from '../utils/vaultStore';
-import { scheduleVaultSync } from '../utils/vaultSync';
 import { VAULT_LIMITS, type VaultItem, type VaultKind } from '../utils/vaultTypes';
 import { VaultCropper } from './VaultCropper';
 import {
@@ -319,8 +318,6 @@ export const VaultCaptureSheet: React.FC<VaultCaptureSheetProps> = ({
           ? Boolean(editingItem.hasSolutionImage && !removeExistingSolImage)
           : false;
 
-      const mediaChanged = Boolean(qProcessed || sProcessed || removeExistingSolImage);
-
       const nextItem: VaultItem = {
         id: itemId,
         subjectId,
@@ -340,10 +337,7 @@ export const VaultCaptureSheet: React.FC<VaultCaptureSheetProps> = ({
         mime: qProcessed ? qProcessed.mime : editingItem?.mime || 'image/webp',
         revisionCount: editingItem ? editingItem.revisionCount : 0,
         lastRevisedAt: editingItem ? editingItem.lastRevisedAt : undefined,
-        driveQId: qProcessed ? undefined : editingItem?.driveQId,
-        driveSId:
-          sProcessed || removeExistingSolImage ? undefined : editingItem?.driveSId,
-        syncState: mediaChanged || !editingItem?.driveQId ? 'pending' : 'pending',
+        syncState: 'pending',
       };
 
       const saved = await saveVaultItem(
@@ -367,8 +361,6 @@ export const VaultCaptureSheet: React.FC<VaultCaptureSheetProps> = ({
               }
             : undefined
       );
-
-      scheduleVaultSync();
 
       if (addAnother) {
         cleanupMediaRefs();

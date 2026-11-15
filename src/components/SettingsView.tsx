@@ -1,4 +1,4 @@
-import React, { Suspense, useEffect, useMemo, useRef, useState } from 'react';
+import React, { useEffect, useMemo, useRef, useState } from 'react';
 import {
   ArrowLeft,
   Bell,
@@ -6,7 +6,6 @@ import {
   Calendar,
   Cloud,
   Database,
-  HardDrive,
   Info,
   Palette,
   Repeat,
@@ -24,12 +23,9 @@ import {
   computeLevelInfo,
   computeTotalXp,
 } from '../utils/xp';
-import { getDriveAccessToken, googleDriveSignIn } from '../utils/googleDrive';
-import { deleteVaultFromDrive } from '../utils/vaultSync';
 import {
   Button,
   Card,
-  Dialog,
   EmptyState,
   Field,
   ListGroup,
@@ -38,19 +34,13 @@ import {
   Segmented,
   Select,
   type SelectOption,
-  Skeleton,
   Stat,
   Switch,
 } from './ui';
 
-const GoogleDrivePanel = React.lazy(() =>
-  import('./GoogleDrivePanel').then((m) => ({ default: m.GoogleDrivePanel }))
-);
-
 export type SettingsSection =
   | 'profile'
   | 'sync'
-  | 'drive'
   | 'study'
   | 'targets'
   | 'exams'
@@ -98,10 +88,6 @@ export interface SettingsViewProps {
   onSignOutGoogle?: () => void;
   onSyncNow?: () => void;
   onDeleteCloudData?: () => void;
-  onBuildCsvExport?: () => string;
-  onRestoreBackupJson?: (jsonText: string, sourceLabel?: string) => boolean;
-  onMarkExported?: () => void;
-  onNotify?: (msg: string) => void;
   todayKey?: string;
   onOpenProfileModal?: () => void;
 }
@@ -165,10 +151,6 @@ const SECTION_META: Record<
   sync: {
     title: 'Account and cloud sync',
     subtitle: 'Google backup, sync quota, and privacy controls',
-  },
-  drive: {
-    title: 'Google Drive',
-    subtitle: 'Question Vault sync and study backups in your "Deep Hours Vault" folder',
   },
   study: {
     title: 'Study preferences',
@@ -240,10 +222,6 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
   onSignOutGoogle,
   onSyncNow,
   onDeleteCloudData,
-  onBuildCsvExport,
-  onRestoreBackupJson,
-  onMarkExported,
-  onNotify,
   todayKey: todayKeyProp,
   onOpenProfileModal,
 }) => {
@@ -285,8 +263,6 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
   const [editSubEmoji, setEditSubEmoji] = useState('📘');
   const [editSubColor, setEditSubColor] = useState(ALL_SUBJECT_COLORS[0]);
   const [confirmDeleteCloud, setConfirmDeleteCloud] = useState(false);
-  const [confirmDeleteDriveVault, setConfirmDeleteDriveVault] = useState(false);
-  const [deletingDriveVault, setDeletingDriveVault] = useState(false);
   const revisionIntervalsStr = (state.set.revisionIntervals || [1, 3, 7, 21]).join(', ');
   const [intervalsInput, setIntervalsInput] = useState(revisionIntervalsStr);
   useEffect(() => {
@@ -373,13 +349,6 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
             trailing={syncStatusLabel}
             chevron
             onClick={() => setSection('sync')}
-          />
-          <ListRow
-            leading={<HardDrive size={20} strokeWidth={1.75} aria-hidden="true" />}
-            title="Google Drive"
-            subtitle='Vault question sync and backups inside "Deep Hours Vault"'
-            chevron
-            onClick={() => setSection('drive')}
           />
         </ListGroup>
 
@@ -737,9 +706,6 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
                 <Button variant="secondary" onClick={onExportJson}>
                   Download backup
                 </Button>
-                <Button variant="secondary" onClick={() => setSection('drive')}>
-                  Google Drive
-                </Button>
                 <Button variant="secondary" onClick={onSignOutGoogle}>
                   Sign out
                 </Button>
@@ -790,9 +756,6 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
               <Button variant="primary" onClick={onSignInGoogle}>
                 Sign in with Google
               </Button>
-              <Button variant="secondary" onClick={() => setSection('drive')}>
-                Google Drive
-              </Button>
               <Button variant="secondary" onClick={onExportJson}>
                 Download backup
               </Button>
@@ -814,30 +777,6 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
             Deleting your cloud data removes your group entries and closes any groups you own.
           </p>
         </Card>
-      )}
-
-      {/* 2b. Google Drive */}
-      {activeSection === 'drive' && (
-        <Suspense
-          fallback={
-            <div style={{ display: 'grid', gap: '12px' }}>
-              <Skeleton height={160} />
-              <Skeleton height={220} />
-            </div>
-          }
-        >
-          <GoogleDrivePanel
-            state={state}
-            todayKey={effectiveTodayKey}
-            isOnline={isOnline}
-            onBuildCsvExport={() => onBuildCsvExport?.() || ''}
-            onRestoreBackupJson={(jsonText, sourceLabel) =>
-              onRestoreBackupJson ? onRestoreBackupJson(jsonText, sourceLabel) : false
-            }
-            onMarkExported={() => onMarkExported?.()}
-            onNotify={(msg) => onNotify?.(msg)}
-          />
-        </Suspense>
       )}
 
       {/* 3. Study */}
@@ -1627,9 +1566,6 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
             <Button variant="secondary" onClick={() => fileInputRef.current?.click()}>
               Import JSON backup
             </Button>
-            <Button variant="secondary" onClick={() => setSection('drive')}>
-              Google Drive backups
-            </Button>
             <input
               ref={fileInputRef}
               type="file"
@@ -1651,72 +1587,10 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
               gap: '8px',
             }}
           >
-            <Button
-              variant="secondary"
-              onClick={() => setConfirmDeleteDriveVault(true)}
-            >
-              Delete Vault from Drive
-            </Button>
             <Button variant="danger" onClick={onRequestReset}>
               Erase all device data
             </Button>
           </div>
-
-          <Dialog
-            open={confirmDeleteDriveVault}
-            onClose={() => {
-              if (!deletingDriveVault) setConfirmDeleteDriveVault(false);
-            }}
-            title="Delete Vault from Google Drive?"
-          >
-            <p style={{ margin: 0, fontSize: '14px', color: 'var(--tx-2)', lineHeight: 1.5 }}>
-              This deletes <code>vault-index.json</code> and your synced question/solution photos (
-              <code>q_*</code>, <code>s_*</code>) from the &ldquo;Deep Hours Vault&rdquo; folder in
-              Google Drive.
-            </p>
-            <p style={{ margin: 0, fontSize: '13px', color: 'var(--tx-3)', lineHeight: 1.5 }}>
-              Your local Vault questions on this device and your study JSON/CSV backups in Drive
-              will remain untouched.
-            </p>
-            <div style={{ display: 'flex', gap: '8px', marginTop: '4px' }}>
-              <Button
-                variant="secondary"
-                disabled={deletingDriveVault}
-                onClick={() => setConfirmDeleteDriveVault(false)}
-                style={{ flex: 1 }}
-              >
-                Cancel
-              </Button>
-              <Button
-                variant="danger"
-                disabled={deletingDriveVault}
-                onClick={async () => {
-                  try {
-                    setDeletingDriveVault(true);
-                    if (!getDriveAccessToken()) {
-                      await googleDriveSignIn();
-                    }
-                    const res = await deleteVaultFromDrive();
-                    setConfirmDeleteDriveVault(false);
-                    onNotify?.(
-                      res.deletedCount > 0
-                        ? `Deleted ${res.deletedCount} Vault file${res.deletedCount === 1 ? '' : 's'} from Drive`
-                        : 'No Vault files found in Google Drive'
-                    );
-                  } catch (err) {
-                    onNotify?.(
-                      err instanceof Error ? err.message : 'Could not delete Vault from Drive'
-                    );
-                  } finally {
-                    setDeletingDriveVault(false);
-                  }
-                }}
-                style={{ flex: 1 }}
-              >
-                {deletingDriveVault ? 'Deleting…' : 'Delete from Drive'}
-              </Button>
-            </div>
-          </Dialog>
         </Card>
       )}
 
@@ -1727,7 +1601,7 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
           <p style={{ margin: 0, fontSize: '13px', color: 'var(--tx-2)', lineHeight: 1.5 }}>
             Local-first NEET preparation workspace built with timestamp-accurate timers,
             offline storage, Question Vault photo revision, Picture-in-Picture support, and
-            optional Firebase / Google Drive sync.
+            optional Firebase cloud sync.
           </p>
           <p style={{ margin: 0, fontSize: '13px', color: 'var(--tx-2)', lineHeight: 1.5 }}>
             Quick actions such as logging past study sessions, adding tasks, and capturing

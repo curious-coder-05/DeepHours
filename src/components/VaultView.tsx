@@ -1,25 +1,29 @@
 import React, { Suspense, useCallback, useEffect, useMemo, useReducer, useRef, useState } from 'react';
 import {
+  Archive,
   Camera,
   Check,
   ChevronDown,
   ChevronRight,
-  Cloud,
-  CloudOff,
+  Download,
   Edit3,
   Eye,
   EyeOff,
   MoreHorizontal,
   Play,
   Plus,
-  RefreshCw,
   RotateCcw,
   SlidersHorizontal,
   Trash2,
+  Upload,
 } from 'lucide-react';
 import type { Chapter, PulseHabitState, Subject } from '../types';
-import { googleDriveSignIn } from '../utils/googleDrive';
 import { getSubject } from '../utils/studyLogic';
+import {
+  buildVaultArchiveFilename,
+  formatVaultImportSummary,
+  VAULT_ARCHIVE_EXTENSION,
+} from '../utils/vaultArchive';
 import {
   INITIAL_REVEAL_STATE,
   computeVaultCounts,
@@ -32,18 +36,12 @@ import {
 } from '../utils/vaultLogic';
 import {
   deleteVaultItemLocal,
+  exportVaultArchiveBundle,
   getVaultBlob,
+  importVaultArchiveBundle,
   listVaultItems,
   saveVaultItem,
-  setVaultMeta,
 } from '../utils/vaultStore';
-import {
-  getVaultSyncSnapshot,
-  refreshVaultSyncStatusFromStore,
-  scheduleVaultSync,
-  subscribeVaultSync,
-  syncVaultNow,
-} from '../utils/vaultSync';
 import type { VaultItem, VaultKind } from '../utils/vaultTypes';
 import { VaultCaptureSheet } from './VaultCaptureSheet';
 import { VaultZoomViewer } from './VaultZoomViewer';
@@ -78,6 +76,7 @@ export interface VaultCaptureRequest {
 
 export interface VaultViewProps {
   state: PulseHabitState;
+  todayKey?: string;
   initialChapterFilter?: {
     nonce: number;
     subjectId: string;
@@ -86,7 +85,6 @@ export interface VaultViewProps {
   captureRequest?: VaultCaptureRequest | null;
   activeTimerText?: string | null;
   onNotify: (msg: string, undo?: () => void) => void;
-  onOpenDriveSettings: () => void;
   onToggleMistakeResolved: (id: string) => void;
   onDeleteMistake: (id: string) => void;
   onToggleDoubtResolved: (id: string) => void;
@@ -511,11 +509,11 @@ const VaultQuestionCard: React.FC<VaultCardProps> = ({
 
 export const VaultView: React.FC<VaultViewProps> = ({
   state,
+  todayKey,
   initialChapterFilter,
   captureRequest,
   activeTimerText,
   onNotify,
-  onOpenDriveSettings,
   onToggleMistakeResolved,
   onDeleteMistake,
   onToggleDoubtResolved,
@@ -571,12 +569,14 @@ export const VaultView: React.FC<VaultViewProps> = ({
     label: string;
   }>({ open: false, items: [], label: 'Vault' });
 
-  // Sync Status Pill
-  const [syncSnap, setSyncSnap] = useState(() => getVaultSyncSnapshot());
-  const [connectingDrive, setConnectingDrive] = useState<boolean>(false);
-
   // Legacy collapsed accordion (V12)
   const [legacyExpanded, setLegacyExpanded] = useState<boolean>(false);
+
+  // Local Vault Export / Import archive
+  const [backupSheetOpen, setBackupSheetOpen] = useState<boolean>(false);
+  const [archiveBusy, setArchiveBusy] = useState<'export' | 'import' | null>(null);
+  const [archiveError, setArchiveError] = useState<string | null>(null);
+  const importInputRef = useRef<HTMLInputElement | null>(null);
 
   const loadItems = useCallback(async () => {
     try {
@@ -589,14 +589,6 @@ export const VaultView: React.FC<VaultViewProps> = ({
 
   useEffect(() => {
     void loadItems();
-    void refreshVaultSyncStatusFromStore();
-    const unsub = subscribeVaultSync((snap) => {
-      setSyncSnap(snap);
-      if (snap.status === 'synced') {
-        void loadItems();
-      }
-    });
-    return unsub;
   }, [loadItems]);
 
   // Apply external chapter filter jump (e.g. from Syllabus row chip)
@@ -708,30 +700,6 @@ export const VaultView: React.FC<VaultViewProps> = ({
     setVisibleLimit(PAGE_SIZE);
   };
 
-  const handleDrivePillClick = async () => {
-    if (syncSnap.status === 'local') {
-      onOpenDriveSettings();
-      return;
-    }
-    if (syncSnap.status === 'reconnect') {
-      setConnectingDrive(true);
-      try {
-        await googleDriveSignIn();
-        await setVaultMeta({ hasConnectedBefore: true });
-        void syncVaultNow();
-        onNotify('Google Drive connected');
-      } catch (err) {
-        onNotify(err instanceof Error ? err.message : 'Google Drive sign-in cancelled');
-      } finally {
-        setConnectingDrive(false);
-      }
-      return;
-    }
-    if (syncSnap.status === 'error' || syncSnap.status === 'synced') {
-      void syncVaultNow();
-    }
-  };
-
   const handleToggleMastered = useCallback(
     async (item: VaultItem) => {
       const nextMastered = !item.mastered;
@@ -744,7 +712,6 @@ export const VaultView: React.FC<VaultViewProps> = ({
         syncState: 'pending',
       });
       await loadItems();
-      scheduleVaultSync();
       onNotify(
         nextMastered ? 'Moved to Mastered' : 'Moved back to Active',
         () => {
@@ -756,7 +723,6 @@ export const VaultView: React.FC<VaultViewProps> = ({
             syncState: 'pending',
           }).then(() => {
             void loadItems();
-            scheduleVaultSync();
           });
         }
       );
@@ -772,7 +738,6 @@ export const VaultView: React.FC<VaultViewProps> = ({
       setDeleteTarget(null);
       setCompactDetailItem((cur) => (cur?.id === deleteTarget.id ? null : cur));
       await loadItems();
-      scheduleVaultSync();
       onNotify('Question deleted from Vault');
     } finally {
       setDeleting(false);
@@ -790,7 +755,6 @@ export const VaultView: React.FC<VaultViewProps> = ({
         syncState: 'pending',
       });
       await loadItems();
-      scheduleVaultSync();
     },
     [loadItems]
   );
@@ -811,27 +775,78 @@ export const VaultView: React.FC<VaultViewProps> = ({
     setDeckScope({ open: true, items: activeOnes, label });
   };
 
-  const drivePillMeta = useMemo(() => {
-    if (connectingDrive) {
-      return { label: 'Connecting…', tone: 'neutral' as const };
+  const totalVaultBytes = useMemo(
+    () => items.reduce((acc, it) => acc + (it.qBytes || 0), 0),
+    [items]
+  );
+
+  const formattedVaultSize = useMemo(() => {
+    if (totalVaultBytes <= 0) return '0 KB';
+    if (totalVaultBytes >= 1024 * 1024) {
+      return `${(totalVaultBytes / (1024 * 1024)).toFixed(1)} MB`;
     }
-    if (syncSnap.status === 'syncing') {
-      return {
-        label: syncSnap.pendingCount > 0 ? `Syncing ${syncSnap.pendingCount}…` : 'Syncing…',
-        tone: 'accent' as const,
-      };
+    return `${Math.max(1, Math.round(totalVaultBytes / 1024))} KB`;
+  }, [totalVaultBytes]);
+
+  const handleExportVault = useCallback(async () => {
+    if (archiveBusy || counts.total === 0) return;
+    setArchiveBusy('export');
+    setArchiveError(null);
+    try {
+      const bundle = await exportVaultArchiveBundle();
+      if (bundle.itemCount === 0) {
+        onNotify('No Vault questions to export');
+        return;
+      }
+      const json = JSON.stringify(bundle);
+      const blob = new Blob([json], { type: 'application/json' });
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = buildVaultArchiveFilename(todayKey);
+      a.style.display = 'none';
+      document.body.appendChild(a);
+      a.click();
+      document.body.removeChild(a);
+      window.setTimeout(() => URL.revokeObjectURL(url), 1500);
+      setBackupSheetOpen(false);
+      onNotify(
+        `Exported ${bundle.itemCount} Vault question${bundle.itemCount === 1 ? '' : 's'}`
+      );
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : 'Failed to export Vault archive';
+      setArchiveError(msg);
+    } finally {
+      setArchiveBusy(null);
     }
-    if (syncSnap.status === 'synced') {
-      return { label: 'Synced to Drive', tone: 'ok' as const };
-    }
-    if (syncSnap.status === 'reconnect') {
-      return { label: 'Reconnect Drive', tone: 'warn' as const };
-    }
-    if (syncSnap.status === 'error') {
-      return { label: 'Sync error · Retry', tone: 'err' as const };
-    }
-    return { label: 'Local only', tone: 'neutral' as const };
-  }, [connectingDrive, syncSnap.pendingCount, syncSnap.status]);
+  }, [archiveBusy, counts.total, onNotify, todayKey]);
+
+  const handleImportVaultFile = useCallback(
+    async (file?: File | null) => {
+      if (!file || archiveBusy) return;
+      setArchiveBusy('import');
+      setArchiveError(null);
+      try {
+        const rawJson = await file.text();
+        const result = await importVaultArchiveBundle(rawJson);
+        await loadItems();
+        setBackupSheetOpen(false);
+        onNotify(formatVaultImportSummary(result));
+      } catch (err) {
+        const msg = err instanceof Error ? err.message : 'Could not import Vault archive';
+        setArchiveError(msg);
+        if (!backupSheetOpen) {
+          onNotify(msg);
+        }
+      } finally {
+        setArchiveBusy(null);
+        if (importInputRef.current) {
+          importInputRef.current.value = '';
+        }
+      }
+    },
+    [archiveBusy, backupSheetOpen, loadItems, onNotify]
+  );
 
   const legacyMistakes = state.mistakes || [];
   const legacyDoubts = state.doubts || [];
@@ -859,6 +874,14 @@ export const VaultView: React.FC<VaultViewProps> = ({
 
   return (
     <div style={{ display: 'grid', gap: '14px' }}>
+      <input
+        ref={importInputRef}
+        type="file"
+        accept={`${VAULT_ARCHIVE_EXTENSION},.json,application/json`}
+        hidden
+        onChange={(e) => void handleImportVaultFile(e.target.files?.[0])}
+      />
+
       {/* V1 Header */}
       <Card style={{ margin: 0, display: 'grid', gap: '12px' }}>
         <div
@@ -871,27 +894,9 @@ export const VaultView: React.FC<VaultViewProps> = ({
           }}
         >
           <div style={{ minWidth: 0 }}>
-            <div style={{ display: 'flex', alignItems: 'center', gap: '10px', flexWrap: 'wrap' }}>
-              <h2 style={{ margin: 0, fontSize: '20px', fontWeight: 600, color: 'var(--tx)' }}>
-                Vault
-              </h2>
-              {/* V10 28px Drive Sync Pill */}
-              <button
-                type="button"
-                onClick={() => void handleDrivePillClick()}
-                className={`dh-vault-sync-pill tone-${drivePillMeta.tone}`}
-                aria-label={`Drive status: ${drivePillMeta.label}`}
-              >
-                {syncSnap.status === 'syncing' ? (
-                  <RefreshCw size={13} strokeWidth={1.75} className="dh-spin" aria-hidden="true" />
-                ) : syncSnap.status === 'local' ? (
-                  <CloudOff size={13} strokeWidth={1.75} aria-hidden="true" />
-                ) : (
-                  <Cloud size={13} strokeWidth={1.75} aria-hidden="true" />
-                )}
-                <span>{drivePillMeta.label}</span>
-              </button>
-            </div>
+            <h2 style={{ margin: 0, fontSize: '20px', fontWeight: 600, color: 'var(--tx)' }}>
+              Vault
+            </h2>
             <p className="tabular-nums" style={{ margin: '4px 0 0', fontSize: '13px', color: 'var(--tx-2)' }}>
               {counts.total === 0
                 ? 'Unsolved and hard questions ready to snap & revise'
@@ -915,6 +920,17 @@ export const VaultView: React.FC<VaultViewProps> = ({
                 Start revision ({filteredItems.filter((i) => !i.mastered).length})
               </Button>
             )}
+            <IconButton
+              size={48}
+              label="Export or import Vault backup"
+              title="Export or import Vault backup"
+              onClick={() => {
+                setArchiveError(null);
+                setBackupSheetOpen(true);
+              }}
+            >
+              <Archive size={18} strokeWidth={1.75} aria-hidden="true" />
+            </IconButton>
             <Button
               variant="primary"
               size="md"
@@ -1062,7 +1078,7 @@ export const VaultView: React.FC<VaultViewProps> = ({
                 >
                   <li>• Answers &amp; solutions stay hidden until you tap to reveal</li>
                   <li>• High-contrast B&amp;W scan mode keeps photos under 150 KB</li>
-                  <li>• Works completely offline, with optional Google Drive backup</li>
+                  <li>• Stored offline on this device inside IndexedDB</li>
                 </ul>
                 <Button
                   variant="primary"
@@ -1076,8 +1092,17 @@ export const VaultView: React.FC<VaultViewProps> = ({
                   <Camera size={17} strokeWidth={1.75} aria-hidden="true" />
                   Add your first question
                 </Button>
-                <Button variant="ghost" size="sm" onClick={onOpenDriveSettings}>
-                  Back up to Google Drive
+                <Button
+                  variant="secondary"
+                  size="lg"
+                  disabled={archiveBusy !== null}
+                  onClick={() => {
+                    setArchiveError(null);
+                    importInputRef.current?.click();
+                  }}
+                >
+                  <Upload size={16} strokeWidth={1.75} aria-hidden="true" />
+                  {archiveBusy === 'import' ? 'Importing Vault…' : 'Import Vault backup'}
                 </Button>
               </div>
             }
@@ -1711,8 +1736,7 @@ export const VaultView: React.FC<VaultViewProps> = ({
         title="Delete this question?"
       >
         <p style={{ margin: 0, fontSize: '14px', color: 'var(--tx-2)', lineHeight: 1.5 }}>
-          The photo, answer, and solution will be permanently removed from this device and Google
-          Drive.
+          The photo, answer, and solution will be permanently removed from this device.
         </p>
         <div style={{ display: 'flex', justifyContent: 'flex-end', gap: '8px', marginTop: '6px' }}>
           <Button
@@ -1731,6 +1755,94 @@ export const VaultView: React.FC<VaultViewProps> = ({
           </Button>
         </div>
       </Dialog>
+
+      {/* Local Vault Backup & Restore Sheet */}
+      <Sheet
+        open={backupSheetOpen}
+        onClose={() => {
+          if (!archiveBusy) {
+            setBackupSheetOpen(false);
+          }
+        }}
+        title="Vault backup & restore"
+        subtitle={`Self-contained ${VAULT_ARCHIVE_EXTENSION} archive stored offline on this device`}
+      >
+        <div style={{ display: 'grid', gap: '14px' }}>
+          <div
+            style={{
+              background: 'var(--sf-2)',
+              border: '1px solid var(--line)',
+              borderRadius: '12px',
+              padding: '14px',
+              display: 'flex',
+              alignItems: 'center',
+              justifyContent: 'space-between',
+              gap: '12px',
+            }}
+          >
+            <div>
+              <div style={{ fontSize: '14px', fontWeight: 600, color: 'var(--tx)' }}>
+                Local Vault storage
+              </div>
+              <div className="tabular-nums" style={{ fontSize: '13px', color: 'var(--tx-2)', marginTop: '2px' }}>
+                {counts.total === 0
+                  ? 'No saved questions on this device yet'
+                  : `${counts.total} question${counts.total === 1 ? '' : 's'} · ${formattedVaultSize} photos`}
+              </div>
+            </div>
+          </div>
+
+          {archiveError && (
+            <div
+              role="alert"
+              style={{
+                background: 'color-mix(in srgb, var(--err) 12%, transparent)',
+                border: '1px solid color-mix(in srgb, var(--err) 40%, transparent)',
+                borderRadius: '12px',
+                padding: '12px 14px',
+                fontSize: '13px',
+                color: 'var(--err)',
+                lineHeight: 1.45,
+              }}
+            >
+              {archiveError}
+            </div>
+          )}
+
+          <div style={{ display: 'grid', gap: '10px' }}>
+            <Button
+              variant="primary"
+              size="lg"
+              fullWidth
+              disabled={archiveBusy !== null || counts.total === 0}
+              onClick={() => void handleExportVault()}
+            >
+              <Download size={17} strokeWidth={1.75} aria-hidden="true" />
+              {archiveBusy === 'export'
+                ? 'Preparing Vault archive…'
+                : `Export Vault (${counts.total})`}
+            </Button>
+            <Button
+              variant="secondary"
+              size="lg"
+              fullWidth
+              disabled={archiveBusy !== null}
+              onClick={() => {
+                setArchiveError(null);
+                importInputRef.current?.click();
+              }}
+            >
+              <Upload size={17} strokeWidth={1.75} aria-hidden="true" />
+              {archiveBusy === 'import' ? 'Importing Vault archive…' : 'Import Vault backup'}
+            </Button>
+          </div>
+
+          <p style={{ margin: 0, fontSize: '13px', color: 'var(--tx-3)', lineHeight: 1.5 }}>
+            Exports include question photos, solutions, answers, and mastery progress. Imports
+            safely merge new or updated questions by ID without deleting existing Vault items.
+          </p>
+        </div>
+      </Sheet>
     </div>
   );
 };

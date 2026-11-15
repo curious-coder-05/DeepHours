@@ -1,3 +1,5 @@
+import { readFileSync } from 'node:fs';
+import path from 'node:path';
 import { describe, it } from 'node:test';
 import assert from 'node:assert/strict';
 import {
@@ -186,5 +188,13 @@ describe('Cloud Sync Diff-Check & Budget Hardening', () => {
     assert.equal(ctrl.canWrite(488), true);
     assert.equal(ctrl.canWrite(489), false);
     ctrl.dispose();
+  });
+
+  it('Google Sign-In uses only default basic identity scopes (no Drive scopes or addScope)', () => {
+    const src = readFileSync(path.resolve(import.meta.dirname, './cloudSync.ts'), 'utf8');
+    assert.ok(src.includes('new GoogleAuthProvider()'));
+    assert.equal(src.includes('addScope'), false);
+    assert.equal(src.includes('googleapis.com/auth/drive'), false);
+    assert.equal(src.includes('googleapis.com/drive'), false);
   });
 });
