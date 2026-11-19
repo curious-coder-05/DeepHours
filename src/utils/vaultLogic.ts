@@ -22,12 +22,61 @@ export function clampVaultSolutionText(value: string | undefined): string | unde
   return normalized.slice(0, VAULT_LIMITS.solutionMax);
 }
 
+const SAFE_VAULT_MIMES = new Set([
+  'image/webp',
+  'image/jpeg',
+  'image/png',
+  'image/gif',
+  'image/avif',
+]);
+
+function normalizeFiniteTs(val: unknown, fallback: number): number {
+  const n = Number(val);
+  return Number.isFinite(n) && n >= 0 ? Math.floor(n) : fallback;
+}
+
+function normalizeOptionalTs(val: unknown): number | undefined {
+  if (typeof val !== 'number' || !Number.isFinite(val) || val < 0) return undefined;
+  return Math.floor(val);
+}
+
+function normalizeVaultMime(val: unknown): string {
+  if (typeof val !== 'string') return 'image/webp';
+  const lower = val.trim().toLowerCase();
+  const mapped = lower === 'image/jpg' ? 'image/jpeg' : lower;
+  return SAFE_VAULT_MIMES.has(mapped) ? mapped : 'image/webp';
+}
+
 export function sanitizeVaultItem(raw: VaultItem): VaultItem {
+  const nowFallback = Date.now();
+  const createdAt = normalizeFiniteTs(raw.createdAt, nowFallback);
+  const updatedAt = normalizeFiniteTs(raw.updatedAt, createdAt);
+  const chapterId =
+    typeof raw.chapterId === 'string' && raw.chapterId.trim()
+      ? raw.chapterId.trim().slice(0, 120)
+      : undefined;
+  const mastered = Boolean(raw.mastered);
+  const masteredAt = mastered ? normalizeOptionalTs(raw.masteredAt) : undefined;
+  const lastRevisedAt = normalizeOptionalTs(raw.lastRevisedAt);
+  const deletedAt = normalizeOptionalTs(raw.deletedAt);
+  const driveQId =
+    typeof raw.driveQId === 'string' && raw.driveQId.trim()
+      ? raw.driveQId.trim().slice(0, 200)
+      : undefined;
+  const driveSId =
+    typeof raw.driveSId === 'string' && raw.driveSId.trim()
+      ? raw.driveSId.trim().slice(0, 200)
+      : undefined;
+
   return {
-    ...raw,
+    id: typeof raw.id === 'string' ? raw.id.trim().slice(0, 120) : '',
+    subjectId: typeof raw.subjectId === 'string' ? raw.subjectId.trim().slice(0, 120) : '',
+    ...(chapterId !== undefined ? { chapterId } : {}),
     kind: raw.kind === 'hard' ? 'hard' : 'unsolved',
-    mastered: Boolean(raw.mastered),
-    masteredAt: raw.mastered && typeof raw.masteredAt === 'number' ? raw.masteredAt : undefined,
+    createdAt,
+    updatedAt,
+    mastered,
+    ...(masteredAt !== undefined ? { masteredAt } : {}),
     answerText: clampVaultText(raw.answerText, VAULT_LIMITS.answerMax),
     solutionText: clampVaultSolutionText(raw.solutionText),
     note: clampVaultText(raw.note, VAULT_LIMITS.noteMax),
@@ -35,8 +84,12 @@ export function sanitizeVaultItem(raw: VaultItem): VaultItem {
     qBytes: Math.max(0, Math.round(Number(raw.qBytes) || 0)),
     width: Math.max(0, Math.round(Number(raw.width) || 0)),
     height: Math.max(0, Math.round(Number(raw.height) || 0)),
-    mime: raw.mime || 'image/webp',
+    mime: normalizeVaultMime(raw.mime),
     revisionCount: Math.max(0, Math.round(Number(raw.revisionCount) || 0)),
+    ...(lastRevisedAt !== undefined ? { lastRevisedAt } : {}),
+    ...(deletedAt !== undefined ? { deletedAt } : {}),
+    ...(driveQId !== undefined ? { driveQId } : {}),
+    ...(driveSId !== undefined ? { driveSId } : {}),
     syncState:
       raw.syncState === 'synced' || raw.syncState === 'error' ? raw.syncState : 'pending',
   };

@@ -1,6 +1,8 @@
 import { describe, it } from 'node:test';
 import assert from 'node:assert/strict';
 import {
+  MAX_VAULT_ARCHIVE_ENTRIES,
+  MAX_VAULT_IMAGE_BYTES,
   VAULT_ARCHIVE_FORMAT,
   VAULT_ARCHIVE_VERSION,
   base64ToBytes,
@@ -183,6 +185,131 @@ describe('vaultArchive', () => {
           })
         ),
       /missing or corrupted image/
+    );
+  });
+
+  it('blocks SVG/HTML XSS data URLs, ignores spoofed MIME headers, and strips prototype-pollution/untrusted fields', () => {
+    const validPngDataUrl = 'data:image/png;base64,iVBORw0KGgo=';
+    const svgXssDataUrl = 'data:image/svg+xml;base64,PHN2ZyBvbmxvYWQ9ImFsZXJ0KDEpIi8+';
+
+    // 1. SVG data URL must be rejected in both parseVaultArchiveJson and decodeVaultBlob
+    assert.throws(
+      () =>
+        parseVaultArchiveJson(
+          JSON.stringify({
+            format: VAULT_ARCHIVE_FORMAT,
+            version: VAULT_ARCHIVE_VERSION,
+            entries: [
+              {
+                item: { id: 'vq-svg', subjectId: 'phy' },
+                qImage: { mime: 'image/svg+xml', dataUrl: svgXssDataUrl },
+              },
+            ],
+          })
+        ),
+      /missing or corrupted image/
+    );
+    assert.throws(
+      () =>
+        decodeVaultBlob({
+          mime: 'image/webp',
+          width: 100,
+          height: 100,
+          bytes: 16,
+          dataUrl: svgXssDataUrl,
+        }),
+      /invalid or unsupported image/
+    );
+
+    // 2. Spoofed encoded.mime ('text/html' / 'image/svg+xml') must be ignored in favor of validated raster MIME
+    const decoded = decodeVaultBlob({
+      mime: 'text/html',
+      width: 100,
+      height: 100,
+      bytes: 8,
+      dataUrl: validPngDataUrl,
+    });
+    assert.equal(decoded.mime, 'image/png');
+    assert.equal(decoded.blob.type, 'image/png');
+
+    // 3. Prototype-pollution keys and unknown fields on item are stripped by reviver + strict allowlist
+    const maliciousJson = `{"format":"${VAULT_ARCHIVE_FORMAT}","version":${VAULT_ARCHIVE_VERSION},"entries":[{"item":{"id":"vq-clean","subjectId":"phy","__proto__":{"polluted":true},"constructor":{"prototype":{"x":1}},"evilInjectedField":"bad","note":"safe"},"qImage":{"mime":"text/html","dataUrl":"${validPngDataUrl}"}}]}`;
+    const parsed = parseVaultArchiveJson(maliciousJson);
+    assert.equal(parsed.entries.length, 1);
+    const cleanItem = parsed.entries[0].item as unknown as Record<string, unknown>;
+    assert.equal(cleanItem.evilInjectedField, undefined);
+    assert.equal(({} as Record<string, unknown>).polluted, undefined);
+    assert.equal(parsed.entries[0].qImage.mime, 'image/png');
+    assert.equal(parsed.entries[0].item.mime, 'image/png');
+  });
+
+  it('rejects unpadded/corrupted base64, corrupted sImage, oversized images, and excess entry counts upfront', () => {
+    const validPngDataUrl = 'data:image/png;base64,iVBORw0KGgo=';
+
+    // Unpadded / invalid base64 length (not divisible by 4)
+    assert.throws(
+      () =>
+        parseVaultArchiveJson(
+          JSON.stringify({
+            format: VAULT_ARCHIVE_FORMAT,
+            version: VAULT_ARCHIVE_VERSION,
+            entries: [
+              {
+                item: { id: 'vq-b64', subjectId: 'phy' },
+                qImage: { dataUrl: 'data:image/webp;base64,ABC' },
+              },
+            ],
+          })
+        ),
+      /missing or corrupted image/
+    );
+
+    // Corrupted solution image (sImage) must fail upfront rather than mid-transaction
+    assert.throws(
+      () =>
+        parseVaultArchiveJson(
+          JSON.stringify({
+            format: VAULT_ARCHIVE_FORMAT,
+            version: VAULT_ARCHIVE_VERSION,
+            entries: [
+              {
+                item: { id: 'vq-sol-bad', subjectId: 'phy', hasSolutionImage: true },
+                qImage: { dataUrl: validPngDataUrl },
+                sImage: { dataUrl: 'data:image/svg+xml;base64,PHN2Zy8+' },
+              },
+            ],
+          })
+        ),
+      /missing or corrupted solution image/
+    );
+
+    // Oversized image (> MAX_VAULT_IMAGE_BYTES) rejected
+    const oversizedB64Len = Math.ceil(((MAX_VAULT_IMAGE_BYTES + 64) * 4) / 3 / 4) * 4;
+    const oversizedDataUrl = `data:image/webp;base64,${'A'.repeat(oversizedB64Len)}`;
+    assert.throws(
+      () =>
+        decodeVaultBlob({
+          mime: 'image/webp',
+          width: 1000,
+          height: 1000,
+          bytes: MAX_VAULT_IMAGE_BYTES + 64,
+          dataUrl: oversizedDataUrl,
+        }),
+      /invalid or unsupported image/
+    );
+
+    // Excess entry count (> MAX_VAULT_ARCHIVE_ENTRIES) rejected
+    const tooManyEntries = Array.from({ length: MAX_VAULT_ARCHIVE_ENTRIES + 1 }, () => null);
+    assert.throws(
+      () =>
+        parseVaultArchiveJson(
+          JSON.stringify({
+            format: VAULT_ARCHIVE_FORMAT,
+            version: VAULT_ARCHIVE_VERSION,
+            entries: tooManyEntries,
+          })
+        ),
+      /safety limit/
     );
   });
 

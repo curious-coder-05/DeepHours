@@ -407,34 +407,55 @@ export async function clearAllVaultData(): Promise<void> {
 }
 
 export async function exportVaultArchiveBundle(): Promise<VaultArchiveBundle> {
-  const items = await listVaultItems();
-  const records = await Promise.all(
-    items.map(async (item) => {
-      const [qRec, sRec] = await Promise.all([
-        getVaultBlobRecord(item.id, 'q'),
-        item.hasSolutionImage ? getVaultBlobRecord(item.id, 's') : Promise.resolve(null),
-      ]);
-      return {
-        item,
-        qImage: qRec
-          ? {
-              blob: qRec.blob,
-              width: qRec.width || item.width,
-              height: qRec.height || item.height,
-              mime: qRec.mime || item.mime || 'image/webp',
-            }
-          : null,
-        sImage: sRec
-          ? {
-              blob: sRec.blob,
-              width: sRec.width || item.width,
-              height: sRec.height || item.height,
-              mime: sRec.mime || 'image/webp',
-            }
-          : null,
-      };
-    })
-  );
+  if (!hasIndexedDb()) {
+    return buildVaultArchiveBundle([]);
+  }
+
+  const db = await openVaultDb();
+  let items: VaultItem[] = [];
+  const blobMap = new Map<string, VaultBlobRecord>();
+  try {
+    const tx = db.transaction([STORE_ITEMS, STORE_BLOBS], 'readonly');
+    const [rawItems, rawBlobs] = await Promise.all([
+      idbReq(tx.objectStore(STORE_ITEMS).getAll()) as Promise<VaultItem[]>,
+      idbReq(tx.objectStore(STORE_BLOBS).getAll()) as Promise<VaultBlobRecord[]>,
+    ]);
+    items = (rawItems || [])
+      .filter((it) => it && !it.deletedAt)
+      .map((it) => sanitizeVaultItem(it))
+      .sort((a, b) => b.createdAt - a.createdAt);
+    for (const rec of rawBlobs || []) {
+      if (rec?.key) blobMap.set(rec.key, rec);
+    }
+  } finally {
+    db.close();
+  }
+
+  const records = items.map((item) => {
+    const qRec = blobMap.get(makeBlobKey(item.id, 'q')) || null;
+    const sRec = item.hasSolutionImage
+      ? blobMap.get(makeBlobKey(item.id, 's')) || null
+      : null;
+    return {
+      item,
+      qImage: qRec
+        ? {
+            blob: qRec.blob,
+            width: qRec.width || item.width,
+            height: qRec.height || item.height,
+            mime: qRec.mime || item.mime || 'image/webp',
+          }
+        : null,
+      sImage: sRec
+        ? {
+            blob: sRec.blob,
+            width: sRec.width || item.width,
+            height: sRec.height || item.height,
+            mime: sRec.mime || 'image/webp',
+          }
+        : null,
+    };
+  });
 
   return buildVaultArchiveBundle(records);
 }
@@ -449,22 +470,73 @@ export async function importVaultArchiveBundle(rawJson: string): Promise<{
   const existingItems = await listVaultItems();
   const plan = planVaultArchiveImport(existingItems, bundle.entries);
 
-  for (const entry of plan.toSave) {
+  // Pre-decode ALL blobs before starting any write transaction so malformed data never partially mutates IndexedDB
+  const prepared = plan.toSave.map((entry) => {
     const qDecoded = decodeVaultBlob(entry.qImage);
     const sDecoded = entry.sImage ? decodeVaultBlob(entry.sImage) : null;
-    await saveVaultItem(
-      {
-        ...entry.item,
-        qBytes: qDecoded.blob.size,
-        width: qDecoded.width || entry.item.width,
-        height: qDecoded.height || entry.item.height,
-        mime: qDecoded.mime,
-        hasSolutionImage: Boolean(sDecoded),
-        syncState: 'pending',
-      },
-      qDecoded,
-      sDecoded || 'delete'
-    );
+    const cleanItem = sanitizeVaultItem({
+      ...entry.item,
+      qBytes: qDecoded.blob.size,
+      width: qDecoded.width || entry.item.width,
+      height: qDecoded.height || entry.item.height,
+      mime: qDecoded.mime,
+      hasSolutionImage: Boolean(sDecoded),
+      syncState: 'pending',
+    });
+    return { cleanItem, qDecoded, sDecoded };
+  });
+
+  if (prepared.length > 0) {
+    if (!hasIndexedDb()) {
+      throw new Error('IndexedDB is not available in this environment');
+    }
+    const db = await openVaultDb();
+    try {
+      // Single atomic readwrite transaction: either ALL restored entries commit or IndexedDB rolls back cleanly
+      const tx = db.transaction(
+        [STORE_ITEMS, STORE_BLOBS, STORE_TOMBSTONES],
+        'readwrite'
+      );
+      const itemStore = tx.objectStore(STORE_ITEMS);
+      const blobStore = tx.objectStore(STORE_BLOBS);
+      const tombStore = tx.objectStore(STORE_TOMBSTONES);
+
+      for (const { cleanItem, qDecoded, sDecoded } of prepared) {
+        itemStore.put(cleanItem);
+        tombStore.delete(cleanItem.id);
+        blobStore.put({
+          key: makeBlobKey(cleanItem.id, 'q'),
+          itemId: cleanItem.id,
+          slot: 'q',
+          blob: qDecoded.blob,
+          bytes: qDecoded.blob.size,
+          width: qDecoded.width,
+          height: qDecoded.height,
+          mime: qDecoded.mime,
+          updatedAt: cleanItem.updatedAt,
+        } satisfies VaultBlobRecord);
+
+        if (sDecoded) {
+          blobStore.put({
+            key: makeBlobKey(cleanItem.id, 's'),
+            itemId: cleanItem.id,
+            slot: 's',
+            blob: sDecoded.blob,
+            bytes: sDecoded.blob.size,
+            width: sDecoded.width,
+            height: sDecoded.height,
+            mime: sDecoded.mime,
+            updatedAt: cleanItem.updatedAt,
+          } satisfies VaultBlobRecord);
+        } else {
+          blobStore.delete(makeBlobKey(cleanItem.id, 's'));
+        }
+      }
+      await waitTx(tx);
+    } finally {
+      db.close();
+    }
+    void ensurePersistentStorage();
   }
 
   return {

@@ -301,6 +301,7 @@ const Scene3DInner: React.FC<Scene3DProps> = ({
   continuousRef.current = effectiveContinuous;
 
   const startOrResumeRef = useRef<(() => void) | null>(null);
+  const pauseLoopRef = useRef<(() => void) | null>(null);
 
   // Single active WebGL context guard: overlays suspend background stage scenes synchronously
   useLayoutEffect(() => {
@@ -328,6 +329,8 @@ const Scene3DInner: React.FC<Scene3DProps> = ({
   useEffect(() => {
     if (active && !overlaySuppressed) {
       startOrResumeRef.current?.();
+    } else {
+      pauseLoopRef.current?.();
     }
   }, [active, effectiveContinuous, overlaySuppressed]);
 
@@ -338,6 +341,8 @@ const Scene3DInner: React.FC<Scene3DProps> = ({
 
     let disposed = false;
     let frameId = 0;
+    let singleFrameId = 0;
+    let loopRunning = false;
     let isVisibleInViewport = true;
     let isContextLost = false;
     let rendererInstance: import('three').WebGLRenderer | null = null;
@@ -448,12 +453,15 @@ const Scene3DInner: React.FC<Scene3DProps> = ({
           height: initH,
           requestRender: () => {
             if (!canRun()) return;
+            // If continuous rAF loop is already driving frames, avoid scheduling a competing second draw
+            if (loopRunning && activeRef.current && continuousRef.current) return;
             if (renderBusy) {
               renderDirty = true;
               return;
             }
             renderBusy = true;
-            frameId = window.requestAnimationFrame((now) => {
+            singleFrameId = window.requestAnimationFrame((now) => {
+              singleFrameId = 0;
               renderDirty = false;
               if (!canRun()) {
                 renderBusy = false;
@@ -466,7 +474,7 @@ const Scene3DInner: React.FC<Scene3DProps> = ({
               renderer.render(scene, camera);
               const done = () => {
                 renderBusy = false;
-                if (renderDirty && canRun()) ctx.requestRender();
+                if (renderDirty && canRun() && !loopRunning) ctx.requestRender();
               };
               if (resolution.isSoftwareGl) afterDraw(done);
               else done();
@@ -485,7 +493,10 @@ const Scene3DInner: React.FC<Scene3DProps> = ({
         }
 
         const loop = (now: number) => {
-          if (!canRun() || !activeRef.current) return;
+          if (!canRun() || !activeRef.current) {
+            loopRunning = false;
+            return;
+          }
 
           // Sample active frame deltas for 2s FPS governor
           if (
@@ -504,6 +515,7 @@ const Scene3DInner: React.FC<Scene3DProps> = ({
                 if (evalRes.ready) {
                   governorChecked = true;
                   if (evalRes.shouldDowngrade) {
+                    loopRunning = false;
                     triggerSessionLiteDowngrade();
                     return;
                   }
@@ -526,11 +538,16 @@ const Scene3DInner: React.FC<Scene3DProps> = ({
           controllers?.onTick?.(dt, elapsedTotal, ctx);
           renderer.render(scene, camera);
 
-          if (!continuousRef.current) return;
+          if (!continuousRef.current) {
+            loopRunning = false;
+            return;
+          }
           if (resolution.isSoftwareGl) {
             afterDraw(() => {
               if (canRun() && activeRef.current && continuousRef.current) {
                 loop(performance.now());
+              } else {
+                loopRunning = false;
               }
             });
           } else {
@@ -541,10 +558,15 @@ const Scene3DInner: React.FC<Scene3DProps> = ({
         const startOrResume = () => {
           window.cancelAnimationFrame(frameId);
           window.clearTimeout(frameId);
+          window.cancelAnimationFrame(singleFrameId);
+          singleFrameId = 0;
+          loopRunning = false;
+          renderBusy = false;
           prevGovernorTs = 0;
           if (!canRun()) return;
           lastTime = performance.now();
           if (activeRef.current && continuousRef.current) {
+            loopRunning = true;
             frameId = window.requestAnimationFrame(loop);
           } else {
             // Render crisp static fallback frame on demand
@@ -556,9 +578,13 @@ const Scene3DInner: React.FC<Scene3DProps> = ({
         const pauseLoop = () => {
           window.cancelAnimationFrame(frameId);
           window.clearTimeout(frameId);
+          window.cancelAnimationFrame(singleFrameId);
+          singleFrameId = 0;
+          loopRunning = false;
           renderBusy = false;
           prevGovernorTs = 0;
         };
+        pauseLoopRef.current = pauseLoop;
 
         // ResizeObserver for responsive container sizing
         if (typeof ResizeObserver !== 'undefined') {
@@ -640,8 +666,10 @@ const Scene3DInner: React.FC<Scene3DProps> = ({
     return () => {
       disposed = true;
       startOrResumeRef.current = null;
+      pauseLoopRef.current = null;
       window.cancelAnimationFrame(frameId);
       window.clearTimeout(frameId);
+      window.cancelAnimationFrame(singleFrameId);
       resizeObserver?.disconnect();
       intersectionObserver?.disconnect();
       cleanupVisibility?.();

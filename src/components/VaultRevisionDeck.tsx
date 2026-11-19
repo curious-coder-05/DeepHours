@@ -10,7 +10,9 @@ import {
   Shuffle,
   X,
 } from 'lucide-react';
-import type { Chapter, Subject } from '../types';
+import type { Chapter, PulseHabitState, Subject } from '../types';
+import { fmtHMS, getTimerMetrics } from '../utils/studyLogic';
+import { useTimerTick } from '../utils/timerTicker';
 import {
   INITIAL_REVEAL_STATE,
   orderRevisionDeck,
@@ -30,11 +32,44 @@ export interface VaultRevisionDeckProps {
   chapters: readonly Chapter[];
   deckLabel: string;
   activeTimerText?: string | null;
+  timerState?: PulseHabitState;
   onClose: () => void;
   onRecordRevised: (item: VaultItem) => Promise<void> | void;
   onMarkMastered: (item: VaultItem) => Promise<void> | void;
   onEditItem?: (item: VaultItem) => void;
 }
+
+const LiveRevisionTimerBadge: React.FC<{
+  timerState?: PulseHabitState;
+  fallbackText?: string | null;
+}> = ({ timerState, fallbackText }) => {
+  const isRunning = Boolean(timerState?.activeTimer?.status === 'running');
+  useTimerTick(isRunning);
+  const metrics = timerState?.activeTimer
+    ? getTimerMetrics(timerState, Date.now())
+    : null;
+  const text = metrics
+    ? `${metrics.status === 'paused' ? 'Paused ' : ''}${fmtHMS(metrics.totalActiveMs)}`
+    : fallbackText;
+  if (!text) return null;
+  return (
+    <span
+      className="tabular-nums"
+      style={{
+        padding: '5px 10px',
+        borderRadius: '10px',
+        background: 'var(--ac-soft)',
+        border: '1px solid var(--ac-bd)',
+        color: 'var(--ac-ink)',
+        fontFamily: 'var(--font-mono)',
+        fontSize: '13px',
+        fontWeight: 600,
+      }}
+    >
+      {text}
+    </span>
+  );
+};
 
 export const VaultRevisionDeck: React.FC<VaultRevisionDeckProps> = ({
   open,
@@ -43,6 +78,7 @@ export const VaultRevisionDeck: React.FC<VaultRevisionDeckProps> = ({
   chapters,
   deckLabel,
   activeTimerText,
+  timerState,
   onClose,
   onRecordRevised,
   onMarkMastered,
@@ -61,7 +97,21 @@ export const VaultRevisionDeck: React.FC<VaultRevisionDeckProps> = ({
   const [sUrl, setSUrl] = useState<string | null>(null);
   const [zoomOpen, setZoomOpen] = useState<boolean>(false);
   const urlCacheRef = useRef<Map<string, string>>(new Map());
+  const openRef = useRef<boolean>(open);
+  openRef.current = open;
   const swipeStartRef = useRef<{ x: number; y: number } | null>(null);
+
+  // Revoke all cached Blob URLs on unmount even if unmounted while open
+  useEffect(() => {
+    const cache = urlCacheRef.current;
+    return () => {
+      openRef.current = false;
+      for (const u of cache.values()) {
+        URL.revokeObjectURL(u);
+      }
+      cache.clear();
+    };
+  }, []);
 
   const rebuildDeck = useCallback(
     (useShuffle: boolean) => {
@@ -111,7 +161,9 @@ export const VaultRevisionDeck: React.FC<VaultRevisionDeckProps> = ({
     const cached = urlCacheRef.current.get(key);
     if (cached) return cached;
     const blob = await getVaultBlob(itemId, slot);
-    if (!blob) return null;
+    if (!blob || !openRef.current) return null;
+    const existingAfterAwait = urlCacheRef.current.get(key);
+    if (existingAfterAwait) return existingAfterAwait;
     const url = URL.createObjectURL(blob);
     urlCacheRef.current.set(key, url);
     return url;
@@ -321,23 +373,10 @@ export const VaultRevisionDeck: React.FC<VaultRevisionDeckProps> = ({
           </div>
 
           <div style={{ display: 'flex', alignItems: 'center', gap: '8px', flexShrink: 0 }}>
-            {activeTimerText && (
-              <span
-                className="tabular-nums"
-                style={{
-                  padding: '5px 10px',
-                  borderRadius: '10px',
-                  background: 'var(--ac-soft)',
-                  border: '1px solid var(--ac-bd)',
-                  color: 'var(--ac-ink)',
-                  fontFamily: 'var(--font-mono)',
-                  fontSize: '13px',
-                  fontWeight: 600,
-                }}
-              >
-                {activeTimerText}
-              </span>
-            )}
+            <LiveRevisionTimerBadge
+              timerState={timerState}
+              fallbackText={activeTimerText}
+            />
             <Button
               variant={shuffled ? 'primary' : 'secondary'}
               size="sm"

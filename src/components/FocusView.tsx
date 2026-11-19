@@ -40,6 +40,9 @@ import {
   getTimerMetrics,
   getTodaySubjectMs,
 } from '../utils/studyLogic';
+import { useTimerTick } from '../utils/timerTicker';
+import { triggerHaptic } from '../utils/haptics';
+import { BottomSheet } from './BottomSheet';
 import {
   BarChart,
   Button,
@@ -49,7 +52,6 @@ import {
   Meter,
   Segmented,
   Select,
-  Sheet,
   WindowedList,
 } from './ui';
 import { FocusOrbitScene } from './three/FocusOrbitScene';
@@ -170,6 +172,7 @@ export const FocusView: React.FC<FocusViewProps> = ({
   const curMode: ActiveTimerMode = t?.mode || state.set.defaultMode || 'pomo';
   const isStopwatch = curMode === 'stopwatch';
   const aesthetic: TimerAesthetic = state.set.timerAesthetic || 'neon';
+  useTimerTick(t?.status === 'running');
   const m = getTimerMetrics(state);
 
   const defaultIdleMs =
@@ -385,7 +388,7 @@ export const FocusView: React.FC<FocusViewProps> = ({
         {/* Countdown Quick Presets when idle */}
         {curMode === 'countdown' && !t && (
           <div
-            className="dh-scroll-chips hide-desk"
+            className="dh-edge-fade-rail hide-desk"
             style={{
               justifyContent: 'center',
               marginTop: 4,
@@ -397,15 +400,16 @@ export const FocusView: React.FC<FocusViewProps> = ({
               <Chip
                 key={mins}
                 selected={(state.set.countdownMins || 45) === mins}
-                onClick={() =>
+                onClick={() => {
+                  triggerHaptic('tap');
                   onStartTimer(
                     effectiveSubId,
                     headingInput,
                     'countdown',
                     mins,
                     effectiveChapId || undefined
-                  )
-                }
+                  );
+                }}
               >
                 {mins}m
               </Chip>
@@ -747,7 +751,10 @@ export const FocusView: React.FC<FocusViewProps> = ({
                   <Play size={20} strokeWidth={2} />
                 )
               }
-              onClick={onTogglePause}
+              onClick={() => {
+                triggerHaptic('tap');
+                onTogglePause();
+              }}
               style={{ minWidth: 184 }}
             >
               {t.status === 'running' ? 'Pause session' : 'Resume session'}
@@ -757,15 +764,16 @@ export const FocusView: React.FC<FocusViewProps> = ({
               variant="primary"
               size="xl"
               icon={<Play size={20} strokeWidth={2} />}
-              onClick={() =>
+              onClick={() => {
+                triggerHaptic('tap');
                 onStartTimer(
                   effectiveSubId,
                   headingInput,
                   curMode,
                   undefined,
                   effectiveChapId || undefined
-                )
-              }
+                );
+              }}
               style={{ minWidth: 196 }}
             >
               Start focus
@@ -776,6 +784,7 @@ export const FocusView: React.FC<FocusViewProps> = ({
             <Button
               variant="secondary"
               size="lg"
+              className="dh-glass-btn"
               icon={
                 t?.phase === 'break' ? (
                   <Zap size={17} strokeWidth={1.75} />
@@ -783,7 +792,10 @@ export const FocusView: React.FC<FocusViewProps> = ({
                   <Coffee size={17} strokeWidth={1.75} />
                 )
               }
-              onClick={onTogglePomoPhase}
+              onClick={() => {
+                triggerHaptic('tap');
+                onTogglePomoPhase();
+              }}
             >
               {t?.phase === 'break' ? 'Work phase' : 'Break'}
             </Button>
@@ -793,8 +805,12 @@ export const FocusView: React.FC<FocusViewProps> = ({
             <Button
               variant="secondary"
               size="lg"
+              className="dh-glass-btn"
               icon={<SkipForward size={17} strokeWidth={1.75} />}
-              onClick={onNextMockSection}
+              onClick={() => {
+                triggerHaptic('tap');
+                onNextMockSection();
+              }}
             >
               Next section
             </Button>
@@ -805,7 +821,10 @@ export const FocusView: React.FC<FocusViewProps> = ({
               variant="danger"
               size="lg"
               icon={<Square size={16} strokeWidth={2} />}
-              onClick={onStopAndReflect}
+              onClick={() => {
+                triggerHaptic('stop');
+                onStopAndReflect();
+              }}
             >
               Stop &amp; log
             </Button>
@@ -950,7 +969,7 @@ export const FocusView: React.FC<FocusViewProps> = ({
       </div>
 
       {/* 3. Focus Sounds Card */}
-      <Card className="hide-desk">
+      <Card className="hide-desk dh-today-card">
         <div className="split" style={{ marginBottom: 10 }}>
           <div className="row" style={{ gap: 8 }}>
             {state.set.soundscape === 'off' ? (
@@ -981,7 +1000,7 @@ export const FocusView: React.FC<FocusViewProps> = ({
         </div>
 
         <div
-          className="dh-scroll-chips"
+          className="dh-edge-fade-rail"
           style={{
             marginBottom: state.set.soundscape !== 'off' ? 12 : 0,
           }}
@@ -990,7 +1009,10 @@ export const FocusView: React.FC<FocusViewProps> = ({
             <Chip
               key={k}
               selected={state.set.soundscape === k}
-              onClick={() => onSetSoundscape(k)}
+              onClick={() => {
+                triggerHaptic('tap');
+                onSetSoundscape(k);
+              }}
             >
               {lbl}
             </Chip>
@@ -1025,13 +1047,13 @@ export const FocusView: React.FC<FocusViewProps> = ({
       </Card>
 
       {/* 4. Session Checklist Card */}
-      <Card className="hide-desk">
+      <Card className="hide-desk dh-today-card">
         <div className="split" style={{ marginBottom: 10 }}>
           <div className="row" style={{ gap: 8 }}>
             <ListChecks size={18} strokeWidth={1.75} style={{ color: 'var(--ac-ink)' }} />
             <h3 style={{ margin: 0, fontSize: 18 }}>Session checklist</h3>
           </div>
-          <small style={{ fontSize: 13 }}>
+          <small className="dh-meta-count">
             {globalTodos.filter((x) => x.done).length}/{globalTodos.length} done
           </small>
         </div>
@@ -1041,6 +1063,7 @@ export const FocusView: React.FC<FocusViewProps> = ({
             e.preventDefault();
             const clean = newTodoText.trim();
             if (!clean) return;
+            triggerHaptic('tap');
             onAddTodo(clean);
             setNewTodoText('');
           }}
@@ -1057,8 +1080,9 @@ export const FocusView: React.FC<FocusViewProps> = ({
           />
           <Button
             type="submit"
-            variant="primary"
+            variant="secondary"
             size="md"
+            className="dh-glass-accent-btn"
             icon={<Plus size={15} strokeWidth={2} />}
           >
             Add
@@ -1075,13 +1099,16 @@ export const FocusView: React.FC<FocusViewProps> = ({
                   background: 'var(--sf-2)',
                   padding: '8px 12px',
                   borderRadius: 12,
-                  border: '1px solid var(--line)',
+                  border: '1px solid var(--hairline)',
                   gap: 10,
                 }}
               >
                 <button
                   type="button"
-                  onClick={() => onToggleTodo(td.id)}
+                  onClick={() => {
+                    triggerHaptic('success');
+                    onToggleTodo(td.id);
+                  }}
                   style={{
                     flex: 1,
                     display: 'flex',
@@ -1121,7 +1148,7 @@ export const FocusView: React.FC<FocusViewProps> = ({
       </Card>
 
       {/* 5. Today's Logged Sessions */}
-      <Card className="hide-desk">
+      <Card className="hide-desk dh-today-card">
         <div className="split" style={{ marginBottom: 10 }}>
           <div className="row" style={{ gap: 8 }}>
             <BookOpen size={18} strokeWidth={1.75} style={{ color: 'var(--ac-ink)' }} />
@@ -1132,6 +1159,7 @@ export const FocusView: React.FC<FocusViewProps> = ({
           <Button
             variant="secondary"
             size="sm"
+            className="dh-glass-btn"
             icon={<Plus size={14} strokeWidth={2} />}
             onClick={() =>
               onOpenManualSession(effectiveSubId, effectiveChapId || undefined)
@@ -1171,12 +1199,22 @@ export const FocusView: React.FC<FocusViewProps> = ({
                       background: 'var(--sf-2)',
                       padding: '10px 12px',
                       borderRadius: 12,
-                      borderLeft: `3px solid ${sSub.color}`,
+                      border: '1px solid var(--hairline)',
                       gap: 10,
                     }}
                   >
                     <div style={{ minWidth: 0, flex: 1 }}>
-                      <div className="row" style={{ gap: 6, flexWrap: 'wrap' }}>
+                      <div className="row" style={{ gap: 7, flexWrap: 'wrap' }}>
+                        <span
+                          aria-hidden="true"
+                          style={{
+                            width: 8,
+                            height: 8,
+                            borderRadius: '50%',
+                            background: sSub.color,
+                            flexShrink: 0,
+                          }}
+                        />
                         <b
                           style={{
                             fontSize: 14,
@@ -1188,13 +1226,11 @@ export const FocusView: React.FC<FocusViewProps> = ({
                           {sSub.e} {heading}
                         </b>
                         <span
-                          className="pill"
+                          className="tabular-nums"
                           style={{
                             fontSize: 13,
-                            padding: '1px 8px',
-                            background: 'var(--sf-3)',
-                            color: 'var(--tx)',
-                            fontVariantNumeric: 'tabular-nums',
+                            fontWeight: 600,
+                            color: 'var(--ac-ink)',
                           }}
                         >
                           {fmtHMShort(ses.activeMs)}
@@ -1216,6 +1252,7 @@ export const FocusView: React.FC<FocusViewProps> = ({
                     <Button
                       variant="secondary"
                       size="sm"
+                      className="dh-glass-btn"
                       icon={<Edit3 size={13} strokeWidth={1.75} />}
                       onClick={() => onEditSession(ses.id)}
                     >
@@ -1240,8 +1277,8 @@ export const FocusView: React.FC<FocusViewProps> = ({
         )}
       </Card>
 
-      {/* Subject, Chapter & Topic Sheet */}
-      <Sheet
+      {/* Subject, Chapter & Topic Frosted BottomSheet */}
+      <BottomSheet
         open={topicSheetOpen}
         onClose={() => setTopicSheetOpen(false)}
         title="Subject & topic"
@@ -1250,18 +1287,34 @@ export const FocusView: React.FC<FocusViewProps> = ({
             ? 'Switching saves your current study slice and starts the new topic seamlessly'
             : 'Choose what you are studying for this focus block'
         }
+        footer={
+          <Button
+            variant="primary"
+            size="lg"
+            fullWidth
+            className="dh-focus-cta"
+            onClick={() => {
+              triggerHaptic('tap');
+              if (t) {
+                onSwitchTopic(effectiveSubId, headingInput, effectiveChapId || undefined);
+              }
+              setTopicSheetOpen(false);
+            }}
+          >
+            {t ? 'Apply switch' : 'Done'}
+          </Button>
+        }
       >
-        <div>
-          <div style={{ fontSize: 13, fontWeight: 600, color: 'var(--tx-2)', marginBottom: 8 }}>
-            Subject
-          </div>
-          <div className="dh-scroll-chips">
+        <div className="dh-sheet-field">
+          <span className="dh-sheet-field-label">Subject</span>
+          <div className="dh-edge-fade-rail">
             {activeSubjects.map((s) => (
               <Chip
                 key={s.id}
                 selected={effectiveSubId === s.id}
                 colorDot={s.color}
                 onClick={() => {
+                  triggerHaptic('tap');
                   setSelectedSubjectId(s.id);
                   setSelectedChapterId('');
                   if (t) {
@@ -1281,10 +1334,8 @@ export const FocusView: React.FC<FocusViewProps> = ({
           </div>
         </div>
 
-        <div>
-          <div style={{ fontSize: 13, fontWeight: 600, color: 'var(--tx-2)', marginBottom: 8 }}>
-            Syllabus chapter
-          </div>
+        <div className="dh-sheet-field">
+          <span className="dh-sheet-field-label">Syllabus chapter</span>
           <Select
             aria-label="Link syllabus chapter"
             title={`Link ${curSubject.name} chapter`}
@@ -1305,62 +1356,41 @@ export const FocusView: React.FC<FocusViewProps> = ({
           />
         </div>
 
-        <div>
-          <label
-            htmlFor="sessionHeadingInput"
-            style={{
-              display: 'block',
-              fontSize: 13,
-              fontWeight: 600,
-              color: 'var(--tx-2)',
-              marginBottom: 8,
-            }}
-          >
+        <div className="dh-sheet-field">
+          <label htmlFor="sessionHeadingInput" className="dh-sheet-field-label">
             Session topic or goal
           </label>
-          <div className="row" style={{ gap: 8, flexWrap: 'wrap' }}>
-            <input
-              id="sessionHeadingInput"
-              type="text"
-              placeholder="e.g., Rotational Mechanics PYQs, NCERT Ch 4..."
-              value={headingInput}
-              onChange={(e) => setHeadingInput(e.target.value)}
-              onKeyDown={(e) => {
-                if (e.key === 'Enter') {
-                  e.preventDefault();
-                  if (t) {
-                    onSwitchTopic(effectiveSubId, headingInput, effectiveChapId || undefined);
-                  }
-                  setTopicSheetOpen(false);
-                }
-              }}
-              style={{ flex: '1 1 220px', minHeight: 44, fontSize: 14 }}
-            />
-            <Button
-              variant="primary"
-              size="md"
-              onClick={() => {
+          <input
+            id="sessionHeadingInput"
+            type="text"
+            placeholder="e.g., Rotational Mechanics PYQs, NCERT Ch 4..."
+            value={headingInput}
+            onChange={(e) => setHeadingInput(e.target.value)}
+            onKeyDown={(e) => {
+              if (e.key === 'Enter') {
+                e.preventDefault();
+                triggerHaptic('tap');
                 if (t) {
                   onSwitchTopic(effectiveSubId, headingInput, effectiveChapId || undefined);
                 }
                 setTopicSheetOpen(false);
-              }}
-            >
-              {t ? 'Apply switch' : 'Done'}
-            </Button>
-          </div>
+              }
+            }}
+            style={{ width: '100%', minHeight: 46, fontSize: 14 }}
+          />
 
           {recentHeadings.length > 0 && (
-            <div style={{ marginTop: 12 }}>
+            <div style={{ marginTop: 8 }}>
               <div style={{ fontSize: 13, color: 'var(--tx-3)', marginBottom: 6 }}>
                 Recent topics
               </div>
-              <div className="dh-scroll-chips">
+              <div className="dh-edge-fade-rail">
                 {recentHeadings.map((h) => (
                   <Chip
                     key={`${h.subjectId}_${h.heading}`}
                     selected={headingInput === h.heading}
                     onClick={() => {
+                      triggerHaptic('tap');
                       setSelectedSubjectId(h.subjectId);
                       setHeadingInput(h.heading);
                       if (t) {
@@ -1375,7 +1405,7 @@ export const FocusView: React.FC<FocusViewProps> = ({
             </div>
           )}
         </div>
-      </Sheet>
+      </BottomSheet>
     </div>
   );
 };

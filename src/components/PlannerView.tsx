@@ -10,6 +10,8 @@ import {
   getTodaySubjectMs,
   pad,
 } from '../utils/studyLogic';
+import { useTimerTick } from '../utils/timerTicker';
+import { pluralWord } from '../utils/format';
 import { Button } from './ui/Button';
 import { Card } from './ui/Card';
 import { Chip } from './ui/Chip';
@@ -72,11 +74,12 @@ export const PlannerView: React.FC<PlannerViewProps> = ({
     [state.sessions, sel]
   );
 
-  const now = Date.now();
   const isLiveToday =
     Boolean(state.activeTimer) &&
     sel === todayKey &&
     state.activeTimer?.phase !== 'break';
+  useTimerTick(isLiveToday && state.activeTimer?.status === 'running');
+  const now = Date.now();
   const liveMetrics = isLiveToday ? getTimerMetrics(state, now) : null;
 
   const actualSlots: Record<number, SlotData> = {};
@@ -261,8 +264,9 @@ export const PlannerView: React.FC<PlannerViewProps> = ({
             </p>
           </div>
           <Button
-            variant="primary"
+            variant="secondary"
             size="sm"
+            className="dh-glass-accent-btn"
             icon={<Plus size={16} />}
             onClick={() => onOpenManualSession()}
           >
@@ -275,7 +279,10 @@ export const PlannerView: React.FC<PlannerViewProps> = ({
             <Stat label="Total studied" value={fmtHMShort(totalStudiedMs)} />
           </div>
           <div id="gridSessionsCountPill">
-            <Stat label="Sessions" value={String(sessionsCount)} />
+            <Stat
+              label={pluralWord(sessionsCount, 'Session', 'Sessions')}
+              value={String(sessionsCount)}
+            />
           </div>
           <div id="gridTimeSpanPill">
             <Stat label="First → last" value={spanText} />

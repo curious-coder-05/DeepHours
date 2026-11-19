@@ -191,6 +191,9 @@ export const StudySkylineScene: React.FC<StudySkylineSceneProps> = ({
   const rangeModeRef = useRef(rangeMode);
   rangeModeRef.current = rangeMode;
 
+  const ambientPausedRef = useRef(ambientPaused);
+  ambientPausedRef.current = ambientPaused;
+
   const [selectedIdx, setSelectedIdx] = useState<number | null>(() => {
     for (let i = cityDays.length - 1; i >= 0; i--) {
       if (!cityDays[i].future && cityDays[i].hrs > 0) return i;
@@ -252,14 +255,28 @@ export const StudySkylineScene: React.FC<StudySkylineSceneProps> = ({
 
     const totalDays = Math.max(1, cityDays.length);
     const durationMs = 4500;
-    const startTs = performance.now();
+    let startTs = performance.now();
+    let hiddenAt: number | null = null;
+    let lastEmittedDayIdx = -1;
     let rafId = 0;
 
     const step = (now: number) => {
+      if (typeof document !== 'undefined' && document.hidden) {
+        if (hiddenAt === null) hiddenAt = now;
+        rafId = window.requestAnimationFrame(step);
+        return;
+      }
+      if (hiddenAt !== null) {
+        startTs += now - hiddenAt;
+        hiddenAt = null;
+      }
       const t = Math.min(1, (now - startTs) / durationMs);
       replayProgressRef.current = t;
       const curDayIdx = Math.min(totalDays - 1, Math.floor(t * totalDays));
-      setReplayIndex(curDayIdx);
+      if (curDayIdx !== lastEmittedDayIdx) {
+        lastEmittedDayIdx = curDayIdx;
+        setReplayIndex(curDayIdx);
+      }
       rebuildCityRef.current?.(selectedIdx, t);
       sceneCtxRef.current?.requestRender();
       if (t < 1) {
@@ -716,6 +733,7 @@ export const StudySkylineScene: React.FC<StudySkylineSceneProps> = ({
                 return;
               }
 
+              if (e.target !== canvas) return;
               const now = performance.now();
               if (now - lastRaycastTs < 50) return;
               lastRaycastTs = now;
@@ -760,7 +778,7 @@ export const StudySkylineScene: React.FC<StudySkylineSceneProps> = ({
 
             return {
               onTick: (dt, elapsed) => {
-                if (!isDragging && !introActive && !resolution.isSoftwareGl && !ambientPaused) {
+                if (!isDragging && !introActive && !resolution.isSoftwareGl && !ambientPausedRef.current) {
                   targetAzimuth += dt * 0.07;
                 }
                 const dampRate = introActive ? 3.2 : 6.2;

@@ -434,6 +434,8 @@ export const SyllabusGalaxyScene: React.FC<SyllabusGalaxySceneProps> = ({
             const dummyPos = new THREE.Vector3();
             const dummyQuat = new THREE.Quaternion();
             const dummyScale = new THREE.Vector3();
+            const invRotY = new THREE.Quaternion();
+            const yAxis = new THREE.Vector3(0, 1, 0);
             const cColor = new THREE.Color();
             const haloColor = new THREE.Color();
             const dimBg = new THREE.Color('#202632');
@@ -446,11 +448,8 @@ export const SyllabusGalaxyScene: React.FC<SyllabusGalaxySceneProps> = ({
               const links = curLayout.links;
               const subFilter = activeSubjectIdRef.current;
 
-              // Inverse galaxy Y rotation so billboarded halos still face camera cleanly
-              const invRotY = new THREE.Quaternion().setFromAxisAngle(
-                new THREE.Vector3(0, 1, 0),
-                -galaxyGroup.rotation.y
-              );
+              // Inverse galaxy Y rotation so billboarded halos still face camera cleanly (zero per-frame alloc)
+              invRotY.setFromAxisAngle(yAxis, -galaxyGroup.rotation.y);
               const billboardQuat = invRotY.multiply(camera.quaternion);
 
               if (nodes.length === 0) {
@@ -714,6 +713,7 @@ export const SyllabusGalaxyScene: React.FC<SyllabusGalaxySceneProps> = ({
                 return;
               }
 
+              if (e.target !== canvas) return;
               const now = performance.now();
               if (now - lastHoverTs < 50) return;
               lastHoverTs = now;

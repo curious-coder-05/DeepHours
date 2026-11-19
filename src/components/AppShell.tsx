@@ -8,8 +8,9 @@ import {
   Timer,
   Users,
 } from 'lucide-react';
-import type { AppTab, SyncStatus, TimerMetrics } from '../types';
-import { fmtHMS } from '../utils/studyLogic';
+import type { AppTab, PulseHabitState, SyncStatus, TimerMetrics } from '../types';
+import { fmtHMS, getTimerMetrics } from '../utils/studyLogic';
+import { useTimerTick } from '../utils/timerTicker';
 import { BrandLogo, IconButton, TopBar } from './ui';
 
 export type MainNavTab = 'today' | 'focus' | 'prep' | 'stats' | 'groups';
@@ -21,18 +22,125 @@ export interface AppShellProps {
   onCloseSettings: () => void;
   topBarTitle: string;
   topBarSubtitle?: string;
-  avatarEmoji: string;
   syncStatus: SyncStatus;
   isOnline: boolean;
   isSignedIn: boolean;
+  streakCount: number;
+  streakMetToday: boolean;
+  level: number;
+  xpProgressPct: number;
+  onOpenDrawer: () => void;
+  onBackFromSettings: () => void;
+  onOpenStreak: () => void;
+  onOpenProfile: () => void;
   onOpenQuickActions: () => void;
-  onOpenSettings: () => void;
-  onOpenSyncSettings: () => void;
   activeMetrics: TimerMetrics | null;
+  timerState?: PulseHabitState;
   onToggleTimerPause: () => void;
   todayPct: number;
   children: React.ReactNode;
 }
+
+const LiveMiniTimerBar: React.FC<{
+  fallbackMetrics: TimerMetrics;
+  timerState?: PulseHabitState;
+  onOpenFocus: () => void;
+  onToggleTimerPause: () => void;
+}> = ({ fallbackMetrics, timerState, onOpenFocus, onToggleTimerPause }) => {
+  const isRunning = Boolean(
+    timerState
+      ? timerState.activeTimer?.status === 'running'
+      : fallbackMetrics.status === 'running'
+  );
+  useTimerTick(isRunning);
+  const liveMetrics =
+    (timerState?.activeTimer ? getTimerMetrics(timerState, Date.now()) : null) ||
+    fallbackMetrics;
+
+  return (
+    <div
+      className="dh-mini-timer"
+      role="region"
+      aria-label="Active study timer"
+    >
+      <button
+        type="button"
+        onClick={onOpenFocus}
+        style={{
+          flex: 1,
+          minWidth: 0,
+          background: 'transparent',
+          border: 0,
+          padding: 0,
+          minHeight: '40px',
+          display: 'flex',
+          alignItems: 'center',
+          gap: '10px',
+          textAlign: 'left',
+        }}
+      >
+        <span
+          aria-hidden="true"
+          style={{
+            width: '10px',
+            height: '10px',
+            borderRadius: '99px',
+            background: liveMetrics.subject.color,
+            flexShrink: 0,
+          }}
+        />
+        <span style={{ minWidth: 0, flex: 1 }}>
+          <span
+            style={{
+              display: 'block',
+              fontSize: '14px',
+              fontWeight: 600,
+              color: 'var(--tx)',
+              overflow: 'hidden',
+              textOverflow: 'ellipsis',
+              whiteSpace: 'nowrap',
+            }}
+          >
+            {liveMetrics.heading}
+          </span>
+          <span style={{ display: 'block', fontSize: '13px', color: 'var(--tx-2)' }}>
+            {liveMetrics.status === 'paused' ? 'Paused' : 'Studying'} ·{' '}
+            {liveMetrics.subject.name}
+          </span>
+        </span>
+        <span
+          className="mono"
+          style={{
+            fontSize: '15px',
+            fontWeight: 700,
+            color: liveMetrics.status === 'paused' ? 'var(--warn-ink)' : 'var(--ok-ink)',
+            flexShrink: 0,
+          }}
+        >
+          {fmtHMS(liveMetrics.totalActiveMs)}
+        </span>
+      </button>
+
+      <IconButton
+        aria-label={
+          liveMetrics.status === 'running' ? 'Pause session' : 'Resume session'
+        }
+        size={40}
+        variant="primary"
+        onClick={(e) => {
+          e.stopPropagation();
+          onToggleTimerPause();
+        }}
+      >
+        {liveMetrics.status === 'running' ? (
+          <Pause size={18} strokeWidth={2} aria-hidden="true" />
+        ) : (
+          <Play size={18} strokeWidth={2} aria-hidden="true" />
+        )}
+      </IconButton>
+    </div>
+  );
+};
 
 const NAV_ITEMS: Array<{
   id: MainNavTab;
@@ -53,14 +161,20 @@ export const AppShell: React.FC<AppShellProps> = ({
   onCloseSettings,
   topBarTitle,
   topBarSubtitle,
-  avatarEmoji,
   syncStatus,
   isOnline,
   isSignedIn,
+  streakCount,
+  streakMetToday,
+  level,
+  xpProgressPct,
+  onOpenDrawer,
+  onBackFromSettings,
+  onOpenStreak,
+  onOpenProfile,
   onOpenQuickActions,
-  onOpenSettings,
-  onOpenSyncSettings,
   activeMetrics,
+  timerState,
   onToggleTimerPause,
   todayPct,
   children,
@@ -119,13 +233,19 @@ export const AppShell: React.FC<AppShellProps> = ({
         <TopBar
           title={topBarTitle}
           subtitle={topBarSubtitle}
-          avatarEmoji={avatarEmoji}
           syncStatus={syncStatus}
           isOnline={isOnline}
           isSignedIn={isSignedIn}
+          streakCount={streakCount}
+          streakMetToday={streakMetToday}
+          level={level}
+          xpProgressPct={xpProgressPct}
+          settingsMode={settingsOpen}
+          onOpenDrawer={onOpenDrawer}
+          onBackFromSettings={onBackFromSettings}
+          onOpenStreak={onOpenStreak}
+          onOpenProfile={onOpenProfile}
           onOpenQuickActions={onOpenQuickActions}
-          onOpenSettings={onOpenSettings}
-          onOpenSyncSettings={onOpenSyncSettings}
         />
 
         <div
@@ -141,87 +261,12 @@ export const AppShell: React.FC<AppShellProps> = ({
 
       {/* Mini Active Timer Bar when away from Focus */}
       {showMiniTimer && activeMetrics && (
-        <div
-          className="dh-mini-timer"
-          role="region"
-          aria-label="Active study timer"
-        >
-          <button
-            type="button"
-            onClick={() => handleNavClick('focus')}
-            style={{
-              flex: 1,
-              minWidth: 0,
-              background: 'transparent',
-              border: 0,
-              padding: 0,
-              minHeight: '40px',
-              display: 'flex',
-              alignItems: 'center',
-              gap: '10px',
-              textAlign: 'left',
-            }}
-          >
-            <span
-              aria-hidden="true"
-              style={{
-                width: '10px',
-                height: '10px',
-                borderRadius: '99px',
-                background: activeMetrics.subject.color,
-                flexShrink: 0,
-              }}
-            />
-            <span style={{ minWidth: 0, flex: 1 }}>
-              <span
-                style={{
-                  display: 'block',
-                  fontSize: '14px',
-                  fontWeight: 600,
-                  color: 'var(--tx)',
-                  overflow: 'hidden',
-                  textOverflow: 'ellipsis',
-                  whiteSpace: 'nowrap',
-                }}
-              >
-                {activeMetrics.heading}
-              </span>
-              <span style={{ display: 'block', fontSize: '13px', color: 'var(--tx-2)' }}>
-                {activeMetrics.status === 'paused' ? 'Paused' : 'Studying'} ·{' '}
-                {activeMetrics.subject.name}
-              </span>
-            </span>
-            <span
-              className="mono"
-              style={{
-                fontSize: '15px',
-                fontWeight: 700,
-                color: activeMetrics.status === 'paused' ? 'var(--warn-ink)' : 'var(--ok-ink)',
-                flexShrink: 0,
-              }}
-            >
-              {fmtHMS(activeMetrics.totalActiveMs)}
-            </span>
-          </button>
-
-          <IconButton
-            aria-label={
-              activeMetrics.status === 'running' ? 'Pause session' : 'Resume session'
-            }
-            size={40}
-            variant="primary"
-            onClick={(e) => {
-              e.stopPropagation();
-              onToggleTimerPause();
-            }}
-          >
-            {activeMetrics.status === 'running' ? (
-              <Pause size={18} strokeWidth={2} aria-hidden="true" />
-            ) : (
-              <Play size={18} strokeWidth={2} aria-hidden="true" />
-            )}
-          </IconButton>
-        </div>
+        <LiveMiniTimerBar
+          fallbackMetrics={activeMetrics}
+          timerState={timerState}
+          onOpenFocus={() => handleNavClick('focus')}
+          onToggleTimerPause={onToggleTimerPause}
+        />
       )}
 
       {/* Mobile 5-Tab Bottom Bar (<768px, NO FAB) */}

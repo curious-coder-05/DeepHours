@@ -38,23 +38,19 @@ import {
   Switch,
 } from './ui';
 
-export type SettingsSection =
-  | 'profile'
-  | 'sync'
-  | 'study'
-  | 'targets'
-  | 'exams'
-  | 'subjects'
-  | 'habits'
-  | 'appearance'
-  | 'notifications'
-  | 'data'
-  | 'about';
+import {
+  SETTINGS_SECTION_META,
+  type SettingsSectionId,
+} from '../utils/navHelpers';
+
+export type SettingsSection = SettingsSectionId;
 
 export interface SettingsViewProps {
   state: PulseHabitState;
   activeSection?: SettingsSection | null;
   onChangeSection?: (section: SettingsSection | null) => void;
+  onBack?: () => void;
+  hideSubHeader?: boolean;
   amoled?: boolean;
   onToggleAmoled?: (enabled: boolean) => void;
   onNewHabit: () => void;
@@ -140,60 +136,14 @@ const DAY_RESET_OPTIONS: SelectOption<string>[] = [0, 1, 2, 3, 4, 5, 6].map((h) 
       : `Sessions between 00:00 and ${pad(h)}:00 count toward previous day`,
 }));
 
-const SECTION_META: Record<
-  SettingsSection,
-  { title: string; subtitle: string }
-> = {
-  profile: {
-    title: 'Profile and level',
-    subtitle: 'Avatar, study identity, and XP breakdown',
-  },
-  sync: {
-    title: 'Account and cloud sync',
-    subtitle: 'Google backup, sync quota, and privacy controls',
-  },
-  study: {
-    title: 'Study preferences',
-    subtitle: 'Day reset hour, week start, timer style, and PiP engine',
-  },
-  targets: {
-    title: 'Goals and targets',
-    subtitle: 'Daily minimum, mock duration, revision intervals, and subject quotas',
-  },
-  exams: {
-    title: 'Exams',
-    subtitle: 'Manage D-Day countdowns and your primary exam target',
-  },
-  subjects: {
-    title: 'Subjects',
-    subtitle: 'Customize active subjects, icons, and accent colors',
-  },
-  habits: {
-    title: 'Habits',
-    subtitle: 'Create, edit, and organize daily or auto-synced habits',
-  },
-  appearance: {
-    title: 'Appearance',
-    subtitle: 'Theme, AMOLED black, accent color, and 3D depth',
-  },
-  notifications: {
-    title: 'Notifications and sound',
-    subtitle: 'Chimes, haptics, reminders, and app install',
-  },
-  data: {
-    title: 'Data and backup',
-    subtitle: 'Export JSON/CSV, restore backups, or reset device storage',
-  },
-  about: {
-    title: 'About Deep Hours',
-    subtitle: 'Version info and offline storage details',
-  },
-};
+const SECTION_META = SETTINGS_SECTION_META;
 
 export const SettingsView: React.FC<SettingsViewProps> = ({
   state,
   activeSection: controlledSection,
   onChangeSection,
+  onBack,
+  hideSubHeader = false,
   amoled = false,
   onToggleAmoled,
   onNewHabit,
@@ -437,36 +387,41 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
 
   return (
     <div style={{ display: 'grid', gap: '20px', paddingBottom: '20px' }}>
-      {/* Sub-view Header */}
-      <div
-        style={{
-          display: 'flex',
-          alignItems: 'flex-start',
-          gap: '12px',
-          paddingBottom: '4px',
-          minWidth: 0,
-          maxWidth: '100%',
-        }}
-      >
-        <Button
-          variant="secondary"
-          size="md"
-          onClick={() => setSection(null)}
-          aria-label="Back to settings"
-          style={{ flexShrink: 0, whiteSpace: 'nowrap' }}
+      {/* Sub-view Header (omitted when TopBar renders sticky Back + title + menu bar) */}
+      {!hideSubHeader && (
+        <div
+          style={{
+            display: 'flex',
+            alignItems: 'flex-start',
+            gap: '12px',
+            paddingBottom: '4px',
+            minWidth: 0,
+            maxWidth: '100%',
+          }}
         >
-          <ArrowLeft size={16} strokeWidth={1.75} aria-hidden="true" />
-          Settings
-        </Button>
-        <div style={{ minWidth: 0, flex: 1, overflowWrap: 'break-word' }}>
-          <h2 style={{ margin: 0, fontSize: '20px', fontWeight: 600, lineHeight: 1.25 }}>
-            {meta.title}
-          </h2>
-          <div style={{ fontSize: '13px', color: 'var(--tx-2)', lineHeight: 1.35 }}>
-            {meta.subtitle}
+          <Button
+            variant="secondary"
+            size="md"
+            onClick={() => {
+              if (onBack) onBack();
+              else setSection(null);
+            }}
+            aria-label={onBack ? 'Back' : 'Back to settings'}
+            style={{ flexShrink: 0, whiteSpace: 'nowrap' }}
+          >
+            <ArrowLeft size={16} strokeWidth={1.75} aria-hidden="true" />
+            {onBack ? 'Back' : 'Settings'}
+          </Button>
+          <div style={{ minWidth: 0, flex: 1, overflowWrap: 'break-word' }}>
+            <h2 style={{ margin: 0, fontSize: '20px', fontWeight: 600, lineHeight: 1.25 }}>
+              {meta.title}
+            </h2>
+            <div style={{ fontSize: '13px', color: 'var(--tx-2)', lineHeight: 1.35 }}>
+              {meta.subtitle}
+            </div>
           </div>
         </div>
-      </div>
+      )}
 
       {/* 1. Profile and level */}
       {activeSection === 'profile' && (

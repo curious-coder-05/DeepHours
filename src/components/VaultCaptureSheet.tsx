@@ -1,4 +1,4 @@
-import React, { useEffect, useMemo, useRef, useState } from 'react';
+import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { Camera, Check, Crop, ImagePlus, Trash2 } from 'lucide-react';
 import type { Chapter, Subject } from '../types';
 import { uid } from '../utils/studyLogic';
@@ -11,6 +11,8 @@ import {
 import { clampVaultSolutionText, clampVaultText } from '../utils/vaultLogic';
 import { getVaultBlob, saveVaultItem } from '../utils/vaultStore';
 import { VAULT_LIMITS, type VaultItem, type VaultKind } from '../utils/vaultTypes';
+import { triggerHaptic } from '../utils/haptics';
+import { BottomSheet } from './BottomSheet';
 import { VaultCropper } from './VaultCropper';
 import {
   Button,
@@ -19,7 +21,6 @@ import {
   Field,
   Segmented,
   Select,
-  Sheet,
 } from './ui';
 
 const LAST_SUBJECT_KEY = 'dh_vault_last_subject';
@@ -98,26 +99,63 @@ export const VaultCaptureSheet: React.FC<VaultCaptureSheetProps> = ({
   const sCameraRef = useRef<HTMLInputElement | null>(null);
   const sGalleryRef = useRef<HTMLInputElement | null>(null);
 
+  const qPreviewUrlRef = useRef<string | null>(null);
+  const sPreviewUrlRef = useRef<string | null>(null);
+  const qSourceRef = useRef<ImageBitmap | HTMLImageElement | null>(null);
+  const sSourceRef = useRef<ImageBitmap | HTMLImageElement | null>(null);
+  qSourceRef.current = qSource;
+  sSourceRef.current = sSource;
+
+  const replaceQPreviewUrl = useCallback((nextUrl: string | null) => {
+    if (qPreviewUrlRef.current) {
+      URL.revokeObjectURL(qPreviewUrlRef.current);
+    }
+    qPreviewUrlRef.current = nextUrl;
+    setQPreviewUrl(nextUrl);
+  }, []);
+
+  const replaceSPreviewUrl = useCallback((nextUrl: string | null) => {
+    if (sPreviewUrlRef.current) {
+      URL.revokeObjectURL(sPreviewUrlRef.current);
+    }
+    sPreviewUrlRef.current = nextUrl;
+    setSPreviewUrl(nextUrl);
+  }, []);
+
+  // Ensure all Blob URLs and ImageBitmaps are freed on unmount
+  useEffect(() => {
+    return () => {
+      if (qPreviewUrlRef.current) {
+        URL.revokeObjectURL(qPreviewUrlRef.current);
+        qPreviewUrlRef.current = null;
+      }
+      if (sPreviewUrlRef.current) {
+        URL.revokeObjectURL(sPreviewUrlRef.current);
+        sPreviewUrlRef.current = null;
+      }
+      if (qSourceRef.current) {
+        closeDecodedImage(qSourceRef.current);
+        qSourceRef.current = null;
+      }
+      if (sSourceRef.current) {
+        closeDecodedImage(sSourceRef.current);
+        sSourceRef.current = null;
+      }
+    };
+  }, []);
+
   // Manage preview URLs cleanly
   useEffect(() => {
     if (!qProcessed?.blob) return;
-    const url = URL.createObjectURL(qProcessed.blob);
-    setQPreviewUrl((prev) => {
-      if (prev) URL.revokeObjectURL(prev);
-      return url;
-    });
-  }, [qProcessed]);
+    replaceQPreviewUrl(URL.createObjectURL(qProcessed.blob));
+  }, [qProcessed, replaceQPreviewUrl]);
 
   useEffect(() => {
     if (!sProcessed?.blob) return;
-    const url = URL.createObjectURL(sProcessed.blob);
-    setSPreviewUrl((prev) => {
-      if (prev) URL.revokeObjectURL(prev);
-      return url;
-    });
-  }, [sProcessed]);
+    replaceSPreviewUrl(URL.createObjectURL(sProcessed.blob));
+  }, [sProcessed, replaceSPreviewUrl]);
 
-  const cleanupMediaRefs = () => {
+  const cleanupMediaRefs = useCallback(() => {
     setQSource((prev) => {
       closeDecodedImage(prev);
       return null;
@@ -126,15 +164,9 @@ export const VaultCaptureSheet: React.FC<VaultCaptureSheetProps> = ({
       closeDecodedImage(prev);
       return null;
     });
-    setQPreviewUrl((prev) => {
-      if (prev) URL.revokeObjectURL(prev);
-      return null;
-    });
-    setSPreviewUrl((prev) => {
-      if (prev) URL.revokeObjectURL(prev);
-      return null;
-    });
-  };
+    replaceQPreviewUrl(null);
+    replaceSPreviewUrl(null);
+  }, [replaceQPreviewUrl, replaceSPreviewUrl]);
 
   // Initialize form whenever opened or editingItem changes
   useEffect(() => {
@@ -151,6 +183,7 @@ export const VaultCaptureSheet: React.FC<VaultCaptureSheetProps> = ({
     setRemoveExistingSolImage(false);
 
     if (editingItem) {
+      let cancelled = false;
       setSubjectId(editingItem.subjectId || fallbackSubId);
       setChapterId(editingItem.chapterId || '');
       setKind(editingItem.kind);
@@ -163,25 +196,21 @@ export const VaultCaptureSheet: React.FC<VaultCaptureSheetProps> = ({
 
       void (async () => {
         const existingQ = await getVaultBlob(editingItem.id, 'q');
+        if (cancelled) return;
         if (existingQ) {
-          const url = URL.createObjectURL(existingQ);
-          setQPreviewUrl((prev) => {
-            if (prev) URL.revokeObjectURL(prev);
-            return url;
-          });
+          replaceQPreviewUrl(URL.createObjectURL(existingQ));
         }
         if (editingItem.hasSolutionImage) {
           const existingS = await getVaultBlob(editingItem.id, 's');
+          if (cancelled) return;
           if (existingS) {
-            const url = URL.createObjectURL(existingS);
-            setSPreviewUrl((prev) => {
-              if (prev) URL.revokeObjectURL(prev);
-              return url;
-            });
+            replaceSPreviewUrl(URL.createObjectURL(existingS));
           }
         }
       })();
-      return;
+      return () => {
+        cancelled = true;
+      };
     }
 
     const rememberedSub = readStoredString(LAST_SUBJECT_KEY);
@@ -362,6 +391,7 @@ export const VaultCaptureSheet: React.FC<VaultCaptureSheetProps> = ({
             : undefined
       );
 
+      triggerHaptic('success');
       if (addAnother) {
         cleanupMediaRefs();
         setQProcessed(null);
@@ -403,7 +433,7 @@ export const VaultCaptureSheet: React.FC<VaultCaptureSheetProps> = ({
 
   return (
     <>
-      <Sheet
+      <BottomSheet
         open={open}
         onClose={handleRequestClose}
         title={stepTitle}
@@ -527,13 +557,14 @@ export const VaultCaptureSheet: React.FC<VaultCaptureSheetProps> = ({
           {step === 'source' && (
             <div style={{ display: 'grid', gap: '14px' }}>
               <Field label="Subject">
-                <div style={{ display: 'flex', flexWrap: 'wrap', gap: '8px' }}>
+                <div className="dh-edge-fade-rail">
                   {activeSubjects.map((sub) => (
                     <Chip
                       key={sub.id}
                       selected={subjectId === sub.id}
                       colorDot={sub.color}
                       onClick={() => {
+                        triggerHaptic('tap');
                         setSubjectId(sub.id);
                         setChapterId('');
                       }}
@@ -576,7 +607,10 @@ export const VaultCaptureSheet: React.FC<VaultCaptureSheetProps> = ({
                 <Button
                   variant="primary"
                   size="lg"
-                  onClick={() => qCameraRef.current?.click()}
+                  onClick={() => {
+                    triggerHaptic('tap');
+                    qCameraRef.current?.click();
+                  }}
                 >
                   <Camera size={18} strokeWidth={1.75} aria-hidden="true" />
                   Take photo
@@ -584,7 +618,11 @@ export const VaultCaptureSheet: React.FC<VaultCaptureSheetProps> = ({
                 <Button
                   variant="secondary"
                   size="lg"
-                  onClick={() => qGalleryRef.current?.click()}
+                  className="dh-glass-btn"
+                  onClick={() => {
+                    triggerHaptic('tap');
+                    qGalleryRef.current?.click();
+                  }}
                 >
                   <ImagePlus size={18} strokeWidth={1.75} aria-hidden="true" />
                   Upload
@@ -698,13 +736,14 @@ export const VaultCaptureSheet: React.FC<VaultCaptureSheetProps> = ({
 
               {/* Editable metadata tags */}
               <div style={{ display: 'grid', gap: '10px' }}>
-                <div style={{ display: 'flex', flexWrap: 'wrap', gap: '8px' }}>
+                <div className="dh-edge-fade-rail">
                   {activeSubjects.map((sub) => (
                     <Chip
                       key={sub.id}
                       selected={subjectId === sub.id}
                       colorDot={sub.color}
                       onClick={() => {
+                        triggerHaptic('tap');
                         setSubjectId(sub.id);
                         setChapterId('');
                       }}
@@ -820,10 +859,7 @@ export const VaultCaptureSheet: React.FC<VaultCaptureSheetProps> = ({
                             return null;
                           });
                           setRemoveExistingSolImage(true);
-                          setSPreviewUrl((prev) => {
-                            if (prev) URL.revokeObjectURL(prev);
-                            return null;
-                          });
+                          replaceSPreviewUrl(null);
                         }}
                       >
                         <Trash2 size={14} strokeWidth={1.75} aria-hidden="true" />
@@ -865,6 +901,7 @@ export const VaultCaptureSheet: React.FC<VaultCaptureSheetProps> = ({
                 {!editingItem && (
                   <Button
                     variant="secondary"
+                    className="dh-glass-btn"
                     disabled={saving}
                     onClick={() => void handleSave(true)}
                     style={{ flex: '1 1 160px' }}
@@ -888,7 +925,7 @@ export const VaultCaptureSheet: React.FC<VaultCaptureSheetProps> = ({
             </div>
           )}
         </div>
-      </Sheet>
+      </BottomSheet>
 
       <Dialog
         open={confirmDiscardOpen}

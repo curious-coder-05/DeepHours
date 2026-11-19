@@ -4,6 +4,72 @@ import type { VaultItem } from './vaultTypes.ts';
 export const VAULT_ARCHIVE_FORMAT = 'deep-hours-vault-archive' as const;
 export const VAULT_ARCHIVE_VERSION = 1 as const;
 export const VAULT_ARCHIVE_EXTENSION = '.dhvault.json' as const;
+export const MAX_VAULT_ARCHIVE_BYTES = 60 * 1024 * 1024; // 60 MB archive ceiling
+export const MAX_VAULT_ARCHIVE_ENTRIES = 2000;
+export const MAX_VAULT_IMAGE_BYTES = 5 * 1024 * 1024; // 5 MB per decoded image ceiling
+
+export const ALLOWED_VAULT_IMAGE_MIMES = new Set<string>([
+  'image/webp',
+  'image/jpeg',
+  'image/png',
+  'image/gif',
+  'image/avif',
+]);
+
+function normalizeAllowedImageMime(rawMime: unknown): string | null {
+  if (typeof rawMime !== 'string') return null;
+  const cleaned = rawMime.trim().toLowerCase();
+  const mapped = cleaned === 'image/jpg' ? 'image/jpeg' : cleaned;
+  return ALLOWED_VAULT_IMAGE_MIMES.has(mapped) ? mapped : null;
+}
+
+function estimateBase64DecodedBytes(cleanB64: string): number {
+  const len = cleanB64.length;
+  if (len === 0) return 0;
+  const pad = cleanB64.endsWith('==') ? 2 : cleanB64.endsWith('=') ? 1 : 0;
+  return Math.floor((len * 3) / 4) - pad;
+}
+
+function parseValidatedDataUrl(dataUrl: unknown): {
+  mime: string;
+  cleanB64: string;
+  decodedBytes: number;
+  normalizedDataUrl: string;
+} | null {
+  if (typeof dataUrl !== 'string') return null;
+  const trimmed = dataUrl.trim();
+  const match = /^data:([^;,]+);base64,([A-Za-z0-9+/=\s]+)$/.exec(trimmed);
+  if (!match) return null;
+  const mime = normalizeAllowedImageMime(match[1]);
+  if (!mime) return null;
+  const cleanB64 = match[2].replace(/\s+/g, '');
+  if (
+    cleanB64.length === 0 ||
+    cleanB64.length % 4 !== 0 ||
+    !/^[A-Za-z0-9+/]+={0,2}$/.test(cleanB64)
+  ) {
+    return null;
+  }
+  const decodedBytes = estimateBase64DecodedBytes(cleanB64);
+  if (decodedBytes <= 0 || decodedBytes > MAX_VAULT_IMAGE_BYTES) {
+    return null;
+  }
+  return {
+    mime,
+    cleanB64,
+    decodedBytes,
+    normalizedDataUrl: `data:${mime};base64,${cleanB64}`,
+  };
+}
+
+function safeJsonParseArchive(rawJson: string): unknown {
+  return JSON.parse(rawJson, (key, value) => {
+    if (key === '__proto__' || key === 'constructor' || key === 'prototype') {
+      return undefined;
+    }
+    return value;
+  });
+}
 
 export interface VaultArchiveEncodedBlob {
   mime: string;
@@ -108,18 +174,22 @@ export function decodeVaultBlob(encoded: VaultArchiveEncodedBlob): {
   height: number;
   mime: string;
 } {
-  const match = /^data:([^;,]+);base64,([A-Za-z0-9+/=\r\n]+)$/.exec(
-    (encoded.dataUrl || '').trim()
-  );
-  if (!match) {
-    throw new Error('Vault archive contains an invalid image payload.');
+  const parsed = parseValidatedDataUrl(encoded?.dataUrl);
+  if (!parsed) {
+    throw new Error('Vault archive contains an invalid or unsupported image payload.');
   }
-  const mime = (encoded.mime || match[1] || 'image/webp').trim();
-  const cleanB64 = match[2].replace(/\s+/g, '');
-  const bytes = base64ToBytes(cleanB64);
-  const copy = new Uint8Array(bytes.byteLength);
-  copy.set(bytes);
-  const blob = new Blob([copy.buffer], { type: mime });
+  // Always derive MIME strictly from the validated raster data URL (ignore spoofed encoded.mime)
+  const { mime, cleanB64 } = parsed;
+  let bytes: Uint8Array;
+  try {
+    bytes = base64ToBytes(cleanB64);
+  } catch {
+    throw new Error('Vault archive contains corrupted base64 image data.');
+  }
+  if (bytes.byteLength === 0 || bytes.byteLength > MAX_VAULT_IMAGE_BYTES) {
+    throw new Error('Vault archive image exceeds the 5 MB safety limit.');
+  }
+  const blob = new Blob([bytes.buffer as ArrayBuffer], { type: mime });
   return {
     blob,
     width: Math.max(0, Math.round(Number(encoded.width) || 0)),
@@ -169,19 +239,39 @@ export async function buildVaultArchiveBundle(
   };
 }
 
-function isValidEncodedBlob(val: unknown): val is VaultArchiveEncodedBlob {
-  if (!val || typeof val !== 'object') return false;
+function extractValidatedEncodedBlob(
+  val: unknown
+): VaultArchiveEncodedBlob | null {
+  if (!val || typeof val !== 'object' || Array.isArray(val)) return null;
   const candidate = val as Partial<VaultArchiveEncodedBlob>;
-  if (typeof candidate.dataUrl !== 'string') return false;
-  return /^data:image\/[A-Za-z0-9.+-]+;base64,[A-Za-z0-9+/=\r\n]+$/.test(
-    candidate.dataUrl.trim()
-  );
+  const parsed = parseValidatedDataUrl(candidate.dataUrl);
+  if (!parsed) return null;
+  // Verify base64 decodes cleanly upfront before any IndexedDB transaction begins
+  try {
+    atob(parsed.cleanB64);
+  } catch {
+    return null;
+  }
+  return {
+    mime: parsed.mime,
+    width: Math.max(0, Math.round(Number(candidate.width) || 0)),
+    height: Math.max(0, Math.round(Number(candidate.height) || 0)),
+    bytes: parsed.decodedBytes,
+    dataUrl: parsed.normalizedDataUrl,
+  };
 }
 
 export function parseVaultArchiveJson(rawJson: string): VaultArchiveBundle {
+  if (typeof rawJson !== 'string' || rawJson.length === 0) {
+    throw new Error('Selected file is not valid JSON.');
+  }
+  if (rawJson.length > MAX_VAULT_ARCHIVE_BYTES) {
+    throw new Error('Vault archive is too large to import safely (60 MB limit).');
+  }
+
   let parsed: unknown;
   try {
-    parsed = JSON.parse(rawJson);
+    parsed = safeJsonParseArchive(rawJson);
   } catch {
     throw new Error('Selected file is not valid JSON.');
   }
@@ -199,13 +289,20 @@ export function parseVaultArchiveJson(rawJson: string): VaultArchiveBundle {
     throw new Error('Vault archive is missing question entries.');
   }
 
+  if (obj.entries.length > MAX_VAULT_ARCHIVE_ENTRIES) {
+    throw new Error(
+      `Vault archive exceeds the ${MAX_VAULT_ARCHIVE_ENTRIES}-question safety limit.`
+    );
+  }
+
   const sanitizedEntries: VaultArchiveEntry[] = [];
   for (const rawEntry of obj.entries) {
-    if (!rawEntry || typeof rawEntry !== 'object') continue;
+    if (!rawEntry || typeof rawEntry !== 'object' || Array.isArray(rawEntry)) continue;
     const entry = rawEntry as Partial<VaultArchiveEntry>;
     if (
       !entry.item ||
       typeof entry.item !== 'object' ||
+      Array.isArray(entry.item) ||
       typeof entry.item.id !== 'string' ||
       !entry.item.id.trim() ||
       typeof entry.item.subjectId !== 'string' ||
@@ -213,46 +310,47 @@ export function parseVaultArchiveJson(rawJson: string): VaultArchiveBundle {
     ) {
       continue;
     }
-    if (!isValidEncodedBlob(entry.qImage)) {
+
+    const qValid = extractValidatedEncodedBlob(entry.qImage);
+    if (!qValid) {
       throw new Error(`Question "${entry.item.id}" has a missing or corrupted image.`);
     }
 
-    const sValid = entry.sImage && isValidEncodedBlob(entry.sImage) ? entry.sImage : undefined;
+    let sValid: VaultArchiveEncodedBlob | undefined;
+    if (entry.sImage !== undefined && entry.sImage !== null) {
+      const parsedSol = extractValidatedEncodedBlob(entry.sImage);
+      if (!parsedSol) {
+        throw new Error(
+          `Question "${entry.item.id}" has a missing or corrupted solution image.`
+        );
+      }
+      sValid = parsedSol;
+    }
+
     const cleanItem = sanitizeVaultItem({
       ...entry.item,
       id: entry.item.id.trim(),
       subjectId: entry.item.subjectId.trim(),
+      qBytes: qValid.bytes,
+      mime: qValid.mime,
       hasSolutionImage: Boolean(sValid),
       syncState: 'pending',
     });
 
     sanitizedEntries.push({
       item: cleanItem,
-      qImage: {
-        mime: (entry.qImage.mime || 'image/webp').trim(),
-        width: Math.max(0, Math.round(Number(entry.qImage.width) || 0)),
-        height: Math.max(0, Math.round(Number(entry.qImage.height) || 0)),
-        bytes: Math.max(0, Math.round(Number(entry.qImage.bytes) || 0)),
-        dataUrl: entry.qImage.dataUrl.trim(),
-      },
-      ...(sValid
-        ? {
-            sImage: {
-              mime: (sValid.mime || 'image/webp').trim(),
-              width: Math.max(0, Math.round(Number(sValid.width) || 0)),
-              height: Math.max(0, Math.round(Number(sValid.height) || 0)),
-              bytes: Math.max(0, Math.round(Number(sValid.bytes) || 0)),
-              dataUrl: sValid.dataUrl.trim(),
-            },
-          }
-        : {}),
+      qImage: qValid,
+      ...(sValid ? { sImage: sValid } : {}),
     });
   }
 
   return {
     format: VAULT_ARCHIVE_FORMAT,
     version: VAULT_ARCHIVE_VERSION,
-    exportedAt: typeof obj.exportedAt === 'number' ? obj.exportedAt : Date.now(),
+    exportedAt:
+      typeof obj.exportedAt === 'number' && Number.isFinite(obj.exportedAt)
+        ? obj.exportedAt
+        : Date.now(),
     itemCount: sanitizedEntries.length,
     entries: sanitizedEntries,
   };

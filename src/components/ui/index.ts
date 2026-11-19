@@ -7,6 +7,7 @@ export { Chip, type ChipProps } from './Chip';
 export { Switch, type SwitchProps } from './Switch';
 export { Field, type FieldProps } from './Field';
 export { Sheet, type SheetProps } from './Sheet';
+export { BottomSheet, type BottomSheetProps } from '../BottomSheet';
 export { Select, type SelectProps, type SelectOption } from './Select';
 export { Dialog, type DialogProps } from './Dialog';
 export {

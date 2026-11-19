@@ -1196,6 +1196,7 @@ export function mergeStateWithCloudDocs(
 // ==========================================
 
 export interface SyncOutboxMeta {
+  activeUid?: string;
   dirtyDocs: string[];
   lastPushTs: number;
   lastPullTs: number;
@@ -1234,6 +1235,43 @@ function sanitizeStringRecord(input: unknown): Record<string, string> {
   return out;
 }
 
+function sanitizeNumberRecord(input: unknown): Record<string, number> {
+  const out: Record<string, number> = {};
+  if (!input || typeof input !== 'object' || Array.isArray(input)) return out;
+  for (const [k, v] of Object.entries(input as Record<string, unknown>)) {
+    if (k === '__proto__' || k === 'constructor' || k === 'prototype') continue;
+    const n = Number(v);
+    if (Number.isFinite(n) && n >= 0) out[k] = n;
+  }
+  return out;
+}
+
+/**
+ * Ensures sync outbox caches (knownRemoteDocTs, lastSyncedSignatures, dirtyDocs)
+ * never leak across different Google accounts on the same device.
+ */
+export function scopeOutboxMetaForUid(
+  meta: SyncOutboxMeta,
+  uid: string
+): SyncOutboxMeta {
+  const cleanUid = (uid || '').trim();
+  if (!cleanUid) return meta;
+  if (meta.activeUid && meta.activeUid !== cleanUid) {
+    return {
+      ...meta,
+      activeUid: cleanUid,
+      dirtyDocs: [],
+      knownRemoteDocTs: {},
+      lastSyncedSignatures: {},
+    };
+  }
+  if (meta.activeUid === cleanUid) return meta;
+  return {
+    ...meta,
+    activeUid: cleanUid,
+  };
+}
+
 export function loadSyncOutboxMeta(): SyncOutboxMeta {
   try {
     if (typeof localStorage === 'undefined') {
@@ -1257,13 +1295,15 @@ export function loadSyncOutboxMeta(): SyncOutboxMeta {
     }
     const parsed = JSON.parse(raw) as Partial<SyncOutboxMeta>;
     return {
-      dirtyDocs: Array.isArray(parsed.dirtyDocs) ? parsed.dirtyDocs : [],
+      ...(typeof parsed.activeUid === 'string' && parsed.activeUid
+        ? { activeUid: parsed.activeUid }
+        : {}),
+      dirtyDocs: Array.isArray(parsed.dirtyDocs)
+        ? parsed.dirtyDocs.filter((x): x is string => typeof x === 'string')
+        : [],
       lastPushTs: Number(parsed.lastPushTs) || 0,
       lastPullTs: Number(parsed.lastPullTs) || 0,
-      knownRemoteDocTs:
-        parsed.knownRemoteDocTs && typeof parsed.knownRemoteDocTs === 'object'
-          ? parsed.knownRemoteDocTs
-          : {},
+      knownRemoteDocTs: sanitizeNumberRecord(parsed.knownRemoteDocTs),
       lastSyncedSignatures: sanitizeStringRecord(parsed.lastSyncedSignatures),
       dailyWritesDayKey:
         typeof parsed.dailyWritesDayKey === 'string' ? parsed.dailyWritesDayKey : '',
@@ -1273,7 +1313,7 @@ export function loadSyncOutboxMeta(): SyncOutboxMeta {
           ? parsed.quotaPausedUntilDayKey
           : null,
       firstSignInMergedUids: Array.isArray(parsed.firstSignInMergedUids)
-        ? parsed.firstSignInMergedUids
+        ? parsed.firstSignInMergedUids.filter((x): x is string => typeof x === 'string')
         : [],
     };
   } catch {
@@ -1289,10 +1329,11 @@ export function loadSyncOutboxMeta(): SyncOutboxMeta {
 
 export function saveSyncOutboxMeta(meta: SyncOutboxMeta): void {
   const safeSigs = sanitizeStringRecord(meta.lastSyncedSignatures);
+  const safeRemoteTs = sanitizeNumberRecord(meta.knownRemoteDocTs);
   memoryOutboxMeta = {
     ...meta,
     dirtyDocs: [...(meta.dirtyDocs || [])],
-    knownRemoteDocTs: { ...(meta.knownRemoteDocTs || {}) },
+    knownRemoteDocTs: safeRemoteTs,
     lastSyncedSignatures: safeSigs,
     firstSignInMergedUids: [...(meta.firstSignInMergedUids || [])],
   };
@@ -1628,7 +1669,9 @@ export class SyncBudgetController {
 
     this.timerId = setTimeout(() => {
       this.timerId = null;
-      void this.flush(false);
+      void this.flush(false).catch(() => {
+        // Transient network/sync failures retain dirtyDocs for the next flush attempt.
+      });
     }, delay);
   }
 
@@ -1714,6 +1757,7 @@ export class SyncBudgetController {
           pausedReason: 'resource-exhausted',
         };
       }
+      this.notifyMeta();
       throw err;
     } finally {
       this.isFlushing = false;
@@ -1968,11 +2012,16 @@ export async function performCloudSyncCycle(
       },
   localStateArg?: PulseHabitState,
   controllerArg?: SyncBudgetController,
-  extraOpts?: { forcePull?: boolean; dirtyDocKeys?: string[] }
+  extraOpts?: {
+    forcePull?: boolean;
+    dirtyDocKeys?: string[];
+    getLatestLocalState?: () => PulseHabitState;
+  }
 ): Promise<{
   status: SyncStatus;
   errorMessage?: string;
   pulledDocs: number;
+  downloadedDocs?: Record<string, Record<string, unknown>>;
   mergedState: PulseHabitState;
   writesUsed: number;
   readsUsed: number;
@@ -2013,7 +2062,7 @@ export async function performCloudSyncCycle(
     }
   }
 
-  const meta = loadSyncOutboxMeta();
+  const meta = scopeOutboxMetaForUid(loadSyncOutboxMeta(), uid);
   const now = Date.now();
   const todayKey = getLocalCalendarDateKey(now);
 
@@ -2150,11 +2199,12 @@ export async function performCloudSyncCycle(
 
   const pulledDocsCount = Object.keys(downloadedDocs).length;
 
-  // 3. Merge downloaded docs with localState (union by id, newer updatedAt wins, tombstones respected)
+  // 3. Merge downloaded docs against the FRESHEST localState (prevents clobbering edits made mid-fetch)
+  const latestLocalState = extraOpts?.getLatestLocalState?.() || localState;
   const mergedBase =
     pulledDocsCount > 0
-      ? mergeStateWithCloudDocs(localState, downloadedDocs, now)
-      : localState;
+      ? mergeStateWithCloudDocs(latestLocalState, downloadedDocs, now)
+      : latestLocalState;
 
   const mergedState: PulseHabitState = {
     ...mergedBase,
@@ -2339,6 +2389,7 @@ export async function performCloudSyncCycle(
   return {
     status: 'synced',
     pulledDocs: pulledDocsCount,
+    downloadedDocs: pulledDocsCount > 0 ? downloadedDocs : undefined,
     mergedState,
     writesUsed,
     readsUsed,

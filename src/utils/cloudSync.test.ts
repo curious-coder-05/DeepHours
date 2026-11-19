@@ -12,6 +12,7 @@ import {
   partitionStateToCloudDocs,
   planCloudDocWrites,
   saveSyncOutboxMeta,
+  scopeOutboxMetaForUid,
 } from './cloudSync.ts';
 import { createBlankState, createDailyTask } from './studyLogic.ts';
 
@@ -196,5 +197,88 @@ describe('Cloud Sync Diff-Check & Budget Hardening', () => {
     assert.equal(src.includes('addScope'), false);
     assert.equal(src.includes('googleapis.com/auth/drive'), false);
     assert.equal(src.includes('googleapis.com/drive'), false);
+  });
+
+  it('scopeOutboxMetaForUid isolates sync caches when switching Google accounts on the same device', () => {
+    const metaUserA = {
+      activeUid: 'user-a',
+      dirtyDocs: ['meta/core', 'months/2026-11'],
+      lastPushTs: 5000,
+      lastPullTs: 5000,
+      knownRemoteDocTs: { 'meta/core': 5000, 'months/2026-11': 5000 },
+      lastSyncedSignatures: { 'meta/core': 'v1:10:aaaa', 'months/2026-11': 'v1:20:bbbb' },
+      dailyWritesDayKey: '2026-11-19',
+      dailyWritesCount: 4,
+      quotaPausedUntilDayKey: null,
+      firstSignInMergedUids: ['user-a'],
+    };
+
+    // Same user preserves all sync caches
+    const same = scopeOutboxMetaForUid(metaUserA, 'user-a');
+    assert.deepEqual(same.dirtyDocs, metaUserA.dirtyDocs);
+    assert.deepEqual(same.knownRemoteDocTs, metaUserA.knownRemoteDocTs);
+    assert.deepEqual(same.lastSyncedSignatures, metaUserA.lastSyncedSignatures);
+
+    // Different user wipes per-account caches while retaining device daily quota counter
+    const switched = scopeOutboxMetaForUid(metaUserA, 'user-b');
+    assert.equal(switched.activeUid, 'user-b');
+    assert.deepEqual(switched.dirtyDocs, []);
+    assert.deepEqual(switched.knownRemoteDocTs, {});
+    assert.deepEqual(switched.lastSyncedSignatures, {});
+    assert.equal(switched.dailyWritesCount, 4);
+  });
+
+  it('SyncBudgetController preserves dirtyDocs and notifies listeners when a flush fails', async () => {
+    let notifiedDirtyCount = 0;
+    const ctrl = new SyncBudgetController({
+      initialMeta: {
+        dirtyDocs: [],
+        lastPushTs: 0,
+        lastPullTs: 0,
+        knownRemoteDocTs: {},
+        lastSyncedSignatures: {},
+        dailyWritesDayKey: '2026-11-19',
+        dailyWritesCount: 0,
+        quotaPausedUntilDayKey: null,
+        firstSignInMergedUids: [],
+      },
+      getNow: () => new Date('2026-11-19T12:00:00Z').getTime(),
+      onFlushDocs: async () => {
+        throw new Error('network-request-failed');
+      },
+      onMetaChanged: (m) => {
+        notifiedDirtyCount = m.dirtyDocs.length;
+      },
+    });
+
+    ctrl.markDirty(['meta/core', 'months/2026-11']);
+    await assert.rejects(() => ctrl.flush(true), /network-request-failed/);
+    assert.deepEqual(ctrl.getMeta().dirtyDocs.sort(), ['meta/core', 'months/2026-11']);
+    assert.equal(notifiedDirtyCount, 2);
+    ctrl.dispose();
+  });
+
+  it('firestore.rules enforces valid Firestore CEL (no request.resource.size()), verified email, joinedAt immutability, full mocks validation, and zero-read cheer static checks', () => {
+    const rules = readFileSync(path.resolve(import.meta.dirname, '../../firestore.rules'), 'utf8');
+
+    // Cloud Firestore v2 has NO request.resource.size() (Cloud Storage only)
+    assert.equal(rules.includes('request.resource.size('), false);
+
+    // Open-signup verified-email gate
+    assert.ok(rules.includes('request.auth.token.email_verified == true'));
+
+    // joinedAt immutability on member self-update
+    assert.ok(rules.includes('resource.data.members[request.auth.uid].joinedAt'));
+
+    // Full mocks list validation across indices 0..9
+    assert.ok(rules.includes('function isValidMocksList('));
+    assert.ok(rules.includes('isValidMockPoint(mocks[9])'));
+
+    // Cheers static validation must execute BEFORE any exists() / get() lookup
+    const cheersSection = rules.slice(rules.indexOf('match /cheers/{cheerId}'));
+    const staticCheckIdx = cheersSection.indexOf('request.resource.data.from == request.auth.uid');
+    const lookupIdx = cheersSection.indexOf('bothAreGroupMembers(');
+    assert.ok(staticCheckIdx > 0 && lookupIdx > staticCheckIdx);
+    assert.ok(cheersSection.includes('allow update: if false;'));
   });
 });

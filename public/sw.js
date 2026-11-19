@@ -1,4 +1,4 @@
-const CACHE_NAME = 'deep-hours-v23';
+const CACHE_NAME = 'deep-hours-v27';
 const ASSETS = [
   '/',
   '/index.html',
@@ -26,6 +26,11 @@ function extractSameOriginAssetUrls(html, origin) {
   return Array.from(found);
 }
 
+function isHtmlResponse(response) {
+  const ct = (response.headers && response.headers.get('content-type')) || '';
+  return ct.toLowerCase().includes('text/html');
+}
+
 self.addEventListener('install', event => {
   event.waitUntil(
     caches.open(CACHE_NAME).then(async cache => {
@@ -33,7 +38,7 @@ self.addEventListener('install', event => {
 
       try {
         const manifestRes = await fetch('/precache-manifest.json', { cache: 'no-cache' });
-        if (manifestRes && manifestRes.ok) {
+        if (manifestRes && manifestRes.ok && !isHtmlResponse(manifestRes)) {
           const manifestJson = await manifestRes.json();
           const list = Array.isArray(manifestJson)
             ? manifestJson
@@ -68,7 +73,17 @@ self.addEventListener('install', event => {
       }
 
       await Promise.all(
-        Array.from(urlsToCache).map(url => cache.add(url).catch(() => {}))
+        Array.from(urlsToCache).map(async url => {
+          try {
+            const resp = await fetch(url, { cache: 'no-cache' });
+            if (resp && resp.ok && resp.type === 'basic') {
+              if (url.startsWith('/assets/') && isHtmlResponse(resp)) return;
+              await cache.put(url, resp);
+            }
+          } catch {
+            // ignore individual offline install misses
+          }
+        })
       );
     })
   );
@@ -115,17 +130,21 @@ self.addEventListener('fetch', event => {
     url.pathname === '/index.html';
 
   if (isNav) {
-    // F6: Network-first for navigation requests (index.html) with cache fallback
+    // Network-first with cache: 'no-cache' so users always receive fresh index.html after publish
     event.respondWith(
-      fetch(event.request)
+      fetch(event.request, { cache: 'no-cache' })
         .then(response => {
-          if (response && response.status === 200) {
+          if (response && response.status === 200 && response.type === 'basic') {
             const clone = response.clone();
             const indexClone = response.clone();
-            caches.open(CACHE_NAME).then(cache => {
-              cache.put(event.request, clone);
-              cache.put('/index.html', indexClone);
-            });
+            event.waitUntil(
+              caches.open(CACHE_NAME).then(cache =>
+                Promise.all([
+                  cache.put(event.request, clone),
+                  cache.put('/index.html', indexClone),
+                ])
+              )
+            );
           }
           return response;
         })
@@ -133,19 +152,58 @@ self.addEventListener('fetch', event => {
           caches
             .match(event.request)
             .then(cached => cached || caches.match('/index.html'))
+            .then(cached => cached || caches.match('/'))
+            .then(
+              cached =>
+                cached ||
+                new Response('Offline — please reconnect to load Deep Hours.', {
+                  status: 503,
+                  headers: { 'Content-Type': 'text/plain; charset=utf-8' },
+                })
+            )
         )
     );
     return;
   }
 
-  // F6: Stale-while-revalidate for other same-origin assets
+  // Content-hashed immutable bundles (/assets/*): cache-first, rejecting SPA text/html fallbacks
+  if (url.pathname.startsWith('/assets/')) {
+    event.respondWith(
+      caches.open(CACHE_NAME).then(cache =>
+        cache.match(event.request).then(cached => {
+          if (cached) return cached;
+          return fetch(event.request)
+            .then(response => {
+              if (
+                response &&
+                response.status === 200 &&
+                response.type === 'basic' &&
+                !isHtmlResponse(response)
+              ) {
+                event.waitUntil(cache.put(event.request, response.clone()));
+              }
+              return response;
+            })
+            .catch(() => new Response('Offline', { status: 503, statusText: 'Offline' }));
+        })
+      )
+    );
+    return;
+  }
+
+  // Stale-while-revalidate for other non-hashed same-origin assets (icons, manifest), rejecting HTML poisoning
   event.respondWith(
     caches.open(CACHE_NAME).then(cache =>
       cache.match(event.request).then(cached => {
         const networkFetch = fetch(event.request)
           .then(response => {
-            if (response && response.status === 200 && response.type === 'basic') {
-              cache.put(event.request, response.clone());
+            if (
+              response &&
+              response.status === 200 &&
+              response.type === 'basic' &&
+              !isHtmlResponse(response)
+            ) {
+              event.waitUntil(cache.put(event.request, response.clone()));
             }
             return response;
           })

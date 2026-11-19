@@ -1,4 +1,5 @@
 import React, { Suspense, useCallback, useEffect, useMemo, useReducer, useRef, useState } from 'react';
+import { createPortal } from 'react-dom';
 import {
   Archive,
   Camera,
@@ -25,7 +26,9 @@ import {
 } from 'lucide-react';
 import type { Chapter, PulseHabitState, Subject } from '../types';
 import { getSubject } from '../utils/studyLogic';
+import { triggerHaptic } from '../utils/haptics';
 import {
+  MAX_VAULT_ARCHIVE_BYTES,
   buildVaultArchiveFilename,
   formatVaultImportSummary,
   VAULT_ARCHIVE_EXTENSION,
@@ -54,6 +57,7 @@ import {
   saveVaultItem,
 } from '../utils/vaultStore';
 import type { VaultItem, VaultKind } from '../utils/vaultTypes';
+import { BottomSheet } from './BottomSheet';
 import { VaultCaptureSheet } from './VaultCaptureSheet';
 import { VaultZoomViewer } from './VaultZoomViewer';
 import {
@@ -63,7 +67,6 @@ import {
   Dialog,
   EmptyState,
   IconButton,
-  Sheet,
   Skeleton,
 } from './ui';
 
@@ -118,6 +121,7 @@ const LazyVaultBlobImage: React.FC<LazyBlobImageProps> = ({
   onClick,
 }) => {
   const hostRef = useRef<HTMLDivElement | null>(null);
+  const urlRef = useRef<string | null>(null);
   const [inView, setInView] = useState<boolean>(false);
   const [url, setUrl] = useState<string | null>(null);
 
@@ -141,10 +145,11 @@ const LazyVaultBlobImage: React.FC<LazyBlobImageProps> = ({
 
   useEffect(() => {
     if (!inView) {
-      setUrl((prev) => {
-        if (prev) URL.revokeObjectURL(prev);
-        return null;
-      });
+      if (urlRef.current) {
+        URL.revokeObjectURL(urlRef.current);
+        urlRef.current = null;
+      }
+      setUrl(null);
       return;
     }
     let cancelled = false;
@@ -156,10 +161,11 @@ const LazyVaultBlobImage: React.FC<LazyBlobImageProps> = ({
         URL.revokeObjectURL(nextUrl);
         return;
       }
-      setUrl((prev) => {
-        if (prev) URL.revokeObjectURL(prev);
-        return nextUrl;
-      });
+      if (urlRef.current) {
+        URL.revokeObjectURL(urlRef.current);
+      }
+      urlRef.current = nextUrl;
+      setUrl(nextUrl);
     })();
     return () => {
       cancelled = true;
@@ -168,10 +174,10 @@ const LazyVaultBlobImage: React.FC<LazyBlobImageProps> = ({
 
   useEffect(() => {
     return () => {
-      setUrl((prev) => {
-        if (prev) URL.revokeObjectURL(prev);
-        return null;
-      });
+      if (urlRef.current) {
+        URL.revokeObjectURL(urlRef.current);
+        urlRef.current = null;
+      }
     };
   }, []);
 
@@ -216,6 +222,7 @@ interface VaultCardProps {
   onRequestDelete: (item: VaultItem) => void;
   onZoom: (url: string, item: VaultItem) => void;
   onQuickView: (item: VaultItem) => void;
+  onMenuOpenChange?: (open: boolean) => void;
 }
 
 const VaultQuestionCard: React.FC<VaultCardProps> = ({
@@ -227,9 +234,28 @@ const VaultQuestionCard: React.FC<VaultCardProps> = ({
   onRequestDelete,
   onZoom,
   onQuickView,
+  onMenuOpenChange,
 }) => {
   const [reveal, dispatchReveal] = useReducer(revealReducer, INITIAL_REVEAL_STATE);
   const [menuOpen, setMenuOpen] = useState(false);
+
+  const setCardMenuOpen = useCallback(
+    (next: boolean) => {
+      setMenuOpen((prev) => {
+        if (prev !== next) {
+          onMenuOpenChange?.(next);
+        }
+        return next;
+      });
+    },
+    [onMenuOpenChange]
+  );
+
+  useEffect(() => {
+    return () => {
+      if (menuOpen) onMenuOpenChange?.(false);
+    };
+  }, [menuOpen, onMenuOpenChange]);
 
   return (
     <>
@@ -289,7 +315,7 @@ const VaultQuestionCard: React.FC<VaultCardProps> = ({
             <span className="tabular-nums" style={{ fontSize: '13px', color: 'var(--tx-3)' }}>
               {formatRelativeVaultDate(item.createdAt)}
             </span>
-            <IconButton label="Question actions" onClick={() => setMenuOpen(true)}>
+            <IconButton label="Question actions" onClick={() => setCardMenuOpen(true)}>
               <MoreHorizontal size={17} strokeWidth={1.75} />
             </IconButton>
           </div>
@@ -313,9 +339,13 @@ const VaultQuestionCard: React.FC<VaultCardProps> = ({
         {/* Strict Two-Stage Reveal Row */}
         <div style={{ display: 'flex', gap: '8px', flexWrap: 'wrap' }}>
           <Button
-            variant={reveal.answerOpen ? 'primary' : 'secondary'}
+            variant="secondary"
             size="sm"
-            onClick={() => dispatchReveal({ type: 'toggle_answer' })}
+            className={reveal.answerOpen ? 'dh-glass-accent-btn' : 'dh-glass-btn'}
+            onClick={() => {
+              triggerHaptic('tap');
+              dispatchReveal({ type: 'toggle_answer' });
+            }}
             style={{ flex: '1 1 120px' }}
           >
             {reveal.answerOpen ? (
@@ -326,9 +356,13 @@ const VaultQuestionCard: React.FC<VaultCardProps> = ({
             {reveal.answerOpen ? 'Hide answer' : 'Reveal answer'}
           </Button>
           <Button
-            variant={reveal.solutionOpen ? 'primary' : 'secondary'}
+            variant="secondary"
             size="sm"
-            onClick={() => dispatchReveal({ type: 'toggle_solution' })}
+            className={reveal.solutionOpen ? 'dh-glass-accent-btn' : 'dh-glass-btn'}
+            onClick={() => {
+              triggerHaptic('tap');
+              dispatchReveal({ type: 'toggle_solution' });
+            }}
             style={{ flex: '1 1 120px' }}
           >
             {reveal.solutionOpen ? (
@@ -342,7 +376,10 @@ const VaultQuestionCard: React.FC<VaultCardProps> = ({
             variant={item.mastered ? 'secondary' : 'ghost'}
             size="sm"
             aria-label={item.mastered ? 'Move back to active' : 'Mark mastered'}
-            onClick={() => onToggleMastered(item)}
+            onClick={() => {
+              triggerHaptic('success');
+              onToggleMastered(item);
+            }}
             style={{
               color: item.mastered ? 'var(--ok-ink)' : 'var(--tx-2)',
               borderColor: item.mastered
@@ -465,9 +502,9 @@ const VaultQuestionCard: React.FC<VaultCardProps> = ({
         )}
       </article>
 
-      <Sheet
+      <BottomSheet
         open={menuOpen}
-        onClose={() => setMenuOpen(false)}
+        onClose={() => setCardMenuOpen(false)}
         title={chapterName || `${subject.emoji} ${subject.name}`}
         subtitle={item.kind === 'hard' ? 'Hard / Trap question' : 'Unsolved question'}
       >
@@ -476,8 +513,10 @@ const VaultQuestionCard: React.FC<VaultCardProps> = ({
             variant="secondary"
             size="lg"
             fullWidth
+            className="dh-glass-btn"
             onClick={() => {
-              setMenuOpen(false);
+              triggerHaptic('tap');
+              setCardMenuOpen(false);
               onQuickView(item);
             }}
           >
@@ -488,8 +527,10 @@ const VaultQuestionCard: React.FC<VaultCardProps> = ({
             variant="secondary"
             size="lg"
             fullWidth
+            className="dh-glass-btn"
             onClick={() => {
-              setMenuOpen(false);
+              triggerHaptic('tap');
+              setCardMenuOpen(false);
               onEdit(item);
             }}
           >
@@ -500,8 +541,10 @@ const VaultQuestionCard: React.FC<VaultCardProps> = ({
             variant="secondary"
             size="lg"
             fullWidth
+            className="dh-glass-btn"
             onClick={() => {
-              setMenuOpen(false);
+              triggerHaptic('success');
+              setCardMenuOpen(false);
               onToggleMastered(item);
             }}
           >
@@ -517,7 +560,8 @@ const VaultQuestionCard: React.FC<VaultCardProps> = ({
             size="lg"
             fullWidth
             onClick={() => {
-              setMenuOpen(false);
+              triggerHaptic('stop');
+              setCardMenuOpen(false);
               onRequestDelete(item);
             }}
           >
@@ -525,7 +569,7 @@ const VaultQuestionCard: React.FC<VaultCardProps> = ({
             Delete question
           </Button>
         </div>
-      </Sheet>
+      </BottomSheet>
     </>
   );
 };
@@ -566,8 +610,22 @@ export const VaultQuickView: React.FC<VaultQuickViewProps> = ({
     null
   );
   const urlCacheRef = useRef<Map<string, string>>(new Map());
+  const openRef = useRef<boolean>(open);
+  openRef.current = open;
   const swipeStartRef = useRef<{ x: number; y: number } | null>(null);
   const thumbStripRef = useRef<HTMLDivElement | null>(null);
+
+  // Always revoke cached Blob URLs on unmount (even if unmounted while open)
+  useEffect(() => {
+    const cache = urlCacheRef.current;
+    return () => {
+      openRef.current = false;
+      for (const u of cache.values()) {
+        URL.revokeObjectURL(u);
+      }
+      cache.clear();
+    };
+  }, []);
 
   useEffect(() => {
     if (!open) {
@@ -613,7 +671,9 @@ export const VaultQuickView: React.FC<VaultQuickViewProps> = ({
     const cached = urlCacheRef.current.get(key);
     if (cached) return cached;
     const blob = await getVaultBlob(itemId, slot);
-    if (!blob) return null;
+    if (!blob || !openRef.current) return null;
+    const existingAfterAwait = urlCacheRef.current.get(key);
+    if (existingAfterAwait) return existingAfterAwait;
     const nextUrl = URL.createObjectURL(blob);
     urlCacheRef.current.set(key, nextUrl);
     return nextUrl;
@@ -980,19 +1040,27 @@ export const VaultQuickView: React.FC<VaultQuickViewProps> = ({
         <Button
           variant="secondary"
           size="lg"
+          className="dh-glass-btn"
           disabled={index === 0}
           aria-label="Previous study photo"
-          onClick={() => stepTo(index - 1)}
+          onClick={() => {
+            triggerHaptic('tap');
+            stepTo(index - 1);
+          }}
         >
           <ChevronLeft size={18} strokeWidth={1.75} aria-hidden="true" />
           Prev
         </Button>
 
         <Button
-          variant={reveal.answerOpen ? 'primary' : 'secondary'}
+          variant="secondary"
           size="md"
+          className={reveal.answerOpen ? 'dh-glass-accent-btn' : 'dh-glass-btn'}
           style={{ flex: 1, minHeight: '48px' }}
-          onClick={() => dispatchReveal({ type: 'toggle_answer' })}
+          onClick={() => {
+            triggerHaptic('tap');
+            dispatchReveal({ type: 'toggle_answer' });
+          }}
         >
           {reveal.answerOpen ? (
             <EyeOff size={15} strokeWidth={1.75} aria-hidden="true" />
@@ -1003,10 +1071,14 @@ export const VaultQuickView: React.FC<VaultQuickViewProps> = ({
         </Button>
 
         <Button
-          variant={reveal.solutionOpen ? 'primary' : 'secondary'}
+          variant="secondary"
           size="md"
+          className={reveal.solutionOpen ? 'dh-glass-accent-btn' : 'dh-glass-btn'}
           style={{ flex: 1, minHeight: '48px' }}
-          onClick={() => dispatchReveal({ type: 'toggle_solution' })}
+          onClick={() => {
+            triggerHaptic('tap');
+            dispatchReveal({ type: 'toggle_solution' });
+          }}
         >
           {reveal.solutionOpen ? (
             <EyeOff size={15} strokeWidth={1.75} aria-hidden="true" />
@@ -1021,7 +1093,10 @@ export const VaultQuickView: React.FC<VaultQuickViewProps> = ({
           size="lg"
           disabled={index >= orderedItems.length - 1}
           aria-label="Next study photo"
-          onClick={() => stepTo(index + 1)}
+          onClick={() => {
+            triggerHaptic('tap');
+            stepTo(index + 1);
+          }}
         >
           Next
           <ChevronRight size={18} strokeWidth={1.75} aria-hidden="true" />
@@ -1120,9 +1195,14 @@ export const VaultView: React.FC<VaultViewProps> = ({
 
   // Local Vault Export / Import archive
   const [backupSheetOpen, setBackupSheetOpen] = useState<boolean>(false);
+  const [openCardMenus, setOpenCardMenus] = useState<number>(0);
   const [archiveBusy, setArchiveBusy] = useState<'export' | 'import' | null>(null);
   const [archiveError, setArchiveError] = useState<string | null>(null);
   const importInputRef = useRef<HTMLInputElement | null>(null);
+
+  const handleCardMenuOpenChange = useCallback((isOpen: boolean) => {
+    setOpenCardMenus((count) => Math.max(0, count + (isOpen ? 1 : -1)));
+  }, []);
 
   const loadItems = useCallback(async () => {
     try {
@@ -1458,6 +1538,9 @@ export const VaultView: React.FC<VaultViewProps> = ({
       setArchiveBusy('import');
       setArchiveError(null);
       try {
+        if (file.size > MAX_VAULT_ARCHIVE_BYTES) {
+          throw new Error('Vault archive is too large to import safely (60 MB limit).');
+        }
         const rawJson = await file.text();
         const result = await importVaultArchiveBundle(rawJson);
         await loadItems();
@@ -1539,6 +1622,7 @@ export const VaultView: React.FC<VaultViewProps> = ({
                   initialItemId: it.id,
                 })
               }
+              onMenuOpenChange={handleCardMenuOpenChange}
             />
           );
         })}
@@ -1752,11 +1836,12 @@ export const VaultView: React.FC<VaultViewProps> = ({
           {!emptyMode && folder.activeCount > 0 && (
             <IconButton
               size={44}
-              variant="primary"
+              className="dh-glass-accent-btn"
               label={`Revise ${folder.chapterName}`}
               title={`Revise ${folder.chapterName}`}
               onClick={(e) => {
                 e.stopPropagation();
+                triggerHaptic('tap');
                 launchRevisionForItems(folder.items, folder.chapterName);
               }}
             >
@@ -1771,8 +1856,32 @@ export const VaultView: React.FC<VaultViewProps> = ({
     );
   };
 
+  const isAnyOverlayOpen =
+    captureOpen ||
+    quickViewConfig.open ||
+    deckScope.open ||
+    Boolean(zoomState) ||
+    Boolean(compactDetailItem) ||
+    Boolean(deleteTarget) ||
+    backupSheetOpen ||
+    openCardMenus > 0;
+
+  const openThumbZoneCapture = useCallback(() => {
+    triggerHaptic('tap');
+    setEditingItem(null);
+    if (selectedFolder) {
+      setCaptureSeed({
+        subjectId: selectedFolder.subjectId,
+        chapterId: selectedFolder.chapterId,
+      });
+    } else {
+      setCaptureSeed(subjectFilter !== 'all' ? { subjectId: subjectFilter } : null);
+    }
+    setCaptureOpen(true);
+  }, [selectedFolder, subjectFilter]);
+
   return (
-    <div style={{ display: 'grid', gap: '14px' }}>
+    <div style={{ display: 'grid', gap: '14px', paddingBottom: '88px' }}>
       <input
         ref={importInputRef}
         type="file"
@@ -1785,7 +1894,7 @@ export const VaultView: React.FC<VaultViewProps> = ({
       {!selectedFolder ? (
         <>
           {/* Compact Vault Header */}
-          <Card style={{ margin: 0, display: 'grid', gap: '12px' }}>
+          <Card className="dh-today-card" style={{ margin: 0, display: 'grid', gap: '12px' }}>
             <div
               style={{
                 display: 'flex',
@@ -1811,15 +1920,17 @@ export const VaultView: React.FC<VaultViewProps> = ({
                   <Button
                     variant="secondary"
                     size="md"
-                    onClick={() =>
+                    className="dh-glass-btn"
+                    onClick={() => {
+                      triggerHaptic('tap');
                       setQuickViewConfig({
                         open: true,
                         scope: isGlobalSearchActive ? 'search' : 'subject',
                         initialItemId:
                           (isGlobalSearchActive ? searchMatchingItems : subjectScopedItems)[0]
                             ?.id ?? null,
-                      })
-                    }
+                      });
+                    }}
                   >
                     <Images size={15} strokeWidth={1.75} aria-hidden="true" />
                     Quick-View
@@ -1829,42 +1940,32 @@ export const VaultView: React.FC<VaultViewProps> = ({
                   <Button
                     variant="secondary"
                     size="md"
-                    onClick={() =>
+                    className="dh-glass-accent-btn"
+                    onClick={() => {
+                      triggerHaptic('tap');
                       launchRevisionForItems(
                         subjectActiveItems,
                         subjectFilter === 'all' ? 'Vault' : activeSubjectLabel
-                      )
-                    }
+                      );
+                    }}
                   >
                     <Play size={15} strokeWidth={1.75} aria-hidden="true" />
                     Start revision ({subjectActiveItems.length})
                   </Button>
                 )}
                 <IconButton
-                  size={48}
+                  size={44}
+                  className="dh-glass-btn"
                   label="Export or import Vault backup"
                   title="Export or import Vault backup"
                   onClick={() => {
+                    triggerHaptic('tap');
                     setArchiveError(null);
                     setBackupSheetOpen(true);
                   }}
                 >
                   <Archive size={18} strokeWidth={1.75} aria-hidden="true" />
                 </IconButton>
-                <Button
-                  variant="primary"
-                  size="md"
-                  onClick={() => {
-                    setEditingItem(null);
-                    setCaptureSeed(
-                      subjectFilter !== 'all' ? { subjectId: subjectFilter } : null
-                    );
-                    setCaptureOpen(true);
-                  }}
-                >
-                  <Plus size={16} strokeWidth={1.75} aria-hidden="true" />
-                  Add question
-                </Button>
               </div>
             </div>
           </Card>
@@ -2046,7 +2147,7 @@ export const VaultView: React.FC<VaultViewProps> = ({
             /* Chapter Folder List (Default View per Subject) */
             <div style={{ display: 'grid', gap: '14px' }}>
               {counts.total === 0 && (
-                <Card style={{ margin: 0 }}>
+                <Card className="dh-today-card" style={{ margin: 0 }}>
                   <EmptyState
                     illustration="noVault"
                     title="Snap it, crop it, revise it"
@@ -2054,15 +2155,10 @@ export const VaultView: React.FC<VaultViewProps> = ({
                     action={
                       <div style={{ display: 'grid', gap: '10px', justifyItems: 'center' }}>
                         <Button
-                          variant="primary"
+                          variant="secondary"
                           size="lg"
-                          onClick={() => {
-                            setEditingItem(null);
-                            setCaptureSeed(
-                              subjectFilter !== 'all' ? { subjectId: subjectFilter } : null
-                            );
-                            setCaptureOpen(true);
-                          }}
+                          className="dh-glass-accent-btn"
+                          onClick={openThumbZoneCapture}
                         >
                           <Camera size={17} strokeWidth={1.75} aria-hidden="true" />
                           Add your first question
@@ -2070,8 +2166,10 @@ export const VaultView: React.FC<VaultViewProps> = ({
                         <Button
                           variant="secondary"
                           size="lg"
+                          className="dh-glass-btn"
                           disabled={archiveBusy !== null}
                           onClick={() => {
+                            triggerHaptic('tap');
                             setArchiveError(null);
                             importInputRef.current?.click();
                           }}
@@ -2095,23 +2193,18 @@ export const VaultView: React.FC<VaultViewProps> = ({
                 </div>
               ) : (
                 counts.total > 0 && (
-                  <Card style={{ margin: 0 }}>
+                  <Card className="dh-today-card" style={{ margin: 0 }}>
                     <EmptyState
                       compact
                       illustration="noVault"
                       title={`No saved questions in ${activeSubjectLabel} yet`}
-                      description="Select an empty syllabus chapter below or add a new question directly."
+                      description="Select an empty syllabus chapter below or tap + Add to snap a question."
                       action={
                         <Button
-                          variant="primary"
+                          variant="secondary"
                           size="md"
-                          onClick={() => {
-                            setEditingItem(null);
-                            setCaptureSeed(
-                              subjectFilter !== 'all' ? { subjectId: subjectFilter } : null
-                            );
-                            setCaptureOpen(true);
-                          }}
+                          className="dh-glass-accent-btn"
+                          onClick={openThumbZoneCapture}
                         >
                           <Plus size={16} strokeWidth={1.75} aria-hidden="true" />
                           Add question to {activeSubjectLabel}
@@ -2346,7 +2439,9 @@ export const VaultView: React.FC<VaultViewProps> = ({
                   <Button
                     variant="secondary"
                     size="sm"
-                    onClick={() =>
+                    className="dh-glass-btn"
+                    onClick={() => {
+                      triggerHaptic('tap');
                       setQuickViewConfig({
                         open: true,
                         scope: 'folder',
@@ -2354,8 +2449,8 @@ export const VaultView: React.FC<VaultViewProps> = ({
                         folderChapterId: selectedFolder.chapterId,
                         initialItemId:
                           (chapterDeckItems[0] || folderAllItems[0])?.id ?? null,
-                      })
-                    }
+                      });
+                    }}
                     style={{ minHeight: '40px' }}
                   >
                     <Images size={15} strokeWidth={1.75} aria-hidden="true" />
@@ -2366,29 +2461,17 @@ export const VaultView: React.FC<VaultViewProps> = ({
                   <Button
                     variant="secondary"
                     size="sm"
-                    onClick={() => launchRevisionForItems(folderAllItems, selectedFolderTitle)}
+                    className="dh-glass-accent-btn"
+                    onClick={() => {
+                      triggerHaptic('tap');
+                      launchRevisionForItems(folderAllItems, selectedFolderTitle);
+                    }}
                     style={{ minHeight: '40px' }}
                   >
                     <Play size={14} strokeWidth={1.75} aria-hidden="true" />
                     Revise chapter ({folderCounts.active})
                   </Button>
                 )}
-                <Button
-                  variant="primary"
-                  size="sm"
-                  onClick={() => {
-                    setEditingItem(null);
-                    setCaptureSeed({
-                      subjectId: selectedFolder.subjectId,
-                      chapterId: selectedFolder.chapterId,
-                    });
-                    setCaptureOpen(true);
-                  }}
-                  style={{ minHeight: '40px' }}
-                >
-                  <Plus size={15} strokeWidth={1.75} aria-hidden="true" />
-                  Add
-                </Button>
               </div>
             </div>
 
@@ -2537,23 +2620,17 @@ export const VaultView: React.FC<VaultViewProps> = ({
 
           {/* Chapter Question List */}
           {folderAllItems.length === 0 ? (
-            <Card style={{ margin: 0 }}>
+            <Card className="dh-today-card" style={{ margin: 0 }}>
               <EmptyState
                 illustration="noVault"
                 title={`No questions in ${selectedFolderTitle} yet`}
                 description="Capture an unsolved problem or tricky trap question for this chapter to start building its revision deck."
                 action={
                   <Button
-                    variant="primary"
+                    variant="secondary"
                     size="lg"
-                    onClick={() => {
-                      setEditingItem(null);
-                      setCaptureSeed({
-                        subjectId: selectedFolder.subjectId,
-                        chapterId: selectedFolder.chapterId,
-                      });
-                      setCaptureOpen(true);
-                    }}
+                    className="dh-glass-accent-btn"
+                    onClick={openThumbZoneCapture}
                   >
                     <Camera size={17} strokeWidth={1.75} aria-hidden="true" />
                     Add question to this chapter
@@ -2595,8 +2672,8 @@ export const VaultView: React.FC<VaultViewProps> = ({
         </>
       )}
 
-      {/* Compact Row Detail Sheet */}
-      <Sheet
+      {/* Compact Row Detail Frosted BottomSheet */}
+      <BottomSheet
         open={Boolean(compactDetailItem)}
         onClose={() => setCompactDetailItem(null)}
         title={
@@ -2651,9 +2728,10 @@ export const VaultView: React.FC<VaultViewProps> = ({
                 initialItemId: it.id,
               });
             }}
+            onMenuOpenChange={handleCardMenuOpenChange}
           />
         )}
-      </Sheet>
+      </BottomSheet>
 
       {/* Add / Edit Capture Sheet */}
       <VaultCaptureSheet
@@ -2713,6 +2791,7 @@ export const VaultView: React.FC<VaultViewProps> = ({
             chapters={state.chapters}
             deckLabel={deckScope.label}
             activeTimerText={activeTimerText}
+            timerState={state}
             onClose={() => setDeckScope((d) => ({ ...d, open: false }))}
             onRecordRevised={handleRecordRevisedInDeck}
             onMarkMastered={handleMarkMasteredInDeck}
@@ -2755,8 +2834,8 @@ export const VaultView: React.FC<VaultViewProps> = ({
         </div>
       </Dialog>
 
-      {/* Local Vault Backup & Restore Sheet */}
-      <Sheet
+      {/* Local Vault Backup & Restore Frosted BottomSheet */}
+      <BottomSheet
         open={backupSheetOpen}
         onClose={() => {
           if (!archiveBusy) {
@@ -2769,9 +2848,9 @@ export const VaultView: React.FC<VaultViewProps> = ({
         <div style={{ display: 'grid', gap: '14px' }}>
           <div
             style={{
-              background: 'var(--sf-2)',
-              border: '1px solid var(--line)',
-              borderRadius: '12px',
+              background: 'var(--glass-pill)',
+              border: '1px solid var(--glass-bd)',
+              borderRadius: '14px',
               padding: '14px',
               display: 'flex',
               alignItems: 'center',
@@ -2814,7 +2893,10 @@ export const VaultView: React.FC<VaultViewProps> = ({
               size="lg"
               fullWidth
               disabled={archiveBusy !== null || counts.total === 0}
-              onClick={() => void handleExportVault()}
+              onClick={() => {
+                triggerHaptic('tap');
+                void handleExportVault();
+              }}
             >
               <Download size={17} strokeWidth={1.75} aria-hidden="true" />
               {archiveBusy === 'export'
@@ -2825,8 +2907,10 @@ export const VaultView: React.FC<VaultViewProps> = ({
               variant="secondary"
               size="lg"
               fullWidth
+              className="dh-glass-btn"
               disabled={archiveBusy !== null}
               onClick={() => {
+                triggerHaptic('tap');
                 setArchiveError(null);
                 importInputRef.current?.click();
               }}
@@ -2841,7 +2925,29 @@ export const VaultView: React.FC<VaultViewProps> = ({
             safely merge new or updated questions by ID without deleting existing Vault items.
           </p>
         </div>
-      </Sheet>
+      </BottomSheet>
+
+      {/* Thumb-Zone Single Gold CTA FAB (Portaled to document.body, hidden when overlays open) */}
+      {!isAnyOverlayOpen &&
+        typeof document !== 'undefined' &&
+        createPortal(
+          <button
+            type="button"
+            className={`dh-vault-fab ${activeTimerText ? 'has-mini-timer' : ''}`}
+            aria-label={
+              selectedFolder
+                ? `Add question to ${selectedFolderTitle}`
+                : subjectFilter !== 'all'
+                  ? `Add question to ${activeSubjectLabel}`
+                  : 'Add question to Vault'
+            }
+            onClick={openThumbZoneCapture}
+          >
+            <Plus size={18} strokeWidth={2.25} aria-hidden="true" />
+            <span>Add</span>
+          </button>,
+          document.body
+        )}
     </div>
   );
 };

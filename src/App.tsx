@@ -3,7 +3,7 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
-import React, { Suspense, useCallback, useEffect, useRef, useState } from 'react';
+import React, { Suspense, useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import type {
   ActiveTimerMode,
   AppSettings,
@@ -63,7 +63,14 @@ import {
   uid,
   updateChapterRevisionDate,
 } from './utils/studyLogic';
-import { toggleRestDay } from './utils/insights';
+import { computeMinDayStreak, toggleRestDay } from './utils/insights';
+import { computeLevelInfo, computeTotalXp } from './utils/xp';
+import {
+  SETTINGS_SECTION_META,
+  resolveReturnTab,
+  type MainNavTab,
+  type SettingsSectionId,
+} from './utils/navHelpers';
 import {
   clearAllMockDiagnostics,
   deleteMockDiagnostic,
@@ -77,6 +84,7 @@ import type {
   GroupPublishBudgetController,
 } from './utils/groups';
 import type { SyncBudgetController } from './utils/cloudSync';
+import { emitTimerTick } from './utils/timerTicker';
 import {
   loadInitialState,
   persistState,
@@ -108,8 +116,16 @@ import { CommandPalette } from './components/CommandPalette';
 import { KeyboardShortcutsSheet } from './components/KeyboardShortcutsSheet';
 import type { OnboardingResult } from './components/OnboardingSheet';
 import type { SettingsSection } from './components/SettingsView';
+import { SettingsDrawer } from './components/SettingsDrawer';
+import { StreakDetailSheet } from './components/StatusRow';
 import type { VaultCaptureRequest } from './components/VaultView';
+import { SessionWrapUpSheet } from './components/SessionWrapUpSheet';
 import { clearAllVaultData, ensurePersistentStorage } from './utils/vaultStore';
+import {
+  buildSessionWrapUpSummary,
+  shouldOpenSessionWrapUp,
+  type SessionWrapUpSummary,
+} from './utils/sessionWrapUp';
 import {
   detectRewardMilestone,
   type RewardMilestonePayload,
@@ -235,6 +251,7 @@ export default function App() {
   const [pyqJumpNonce, setPyqJumpNonce] = useState<number>(0);
   const [vaultCaptureRequest, setVaultCaptureRequest] =
     useState<VaultCaptureRequest | null>(null);
+  const [sessionWrapUp, setSessionWrapUp] = useState<SessionWrapUpSummary | null>(null);
   const [statsSubTab, setStatsSubTab] = useState<StatsSubTab>('summary');
   const [sel, setSel] = useState<string>(() => logicalKey(new Date(), 0));
   const [cat, setCat] = useState<'All' | HabitCategory>('All');
@@ -247,7 +264,9 @@ export default function App() {
     onTap?: () => void;
   } | null>(null);
   const [rewardBurst, setRewardBurst] = useState<RewardMilestonePayload | null>(null);
-  const [, setTickCounter] = useState(0);
+  const [dayRolloverKey, setDayRolloverKey] = useState<string>(() =>
+    logicalKey(new Date(), 0)
+  );
 
   // Milestone 2: Firebase Auth & Cloud Sync state
   const [authUser, setAuthUser] = useState<{
@@ -269,11 +288,34 @@ export default function App() {
   );
   const [settingsOpen, setSettingsOpen] = useState(false);
   const [settingsSection, setSettingsSection] = useState<SettingsSection | null>(null);
+  const [settingsDrawerOpen, setSettingsDrawerOpen] = useState(false);
+  const [previousTab, setPreviousTab] = useState<MainNavTab>('today');
+  const [streakSheetOpen, setStreakSheetOpen] = useState(false);
   const [quickActionsOpen, setQuickActionsOpen] = useState(false);
   const [commandPaletteOpen, setCommandPaletteOpen] = useState(false);
   const [shortcutsHelpOpen, setShortcutsHelpOpen] = useState(false);
   const [onboardingOpen, setOnboardingOpen] = useState(false);
   const [amoled, setAmoled] = useState<boolean>(() => getAmoledPref());
+
+  const openSettingsSection = useCallback(
+    (section: SettingsSectionId) => {
+      if (!settingsOpen && tab !== 'more') {
+        setPreviousTab(resolveReturnTab(tab));
+      }
+      setSettingsDrawerOpen(false);
+      setSettingsSection(section);
+      setSettingsOpen(true);
+      window.scrollTo(0, 0);
+    },
+    [settingsOpen, tab]
+  );
+
+  const closeSettingsAndReturn = useCallback(() => {
+    setSettingsOpen(false);
+    setSettingsSection(null);
+    setTab(previousTab);
+    window.scrollTo(0, 0);
+  }, [previousTab]);
 
   const handleToggleAmoled = useCallback((enabled: boolean) => {
     setAmoledPref(enabled);
@@ -282,6 +324,7 @@ export default function App() {
 
   const switchTabWithTransition = useCallback((nextTab: AppTab) => {
     const apply = () => {
+      setSettingsDrawerOpen(false);
       setSettingsOpen(false);
       setSettingsSection(null);
       setTab(nextTab);
@@ -390,7 +433,30 @@ export default function App() {
   const swReloadRequestedRef = useRef(false);
 
   const todayKey = logicalKey(new Date(), state.set.dayResetHour ?? 0);
+  void dayRolloverKey;
   const prevTodayKeyRef = useRef(todayKey);
+
+  const topBarStreakInfo = useMemo(
+    () => computeMinDayStreak(state, todayKey),
+    [state, todayKey]
+  );
+  const topBarTotalXp = useMemo(
+    () => computeTotalXp(state, todayKey),
+    [state, todayKey]
+  );
+  const topBarLevelInfo = useMemo(
+    () => computeLevelInfo(topBarTotalXp),
+    [topBarTotalXp]
+  );
+  const topBarXpProgressPct = Math.min(
+    100,
+    Math.max(
+      0,
+      Math.round(
+        (topBarLevelInfo.xpIntoLevel / Math.max(1, topBarLevelInfo.xpNeededForNext)) * 100
+      )
+    )
+  );
 
   const showToast = useCallback(
     (
@@ -723,10 +789,14 @@ export default function App() {
     };
   }, [handleApplyWaitingSw, hydrateLoadedState, showToast]);
 
-  // A7: Idle day-rollover interval every 30s so todayKey and sel advance automatically past dayResetHour
+  // A7: Idle day-rollover check every 30s — only updates React state when logical day actually changes
   useEffect(() => {
     const id = setInterval(() => {
-      setTickCounter((c) => c + 1);
+      const nextToday = logicalKey(
+        new Date(),
+        stateRef.current.set.dayResetHour ?? 0
+      );
+      setDayRolloverKey((prev) => (prev === nextToday ? prev : nextToday));
     }, 30000);
     return () => clearInterval(id);
   }, []);
@@ -878,7 +948,14 @@ export default function App() {
     );
   }, [state.set.soundscape, state.activeTimer?.status, state.set.soundVol]);
 
-  // Milestone 2: Cloud Sync Controller & Firebase Auth lifecycle
+  // Milestone 2: Cloud Sync Controller & Firebase Auth lifecycle (serialized + coalesced)
+  const syncInFlightRef = useRef<Promise<SyncStatus> | null>(null);
+  const queuedSyncOptsRef = useRef<{
+    forcePull?: boolean;
+    isFirstSignIn?: boolean;
+    dirtyDocKeys?: string[];
+  } | null>(null);
+
   const runCloudSync = useCallback(
     async (opts?: {
       forcePull?: boolean;
@@ -893,52 +970,131 @@ export default function App() {
         return 'offline';
       }
 
-      setSyncStatus('syncing');
-      setSyncErrorMsg(null);
+      // Coalesce overlapping triggers (visibilitychange, online, 8s debounce, 5m interval, manual button)
+      if (syncInFlightRef.current) {
+        const prev = queuedSyncOptsRef.current;
+        const mergedDirty = new Set<string>([
+          ...(prev?.dirtyDocKeys || []),
+          ...(opts?.dirtyDocKeys || []),
+        ]);
+        queuedSyncOptsRef.current = {
+          forcePull: Boolean(prev?.forcePull || opts?.forcePull),
+          isFirstSignIn: Boolean(prev?.isFirstSignIn || opts?.isFirstSignIn),
+          ...(mergedDirty.size > 0 ? { dirtyDocKeys: Array.from(mergedDirty) } : {}),
+        };
+        return syncInFlightRef.current;
+      }
 
-      try {
-        const cs = await getCloudSyncMod();
-        // 2.4: On first sign-in on a device that already has local data, write a safety snapshot first
-        if (opts?.isFirstSignIn && stateRef.current.syncMeta?.uid !== user.uid) {
-          await writeSafetyBackupSnapshot(stateRef.current);
+      const executeCycle = async (cycleOpts?: {
+        forcePull?: boolean;
+        isFirstSignIn?: boolean;
+        dirtyDocKeys?: string[];
+      }): Promise<SyncStatus> => {
+        const activeUser = authUserRef.current;
+        const activeController = syncControllerRef.current;
+        if (!activeUser || !activeController || !readyRef.current) return 'off';
+        if (typeof navigator !== 'undefined' && !navigator.onLine) {
+          setSyncStatus('offline');
+          return 'offline';
         }
 
-        const res = await cs.performCloudSyncCycle(
-          user.uid,
-          stateRef.current,
-          controller,
-          { forcePull: opts?.forcePull, dirtyDocKeys: opts?.dirtyDocKeys }
-        );
-        setSyncWritesToday(cs.getSyncTodayWrites());
-        setSyncStatus(res.status);
-        if (res.errorMessage) {
-          setSyncErrorMsg(res.errorMessage);
-        }
-        if (res.mergedState.syncMeta?.lastSyncedAt) {
-          setLastSyncedAt(res.mergedState.syncMeta.lastSyncedAt);
-        }
-        if (res.status === 'synced' || res.pulledDocs > 0) {
-          const curToday = logicalKey(
-            new Date(),
-            res.mergedState.set.dayResetHour ?? 0
+        setSyncStatus('syncing');
+        setSyncErrorMsg(null);
+
+        try {
+          const cs = await getCloudSyncMod();
+          // 2.4: On first sign-in on a device that already has local data, write a safety snapshot first
+          if (
+            cycleOpts?.isFirstSignIn &&
+            stateRef.current.syncMeta?.uid !== activeUser.uid
+          ) {
+            await writeSafetyBackupSnapshot(stateRef.current);
+          }
+
+          const stateSnapshotBeforePush = stateRef.current;
+          const res = await cs.performCloudSyncCycle(
+            activeUser.uid,
+            stateSnapshotBeforePush,
+            activeController,
+            {
+              forcePull: cycleOpts?.forcePull,
+              dirtyDocKeys: cycleOpts?.dirtyDocKeys,
+              getLatestLocalState: () => stateRef.current,
+            }
           );
-          const syncedState: PulseHabitState = {
-            ...res.mergedState,
-            log: cloneLog(res.mergedState.log),
-            savedAt: Date.now(),
-          };
-          syncStudyHabitsInPlace(syncedState, curToday, curToday);
-          stateRef.current = syncedState;
-          setState(syncedState);
-          persistState(syncedState);
+          setSyncWritesToday(cs.getSyncTodayWrites());
+          setSyncStatus(res.status);
+          if (res.errorMessage) {
+            setSyncErrorMsg(res.errorMessage);
+          }
+          if (res.mergedState.syncMeta?.lastSyncedAt) {
+            setLastSyncedAt(res.mergedState.syncMeta.lastSyncedAt);
+          }
+          if (res.status === 'synced' || res.pulledDocs > 0) {
+            // Re-merge against the LATEST stateRef.current so local edits logged during batch.commit() are never wiped
+            const latestNow = Date.now();
+            const currentLatest = stateRef.current;
+            const localMutatedMidFlight = currentLatest !== stateSnapshotBeforePush;
+            let baseState: PulseHabitState;
+            if (!localMutatedMidFlight) {
+              baseState = res.mergedState;
+            } else if (res.pulledDocs > 0 && res.downloadedDocs) {
+              baseState = {
+                ...cs.mergeStateWithCloudDocs(currentLatest, res.downloadedDocs, latestNow),
+                syncMeta: res.mergedState.syncMeta,
+              };
+            } else {
+              baseState = {
+                ...currentLatest,
+                syncMeta: res.mergedState.syncMeta,
+              };
+            }
+
+            if (res.pulledDocs > 0 || baseState.syncMeta?.lastSyncedAt !== currentLatest.syncMeta?.lastSyncedAt) {
+              const curToday = logicalKey(
+                new Date(),
+                baseState.set.dayResetHour ?? 0
+              );
+              const syncedState: PulseHabitState = {
+                ...baseState,
+                log: cloneLog(baseState.log),
+                savedAt: latestNow,
+              };
+              syncStudyHabitsInPlace(syncedState, curToday, curToday);
+              stateRef.current = syncedState;
+              setState(syncedState);
+              persistState(syncedState);
+            }
+          }
+          return res.status;
+        } catch (err) {
+          const msg =
+            err instanceof Error
+              ? err.message
+              : 'Cloud sync encountered an unexpected error';
+          setSyncStatus('error');
+          setSyncErrorMsg(msg);
+          return 'error';
         }
-        return res.status;
-      } catch (err) {
-        const msg =
-          err instanceof Error ? err.message : 'Cloud sync encountered an unexpected error';
-        setSyncStatus('error');
-        setSyncErrorMsg(msg);
-        return 'error';
+      };
+
+      const runPromise = (async (): Promise<SyncStatus> => {
+        let lastStatus = await executeCycle(opts);
+        while (queuedSyncOptsRef.current) {
+          const nextOpts = queuedSyncOptsRef.current;
+          queuedSyncOptsRef.current = null;
+          lastStatus = await executeCycle(nextOpts);
+        }
+        return lastStatus;
+      })();
+
+      syncInFlightRef.current = runPromise;
+      try {
+        return await runPromise;
+      } finally {
+        if (syncInFlightRef.current === runPromise) {
+          syncInFlightRef.current = null;
+        }
       }
     },
     []
@@ -1539,6 +1695,7 @@ export default function App() {
     if (t.phase === 'work') {
       const res = commitSliceInState(prev, now, {
         subjectId: t.subjectId,
+        chapterId: t.chapterId,
         heading: t.heading,
         rating: 5,
         note: 'Pomodoro work sprint',
@@ -1546,6 +1703,9 @@ export default function App() {
       workingState = res.next;
       nextPhase = 'break';
       nextTargetMs = (prev.set.pomoBreak || 5) * 60000;
+      if (shouldOpenSessionWrapUp(res.savedEntry)) {
+        setSessionWrapUp(buildSessionWrapUpSummary(res.savedEntry!));
+      }
     }
 
     beep('ok', !!prev.set.snd);
@@ -1589,17 +1749,33 @@ export default function App() {
   });
 
   // 500ms Zero-Drift Timer Loop backed by an unthrottled Web Worker + fallback setInterval
+  // Emits 1Hz display ticks ONLY to subscribed timer widgets when running & visible (0 full-App re-renders!)
   const hasActiveTimer = Boolean(state.activeTimer);
   useEffect(() => {
     if (!hasActiveTimer) return;
 
+    let lastEmittedSec = -1;
+    let lastHabitSyncTs = 0;
+
     const handleTick = () => {
-      setTickCounter((c) => c + 1);
       const prev = stateRef.current;
       if (!prev.activeTimer) return;
 
       const now = Date.now();
-      const m = getTimerMetrics(prev, now);
+      const isRunning = prev.activeTimer.status === 'running';
+      const isHidden =
+        typeof document !== 'undefined' && document.visibilityState === 'hidden';
+
+      // Notify ONLY mounted clock subscribers at ~1Hz when running and visible
+      if (isRunning && !isHidden) {
+        const curSec = Math.floor(now / 1000);
+        if (curSec !== lastEmittedSec) {
+          lastEmittedSec = curSec;
+          emitTimerTick();
+        }
+      }
+
+      const m = isRunning ? getTimerMetrics(prev, now) : null;
       let changed = false;
       let nextTimer = prev.activeTimer;
 
@@ -1616,7 +1792,7 @@ export default function App() {
       }
 
       if (
-        nextTimer.status === 'running' &&
+        isRunning &&
         nextTimer.mode !== 'stopwatch' &&
         m &&
         m.overtimeMs > 0 &&
@@ -1631,19 +1807,39 @@ export default function App() {
         );
       }
 
-      const curToday = logicalKey(now, prev.set.dayResetHour ?? 0);
-      const draft: PulseHabitState = {
-        ...prev,
-        log: cloneLog(prev.log),
-        activeTimer: nextTimer,
-      };
-      const habitChanged = syncStudyHabitsInPlace(draft, curToday, curToday, now);
+      // Avoid deep-cloning the entire historical habit log every 500ms: sync auto-study habits every 15s while running
+      const shouldSyncHabits =
+        changed || (isRunning && now - lastHabitSyncTs >= 15000);
+      if (shouldSyncHabits) {
+        lastHabitSyncTs = now;
+        const curToday = logicalKey(now, prev.set.dayResetHour ?? 0);
+        const draft: PulseHabitState = {
+          ...prev,
+          log: cloneLog(prev.log),
+          activeTimer: nextTimer,
+        };
+        const habitChanged = syncStudyHabitsInPlace(draft, curToday, curToday, now);
 
-      if (changed || habitChanged) {
-        saveNextState(draft);
+        if (changed || habitChanged) {
+          saveNextState(draft);
+        }
       }
       renderTick();
     };
+
+    const onVisibilityRefresh = () => {
+      if (
+        typeof document !== 'undefined' &&
+        document.visibilityState === 'visible' &&
+        stateRef.current.activeTimer
+      ) {
+        lastEmittedSec = -1;
+        emitTimerTick();
+      }
+    };
+    if (typeof document !== 'undefined') {
+      document.addEventListener('visibilitychange', onVisibilityRefresh);
+    }
 
     let worker: Worker | null = null;
     let workerUrl: string | null = null;
@@ -1664,6 +1860,9 @@ export default function App() {
     }, 500);
 
     return () => {
+      if (typeof document !== 'undefined') {
+        document.removeEventListener('visibilitychange', onVisibilityRefresh);
+      }
       clearInterval(fallbackId);
       if (worker) worker.terminate();
       if (workerUrl) URL.revokeObjectURL(workerUrl);
@@ -2701,13 +2900,9 @@ export default function App() {
   const todayStudyProg = getUiDailyStudyGoalProgress(state, todayKey, todayKey);
   const activeMetrics = state.activeTimer ? getTimerMetrics(state, Date.now()) : null;
   const isSettingsOpen = settingsOpen || tab === 'more';
-  const selDateFormatted = parseKey(sel).toLocaleDateString('en-US', {
-    weekday: 'short',
-    month: 'short',
-    day: 'numeric',
-  });
+  const activeSettingsSection: SettingsSection = settingsSection || 'profile';
   const topBarTitle = isSettingsOpen
-    ? 'Settings'
+    ? SETTINGS_SECTION_META[activeSettingsSection].title
     : tab === 'focus'
       ? 'Focus'
       : tab === 'prep'
@@ -2718,16 +2913,8 @@ export default function App() {
             ? 'Community'
             : 'Today';
   const topBarSubtitle = isSettingsOpen
-    ? 'Preferences, goals, exams, sync & data'
-    : tab === 'today'
-      ? `${selDateFormatted} · Reset ${pad(state.set.dayResetHour ?? 0)}:00`
-      : tab === 'focus'
-        ? 'Timer & ambient sounds'
-        : tab === 'prep'
-          ? 'Syllabus pace, mocks, vault & PYQs'
-          : tab === 'stats'
-            ? 'Analytics, history & 10m timeline'
-            : 'Private study squads & weekly leaderboards';
+    ? SETTINGS_SECTION_META[activeSettingsSection].subtitle
+    : undefined;
 
   const lazyFallback = (
     <div style={{ display: 'grid', gap: '12px', paddingTop: '8px' }}>
@@ -2745,27 +2932,25 @@ export default function App() {
         onSelectTab={(nextTab) => {
           switchTabWithTransition(nextTab);
         }}
-        onCloseSettings={() => {
-          setSettingsOpen(false);
-          setSettingsSection(null);
-          if (tab === 'more') setTab('today');
-        }}
+        onCloseSettings={closeSettingsAndReturn}
         topBarTitle={topBarTitle}
         topBarSubtitle={topBarSubtitle}
-        avatarEmoji={state.set.avatarEmoji || state.profile?.emoji || '🩺'}
         syncStatus={syncStatus}
         isOnline={isOnline}
         isSignedIn={Boolean(authUser)}
+        streakCount={topBarStreakInfo.streak}
+        streakMetToday={
+          topBarStreakInfo.todayMetMinimum || topBarStreakInfo.todayIsRestDay
+        }
+        level={topBarLevelInfo.level}
+        xpProgressPct={topBarXpProgressPct}
+        onOpenDrawer={() => setSettingsDrawerOpen(true)}
+        onBackFromSettings={closeSettingsAndReturn}
+        onOpenStreak={() => setStreakSheetOpen(true)}
+        onOpenProfile={() => openSettingsSection('profile')}
         onOpenQuickActions={() => setQuickActionsOpen(true)}
-        onOpenSettings={() => {
-          setSettingsSection(null);
-          setSettingsOpen(true);
-        }}
-        onOpenSyncSettings={() => {
-          setSettingsSection('sync');
-          setSettingsOpen(true);
-        }}
         activeMetrics={activeMetrics}
+        timerState={state}
         onToggleTimerPause={toggleTimerPause}
         todayPct={todayStudyProg.pct}
       >
@@ -2780,18 +2965,14 @@ export default function App() {
               onSelectCat={setCat}
               onSwitchTab={(t) => {
                 if (t === 'more') {
-                  setSettingsSection(null);
-                  setSettingsOpen(true);
+                  setSettingsDrawerOpen(true);
                 } else {
                   switchTabWithTransition(t);
+                  window.scrollTo(0, 0);
                 }
-                window.scrollTo(0, 0);
               }}
-              onManageExams={() => {
-                setSettingsSection('exams');
-                setSettingsOpen(true);
-                window.scrollTo(0, 0);
-              }}
+              onManageExams={() => openSettingsSection('exams')}
+              onManageTargets={() => openSettingsSection('targets')}
               onToggleHabit={toggleHabit}
             onIncrementHabit={(id, d) => setHabitValue(id, sel, d)}
             onSkipHabit={skipHabit}
@@ -3110,8 +3291,13 @@ export default function App() {
           <Suspense fallback={lazyFallback}>
             <SettingsView
               state={state}
-              activeSection={settingsSection}
-              onChangeSection={setSettingsSection}
+              activeSection={activeSettingsSection}
+              onChangeSection={(next) => {
+                if (next) openSettingsSection(next);
+                else closeSettingsAndReturn();
+              }}
+              onBack={closeSettingsAndReturn}
+              hideSubHeader
               amoled={amoled}
               onToggleAmoled={handleToggleAmoled}
               todayKey={todayKey}
@@ -3428,6 +3614,31 @@ export default function App() {
         </main>
       </AppShell>
 
+      <SettingsDrawer
+        open={settingsDrawerOpen}
+        onClose={() => setSettingsDrawerOpen(false)}
+        onSelectSection={openSettingsSection}
+        activeSection={isSettingsOpen ? activeSettingsSection : null}
+        state={state}
+        todayKey={todayKey}
+        amoled={amoled}
+        cloudUser={authUser}
+        syncStatus={syncStatus}
+        dailyWritesUsed={syncWritesToday}
+        dailyWriteCap={cloudSyncCache?.DAILY_WRITE_CAP ?? 500}
+        isOnline={isOnline}
+      />
+
+      <StreakDetailSheet
+        open={streakSheetOpen}
+        onClose={() => setStreakSheetOpen(false)}
+        sel={sel}
+        todayKey={todayKey}
+        minStreakInfo={topBarStreakInfo}
+        isSelRestDay={(state.restDays || []).includes(sel)}
+        onToggleRestDay={handleToggleRestDay}
+      />
+
       <QuickActionsSheet
         open={quickActionsOpen}
         onClose={() => setQuickActionsOpen(false)}
@@ -3445,8 +3656,7 @@ export default function App() {
         onSelectPrepSubTab={setPrepSubTab}
         onSelectStatsSubTab={setStatsSubTab}
         onOpenSettings={() => {
-          setSettingsSection(null);
-          setSettingsOpen(true);
+          setSettingsDrawerOpen(true);
         }}
         onQuickAction={handleQuickAction}
         onStartChapterFocus={(subjectId, chapterId, chapterName) => {
@@ -3499,7 +3709,7 @@ export default function App() {
         onDeleteHabit={handleDeleteHabit}
         onSubmitReflection={(subjectId, heading, rating, note, chapterId) => {
           const prev = stateRef.current;
-          const { next } = commitSliceInState(prev, Date.now(), {
+          const { next, savedEntry } = commitSliceInState(prev, Date.now(), {
             subjectId,
             chapterId,
             heading,
@@ -3515,7 +3725,11 @@ export default function App() {
           beep('win', !!updated.set.snd);
           boomConfetti();
           setModal({ type: 'none' });
-          showToast(`Logged session: ${heading}`);
+          if (shouldOpenSessionWrapUp(savedEntry)) {
+            setSessionWrapUp(buildSessionWrapUpSummary(savedEntry!));
+          } else {
+            showToast(`Logged session: ${heading}`);
+          }
         }}
         onDiscardSession={() => {
           updateAndSave((prev) => ({ ...prev, activeTimer: null }));
@@ -3727,6 +3941,39 @@ export default function App() {
               saveNextState(reverted, { suppressMilestones: true });
             }
           );
+        }}
+      />
+
+      <SessionWrapUpSheet
+        summary={sessionWrapUp}
+        subject={
+          sessionWrapUp
+            ? state.subjects.find((s) => s.id === sessionWrapUp.subjectId)
+            : undefined
+        }
+        chapter={
+          sessionWrapUp?.chapterId
+            ? state.chapters.find((c) => c.id === sessionWrapUp.chapterId)
+            : undefined
+        }
+        onClose={() => setSessionWrapUp(null)}
+        onSnapToVault={(subjectId, chapterId) => {
+          setSessionWrapUp(null);
+          setSettingsOpen(false);
+          setSettingsSection(null);
+          setPrepSubTab('mistakes');
+          setTab('prep');
+          setVaultCaptureRequest({
+            nonce: Date.now(),
+            kind: 'unsolved',
+            subjectId,
+            chapterId,
+          });
+          window.scrollTo(0, 0);
+        }}
+        onSetChapterConfidence={(chapterId, confidence) => {
+          handleUpdateChapter(chapterId, { confidence });
+          showToast(`Updated chapter confidence (${confidence}/5)`);
         }}
       />
 

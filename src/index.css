@@ -40,8 +40,14 @@
   --info: #60A5FA;
   --info-ink: #60A5FA;
 
-  /* Glass surfaces (strictly TopBar + TabBar) */
+  /* Glass & frosted surfaces */
   --glass-bg: rgba(11, 13, 16, 0.84);
+  --glass-surface: rgba(18, 20, 26, 0.84);
+  --glass-pill: rgba(255, 255, 255, 0.045);
+  --glass-pill-hover: rgba(255, 255, 255, 0.08);
+  --glass-bd: rgba(255, 255, 255, 0.10);
+  --glass-specular: inset 0 1px 0 rgba(255, 255, 255, 0.09);
+  --hairline: rgba(255, 255, 255, 0.07);
 
   /* Legacy aliases so untouched views inherit the calm theme cleanly */
   --card: var(--sf-1);
@@ -78,6 +84,8 @@
   --sf-highlight: inset 0 1px 0 rgba(255, 255, 255, 0.05);
   --shadow-card: none;
   --glass-bg: rgba(0, 0, 0, 0.86);
+  --glass-surface: rgba(14, 16, 21, 0.86);
+  --hairline: rgba(255, 255, 255, 0.07);
 }
 
 [data-t='light'] {
@@ -105,6 +113,12 @@
   --info: #2563EB;
   --info-ink: #1D4ED8;
   --glass-bg: rgba(246, 244, 239, 0.88);
+  --glass-surface: rgba(255, 255, 255, 0.90);
+  --glass-pill: rgba(20, 22, 26, 0.04);
+  --glass-pill-hover: rgba(20, 22, 26, 0.075);
+  --glass-bd: rgba(20, 22, 26, 0.11);
+  --glass-specular: inset 0 1px 0 rgba(255, 255, 255, 0.85);
+  --hairline: rgba(20, 22, 26, 0.08);
 }
 
 @layer base {
@@ -863,80 +877,133 @@ small,
 }
 
 /* Sheet & Dialog Backdrop */
-.dh-backdrop {
+.dh-backdrop,
+.dh-glass-backdrop {
   position: fixed;
   inset: 0;
-  z-index: 60;
+  z-index: 65;
   background: rgba(0, 0, 0, 0.62);
+  backdrop-filter: blur(8px);
+  -webkit-backdrop-filter: blur(8px);
   display: flex;
   align-items: flex-end;
   justify-content: center;
+  overscroll-behavior: contain;
   animation: fadeBackdrop var(--dur-fast) var(--ease-out) both;
 }
 
 @media (min-width: 640px) {
-  .dh-backdrop {
+  .dh-backdrop,
+  .dh-glass-backdrop {
     align-items: center;
     padding: 24px;
   }
 }
 
-.dh-sheet {
+.dh-sheet,
+.dh-glass-sheet {
   width: 100%;
   max-width: 520px;
-  max-height: 90vh;
-  background: var(--sf-1);
-  border: 1px solid var(--line);
+  max-height: min(88dvh, 90vh);
+  background: var(--glass-surface);
+  backdrop-filter: blur(22px);
+  -webkit-backdrop-filter: blur(22px);
+  border: 1px solid var(--glass-bd);
+  border-bottom: 0;
   border-radius: 24px 24px 0 0;
   display: flex;
   flex-direction: column;
   overflow: hidden;
   padding-bottom: var(--sb);
-  box-shadow: 0 20px 56px rgba(0, 0, 0, 0.55);
+  box-shadow: var(--glass-specular), 0 24px 64px rgba(0, 0, 0, 0.56);
+  overscroll-behavior-y: contain;
+  will-change: transform, opacity;
   animation: sheetSlideUp var(--dur-slow) var(--ease-out) both;
 }
 
+.dh-glass-sheet-tall {
+  min-height: min(76dvh, 620px);
+}
+
 @media (min-width: 640px) {
-  .dh-sheet {
+  .dh-sheet,
+  .dh-glass-sheet {
+    border-bottom: 1px solid var(--glass-bd);
     border-radius: 24px;
     padding-bottom: 0;
   }
 }
 
-.dh-sheet-handle {
-  width: 36px;
+.dh-sheet-handle,
+.dh-glass-sheet-handle {
+  width: 38px;
   height: 4px;
   border-radius: 99px;
-  background: var(--tx-3);
+  background: color-mix(in srgb, var(--tx-3) 65%, transparent);
   margin: 10px auto 4px;
   flex-shrink: 0;
 }
 
 @media (min-width: 640px) {
-  .dh-sheet-handle {
+  .dh-sheet-handle,
+  .dh-glass-sheet-handle {
     display: none;
   }
 }
 
-.dh-sheet-head {
+.dh-sheet-head,
+.dh-glass-sheet-head {
   display: flex;
   align-items: center;
   justify-content: space-between;
   gap: 12px;
-  padding: 12px 20px;
-  border-bottom: 1px solid var(--line);
+  padding: 10px 18px 12px 20px;
+  border-bottom: 1px solid var(--hairline);
   flex-shrink: 0;
 }
 
-.dh-sheet-body {
-  padding: 16px 20px 22px;
+.dh-glass-sheet-title {
+  margin: 0;
+  font-size: 18px;
+  font-weight: 600;
+  line-height: 1.25;
+  letter-spacing: -0.015em;
+  color: var(--tx);
+}
+
+.dh-glass-sheet-sub {
+  margin: 2px 0 0;
+  font-size: 13px;
+  color: var(--tx-2);
+  line-height: 1.35;
+}
+
+.dh-sheet-body,
+.dh-glass-sheet-body {
+  padding: 16px 20px 20px;
   overflow-y: auto;
   overflow-x: hidden;
+  overscroll-behavior-y: contain;
   display: grid;
   gap: 14px;
   min-width: 0;
   max-width: 100%;
   box-sizing: border-box;
+}
+
+.dh-glass-sheet-footer {
+  padding: 12px 20px calc(14px + var(--sb));
+  border-top: 1px solid var(--hairline);
+  background: color-mix(in srgb, var(--glass-surface) 92%, transparent);
+  flex-shrink: 0;
+  display: grid;
+  gap: 8px;
+}
+
+@media (min-width: 640px) {
+  .dh-glass-sheet-footer {
+    padding-bottom: 16px;
+  }
 }
 
 .dh-dialog {
@@ -2649,10 +2716,10 @@ body.desk-mode .retro-dial-svg {
   display: grid;
   gap: 8px;
   padding: 10px 0;
-  background: color-mix(in srgb, var(--bg) 90%, transparent);
-  backdrop-filter: blur(14px);
-  -webkit-backdrop-filter: blur(14px);
-  border-bottom: 1px solid var(--line);
+  background: color-mix(in srgb, var(--bg) 86%, transparent);
+  backdrop-filter: blur(18px);
+  -webkit-backdrop-filter: blur(18px);
+  border-bottom: 1px solid var(--hairline);
 }
 
 .dh-vault-search-wrap {
@@ -2707,7 +2774,7 @@ body.desk-mode .retro-dial-svg {
   padding: 14px 14px 14px 16px;
   border-radius: 16px;
   background: var(--sf-1);
-  border: 1px solid var(--line);
+  border: 1px solid var(--hairline);
   min-width: 0;
   transition: border-color var(--dur-fast) var(--ease-out), background-color var(--dur-fast) var(--ease-out);
 }
@@ -2755,7 +2822,7 @@ body.desk-mode .retro-dial-svg {
   padding: 10px 14px;
   border-radius: 14px;
   background: var(--sf-1);
-  border: 1px solid var(--line);
+  border: 1px solid var(--hairline);
   color: var(--tx-2);
   font-size: 14px;
   font-weight: 600;
@@ -2770,34 +2837,77 @@ body.desk-mode .retro-dial-svg {
   display: grid;
   gap: 10px;
   padding: 10px 0 12px;
-  background: color-mix(in srgb, var(--bg) 92%, transparent);
-  backdrop-filter: blur(14px);
-  -webkit-backdrop-filter: blur(14px);
-  border-bottom: 1px solid var(--line);
+  background: color-mix(in srgb, var(--bg) 86%, transparent);
+  backdrop-filter: blur(18px);
+  -webkit-backdrop-filter: blur(18px);
+  border-bottom: 1px solid var(--hairline);
 }
 
 .dh-vault-pill-strip {
   display: flex;
   align-items: center;
   gap: 6px;
-  flex-wrap: wrap;
+  overflow-x: auto;
+  overflow-y: hidden;
+  padding: 2px 24px 4px 2px;
+  scrollbar-width: none;
+  scroll-snap-type: x proximity;
+  overscroll-behavior-x: contain;
+  -webkit-mask-image: linear-gradient(
+    to right,
+    #000 0,
+    #000 calc(100% - 24px),
+    transparent 100%
+  );
+  mask-image: linear-gradient(
+    to right,
+    #000 0,
+    #000 calc(100% - 24px),
+    transparent 100%
+  );
+}
+
+.dh-vault-pill-strip::-webkit-scrollbar {
+  display: none;
+}
+
+.dh-vault-pill-strip > * {
+  scroll-snap-align: start;
+  flex-shrink: 0;
 }
 
 .dh-vault-chips-scroll {
   display: flex;
   align-items: center;
   gap: 8px;
-  min-height: 40px;
+  min-height: 42px;
   overflow-x: auto;
   overflow-y: hidden;
   scrollbar-width: none;
-  padding-right: 18px;
-  -webkit-mask-image: linear-gradient(90deg, #000 calc(100% - 20px), transparent 100%);
-  mask-image: linear-gradient(90deg, #000 calc(100% - 20px), transparent 100%);
+  scroll-snap-type: x proximity;
+  overscroll-behavior-x: contain;
+  padding: 2px 24px 2px 2px;
+  -webkit-mask-image: linear-gradient(
+    to right,
+    #000 0,
+    #000 calc(100% - 26px),
+    transparent 100%
+  );
+  mask-image: linear-gradient(
+    to right,
+    #000 0,
+    #000 calc(100% - 26px),
+    transparent 100%
+  );
 }
 
 .dh-vault-chips-scroll::-webkit-scrollbar {
   display: none;
+}
+
+.dh-vault-chips-scroll > * {
+  scroll-snap-align: start;
+  flex-shrink: 0;
 }
 
 .dh-vault-filter-rowb {
@@ -2855,7 +2965,7 @@ body.desk-mode .retro-dial-svg {
   padding: 14px;
   border-radius: 16px;
   background: var(--sf-1);
-  border: 1px solid var(--line);
+  border: 1px solid var(--hairline);
   min-width: 0;
   align-content: start;
 }
@@ -2872,7 +2982,7 @@ body.desk-mode .retro-dial-svg {
   width: 100%;
   max-height: 280px;
   border-radius: 12px;
-  border: 1px solid var(--line);
+  border: 1px solid var(--hairline);
   background: var(--sf-2);
   object-fit: contain;
   cursor: zoom-in;
@@ -2888,7 +2998,7 @@ body.desk-mode .retro-dial-svg {
   padding: 10px 12px;
   border-radius: 14px;
   background: var(--sf-1);
-  border: 1px solid var(--line);
+  border: 1px solid var(--hairline);
   min-width: 0;
 }
 
@@ -3080,14 +3190,17 @@ body.desk-mode .retro-dial-svg {
   color: var(--tx);
   padding-top: var(--st, 0px);
   padding-bottom: var(--sb, 0px);
+  overscroll-behavior-y: contain;
 }
 
 .dh-vault-deck-top {
   display: grid;
   gap: 8px;
   padding: 12px 16px 8px;
-  background: var(--sf-1);
-  border-bottom: 1px solid var(--line);
+  background: var(--glass-surface);
+  backdrop-filter: blur(18px);
+  -webkit-backdrop-filter: blur(18px);
+  border-bottom: 1px solid var(--hairline);
   flex-shrink: 0;
 }
 
@@ -3095,6 +3208,7 @@ body.desk-mode .retro-dial-svg {
   flex: 1;
   min-height: 0;
   overflow-y: auto;
+  overscroll-behavior-y: contain;
   padding: 16px;
   display: flex;
   flex-direction: column;
@@ -3113,9 +3227,12 @@ body.desk-mode .retro-dial-svg {
 .dh-vault-reveal-panel {
   max-height: 45vh;
   overflow-y: auto;
+  overscroll-behavior-y: contain;
   padding: 12px 16px;
-  background: var(--sf-1);
-  border-top: 1px solid var(--line);
+  background: var(--glass-surface);
+  backdrop-filter: blur(18px);
+  -webkit-backdrop-filter: blur(18px);
+  border-top: 1px solid var(--hairline);
   flex-shrink: 0;
 }
 
@@ -3123,8 +3240,10 @@ body.desk-mode .retro-dial-svg {
   display: grid;
   gap: 8px;
   padding: 10px 16px 14px;
-  background: var(--sf-1);
-  border-top: 1px solid var(--line);
+  background: var(--glass-surface);
+  backdrop-filter: blur(18px);
+  -webkit-backdrop-filter: blur(18px);
+  border-top: 1px solid var(--hairline);
   flex-shrink: 0;
 }
 
@@ -3148,6 +3267,7 @@ body.desk-mode .retro-dial-svg {
   color: var(--tx);
   padding-top: var(--st, 0px);
   padding-bottom: var(--sb, 0px);
+  overscroll-behavior-y: contain;
 }
 
 .dh-vault-quickview-top {
@@ -3156,8 +3276,10 @@ body.desk-mode .retro-dial-svg {
   justify-content: space-between;
   gap: 10px;
   padding: 10px 16px;
-  background: var(--sf-1);
-  border-bottom: 1px solid var(--line);
+  background: var(--glass-surface);
+  backdrop-filter: blur(18px);
+  -webkit-backdrop-filter: blur(18px);
+  border-bottom: 1px solid var(--hairline);
   flex-shrink: 0;
 }
 
@@ -3167,8 +3289,10 @@ body.desk-mode .retro-dial-svg {
   flex-wrap: wrap;
   gap: 8px;
   padding: 10px 16px;
-  background: var(--sf-1);
-  border-bottom: 1px solid var(--line);
+  background: var(--glass-surface);
+  backdrop-filter: blur(18px);
+  -webkit-backdrop-filter: blur(18px);
+  border-bottom: 1px solid var(--hairline);
   flex-shrink: 0;
 }
 
@@ -3181,6 +3305,7 @@ body.desk-mode .retro-dial-svg {
   justify-content: center;
   padding: 14px 16px;
   overflow-y: auto;
+  overscroll-behavior-y: contain;
   gap: 10px;
 }
 
@@ -3189,7 +3314,7 @@ body.desk-mode .retro-dial-svg {
   max-height: 54vh;
   object-fit: contain;
   border-radius: 14px;
-  border: 1px solid var(--line);
+  border: 1px solid var(--hairline);
   background: var(--sf-1);
   cursor: zoom-in;
   display: block;
@@ -3200,9 +3325,12 @@ body.desk-mode .retro-dial-svg {
   align-items: center;
   gap: 8px;
   overflow-x: auto;
+  overscroll-behavior-x: contain;
   padding: 8px 16px;
-  background: var(--sf-1);
-  border-top: 1px solid var(--line);
+  background: var(--glass-surface);
+  backdrop-filter: blur(18px);
+  -webkit-backdrop-filter: blur(18px);
+  border-top: 1px solid var(--hairline);
   scrollbar-width: none;
   flex-shrink: 0;
 }
@@ -3234,8 +3362,10 @@ body.desk-mode .retro-dial-svg {
   align-items: center;
   gap: 8px;
   padding: 10px 16px 14px;
-  background: var(--sf-1);
-  border-top: 1px solid var(--line);
+  background: var(--glass-surface);
+  backdrop-filter: blur(18px);
+  -webkit-backdrop-filter: blur(18px);
+  border-top: 1px solid var(--hairline);
   flex-shrink: 0;
 }
 
@@ -3250,6 +3380,7 @@ body.desk-mode .retro-dial-svg {
   color: #eceff4;
   padding-top: var(--st, 0px);
   padding-bottom: var(--sb, 0px);
+  overscroll-behavior-y: contain;
 }
 
 .dh-vault-zoom-topbar {
@@ -3258,8 +3389,10 @@ body.desk-mode .retro-dial-svg {
   justify-content: space-between;
   gap: 10px;
   padding: 10px 16px;
-  background: rgba(20, 24, 31, 0.92);
-  border-bottom: 1px solid rgba(255, 255, 255, 0.12);
+  background: rgba(20, 24, 31, 0.86);
+  backdrop-filter: blur(18px);
+  -webkit-backdrop-filter: blur(18px);
+  border-bottom: 1px solid rgba(255, 255, 255, 0.1);
   flex-shrink: 0;
 }
 
@@ -3272,6 +3405,1112 @@ body.desk-mode .retro-dial-svg {
   overflow: hidden;
   padding: 16px;
   touch-action: none;
+}
+
+/* ============================================================================
+   v25 Flagship Today Ergonomics & Frosted-Glass Primitives
+   ============================================================================ */
+
+/* Refined translucent frosted buttons (secondary / tinted accent — single gold CTA discipline) */
+.dh-glass-icon-accent {
+  background: var(--glass-pill) !important;
+  border: 1px solid var(--glass-bd) !important;
+  color: var(--ac-ink) !important;
+  box-shadow: var(--glass-specular);
+  backdrop-filter: blur(12px);
+  -webkit-backdrop-filter: blur(12px);
+}
+
+.dh-glass-icon-accent:hover:not(:disabled) {
+  background: var(--glass-pill-hover) !important;
+  border-color: var(--ac-bd) !important;
+}
+
+.dh-glass-btn {
+  background: var(--glass-pill) !important;
+  border: 1px solid var(--glass-bd) !important;
+  color: var(--tx) !important;
+  box-shadow: var(--glass-specular);
+  backdrop-filter: blur(14px);
+  -webkit-backdrop-filter: blur(14px);
+}
+
+.dh-glass-btn:hover:not(:disabled) {
+  background: var(--glass-pill-hover) !important;
+}
+
+.dh-glass-accent-btn {
+  background: color-mix(in srgb, var(--ac) 11%, var(--glass-pill)) !important;
+  border: 1px solid color-mix(in srgb, var(--ac) 34%, var(--glass-bd)) !important;
+  color: var(--ac-ink) !important;
+  box-shadow: var(--glass-specular);
+  backdrop-filter: blur(14px);
+  -webkit-backdrop-filter: blur(14px);
+}
+
+.dh-glass-accent-btn:hover:not(:disabled) {
+  background: color-mix(in srgb, var(--ac) 17%, var(--glass-pill)) !important;
+  border-color: color-mix(in srgb, var(--ac) 52%, var(--glass-bd)) !important;
+}
+
+/* Soft horizontal edge-fade chip rail */
+.dh-edge-fade-rail {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  overflow-x: auto;
+  padding: 2px 24px 6px 2px;
+  scrollbar-width: none;
+  scroll-snap-type: x proximity;
+  scroll-padding-inline: 12px;
+  overscroll-behavior-x: contain;
+  -webkit-mask-image: linear-gradient(
+    to right,
+    #000 0,
+    #000 calc(100% - 28px),
+    transparent 100%
+  );
+  mask-image: linear-gradient(
+    to right,
+    #000 0,
+    #000 calc(100% - 28px),
+    transparent 100%
+  );
+}
+
+.dh-edge-fade-rail::-webkit-scrollbar {
+  display: none;
+}
+
+.dh-edge-fade-rail > * {
+  scroll-snap-align: start;
+  flex-shrink: 0;
+}
+
+/* Collapsible Glanceable Top Strip */
+.dh-glance-strip {
+  width: 100%;
+  max-width: 100%;
+  min-width: 0;
+  margin-bottom: 12px;
+  border-radius: 16px;
+  background: var(--glass-surface);
+  backdrop-filter: blur(18px);
+  -webkit-backdrop-filter: blur(18px);
+  border: 1px solid var(--glass-bd);
+  box-shadow: var(--glass-specular);
+  overflow: hidden;
+}
+
+.dh-glance-trigger {
+  position: relative;
+  width: 100%;
+  min-height: 46px;
+  padding: 10px 14px 12px;
+  background: transparent;
+  border: 0;
+  border-radius: 0;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  text-align: left;
+  color: var(--tx);
+  font-weight: 500;
+}
+
+.dh-glance-trigger:hover:not(:disabled) {
+  background: var(--glass-pill);
+  border-color: transparent;
+}
+
+.dh-glance-items {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 4px 7px;
+  min-width: 0;
+  flex: 1;
+  font-size: 13px;
+  line-height: 1.35;
+  color: var(--tx-2);
+  font-variant-numeric: tabular-nums;
+}
+
+.dh-glance-strong {
+  color: var(--tx);
+  font-weight: 600;
+}
+
+.dh-glance-accent {
+  color: var(--ac-ink);
+  font-weight: 600;
+}
+
+.dh-glance-sep {
+  color: var(--tx-3);
+  opacity: 0.7;
+  user-select: none;
+}
+
+.dh-glance-xp-hairline {
+  position: absolute;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  height: 2px;
+  background: var(--hairline);
+  overflow: hidden;
+}
+
+.dh-glance-xp-fill {
+  height: 100%;
+  background: var(--ac);
+  transition: width var(--dur-mid) var(--ease-out);
+}
+
+.dh-glance-drawer {
+  padding: 12px 12px 12px;
+  border-top: 1px solid var(--hairline);
+  display: grid;
+  gap: 8px;
+  animation: viewEnter var(--dur-mid) var(--ease-out) both;
+}
+
+/* Quiet elevated Today cards (subtle 0.07 hairline, calm 16px rhythm) */
+.dh-today-flow {
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+}
+
+.dh-today-card {
+  margin: 0 !important;
+  border-color: var(--hairline) !important;
+  padding: 16px !important;
+}
+
+@media (min-width: 640px) {
+  .dh-today-card {
+    padding: 18px !important;
+  }
+}
+
+/* Hero inline metric divider strip (replaces nested double-bordered boxes) */
+.dh-hero-metrics {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 12px;
+  padding-top: 12px;
+  border-top: 1px solid var(--hairline);
+}
+
+.dh-hero-metric {
+  min-width: 0;
+}
+
+.dh-hero-metric + .dh-hero-metric {
+  padding-left: 12px;
+  border-left: 1px solid var(--hairline);
+}
+
+.dh-hero-metric-label {
+  display: block;
+  font-size: 13px;
+  color: var(--tx-3);
+  line-height: 1.3;
+}
+
+.dh-hero-metric-val {
+  display: block;
+  font-size: 17px;
+  font-weight: 700;
+  line-height: 1.25;
+  margin-top: 2px;
+  color: var(--tx);
+  font-variant-numeric: tabular-nums;
+}
+
+.dh-hero-metric-sub {
+  display: block;
+  font-size: 13px;
+  color: var(--tx-2);
+  margin-top: 1px;
+  line-height: 1.3;
+  font-variant-numeric: tabular-nums;
+}
+
+/* Compact 1-Tap Focus Launcher Dock */
+.dh-focus-dock {
+  margin-top: 14px;
+  padding-top: 14px;
+  border-top: 1px solid var(--hairline);
+  display: grid;
+  gap: 10px;
+}
+
+.dh-focus-dock-top {
+  display: flex;
+  align-items: stretch;
+  gap: 8px;
+  min-width: 0;
+}
+
+.dh-focus-config-pill {
+  flex: 1;
+  min-width: 0;
+  min-height: 46px;
+  padding: 8px 12px;
+  border-radius: 13px;
+  background: var(--glass-pill);
+  border: 1px solid var(--glass-bd);
+  box-shadow: var(--glass-specular);
+  backdrop-filter: blur(14px);
+  -webkit-backdrop-filter: blur(14px);
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  text-align: left;
+  color: var(--tx);
+}
+
+.dh-focus-config-pill:hover:not(:disabled) {
+  background: var(--glass-pill-hover);
+  border-color: color-mix(in srgb, var(--tx) 18%, transparent);
+}
+
+.dh-focus-log-btn {
+  flex-shrink: 0;
+  min-height: 46px;
+  padding: 0 13px;
+  border-radius: 13px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 5px;
+  font-size: 13px;
+  font-weight: 600;
+  white-space: nowrap;
+}
+
+.dh-focus-cta {
+  min-height: 50px !important;
+  border-radius: 14px !important;
+  font-size: 15px !important;
+  letter-spacing: -0.01em;
+}
+
+/* Full-Width Frosted Task Composer Trigger */
+.dh-task-composer-trigger {
+  width: 100%;
+  min-height: 48px;
+  padding: 10px 14px;
+  border-radius: 13px;
+  background: var(--glass-pill);
+  border: 1px solid var(--glass-bd);
+  box-shadow: var(--glass-specular);
+  backdrop-filter: blur(12px);
+  -webkit-backdrop-filter: blur(12px);
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  text-align: left;
+  color: var(--tx-2);
+  font-size: 14px;
+  font-weight: 500;
+}
+
+.dh-task-composer-trigger:hover:not(:disabled) {
+  background: var(--glass-pill-hover);
+  color: var(--tx);
+}
+
+/* Quiet Today metadata counter (zero pill clutter) */
+.dh-meta-count {
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--tx-2);
+  font-variant-numeric: tabular-nums;
+}
+
+/* Refined 7-Day Rolling Week Strip */
+.dh-wk-v25 {
+  display: grid;
+  grid-template-columns: repeat(7, minmax(0, 1fr));
+  gap: 5px;
+  margin: 0;
+}
+
+.dh-wk-v25 button {
+  display: grid;
+  gap: 4px;
+  justify-items: center;
+  min-height: 62px;
+  padding: 7px 2px;
+  border-radius: 13px;
+  background: transparent;
+  border: 1px solid transparent;
+  color: var(--tx-2);
+}
+
+.dh-wk-v25 button:hover:not(:disabled) {
+  background: var(--glass-pill);
+  border-color: var(--hairline);
+}
+
+.dh-wk-v25 b {
+  font-size: 15px;
+  color: var(--tx);
+  font-variant-numeric: tabular-nums;
+}
+
+.dh-wk-v25 .on {
+  background: var(--ac-soft) !important;
+  border-color: color-mix(in srgb, var(--ac) 48%, transparent) !important;
+  color: var(--tx) !important;
+}
+
+.dh-wk-v25 .on small {
+  color: var(--ac-ink);
+}
+
+/* Sheet form field label & group spacing */
+.dh-sheet-field {
+  display: grid;
+  gap: 6px;
+}
+
+.dh-sheet-field-label {
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--tx-2);
+}
+
+/* Mode selector segmented grid inside Focus Config Sheet */
+.dh-mode-grid {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 8px;
+}
+
+.dh-mode-tile {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 4px;
+  min-height: 64px;
+  padding: 10px 6px;
+  border-radius: 13px;
+  background: var(--glass-pill);
+  border: 1px solid var(--glass-bd);
+  color: var(--tx-2);
+  font-size: 13px;
+  font-weight: 600;
+  text-align: center;
+}
+
+.dh-mode-tile-sub {
+  font-size: 13px;
+  font-weight: 500;
+  color: var(--tx-3);
+  font-variant-numeric: tabular-nums;
+}
+
+.dh-mode-tile.active {
+  background: var(--ac-soft);
+  border-color: var(--ac);
+  color: var(--ac-ink);
+}
+
+.dh-mode-tile.active .dh-mode-tile-sub {
+  color: var(--ac-ink);
+  opacity: 0.9;
+}
+
+/* ============================================================================
+   v26 Focus & Vault Cohesion, Thumb-Zone FAB, Confidence Pills & Habit Polish
+   ============================================================================ */
+
+/* Prevent programmatic tabIndex=-1 sheet focus from painting an outer accent ring */
+.dh-glass-sheet:focus,
+.dh-glass-sheet:focus-visible,
+.dh-sheet:focus,
+.dh-sheet:focus-visible {
+  outline: none;
+}
+
+/* Subtle native tactile press feedback (GPU transform, disabled under reduced-motion) */
+.dh-btn:active:not(:disabled),
+.dh-icon-btn:active:not(:disabled),
+.dh-chip:active:not(:disabled),
+.dh-vault-fab:active:not(:disabled),
+.dh-focus-config-pill:active:not(:disabled),
+.dh-focus-log-btn:active:not(:disabled),
+.dh-task-composer-trigger:active:not(:disabled),
+.ck:active:not(:disabled),
+.dh-task-check:active:not(:disabled),
+.dh-confidence-pill:active:not(:disabled) {
+  transform: scale(0.98);
+}
+
+/* End-of-Session Quick Chapter Confidence 1-5 Pills */
+.dh-confidence-grid {
+  display: grid;
+  grid-template-columns: repeat(5, minmax(0, 1fr));
+  gap: 6px;
+}
+
+.dh-confidence-pill {
+  min-height: 56px;
+  padding: 6px 2px;
+  border-radius: 13px;
+  background: var(--glass-pill);
+  border: 1px solid var(--glass-bd);
+  box-shadow: var(--glass-specular);
+  color: var(--tx);
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 2px;
+  text-align: center;
+  cursor: pointer;
+  transition:
+    transform var(--dur-fast) var(--ease-out),
+    background-color var(--dur-fast) var(--ease-out),
+    border-color var(--dur-fast) var(--ease-out),
+    color var(--dur-fast) var(--ease-out);
+}
+
+.dh-confidence-pill:hover:not(:disabled) {
+  background: var(--glass-pill-hover);
+  border-color: color-mix(in srgb, var(--tx) 20%, transparent);
+}
+
+.dh-confidence-pill.active {
+  background: var(--ac-soft);
+  border-color: var(--ac);
+  color: var(--ac-ink);
+}
+
+.dh-confidence-num {
+  font-size: 16px;
+  font-weight: 700;
+  line-height: 1.15;
+}
+
+.dh-confidence-lbl {
+  font-size: 13px;
+  font-weight: 500;
+  color: var(--tx-2);
+  line-height: 1.2;
+  max-width: 100%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.dh-confidence-pill.active .dh-confidence-lbl {
+  color: var(--ac-ink);
+  font-weight: 600;
+}
+
+/* Vault Thumb-Zone Single Gold CTA FAB (portaled to document.body) */
+.dh-vault-fab {
+  position: fixed;
+  right: 16px;
+  bottom: calc(var(--tabbar-h, 64px) + var(--sb, 0px) + 16px);
+  z-index: 35;
+  min-height: 52px;
+  padding: 0 20px;
+  border-radius: 999px;
+  background: var(--ac);
+  color: var(--ac-on);
+  border: 1px solid color-mix(in srgb, #fff 28%, transparent);
+  box-shadow:
+    inset 0 1px 0 rgba(255, 255, 255, 0.36),
+    0 10px 28px rgba(0, 0, 0, 0.44);
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  font-size: 15px;
+  font-weight: 700;
+  letter-spacing: -0.01em;
+  cursor: pointer;
+  transition:
+    transform var(--dur-fast) var(--ease-out),
+    filter var(--dur-fast) var(--ease-out),
+    bottom var(--dur-mid) var(--ease-out);
+}
+
+.dh-vault-fab:hover:not(:disabled) {
+  filter: brightness(1.06);
+}
+
+.dh-vault-fab.has-mini-timer {
+  bottom: calc(var(--tabbar-h, 64px) + var(--sb, 0px) + 74px);
+}
+
+@media (min-width: 768px) {
+  .dh-vault-fab {
+    right: 28px;
+    bottom: 28px;
+  }
+
+  .dh-vault-fab.has-mini-timer {
+    bottom: 84px;
+  }
+}
+
+/* Narrow-Viewport Habit Row Controls Fix (360px clean right-edge spacing) */
+.dh-habit-card {
+  box-sizing: border-box;
+  gap: 10px;
+  padding: 12px 14px !important;
+  border-color: var(--hairline) !important;
+}
+
+.dh-habit-controls {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  flex-shrink: 0;
+}
+
+.dh-habit-ctrl-btn {
+  min-width: 38px;
+  min-height: 38px;
+  padding: 0 10px !important;
+  border-radius: 10px !important;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  font-variant-numeric: tabular-nums;
+}
+
+@media (max-width: 420px) {
+  .dh-habit-card.has-counter {
+    flex-wrap: wrap;
+    row-gap: 10px;
+  }
+
+  .dh-habit-card.has-counter .dh-habit-controls {
+    width: 100%;
+    justify-content: flex-end;
+    padding-top: 8px;
+    border-top: 1px solid var(--hairline);
+  }
+
+  .dh-habit-card.has-counter .dh-habit-ctrl-btn {
+    min-width: 42px;
+    min-height: 40px;
+    padding: 0 12px !important;
+  }
+}
+
+/* ============================================================================
+   v27 Navigation & Top-Bar Architecture, Frosted Left Drawer & Collapsible Today Date Header
+   ============================================================================ */
+
+/* Top Bar Refinements (360px safe, single-row frosted pills + staggered menu) */
+.dh-topbar {
+  padding: calc(var(--sa) + 8px) 14px 8px;
+}
+
+@media (min-width: 480px) {
+  .dh-topbar {
+    padding-left: 20px;
+    padding-right: 20px;
+  }
+}
+
+@media (min-width: 768px) {
+  .dh-topbar {
+    padding-left: 32px;
+    padding-right: 32px;
+  }
+}
+
+.dh-topbar-inner {
+  gap: 8px;
+  min-height: 40px;
+}
+
+.dh-topbar-left {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+  flex: 1;
+}
+
+.dh-topbar-title {
+  font-size: clamp(1.15rem, 5vw, 1.45rem);
+  line-height: 1.15;
+  letter-spacing: -0.025em;
+}
+
+@media (min-width: 768px) {
+  .dh-topbar-title {
+    font-size: 1.5rem;
+  }
+}
+
+.dh-topbar.collapsed .dh-topbar-title {
+  font-size: clamp(1.08rem, 4.4vw, 1.25rem);
+}
+
+.dh-topbar-title-settings {
+  font-size: clamp(1.05rem, 4.5vw, 1.3rem) !important;
+}
+
+.dh-topbar-actions {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  flex-shrink: 0;
+}
+
+/* Top-Left Staggered Menu Trigger + Conditional 6px Sync Status Dot */
+.dh-topbar-menu-btn {
+  position: relative;
+  width: 40px;
+  height: 40px;
+  min-width: 40px;
+  min-height: 40px;
+  padding: 0;
+  flex-shrink: 0;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: 11px;
+  background: var(--glass-pill);
+  border: 1px solid var(--glass-bd);
+  box-shadow: var(--glass-specular);
+  color: var(--tx);
+  backdrop-filter: blur(12px);
+  -webkit-backdrop-filter: blur(12px);
+}
+
+.dh-topbar-menu-btn:hover:not(:disabled) {
+  background: var(--glass-pill-hover);
+  border-color: color-mix(in srgb, var(--tx) 18%, transparent);
+}
+
+.dh-topbar-menu-btn:active:not(:disabled) {
+  transform: scale(0.96);
+}
+
+.dh-menu-sync-dot {
+  position: absolute;
+  top: 6px;
+  right: 6px;
+  width: 6px;
+  height: 6px;
+  border-radius: 99px;
+  pointer-events: none;
+  box-shadow: 0 0 0 1.5px var(--bg);
+}
+
+.dh-menu-sync-dot-syncing {
+  background: var(--info);
+  animation: dhDotPulse 1.4s ease-in-out infinite;
+}
+
+.dh-menu-sync-dot-pending {
+  background: var(--warn);
+}
+
+.dh-menu-sync-dot-error {
+  background: var(--err);
+}
+
+@keyframes dhDotPulse {
+  0%,
+  100% {
+    opacity: 1;
+    transform: scale(1);
+  }
+  50% {
+    opacity: 0.45;
+    transform: scale(0.85);
+  }
+}
+
+/* Settings Sub-View Sticky Back Button */
+.dh-topbar-back-pill {
+  position: relative;
+  height: 36px;
+  min-height: 36px;
+  padding: 0 11px 0 9px;
+  flex-shrink: 0;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 5px;
+  border-radius: 11px;
+  background: var(--glass-pill);
+  border: 1px solid var(--glass-bd);
+  box-shadow: var(--glass-specular);
+  color: var(--tx);
+  font-size: 13px;
+  font-weight: 600;
+  white-space: nowrap;
+  backdrop-filter: blur(12px);
+  -webkit-backdrop-filter: blur(12px);
+}
+
+.dh-topbar-back-pill::after {
+  content: '';
+  position: absolute;
+  inset: -4px -2px;
+}
+
+.dh-topbar-back-pill:hover:not(:disabled) {
+  background: var(--glass-pill-hover);
+}
+
+/* Uniform 36px Frosted Right Pill Cluster (Streak + Level + Quick Logger +) */
+.dh-topbar-pill {
+  position: relative;
+  height: 36px;
+  min-height: 36px;
+  padding: 0 10px;
+  flex-shrink: 0;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 4px;
+  border-radius: 11px;
+  background: var(--glass-pill);
+  border: 1px solid var(--glass-bd);
+  box-shadow: var(--glass-specular);
+  color: var(--tx);
+  font-size: 13px;
+  font-weight: 600;
+  line-height: 1;
+  white-space: nowrap;
+  backdrop-filter: blur(12px);
+  -webkit-backdrop-filter: blur(12px);
+}
+
+/* Expand vertical touch hit area comfortably without bloating 36px visual height */
+.dh-topbar-pill::after {
+  content: '';
+  position: absolute;
+  inset: -4px 0;
+}
+
+.dh-topbar-pill:hover:not(:disabled) {
+  background: var(--glass-pill-hover);
+  border-color: color-mix(in srgb, var(--tx) 18%, transparent);
+}
+
+.dh-topbar-pill:active:not(:disabled) {
+  transform: scale(0.97);
+}
+
+.dh-topbar-streak-pill {
+  padding: 0 9px;
+}
+
+.dh-topbar-streak-pill.is-met {
+  border-color: color-mix(in srgb, var(--ok) 44%, var(--glass-bd));
+  color: var(--ok-ink);
+}
+
+.dh-topbar-level-pill {
+  padding: 0 10px;
+  overflow: hidden;
+}
+
+.dh-topbar-xp-track {
+  position: absolute;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  height: 2px;
+  background: color-mix(in srgb, var(--tx) 12%, transparent);
+  pointer-events: none;
+}
+
+.dh-topbar-xp-fill {
+  display: block;
+  height: 100%;
+  background: var(--ac);
+  transition: width var(--dur-mid) var(--ease-out);
+}
+
+.dh-topbar-plus-pill {
+  width: 36px;
+  min-width: 36px;
+  padding: 0;
+  color: var(--ac-ink);
+  border-color: color-mix(in srgb, var(--ac) 30%, var(--glass-bd));
+}
+
+.dh-topbar-plus-pill:hover:not(:disabled) {
+  border-color: color-mix(in srgb, var(--ac) 52%, var(--glass-bd));
+}
+
+/* Frosted Left Slide-Over Settings Drawer */
+.dh-drawer-backdrop {
+  position: fixed;
+  inset: 0;
+  z-index: 70;
+  background: rgba(0, 0, 0, 0.62);
+  backdrop-filter: blur(8px);
+  -webkit-backdrop-filter: blur(8px);
+  display: flex;
+  align-items: stretch;
+  justify-content: flex-start;
+  overscroll-behavior: contain;
+  animation: fadeBackdrop var(--dur-fast) var(--ease-out) both;
+}
+
+.dh-drawer-panel {
+  width: min(86vw, 340px);
+  max-width: 100%;
+  height: 100dvh;
+  max-height: 100vh;
+  background: var(--glass-surface);
+  backdrop-filter: blur(22px);
+  -webkit-backdrop-filter: blur(22px);
+  border-right: 1px solid var(--glass-bd);
+  box-shadow: var(--glass-specular), 16px 0 48px rgba(0, 0, 0, 0.52);
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+  padding-top: var(--sa);
+  padding-bottom: var(--sb);
+  overscroll-behavior-y: contain;
+  will-change: transform;
+  animation: drawerSlideIn var(--dur-slow) var(--ease-out) both;
+  transition: transform var(--dur-mid) var(--ease-out);
+}
+
+.dh-drawer-panel.is-dragging {
+  animation: none;
+  transition: none;
+}
+
+.dh-drawer-panel:focus,
+.dh-drawer-panel:focus-visible {
+  outline: none;
+}
+
+@keyframes drawerSlideIn {
+  from {
+    transform: translateX(-100%);
+  }
+  to {
+    transform: translateX(0);
+  }
+}
+
+.dh-drawer-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  padding: 14px 14px 12px 18px;
+  border-bottom: 1px solid var(--hairline);
+  flex-shrink: 0;
+}
+
+.dh-drawer-title {
+  margin: 0;
+  font-size: 18px;
+  font-weight: 700;
+  line-height: 1.2;
+  letter-spacing: -0.02em;
+  color: var(--tx);
+}
+
+.dh-drawer-sub {
+  margin: 2px 0 0;
+  font-size: 13px;
+  color: var(--tx-2);
+  line-height: 1.3;
+}
+
+.dh-drawer-body {
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+  overflow-x: hidden;
+  overscroll-behavior-y: contain;
+  padding: 12px 10px calc(20px + var(--sb));
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.dh-drawer-group {
+  background: color-mix(in srgb, var(--sf-1) 76%, transparent) !important;
+  border-color: var(--hairline) !important;
+  box-shadow: none !important;
+  flex-shrink: 0;
+}
+
+.dh-drawer-row {
+  min-height: 52px !important;
+  padding: 10px 10px !important;
+  gap: 8px !important;
+  border-bottom-color: var(--hairline) !important;
+}
+
+.dh-drawer-row.is-active {
+  background: var(--ac-soft) !important;
+}
+
+.dh-drawer-row.is-active > span:first-child {
+  color: var(--ac-ink) !important;
+}
+
+/* Crisp 1-line ellipsis on narrow ~290px drawer row titles and subtitles */
+.dh-drawer-row > span:nth-child(2) > span {
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+/* Collapsible Interactive Today Date + Exam Countdown Header */
+.dh-today-date-section {
+  margin-bottom: 12px;
+}
+
+.dh-today-date-bar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  min-width: 0;
+}
+
+.dh-today-date-trigger {
+  min-width: 0;
+  min-height: 36px;
+  padding: 4px 10px 4px 2px;
+  border: 0;
+  border-radius: 10px;
+  background: transparent;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  text-align: left;
+  color: var(--tx-2);
+  font-size: 13.5px;
+  font-weight: 500;
+  max-width: 100%;
+}
+
+.dh-today-date-trigger:hover:not(:disabled) {
+  background: var(--glass-pill);
+  border-color: transparent;
+  color: var(--tx);
+}
+
+.dh-today-date-text {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+}
+
+.dh-today-date-primary {
+  color: var(--tx);
+  font-weight: 600;
+  flex-shrink: 0;
+}
+
+.dh-today-date-countdown {
+  color: var(--ac-ink);
+  font-weight: 600;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.dh-today-date-chevron {
+  color: var(--tx-3);
+  flex-shrink: 0;
+  transition: transform var(--dur-mid) var(--ease-out);
+}
+
+.dh-today-date-chevron.is-open {
+  transform: rotate(180deg);
+}
+
+.dh-back-today-pill {
+  height: 32px;
+  min-height: 32px;
+  padding: 0 10px;
+  border-radius: 99px;
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  font-size: 13px;
+  font-weight: 600;
+  flex-shrink: 0;
+  white-space: nowrap;
+}
+
+.dh-date-tray {
+  display: grid;
+  grid-template-rows: 0fr;
+  opacity: 0;
+  transition:
+    grid-template-rows var(--dur-mid) var(--ease-out),
+    opacity var(--dur-fast) var(--ease-out),
+    margin-top var(--dur-mid) var(--ease-out);
+  margin-top: 0;
+}
+
+.dh-date-tray.is-open {
+  grid-template-rows: 1fr;
+  opacity: 1;
+  margin-top: 8px;
+}
+
+.dh-date-tray-inner {
+  overflow: hidden;
+  display: grid;
+  gap: 10px;
+  padding: 0;
+  border-radius: 16px;
+  background: transparent;
+  border: 1px solid transparent;
+  transition:
+    padding var(--dur-mid) var(--ease-out),
+    background-color var(--dur-mid) var(--ease-out),
+    border-color var(--dur-mid) var(--ease-out);
+}
+
+.dh-date-tray.is-open .dh-date-tray-inner {
+  padding: 10px;
+  background: var(--glass-surface);
+  backdrop-filter: blur(18px);
+  -webkit-backdrop-filter: blur(18px);
+  border-color: var(--glass-bd);
+  box-shadow: var(--glass-specular);
+}
+
+.dh-tray-metrics-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 8px;
+  width: 100%;
+  max-width: 100%;
+  min-width: 0;
 }
 }
 

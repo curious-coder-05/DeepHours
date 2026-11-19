@@ -595,6 +595,7 @@ export const FocusOrbitScene: React.FC<FocusOrbitSceneProps> = ({
           };
 
           const onPointerMove = (e: PointerEvent) => {
+            if (!dragActive && e.target !== canvas) return;
             const rect = canvas.getBoundingClientRect();
             if (rect.width > 0 && rect.height > 0) {
               parallaxX = ((e.clientX - rect.left) / rect.width - 0.5) * 0.24;

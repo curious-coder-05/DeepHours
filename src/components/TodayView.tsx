@@ -7,7 +7,7 @@ import {
   MoreHorizontal,
   Calendar,
   Trash2,
-  ArrowRight,
+  SlidersHorizontal,
   Timer,
   Hourglass,
   Clock,
@@ -23,10 +23,13 @@ import {
   Compass,
   Repeat,
   AlertCircle,
+  Activity,
+  ArrowRight,
   ChevronDown,
   ChevronUp,
   Edit3,
   CornerDownRight,
+  RotateCcw,
 } from 'lucide-react';
 import type {
   ActiveTimerMode,
@@ -72,8 +75,13 @@ import { computeStudyNext } from '../utils/pace';
 import {
   computeUiPaceReport,
   getUiDailyStudyGoalProgress,
+  resolveUiExam,
 } from '../utils/uiHelpers';
-import { StatusRow, ExamCountdownCard } from './StatusRow';
+import { formatCountSummary, pluralize } from '../utils/format';
+import { formatTodayDateCountdownLabel } from '../utils/navHelpers';
+import { triggerHaptic } from '../utils/haptics';
+import { ConsistencyDetailSheet, ExamCountdownCard } from './StatusRow';
+import { BottomSheet } from './BottomSheet';
 import {
   Button,
   Card,
@@ -98,6 +106,7 @@ export interface TodayViewProps {
   onSelectCat: (cat: 'All' | HabitCategory) => void;
   onSwitchTab: (tab: AppTab) => void;
   onManageExams?: () => void;
+  onManageTargets?: () => void;
   onToggleHabit: (id: string, dayKey: string) => void;
   onIncrementHabit: (id: string, delta: number) => void;
   onSkipHabit: (id: string, dayKey: string) => void;
@@ -151,6 +160,7 @@ export const TodayView: React.FC<TodayViewProps> = ({
   onSelectCat,
   onSwitchTab,
   onManageExams,
+  onManageTargets,
   onToggleHabit,
   onIncrementHabit,
   onSkipHabit,
@@ -187,6 +197,10 @@ export const TodayView: React.FC<TodayViewProps> = ({
     return dm === 'countdown' || dm === 'stopwatch' ? dm : 'pomo';
   });
   const [tipOffset, setTipOffset] = useState<number>(0);
+  const [focusConfigOpen, setFocusConfigOpen] = useState<boolean>(false);
+  const [taskComposerOpen, setTaskComposerOpen] = useState<boolean>(false);
+  const [calendarTrayOpen, setCalendarTrayOpen] = useState<boolean>(false);
+  const [consistencySheetOpen, setConsistencySheetOpen] = useState<boolean>(false);
 
   // Daily Tasks local UI state
   const [newTaskTitle, setNewTaskTitle] = useState<string>('');
@@ -207,7 +221,20 @@ export const TodayView: React.FC<TodayViewProps> = ({
   const [showUnscheduled, setShowUnscheduled] = useState<boolean>(false);
 
   const isTodaySelected = sel === todayKey;
-  const selDate = parseD(sel);
+  const isCalendarTrayExpanded = !isTodaySelected || calendarTrayOpen;
+  const resolvedExam = useMemo(
+    () => resolveUiExam(state, todayKey),
+    [state, todayKey]
+  );
+  const headerDateInfo = useMemo(
+    () =>
+      formatTodayDateCountdownLabel({
+        selDayKey: sel,
+        todayKey,
+        exam: resolvedExam,
+      }),
+    [sel, todayKey, resolvedExam]
+  );
 
   // 7-day rolling week strip ending on todayKey
   const days = useMemo(
@@ -324,7 +351,7 @@ export const TodayView: React.FC<TodayViewProps> = ({
       return `Aim for ${fmtDuration(studyProg.goalMs)} today`;
     }
     if (selectedDayTotalMs > 0) {
-      return `${selectedDaySessions.length} deep focus session${selectedDaySessions.length === 1 ? '' : 's'} logged`;
+      return `${pluralize(selectedDaySessions.length, 'deep focus session')} logged`;
     }
     return 'Start a focus block today';
   }, [studyProg.goalMs, selectedDayTotalMs, selectedDaySessions.length]);
@@ -405,17 +432,25 @@ export const TodayView: React.FC<TodayViewProps> = ({
   const sleepHours = selWellbeing.sleep;
   const energyLevel = selWellbeing.energy;
 
-  const taskSubjectOptions = useMemo(
-    () => [
-      { value: '', label: 'General (no subject)' },
-      ...activeSubjects.map((s) => ({
-        value: s.id,
-        label: `${s.e} ${s.name}`,
-        swatchColor: s.color,
-      })),
-    ],
-    [activeSubjects]
+  const effectiveQuickSubject = useMemo(
+    () =>
+      activeSubjects.find((s) => s.id === effectiveQuickSubId) ||
+      activeSubjects[0] ||
+      getSubject(state, effectiveQuickSubId),
+    [activeSubjects, effectiveQuickSubId, state]
   );
+
+  const effectiveQuickChapter = useMemo(
+    () => quickSubjectChapters.find((ch) => ch.id === effectiveQuickChapId),
+    [quickSubjectChapters, effectiveQuickChapId]
+  );
+
+  const quickModeLabel =
+    quickMode === 'pomo'
+      ? `Pomodoro ${state.set.pomoWork || 25}m`
+      : quickMode === 'countdown'
+        ? `Countdown ${state.set.countdownMins || 45}m`
+        : 'Stopwatch';
 
   const quickChapterOptions = useMemo(
     () => [
@@ -471,8 +506,11 @@ export const TodayView: React.FC<TodayViewProps> = ({
         leftLabel="Delete"
       >
         <div
-          className={`c ${isD ? 'dn' : ''} ${isSk ? 'sk' : ''}`}
-          onClick={() => onToggleHabit(h.id, sel)}
+          className={`c dh-habit-card ${h.tn > 1 ? 'has-counter' : ''} ${isD ? 'dn' : ''} ${isSk ? 'sk' : ''}`}
+          onClick={() => {
+            triggerHaptic('success');
+            onToggleHabit(h.id, sel);
+          }}
         >
         <button
           type="button"
@@ -480,6 +518,7 @@ export const TodayView: React.FC<TodayViewProps> = ({
           aria-label={`Mark ${h.name} complete`}
           onClick={(ev) => {
             ev.stopPropagation();
+            triggerHaptic('success');
             onToggleHabit(h.id, sel);
           }}
         >
@@ -581,25 +620,30 @@ export const TodayView: React.FC<TodayViewProps> = ({
         </div>
 
         <div
-          className="row"
-          style={{ gap: 4, flexShrink: 0 }}
+          className="dh-habit-controls"
           onClick={(ev) => ev.stopPropagation()}
         >
           {h.tn > 1 && (
             <>
               <button
                 type="button"
-                className="s"
+                className="s dh-habit-ctrl-btn"
                 aria-label={`Decrease ${h.name}`}
-                onClick={() => onIncrementHabit(h.id, -1)}
+                onClick={() => {
+                  triggerHaptic('tap');
+                  onIncrementHabit(h.id, -1);
+                }}
               >
                 −
               </button>
               <button
                 type="button"
-                className="s"
+                className="s dh-habit-ctrl-btn"
                 aria-label={`Increase ${h.name}`}
-                onClick={() => onIncrementHabit(h.id, 1)}
+                onClick={() => {
+                  triggerHaptic('tap');
+                  onIncrementHabit(h.id, 1);
+                }}
               >
                 +
               </button>
@@ -607,11 +651,13 @@ export const TodayView: React.FC<TodayViewProps> = ({
           )}
           <button
             type="button"
-            className="s"
+            className="s dh-habit-ctrl-btn"
             title="Skip today (preserves streak)"
             aria-label={`Skip ${h.name} today`}
-            style={{ padding: '6px 10px' }}
-            onClick={() => onSkipHabit(h.id, sel)}
+            onClick={() => {
+              triggerHaptic('tap');
+              onSkipHabit(h.id, sel);
+            }}
           >
             <SkipForward size={15} strokeWidth={1.75} />
           </button>
@@ -621,121 +667,214 @@ export const TodayView: React.FC<TodayViewProps> = ({
     );
   };
 
+  const showPaceCard = Boolean(
+    paceReport?.exam && !paceReport.pastExam && paceReport.totalChapters > 0
+  );
+
   return (
     <div>
-      {/* 1. Status Row (Streak, Consistency, Level, Rest Day) */}
-      <StatusRow
-        state={state}
-        sel={sel}
-        todayKey={todayKey}
-        minStreakInfo={minStreakInfo}
-        consistencyInfo={consistencyInfo}
-        onToggleRestDay={onToggleRestDay}
-      />
-
-      {/* 2. Exam Countdown + Syllabus Pace Row */}
-      {(() => {
-        const showPaceCard = Boolean(
-          paceReport.exam && !paceReport.pastExam && paceReport.totalChapters > 0
-        );
-        return (
-          <div
-            className={
-              showPaceCard
-                ? 'grid grid-cols-2 gap-2 w-full max-w-full min-w-0'
-                : 'w-full max-w-full min-w-0'
-            }
-            style={{
-              marginBottom: 10,
-              alignItems: 'stretch',
+      {/* 1. Interactive Date + Exam Countdown Header & Collapsible Calendar/Pace Tray */}
+      <section
+        className="dh-today-date-section"
+        aria-label="Date selector and study pace"
+      >
+        <div className="dh-today-date-bar">
+          <button
+            type="button"
+            className="dh-today-date-trigger"
+            aria-expanded={isCalendarTrayExpanded}
+            aria-controls="dh-today-calendar-tray"
+            onClick={() => {
+              triggerHaptic('tap');
+              if (!isTodaySelected) {
+                setCalendarTrayOpen(true);
+                return;
+              }
+              setCalendarTrayOpen((v) => !v);
             }}
           >
-            <div className="min-w-0 max-w-full">
-              <ExamCountdownCard
-                state={state}
-                todayKey={todayKey}
-                onManageExams={onManageExams || (() => onSwitchTab('more'))}
-                onAddExam={onNewDDay}
-              />
-            </div>
+            <span className="dh-today-date-text">
+              <span className="dh-today-date-primary">{headerDateInfo.dateLabel}</span>
+              {headerDateInfo.countdownLabel && (
+                <>
+                  <span className="dh-glance-sep" aria-hidden="true">
+                    ·
+                  </span>
+                  <span className="dh-today-date-countdown tabular-nums">
+                    {headerDateInfo.countdownLabel}
+                  </span>
+                </>
+              )}
+            </span>
+            <ChevronDown
+              size={16}
+              strokeWidth={2}
+              aria-hidden="true"
+              className={`dh-today-date-chevron ${isCalendarTrayExpanded ? 'is-open' : ''}`}
+            />
+          </button>
 
-            {showPaceCard && (
-              <button
-                type="button"
-                className="w-full max-w-full min-w-0 box-border"
-                onClick={() => onSwitchTab('prep')}
-                style={{
-                  height: '100%',
-                  minWidth: 0,
-                  maxWidth: '100%',
-                  boxSizing: 'border-box',
-                  margin: 0,
-                  padding: '10px 11px',
-                  borderRadius: 14,
-                  background: 'var(--sf-1)',
-                  border: '1px solid var(--line)',
-                  display: 'flex',
-                  alignItems: 'center',
-                  justifyContent: 'space-between',
-                  gap: 6,
-                  textAlign: 'left',
-                  minHeight: 52,
-                  cursor: 'pointer',
-                }}
-              >
-                <div style={{ flex: 1, minWidth: 0 }}>
-                  <span
-                    style={{
-                      display: 'block',
-                      fontSize: 13,
-                      color: 'var(--tx-2)',
-                      fontWeight: 500,
-                      lineHeight: 1.3,
+          {!isTodaySelected && (
+            <button
+              type="button"
+              className="dh-back-today-pill dh-glass-accent-btn"
+              onClick={() => {
+                triggerHaptic('tap');
+                onSelectDay(todayKey);
+                setCalendarTrayOpen(false);
+              }}
+            >
+              <RotateCcw size={13} strokeWidth={2} aria-hidden="true" />
+              <span>Back to Today</span>
+            </button>
+          )}
+        </div>
+
+        <div
+          id="dh-today-calendar-tray"
+          className={`dh-date-tray ${isCalendarTrayExpanded ? 'is-open' : ''}`}
+          aria-hidden={!isCalendarTrayExpanded}
+        >
+          <div className="dh-date-tray-inner">
+            {/* 7-Day Rolling Week Strip */}
+            <div
+              className="dh-wk-v25"
+              role="group"
+              aria-label="7-day date selector"
+            >
+              {weekDaysSummary.map(({ key: k, barPct }) => {
+                const d = parseD(k);
+                return (
+                  <button
+                    key={k}
+                    type="button"
+                    tabIndex={isCalendarTrayExpanded ? 0 : -1}
+                    aria-pressed={k === sel}
+                    aria-label={`${DN[d.getDay()]} ${d.getDate()}${k === todayKey ? ' (Today)' : ''}`}
+                    className={k === sel ? 'on' : ''}
+                    onClick={() => {
+                      triggerHaptic('tap');
+                      onSelectDay(k);
                     }}
                   >
-                    Syllabus pace
+                    <small style={{ fontSize: 13 }}>{DN[d.getDay()]}</small>
+                    <b>{d.getDate()}</b>
+                    <span className="wk-bar-track" aria-hidden="true">
+                      <span className="wk-bar-fill" style={{ height: `${barPct}%` }} />
+                    </span>
+                  </button>
+                );
+              })}
+            </div>
+
+            {/* Consistency & Syllabus Pace / Exam Readouts */}
+            <div className="dh-tray-metrics-grid">
+              <button
+                type="button"
+                className="dh-status-card min-w-0"
+                tabIndex={isCalendarTrayExpanded ? 0 : -1}
+                onClick={() => {
+                  triggerHaptic('tap');
+                  setConsistencySheetOpen(true);
+                }}
+                style={{ borderColor: 'var(--hairline)' }}
+              >
+                <span className="dh-status-card-left">
+                  <Activity
+                    size={15}
+                    strokeWidth={1.75}
+                    style={{ color: 'var(--info-ink)', flexShrink: 0 }}
+                    aria-hidden="true"
+                  />
+                  <span className="dh-status-pill-label">Consistency</span>
+                </span>
+                <span className="tabular-nums dh-status-card-val">
+                  {consistencyInfo.total !== null
+                    ? `${consistencyInfo.total}/100`
+                    : 'Building'}
+                </span>
+              </button>
+
+              {showPaceCard && paceReport ? (
+                <button
+                  type="button"
+                  className="dh-status-card min-w-0"
+                  tabIndex={isCalendarTrayExpanded ? 0 : -1}
+                  onClick={() => {
+                    triggerHaptic('tap');
+                    onSwitchTab('prep');
+                  }}
+                  style={{ borderColor: 'var(--hairline)' }}
+                >
+                  <span
+                    className="dh-status-card-left"
+                    style={{ width: '100%', justifyContent: 'space-between' }}
+                  >
+                    <span className="dh-status-pill-label">Syllabus pace</span>
+                    <ArrowRight
+                      size={14}
+                      strokeWidth={1.75}
+                      style={{ color: 'var(--tx-3)', flexShrink: 0 }}
+                      aria-hidden="true"
+                    />
                   </span>
                   <span
+                    className="tabular-nums"
                     style={{
-                      display: '-webkit-box',
-                      WebkitLineClamp: 2,
-                      WebkitBoxOrient: 'vertical',
-                      overflow: 'hidden',
                       fontSize: 13,
                       fontWeight: 600,
                       lineHeight: 1.3,
-                      whiteSpace: 'normal',
-                      overflowWrap: 'break-word',
                       color:
                         paceReport.status === 'ahead'
                           ? 'var(--ok-ink)'
                           : paceReport.status === 'behind'
                             ? 'var(--warn-ink)'
                             : 'var(--ac-ink)',
+                      overflow: 'hidden',
+                      textOverflow: 'ellipsis',
+                      display: '-webkit-box',
+                      WebkitLineClamp: 2,
+                      WebkitBoxOrient: 'vertical',
                     }}
                   >
                     {paceReport.compactSummary}
                   </span>
+                </button>
+              ) : (
+                <div className="min-w-0 max-w-full">
+                  <ExamCountdownCard
+                    state={state}
+                    todayKey={todayKey}
+                    onManageExams={onManageExams || (() => onSwitchTab('more'))}
+                    onAddExam={onNewDDay}
+                  />
                 </div>
-                <ArrowRight
-                  size={15}
-                  strokeWidth={1.75}
-                  style={{ color: 'var(--tx-3)', flexShrink: 0 }}
+              )}
+            </div>
+
+            {showPaceCard && (
+              <div className="min-w-0 max-w-full">
+                <ExamCountdownCard
+                  state={state}
+                  todayKey={todayKey}
+                  onManageExams={onManageExams || (() => onSwitchTab('more'))}
+                  onAddExam={onNewDDay}
                 />
-              </button>
+              </div>
             )}
           </div>
-        );
-      })()}
+        </div>
+      </section>
 
-      {/* 3. Gentle Pace & Wellbeing Check-In (when visible) */}
+      <ConsistencyDetailSheet
+        open={consistencySheetOpen}
+        onClose={() => setConsistencySheetOpen(false)}
+        consistencyInfo={consistencyInfo}
+      />
+
+      {/* 2. Gentle Pace & Wellbeing Check-In (when visible) */}
       {burnoutStatus.visible && (
-        <Card
-          style={{
-            marginBottom: 12,
-            borderLeft: '3px solid var(--info)',
-          }}
-        >
+        <Card className="dh-today-card" style={{ marginBottom: 14 }}>
           <div className="split" style={{ alignItems: 'flex-start', gap: 10 }}>
             <div style={{ flex: 1, minWidth: 0 }}>
               <div className="row" style={{ gap: 8, marginBottom: 4 }}>
@@ -786,66 +925,11 @@ export const TodayView: React.FC<TodayViewProps> = ({
         </Card>
       )}
 
-      {/* 4. 7-Day Rolling Week Strip */}
-      <div className="wk" role="group" aria-label="7-day date selector">
-        {weekDaysSummary.map(({ key: k, barPct }) => {
-          const d = parseD(k);
-          return (
-            <button
-              key={k}
-              type="button"
-              className={k === sel ? 'on' : ''}
-              onClick={() => onSelectDay(k)}
-            >
-              <small style={{ fontSize: 13 }}>{DN[d.getDay()]}</small>
-              <b>{d.getDate()}</b>
-              <span className="wk-bar-track" aria-hidden="true">
-                <span className="wk-bar-fill" style={{ height: `${barPct}%` }} />
-              </span>
-            </button>
-          );
-        })}
-      </div>
-
-      {!isTodaySelected && (
-        <div
-          className="split"
-          style={{
-            background: 'var(--sf-1)',
-            border: '1px solid var(--ac-line)',
-            borderRadius: 'var(--r-card)',
-            padding: '10px 14px',
-            marginBottom: 12,
-          }}
-        >
-          <div className="row" style={{ gap: 8 }}>
-            <Calendar size={16} strokeWidth={1.75} style={{ color: 'var(--ac-ink)' }} />
-            <span style={{ fontSize: 13 }}>
-              Viewing{' '}
-              <b>
-                {selDate.toLocaleDateString('en-US', {
-                  weekday: 'short',
-                  month: 'short',
-                  day: 'numeric',
-                })}
-              </b>
-            </span>
-          </div>
-          <Button
-            variant="secondary"
-            size="sm"
-            onClick={() => onSelectDay(todayKey)}
-          >
-            Return to today
-          </Button>
-        </div>
-      )}
-
       {/* Desktop 1100px+ Two-Column Workspace */}
       <div className="today-desktop-layout">
-        <div className="today-main-col">
-          {/* 5. Top Hero Progress + Primary Focus Session Starter */}
-          <Card className="dh-hero-lumen" style={{ marginTop: 4 }}>
+        <div className="today-main-col dh-today-flow">
+          {/* 4. Top Hero Progress + Compact 1-Tap Focus Launcher */}
+          <Card className="dh-hero-lumen dh-today-card">
             <div className="hero-grid">
               <div style={{ display: 'flex', justifyContent: 'center' }}>
                 <ConcentricProgressRing
@@ -933,9 +1017,7 @@ export const TodayView: React.FC<TodayViewProps> = ({
                     <span style={{ fontSize: 14, color: 'var(--tx-2)' }}>
                       {studyProg.goalMs > 0
                         ? `of ${fmtDuration(studyProg.goalMs)} goal`
-                        : `${selectedDaySessions.length} session${
-                            selectedDaySessions.length === 1 ? '' : 's'
-                          }`}
+                        : pluralize(selectedDaySessions.length, 'session')}
                     </span>
                   </div>
                   <p
@@ -953,10 +1035,11 @@ export const TodayView: React.FC<TodayViewProps> = ({
                   </p>
                 </div>
 
-                <div className="stat-mini">
-                  <div className="stat-box">
-                    <small style={{ fontSize: 13 }}>Focus purity</small>
+                <div className="dh-hero-metrics">
+                  <div className="dh-hero-metric">
+                    <span className="dh-hero-metric-label">Focus purity</span>
                     <b
+                      className="dh-hero-metric-val"
                       style={{
                         color:
                           selectedDayAvgPurity >= 85
@@ -970,34 +1053,36 @@ export const TodayView: React.FC<TodayViewProps> = ({
                         ? `${selectedDayAvgPurity}%`
                         : '—'}
                     </b>
-                    <small style={{ fontSize: 13 }}>
-                      {selectedDaySessions.length} session
-                      {selectedDaySessions.length === 1 ? '' : 's'}
-                    </small>
+                    <span className="dh-hero-metric-sub">
+                      {pluralize(selectedDaySessions.length, 'session')}
+                    </span>
                   </div>
-                  <div className="stat-box">
-                    <small style={{ fontSize: 13 }}>Habits &amp; tasks</small>
-                    <b style={{ color: p === 100 && dayProg.total > 0 ? 'var(--ok-ink)' : 'var(--tx)' }}>
+                  <div className="dh-hero-metric">
+                    <span className="dh-hero-metric-label">Habits &amp; tasks</span>
+                    <b
+                      className="dh-hero-metric-val"
+                      style={{
+                        color:
+                          p === 100 && dayProg.total > 0 ? 'var(--ok-ink)' : 'var(--tx)',
+                      }}
+                    >
                       {dayProg.habitsTotal > 0 || dayProg.tasksTotal > 0
                         ? `${dayProg.habitsDone + dayProg.tasksDone}/${dayProg.habitsTotal + dayProg.tasksTotal}`
                         : '—'}
                     </b>
-                    <small style={{ fontSize: 13 }}>
-                      {dayProg.habitsTotal} habits · {dayProg.tasksTotal} tasks
-                    </small>
+                    <span className="dh-hero-metric-sub">
+                      {formatCountSummary([
+                        { count: dayProg.habitsTotal, singular: 'habit' },
+                        { count: dayProg.tasksTotal, singular: 'task' },
+                      ])}
+                    </span>
                   </div>
                 </div>
               </div>
             </div>
 
-            {/* Primary Focus Starter embedded directly in top Hero card */}
-            <div
-              style={{
-                marginTop: 16,
-                paddingTop: 14,
-                borderTop: '1px solid var(--line)',
-              }}
-            >
+            {/* Compact 1-Tap Focus Launcher Dock (Single dominant Gold CTA) */}
+            <div className="dh-focus-dock">
               {state.activeTimer ? (
                 <div
                   className="split"
@@ -1010,25 +1095,35 @@ export const TodayView: React.FC<TodayViewProps> = ({
                     flexWrap: 'wrap',
                   }}
                 >
-                  <div className="row" style={{ gap: 10 }}>
+                  <div className="row" style={{ gap: 10, minWidth: 0, flex: 1 }}>
                     <span
                       style={{
                         width: 10,
                         height: 10,
                         borderRadius: '50%',
+                        flexShrink: 0,
                         background:
                           state.activeTimer.status === 'running'
                             ? 'var(--ok)'
                             : 'var(--warn)',
                       }}
                     />
-                    <div>
+                    <div style={{ minWidth: 0 }}>
                       <b style={{ fontSize: 14, display: 'block' }}>
                         {state.activeTimer.status === 'running'
                           ? 'Focus session running'
                           : 'Focus session paused'}
                       </b>
-                      <span style={{ fontSize: 13, color: 'var(--tx-2)' }}>
+                      <span
+                        style={{
+                          fontSize: 13,
+                          color: 'var(--tx-2)',
+                          display: 'block',
+                          overflow: 'hidden',
+                          textOverflow: 'ellipsis',
+                          whiteSpace: 'nowrap',
+                        }}
+                      >
                         {getSubject(state, state.activeTimer.subjectId).name} ·{' '}
                         {state.activeTimer.heading || 'Deep study'}
                       </span>
@@ -1037,27 +1132,90 @@ export const TodayView: React.FC<TodayViewProps> = ({
                   <Button
                     variant="primary"
                     size="md"
-                    icon={<Play size={15} strokeWidth={2} />}
+                    className="dh-focus-cta"
+                    icon={<Play size={15} strokeWidth={2.25} />}
                     onClick={() => onSwitchTab('focus')}
                   >
                     Open timer
                   </Button>
                 </div>
               ) : (
-                <div>
-                  <div className="split" style={{ marginBottom: 8 }}>
-                    <div className="row" style={{ gap: 6 }}>
-                      <Timer
-                        size={16}
-                        strokeWidth={1.75}
-                        style={{ color: 'var(--ac-ink)' }}
-                      />
-                      <b style={{ fontSize: 14 }}>Start a focus session</b>
-                    </div>
-                    <Button
-                      variant="ghost"
-                      size="sm"
-                      icon={<Plus size={14} strokeWidth={2} />}
+                <>
+                  <div className="dh-focus-dock-top">
+                    <button
+                      type="button"
+                      className="dh-focus-config-pill"
+                      aria-label="Configure focus session"
+                      onClick={() => setFocusConfigOpen(true)}
+                    >
+                      <div
+                        className="row"
+                        style={{ gap: 9, minWidth: 0, flex: 1, alignItems: 'center' }}
+                      >
+                        <span
+                          aria-hidden="true"
+                          style={{
+                            width: 9,
+                            height: 9,
+                            borderRadius: '50%',
+                            background: effectiveQuickSubject.color,
+                            flexShrink: 0,
+                          }}
+                        />
+                        <div style={{ minWidth: 0, flex: 1 }}>
+                          <span
+                            style={{
+                              display: 'block',
+                              fontSize: 14,
+                              fontWeight: 600,
+                              color: 'var(--tx)',
+                              whiteSpace: 'nowrap',
+                              overflow: 'hidden',
+                              textOverflow: 'ellipsis',
+                              lineHeight: 1.25,
+                            }}
+                          >
+                            {effectiveQuickSubject.e} {effectiveQuickSubject.name}
+                          </span>
+                          <span
+                            style={{
+                              display: 'block',
+                              fontSize: 13,
+                              color: 'var(--tx-2)',
+                              whiteSpace: 'nowrap',
+                              overflow: 'hidden',
+                              textOverflow: 'ellipsis',
+                              lineHeight: 1.25,
+                              fontVariantNumeric: 'tabular-nums',
+                            }}
+                          >
+                            {quickHeading.trim()
+                              ? `${quickHeading.trim()} · ${quickModeLabel}`
+                              : effectiveQuickChapter
+                                ? `${effectiveQuickChapter.name} · ${quickModeLabel}`
+                                : quickModeLabel}
+                          </span>
+                        </div>
+                      </div>
+                      <span
+                        className="row"
+                        style={{
+                          gap: 5,
+                          fontSize: 13,
+                          fontWeight: 600,
+                          color: 'var(--tx-2)',
+                          flexShrink: 0,
+                        }}
+                      >
+                        <SlidersHorizontal size={14} strokeWidth={1.75} aria-hidden="true" />
+                        <span>Setup</span>
+                      </span>
+                    </button>
+
+                    <button
+                      type="button"
+                      className="dh-focus-log-btn dh-glass-btn"
+                      aria-label="Log study hours manually"
                       onClick={() =>
                         onOpenManualSession(
                           effectiveQuickSubId,
@@ -1065,123 +1223,37 @@ export const TodayView: React.FC<TodayViewProps> = ({
                         )
                       }
                     >
-                      Log hours
-                    </Button>
+                      <Plus size={14} strokeWidth={2} aria-hidden="true" />
+                      <span>Log</span>
+                    </button>
                   </div>
 
-                  {/* Subject Selector Chips */}
-                  <div className="dh-scroll-chips">
-                    {activeSubjects.map((s) => (
-                      <Chip
-                        key={s.id}
-                        selected={effectiveQuickSubId === s.id}
-                        colorDot={s.color}
-                        onClick={() => {
-                          setQuickSubjectId(s.id);
-                          setQuickChapterId('');
-                        }}
-                      >
-                        {s.e} {s.name}
-                      </Chip>
-                    ))}
-                  </div>
-
-                  {/* Chapter Sheet Picker + Session Heading Input */}
-                  <div
-                    className="row"
-                    style={{
-                      gap: 8,
-                      marginTop: 6,
-                      flexWrap: 'wrap',
-                      alignItems: 'stretch',
+                  <Button
+                    variant="primary"
+                    size="lg"
+                    fullWidth
+                    className="dh-focus-cta"
+                    icon={<Play size={17} strokeWidth={2.25} />}
+                    onClick={() => {
+                      triggerHaptic('tap');
+                      onQuickStartSession(
+                        effectiveQuickSubId,
+                        quickHeading,
+                        quickMode,
+                        effectiveQuickChapId || undefined
+                      );
                     }}
                   >
-                    {quickSubjectChapters.length > 0 && (
-                      <div style={{ flex: '1 1 200px', minWidth: 0 }}>
-                        <Select
-                          aria-label="Link syllabus chapter"
-                          title="Link syllabus chapter"
-                          value={effectiveQuickChapId}
-                          options={quickChapterOptions}
-                          onChange={(val) => {
-                            setQuickChapterId(val);
-                            const ch = quickSubjectChapters.find((c) => c.id === val);
-                            if (ch && !quickHeading.trim()) {
-                              setQuickHeading(ch.name);
-                            }
-                          }}
-                          placeholder="Link chapter (optional)"
-                        />
-                      </div>
-                    )}
-                    <input
-                      type="text"
-                      aria-label="Session topic or goal"
-                      placeholder="Session topic or goal (optional)"
-                      value={quickHeading}
-                      onChange={(e) => setQuickHeading(e.target.value)}
-                      style={{ flex: '1 1 200px', minHeight: 44, fontSize: 14 }}
-                    />
-                  </div>
-
-                  {/* Mode Selector + Prominent 56px Primary Focus CTA */}
-                  <div
-                    style={{
-                      display: 'flex',
-                      flexDirection: 'column',
-                      gap: 10,
-                      marginTop: 10,
-                    }}
-                  >
-                    <div className="dh-scroll-chips" role="radiogroup" aria-label="Timer mode">
-                      <Chip
-                        selected={quickMode === 'pomo'}
-                        onClick={() => setQuickMode('pomo')}
-                      >
-                        <Timer size={14} strokeWidth={1.75} />
-                        Pomodoro ({state.set.pomoWork || 25}m)
-                      </Chip>
-                      <Chip
-                        selected={quickMode === 'countdown'}
-                        onClick={() => setQuickMode('countdown')}
-                      >
-                        <Hourglass size={14} strokeWidth={1.75} />
-                        Countdown ({state.set.countdownMins || 45}m)
-                      </Chip>
-                      <Chip
-                        selected={quickMode === 'stopwatch'}
-                        onClick={() => setQuickMode('stopwatch')}
-                      >
-                        <Clock size={14} strokeWidth={1.75} />
-                        Stopwatch
-                      </Chip>
-                    </div>
-
-                    <Button
-                      variant="primary"
-                      size="xl"
-                      fullWidth
-                      icon={<Play size={18} strokeWidth={2.25} />}
-                      onClick={() =>
-                        onQuickStartSession(
-                          effectiveQuickSubId,
-                          quickHeading,
-                          quickMode,
-                          effectiveQuickChapId || undefined
-                        )
-                      }
-                    >
-                      Start focus
-                    </Button>
-                  </div>
-                </div>
+                    Start focus
+                  </Button>
+                </>
               )}
             </div>
           </Card>
 
-          {/* 6. Subject Daily Targets (when configured) */}
+          {/* 5. Subject Daily Targets (when configured) */}
           {subjectTargets.length > 0 && (
-            <Card>
+            <Card className="dh-today-card">
               <div className="split" style={{ marginBottom: 10 }}>
                 <div className="row" style={{ gap: 8 }}>
                   <Target
@@ -1194,7 +1266,9 @@ export const TodayView: React.FC<TodayViewProps> = ({
                 <Button
                   variant="ghost"
                   size="sm"
-                  onClick={() => onSwitchTab('more')}
+                  onClick={() =>
+                    onManageTargets ? onManageTargets() : onSwitchTab('more')
+                  }
                 >
                   Edit targets
                 </Button>
@@ -1263,9 +1337,9 @@ export const TodayView: React.FC<TodayViewProps> = ({
             </Card>
           )}
 
-          {/* 7. Study Next — Top 3 Recommended Chapters */}
+          {/* 6. Study Next — Top 3 Recommended Chapters */}
           {studyNextItems.length > 0 && (
-            <Card>
+            <Card className="dh-today-card">
               <div className="split" style={{ marginBottom: 10 }}>
                 <div className="row" style={{ gap: 8 }}>
                   <Compass
@@ -1294,30 +1368,45 @@ export const TodayView: React.FC<TodayViewProps> = ({
                     key={item.chapter.id}
                     className="dh-carousel-card"
                     style={{
-                      borderTop: `3px solid ${item.subjectColor}`,
+                      border: '1px solid var(--hairline)',
                     }}
                   >
                     <div style={{ minWidth: 0 }}>
-                      <div className="row" style={{ gap: 6, flexWrap: 'wrap', marginBottom: 4 }}>
+                      <div
+                        className="row"
+                        style={{ gap: 7, flexWrap: 'nowrap', marginBottom: 4 }}
+                      >
+                        <span
+                          aria-hidden="true"
+                          style={{
+                            width: 8,
+                            height: 8,
+                            borderRadius: '50%',
+                            background: item.subjectColor,
+                            flexShrink: 0,
+                          }}
+                        />
                         <b
                           style={{
                             fontSize: 14,
                             overflow: 'hidden',
                             textOverflow: 'ellipsis',
                             whiteSpace: 'nowrap',
+                            flex: 1,
+                            minWidth: 0,
                           }}
                         >
                           {item.subjectEmoji} {item.chapter.name}
                         </b>
                         {item.chapter.confidence && (
                           <span
-                            className="pill"
                             style={{
                               fontSize: 13,
-                              padding: '1px 7px',
-                              background: 'var(--sf-3)',
-                              color: 'var(--tx-2)',
+                              color: 'var(--tx-3)',
+                              fontVariantNumeric: 'tabular-nums',
+                              flexShrink: 0,
                             }}
+                            aria-label={`Confidence ${item.chapter.confidence} of 5`}
                           >
                             {'★'.repeat(item.chapter.confidence)}
                           </span>
@@ -1335,9 +1424,10 @@ export const TodayView: React.FC<TodayViewProps> = ({
                       </small>
                     </div>
                     <Button
-                      variant="primary"
+                      variant="secondary"
                       size="sm"
                       fullWidth
+                      className="dh-glass-accent-btn"
                       icon={<Play size={13} strokeWidth={2} />}
                       onClick={() =>
                         onQuickStartSession(
@@ -1356,82 +1446,44 @@ export const TodayView: React.FC<TodayViewProps> = ({
             </Card>
           )}
 
-          {/* 8. Daily Tasks Card */}
-          <Card id="dailyTasksCard">
+          {/* 7. Daily Tasks Card */}
+          <Card id="dailyTasksCard" className="dh-today-card">
             <div className="split" style={{ marginBottom: 10 }}>
               <div className="row" style={{ gap: 8 }}>
                 <h3 style={{ margin: 0, fontSize: 16 }}>Daily tasks</h3>
                 <span
-                  className="pill"
+                  className="dh-meta-count"
                   style={{
-                    fontSize: 13,
-                    padding: '2px 8px',
-                    background:
-                      dayTasks.length > 0 && dayProg.tasksDone === dayTasks.length
-                        ? 'color-mix(in srgb, var(--ok) 16%, transparent)'
-                        : 'var(--sf-2)',
                     color:
                       dayTasks.length > 0 && dayProg.tasksDone === dayTasks.length
                         ? 'var(--ok-ink)'
                         : 'var(--tx-2)',
-                    fontVariantNumeric: 'tabular-nums',
                   }}
                 >
                   {dayProg.tasksDone}/{dayProg.tasksTotal}
+                  {dayTasks.length > 0 ? ` · ${pluralize(dayTasks.length, 'task')}` : ''}
                 </span>
               </div>
             </div>
 
-            <form
-              className="row"
-              style={{
-                gap: 8,
-                marginBottom: dayTasks.length > 0 ? 10 : 4,
-                flexWrap: 'wrap',
-              }}
-              onSubmit={(e) => {
-                e.preventDefault();
-                const clean = newTaskTitle.trim();
-                if (!clean) return;
-                onAddTask(clean, sel, newTaskSubjectId || undefined);
-                setNewTaskTitle('');
-              }}
+            <button
+              type="button"
+              className="dh-task-composer-trigger"
+              style={{ marginBottom: dayTasks.length > 0 ? 10 : 6 }}
+              onClick={() => setTaskComposerOpen(true)}
             >
-              <input
-                id="dailyTaskTitleInput"
-                type="text"
-                aria-label="New daily task title"
-                placeholder="Add a task for this day..."
-                value={newTaskTitle}
-                onChange={(e) => setNewTaskTitle(e.target.value)}
-                style={{ flex: '2 1 180px', minHeight: 44, fontSize: 14 }}
-              />
-              <div style={{ flex: '1 1 150px', minWidth: 140 }}>
-                <Select
-                  aria-label="Task subject"
-                  title="Task subject"
-                  value={newTaskSubjectId}
-                  options={taskSubjectOptions}
-                  onChange={setNewTaskSubjectId}
-                  placeholder="General"
-                />
-              </div>
-              <Button
-                type="submit"
-                variant="primary"
-                size="md"
-                icon={<Plus size={16} strokeWidth={2} />}
-              >
-                Add
-              </Button>
-            </form>
+              <span>
+                Add a task for {isTodaySelected ? 'today' : sel}…
+              </span>
+              <Plus size={17} strokeWidth={2} style={{ color: 'var(--ac-ink)', flexShrink: 0 }} />
+            </button>
 
             {dayTasks.length === 0 ? (
               <EmptyState
                 illustration="noTasks"
                 compact
                 title="No tasks scheduled for this day"
-                description="Add a quick goal above to organize your study blocks."
+                description="Tap above to add a goal and tag a subject."
               />
             ) : (
               <WindowedList
@@ -1481,7 +1533,10 @@ export const TodayView: React.FC<TodayViewProps> = ({
                               ? `Mark "${task.title}" incomplete`
                               : `Complete "${task.title}"`
                           }
-                          onClick={() => onToggleTask(task.id)}
+                          onClick={() => {
+                            triggerHaptic('success');
+                            onToggleTask(task.id);
+                          }}
                         >
                           {task.done ? <Check size={18} strokeWidth={2.25} /> : null}
                         </button>
@@ -1511,7 +1566,12 @@ export const TodayView: React.FC<TodayViewProps> = ({
                                   fontSize: 13,
                                 }}
                               />
-                              <Button type="submit" variant="primary" size="sm">
+                              <Button
+                                type="submit"
+                                variant="secondary"
+                                size="sm"
+                                className="dh-glass-accent-btn"
+                              >
                                 Save
                               </Button>
                               <Button
@@ -1526,7 +1586,10 @@ export const TodayView: React.FC<TodayViewProps> = ({
                             <div
                               className="row"
                               style={{ gap: 8, flexWrap: 'wrap', cursor: 'pointer' }}
-                              onClick={() => onToggleTask(task.id)}
+                              onClick={() => {
+                                triggerHaptic('success');
+                                onToggleTask(task.id);
+                              }}
                             >
                               <span
                                 className={`dh-task-title ${task.done ? 'done' : ''}`}
@@ -1752,8 +1815,9 @@ export const TodayView: React.FC<TodayViewProps> = ({
                           </div>
                           <div className="row" style={{ gap: 6 }}>
                             <Button
-                              variant="primary"
+                              variant="secondary"
                               size="sm"
+                              className="dh-glass-accent-btn"
                               onClick={() => onMoveTaskToToday(t.id)}
                             >
                               Today
@@ -1775,8 +1839,8 @@ export const TodayView: React.FC<TodayViewProps> = ({
             )}
           </Card>
 
-          {/* 9. Revisions Due Card (Compact when empty) */}
-          <Card id="revisionsDueCard">
+          {/* 8. Revisions Due Card (Compact when empty) */}
+          <Card id="revisionsDueCard" className="dh-today-card">
             <div
               className="split"
               style={{
@@ -1791,23 +1855,14 @@ export const TodayView: React.FC<TodayViewProps> = ({
                 />
                 <h3 style={{ margin: 0, fontSize: 16 }}>Revisions due</h3>
                 <span
-                  className="pill"
+                  className="dh-meta-count"
                   style={{
-                    fontSize: 13,
-                    padding: '2px 8px',
-                    background:
-                      revisionsBundle.overdue.length > 0
-                        ? 'color-mix(in srgb, var(--err) 16%, transparent)'
-                        : allRevisionsCount > 0
-                          ? 'var(--ac-soft)'
-                          : 'var(--sf-2)',
                     color:
                       revisionsBundle.overdue.length > 0
                         ? 'var(--err-ink)'
                         : allRevisionsCount > 0
                           ? 'var(--ac-ink)'
-                          : 'var(--tx-2)',
-                    fontVariantNumeric: 'tabular-nums',
+                          : 'var(--tx-3)',
                   }}
                 >
                   {allRevisionsCount}
@@ -1823,7 +1878,7 @@ export const TodayView: React.FC<TodayViewProps> = ({
             </div>
 
             {allRevisionsCount > 0 && (
-              <div className="dh-scroll-chips" style={{ marginBottom: 8 }}>
+              <div className="dh-edge-fade-rail" style={{ marginBottom: 8 }}>
                 <Chip
                   selected={revSubjectFilter === 'all'}
                   onClick={() => setRevSubjectFilter('all')}
@@ -1965,8 +2020,9 @@ export const TodayView: React.FC<TodayViewProps> = ({
                                   }}
                                 />
                                 <Button
-                                  variant="primary"
+                                  variant="secondary"
                                   size="sm"
+                                  className="dh-glass-accent-btn"
                                   onClick={() => {
                                     onRescheduleRevision(
                                       rescheduleTarget.chapterId,
@@ -2091,8 +2147,9 @@ export const TodayView: React.FC<TodayViewProps> = ({
                                   }}
                                 />
                                 <Button
-                                  variant="primary"
+                                  variant="secondary"
                                   size="sm"
+                                  className="dh-glass-accent-btn"
                                   onClick={() => {
                                     onRescheduleRevision(
                                       rescheduleTarget.chapterId,
@@ -2116,14 +2173,15 @@ export const TodayView: React.FC<TodayViewProps> = ({
             )}
           </Card>
 
-          {/* 10. Habits Section */}
-          <div style={{ marginTop: 18 }}>
+          {/* 9. Habits Section */}
+          <div>
             <SectionHeader
               title={`Habits (${dayProg.habitsDone}/${dayProg.habitsTotal})`}
               action={
                 <Button
                   variant="secondary"
                   size="sm"
+                  className="dh-glass-btn"
                   icon={<Plus size={15} strokeWidth={2} />}
                   onClick={onNewHabit}
                 >
@@ -2133,7 +2191,7 @@ export const TodayView: React.FC<TodayViewProps> = ({
             />
 
             {allLiveHabits.length > 0 && (
-              <div className="dh-scroll-chips" style={{ marginBottom: 6 }}>
+              <div className="dh-edge-fade-rail" style={{ marginBottom: 6 }}>
                 <Chip selected={cat === 'All'} onClick={() => onSelectCat('All')}>
                   All
                 </Chip>
@@ -2146,7 +2204,7 @@ export const TodayView: React.FC<TodayViewProps> = ({
             )}
 
             {allLiveHabits.length === 0 ? (
-              <Card style={{ textAlign: 'center', padding: '20px 16px' }}>
+              <Card className="dh-today-card" style={{ textAlign: 'center', padding: '20px 16px' }}>
                 <Sparkles
                   size={24}
                   strokeWidth={1.75}
@@ -2173,7 +2231,12 @@ export const TodayView: React.FC<TodayViewProps> = ({
                     </Chip>
                   ))}
                 </div>
-                <Button variant="primary" size="sm" onClick={onNewHabit}>
+                <Button
+                  variant="secondary"
+                  size="sm"
+                  className="dh-glass-accent-btn"
+                  onClick={onNewHabit}
+                >
                   Create custom habit
                 </Button>
               </Card>
@@ -2182,7 +2245,7 @@ export const TodayView: React.FC<TodayViewProps> = ({
                 {dueList.length > 0 ? (
                   dueList.map(renderHabitRow)
                 ) : (
-                  <Card style={{ textAlign: 'center', padding: 14 }}>
+                  <Card className="dh-today-card" style={{ textAlign: 'center', padding: 14 }}>
                     <small style={{ fontSize: 13 }}>
                       No habits scheduled in this category today.
                     </small>
@@ -2222,8 +2285,8 @@ export const TodayView: React.FC<TodayViewProps> = ({
             )}
           </div>
 
-          {/* 11. Flat Focus Tip Card */}
-          <Card style={{ marginTop: 14 }}>
+          {/* 10. Flat Focus Tip Card */}
+          <Card className="dh-today-card">
             <div className="split" style={{ alignItems: 'flex-start', gap: 12 }}>
               <div className="row" style={{ gap: 10, alignItems: 'flex-start', flex: 1 }}>
                 <Lightbulb
@@ -2232,7 +2295,7 @@ export const TodayView: React.FC<TodayViewProps> = ({
                   style={{ color: 'var(--ac-ink)', flexShrink: 0, marginTop: 2 }}
                 />
                 <div style={{ minWidth: 0 }}>
-                  <div className="row" style={{ gap: 8, marginBottom: 4 }}>
+                  <div className="row" style={{ gap: 6, marginBottom: 4 }}>
                     <span
                       style={{
                         fontSize: 13,
@@ -2242,16 +2305,8 @@ export const TodayView: React.FC<TodayViewProps> = ({
                     >
                       Focus tip
                     </span>
-                    <span
-                      className="pill"
-                      style={{
-                        fontSize: 13,
-                        padding: '1px 7px',
-                        background: 'var(--sf-2)',
-                        color: 'var(--tx-2)',
-                      }}
-                    >
-                      {dailyTip.tag}
+                    <span style={{ fontSize: 13, color: 'var(--tx-3)' }}>
+                      · {dailyTip.tag}
                     </span>
                   </div>
                   <b style={{ fontSize: 14, display: 'block', marginBottom: 3 }}>
@@ -2282,9 +2337,9 @@ export const TodayView: React.FC<TodayViewProps> = ({
         </div>
 
         {/* Right Rail on Desktop >=1100px: Today's Timeline + Daily Reflection */}
-        <aside className="today-rail-col">
+        <aside className="today-rail-col dh-today-flow">
           {/* Today's Study Sessions Timeline */}
-          <Card style={{ marginTop: 4 }}>
+          <Card className="dh-today-card">
             <div className="split" style={{ marginBottom: 10 }}>
               <div className="row" style={{ gap: 8 }}>
                 <BookOpen
@@ -2299,6 +2354,7 @@ export const TodayView: React.FC<TodayViewProps> = ({
               <Button
                 variant="secondary"
                 size="sm"
+                className="dh-glass-btn"
                 icon={<Plus size={14} strokeWidth={2} />}
                 onClick={() => onOpenManualSession(effectiveQuickSubId)}
               >
@@ -2331,12 +2387,22 @@ export const TodayView: React.FC<TodayViewProps> = ({
                         background: 'var(--sf-2)',
                         padding: '10px 12px',
                         borderRadius: 12,
-                        borderLeft: `3px solid ${sub.color}`,
+                        border: '1px solid var(--hairline)',
                         gap: 10,
                       }}
                     >
                       <div style={{ minWidth: 0, flex: 1 }}>
-                        <div className="row" style={{ gap: 6, flexWrap: 'wrap' }}>
+                        <div className="row" style={{ gap: 7, flexWrap: 'wrap' }}>
+                          <span
+                            aria-hidden="true"
+                            style={{
+                              width: 8,
+                              height: 8,
+                              borderRadius: '50%',
+                              background: sub.color,
+                              flexShrink: 0,
+                            }}
+                          />
                           <b
                             style={{
                               fontSize: 14,
@@ -2348,16 +2414,14 @@ export const TodayView: React.FC<TodayViewProps> = ({
                             {sub.e} {heading}
                           </b>
                           <span
-                            className="pill"
                             style={{
                               fontSize: 13,
-                              padding: '1px 7px',
-                              background: 'var(--sf-3)',
-                              color: 'var(--tx)',
+                              fontWeight: 600,
+                              color: 'var(--tx-2)',
                               fontVariantNumeric: 'tabular-nums',
                             }}
                           >
-                            {fmtHMShort(ses.activeMs)}
+                            · {fmtHMShort(ses.activeMs)}
                           </span>
                         </div>
                         <small
@@ -2401,7 +2465,7 @@ export const TodayView: React.FC<TodayViewProps> = ({
           </Card>
 
           {/* Daily Reflection & Wellbeing */}
-          <Card id="wellbeingReflectionCard">
+          <Card id="wellbeingReflectionCard" className="dh-today-card">
             <h3 style={{ margin: '0 0 10px', fontSize: 16 }}>
               Reflection &amp; wellbeing
             </h3>
@@ -2546,9 +2610,11 @@ export const TodayView: React.FC<TodayViewProps> = ({
                           fontSize: 13,
                           fontWeight: 600,
                           borderRadius: 8,
-                          background: isLit ? 'var(--ac)' : 'var(--sf-1)',
-                          color: isLit ? 'var(--ac-on)' : 'var(--tx-2)',
-                          border: isLit ? 'none' : '1px solid var(--line)',
+                          background: isLit ? 'var(--ac-soft)' : 'var(--sf-1)',
+                          color: isLit ? 'var(--ac-ink)' : 'var(--tx-2)',
+                          border: isLit
+                            ? '1px solid var(--ac)'
+                            : '1px solid var(--line)',
                           fontVariantNumeric: 'tabular-nums',
                         }}
                       >
@@ -2571,6 +2637,229 @@ export const TodayView: React.FC<TodayViewProps> = ({
           </Card>
         </aside>
       </div>
+
+      {/* Frosted Focus Config BottomSheet */}
+      <BottomSheet
+        open={focusConfigOpen}
+        onClose={() => setFocusConfigOpen(false)}
+        title="Focus setup"
+        subtitle="Choose subject, timer mode, and optional chapter"
+        footer={
+          <div style={{ display: 'grid', gap: 8 }}>
+            <Button
+              variant="primary"
+              size="lg"
+              fullWidth
+              className="dh-focus-cta"
+              icon={<Play size={17} strokeWidth={2.25} />}
+              onClick={() => {
+                setFocusConfigOpen(false);
+                onQuickStartSession(
+                  effectiveQuickSubId,
+                  quickHeading,
+                  quickMode,
+                  effectiveQuickChapId || undefined
+                );
+              }}
+            >
+              Start focus
+            </Button>
+            <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 8 }}>
+              <Button
+                variant="secondary"
+                size="md"
+                className="dh-glass-btn"
+                onClick={() => setFocusConfigOpen(false)}
+              >
+                Save setup
+              </Button>
+              <Button
+                variant="secondary"
+                size="md"
+                className="dh-glass-btn"
+                icon={<Plus size={14} strokeWidth={2} />}
+                onClick={() => {
+                  setFocusConfigOpen(false);
+                  onOpenManualSession(
+                    effectiveQuickSubId,
+                    effectiveQuickChapId || undefined
+                  );
+                }}
+              >
+                Log hours
+              </Button>
+            </div>
+          </div>
+        }
+      >
+        <div className="dh-sheet-field">
+          <span className="dh-sheet-field-label">Subject</span>
+          <div className="dh-edge-fade-rail" role="radiogroup" aria-label="Focus subject">
+            {activeSubjects.map((s) => (
+              <Chip
+                key={s.id}
+                selected={effectiveQuickSubId === s.id}
+                colorDot={s.color}
+                onClick={() => {
+                  setQuickSubjectId(s.id);
+                  setQuickChapterId('');
+                }}
+              >
+                {s.e} {s.name}
+              </Chip>
+            ))}
+          </div>
+        </div>
+
+        <div className="dh-sheet-field">
+          <span className="dh-sheet-field-label">Timer mode</span>
+          <div className="dh-mode-grid" role="radiogroup" aria-label="Timer mode">
+            <button
+              type="button"
+              role="radio"
+              aria-checked={quickMode === 'pomo'}
+              className={`dh-mode-tile ${quickMode === 'pomo' ? 'active' : ''}`}
+              onClick={() => setQuickMode('pomo')}
+            >
+              <Timer size={16} strokeWidth={1.75} aria-hidden="true" />
+              <span>Pomodoro</span>
+              <span className="dh-mode-tile-sub">{state.set.pomoWork || 25}m</span>
+            </button>
+            <button
+              type="button"
+              role="radio"
+              aria-checked={quickMode === 'countdown'}
+              className={`dh-mode-tile ${quickMode === 'countdown' ? 'active' : ''}`}
+              onClick={() => setQuickMode('countdown')}
+            >
+              <Hourglass size={16} strokeWidth={1.75} aria-hidden="true" />
+              <span>Countdown</span>
+              <span className="dh-mode-tile-sub">
+                {state.set.countdownMins || 45}m
+              </span>
+            </button>
+            <button
+              type="button"
+              role="radio"
+              aria-checked={quickMode === 'stopwatch'}
+              className={`dh-mode-tile ${quickMode === 'stopwatch' ? 'active' : ''}`}
+              onClick={() => setQuickMode('stopwatch')}
+            >
+              <Clock size={16} strokeWidth={1.75} aria-hidden="true" />
+              <span>Stopwatch</span>
+              <span className="dh-mode-tile-sub">Open</span>
+            </button>
+          </div>
+        </div>
+
+        {quickSubjectChapters.length > 0 && (
+          <div className="dh-sheet-field">
+            <span className="dh-sheet-field-label">Syllabus chapter (optional)</span>
+            <Select
+              aria-label="Link syllabus chapter"
+              title="Link syllabus chapter"
+              value={effectiveQuickChapId}
+              options={quickChapterOptions}
+              onChange={(val) => {
+                setQuickChapterId(val);
+                const ch = quickSubjectChapters.find((c) => c.id === val);
+                if (ch && !quickHeading.trim()) {
+                  setQuickHeading(ch.name);
+                }
+              }}
+              placeholder="Link chapter (optional)"
+            />
+          </div>
+        )}
+
+        <div className="dh-sheet-field">
+          <label htmlFor="focusTopicInput" className="dh-sheet-field-label">
+            Session topic or goal (optional)
+          </label>
+          <input
+            id="focusTopicInput"
+            type="text"
+            aria-label="Session topic or goal"
+            placeholder="e.g. 30 Electrostatics PYQs"
+            value={quickHeading}
+            onChange={(e) => setQuickHeading(e.target.value)}
+            style={{ width: '100%', minHeight: 48, fontSize: 15 }}
+          />
+        </div>
+      </BottomSheet>
+
+      {/* Frosted Daily Task Composer BottomSheet */}
+      <BottomSheet
+        open={taskComposerOpen}
+        onClose={() => setTaskComposerOpen(false)}
+        title={isTodaySelected ? 'New task for today' : `New task for ${sel}`}
+        subtitle="Keep daily targets crisp and actionable"
+        footer={
+          <Button
+            type="submit"
+            form="dh-task-composer-form"
+            variant="primary"
+            size="lg"
+            fullWidth
+            className="dh-focus-cta"
+            disabled={!newTaskTitle.trim()}
+            icon={<Plus size={17} strokeWidth={2.25} />}
+          >
+            Add task
+          </Button>
+        }
+      >
+        <form
+          id="dh-task-composer-form"
+          style={{ display: 'grid', gap: 14 }}
+          onSubmit={(e) => {
+            e.preventDefault();
+            const clean = newTaskTitle.trim();
+            if (!clean) return;
+            onAddTask(clean, sel, newTaskSubjectId || undefined);
+            setNewTaskTitle('');
+            setTaskComposerOpen(false);
+          }}
+        >
+          <div className="dh-sheet-field">
+            <label htmlFor="dailyTaskTitleInput" className="dh-sheet-field-label">
+              Task title
+            </label>
+            <input
+              id="dailyTaskTitleInput"
+              data-sheet-autofocus
+              type="text"
+              aria-label="New daily task title"
+              placeholder="What do you want to finish?"
+              value={newTaskTitle}
+              onChange={(e) => setNewTaskTitle(e.target.value)}
+              style={{ width: '100%', minHeight: 48, fontSize: 15 }}
+            />
+          </div>
+
+          <div className="dh-sheet-field">
+            <span className="dh-sheet-field-label">Subject tag</span>
+            <div className="dh-edge-fade-rail" role="radiogroup" aria-label="Task subject">
+              <Chip
+                selected={newTaskSubjectId === ''}
+                onClick={() => setNewTaskSubjectId('')}
+              >
+                General
+              </Chip>
+              {activeSubjects.map((s) => (
+                <Chip
+                  key={s.id}
+                  selected={newTaskSubjectId === s.id}
+                  colorDot={s.color}
+                  onClick={() => setNewTaskSubjectId(s.id)}
+                >
+                  {s.e} {s.name}
+                </Chip>
+              ))}
+            </div>
+          </div>
+        </form>
+      </BottomSheet>
     </div>
   );
 };

@@ -1313,6 +1313,9 @@ export class GroupPublishBudgetController {
   private cheersToday = 0;
   private pausedForQuota = false;
   private isOnline = true;
+  private isFlushing = false;
+  private retryCountByGroup: Map<string, number> = new Map();
+  private blockedGroups: Set<string> = new Set();
   private onFlushGroup: (groupId: string) => Promise<void>;
 
   constructor(
@@ -1456,12 +1459,26 @@ export class GroupPublishBudgetController {
   }
 
   public commitEntryHash(groupId: string, entry: MemberEntry): void {
-    this.lastHashByGroup.set(groupId, hashMemberEntry(entry));
+    const committedHash = hashMemberEntry(entry);
+    this.lastHashByGroup.set(groupId, committedHash);
     this.lastWriteTsByGroup.set(groupId, Date.now());
+    this.retryCountByGroup.delete(groupId);
+    this.blockedGroups.delete(groupId);
+    const pendingEntry = this.pendingEntryByGroup.get(groupId);
+    if (!pendingEntry || hashMemberEntry(pendingEntry) === committedHash) {
+      this.pendingGroups.delete(groupId);
+      this.queuedOfflineGroups.delete(groupId);
+      this.pendingEntryByGroup.delete(groupId);
+    }
+  }
+
+  public isGroupBlocked(groupId: string): boolean {
+    return this.blockedGroups.has(groupId);
   }
 
   public markGroupDirty(groupId: string, entry?: MemberEntry): void {
     this.syncDayRollover();
+    if (this.blockedGroups.has(groupId)) return;
     if (entry) {
       if (!this.hasEntryChanged(groupId, entry)) {
         this.pendingGroups.delete(groupId);
@@ -1484,7 +1501,7 @@ export class GroupPublishBudgetController {
   public async flushNow(groupIds?: string[]): Promise<void> {
     if (groupIds) {
       for (const gid of groupIds) {
-        if (gid) this.pendingGroups.add(gid);
+        if (gid && !this.blockedGroups.has(gid)) this.pendingGroups.add(gid);
       }
     }
     if (this.debounceTimer) {
@@ -1530,6 +1547,7 @@ export class GroupPublishBudgetController {
   }
 
   private async flushReadyGroups(forceBackground: boolean): Promise<void> {
+    if (this.isFlushing) return;
     this.syncDayRollover();
     if (this.isPausedForToday()) return;
     if (!this.isOnline) {
@@ -1545,6 +1563,10 @@ export class GroupPublishBudgetController {
     const stillThrottled: string[] = [];
 
     for (const gid of this.pendingGroups) {
+      if (this.blockedGroups.has(gid)) {
+        this.pendingEntryByGroup.delete(gid);
+        continue;
+      }
       const pendingEntry = this.pendingEntryByGroup.get(gid);
       if (pendingEntry && !this.hasEntryChanged(gid, pendingEntry)) {
         this.pendingEntryByGroup.delete(gid);
@@ -1564,26 +1586,68 @@ export class GroupPublishBudgetController {
       this.pendingGroups.add(gid);
     }
 
-    for (const gid of toFlush) {
-      const pendingEntry = this.pendingEntryByGroup.get(gid);
-      if (pendingEntry && !this.hasEntryChanged(gid, pendingEntry)) {
-        this.pendingEntryByGroup.delete(gid);
-        continue;
+    if (toFlush.length === 0) {
+      if (this.pendingGroups.size > 0 && !this.isPausedForToday()) {
+        this.scheduleFlush(this.debounceMs);
       }
-      if (!this.canWrite(1)) break;
-      this.pendingEntryByGroup.delete(gid);
-      try {
-        await this.onFlushGroup(gid);
-      } catch (err) {
-        if (isQuotaError(err)) {
-          this.pauseForQuotaError();
-          break;
-        }
-      }
+      return;
     }
 
-    if (this.pendingGroups.size > 0 && !this.isPausedForToday()) {
-      this.scheduleFlush(this.debounceMs);
+    this.isFlushing = true;
+    let retryDelayMs = this.debounceMs;
+
+    try {
+      for (const gid of toFlush) {
+        const pendingEntry = this.pendingEntryByGroup.get(gid);
+        if (pendingEntry && !this.hasEntryChanged(gid, pendingEntry)) {
+          this.pendingEntryByGroup.delete(gid);
+          continue;
+        }
+        if (!this.canWrite(1)) break;
+        this.pendingEntryByGroup.delete(gid);
+        try {
+          await this.onFlushGroup(gid);
+          this.retryCountByGroup.delete(gid);
+        } catch (err) {
+          if (isQuotaError(err)) {
+            this.pauseForQuotaError();
+            break;
+          }
+          const code = String((err as { code?: string })?.code || '');
+          const msg = err instanceof Error ? err.message : String(err);
+          const isPermissionOrMissing =
+            /permission-denied|not-found/i.test(code) ||
+            /permission-denied|missing or insufficient permissions|no document to update/i.test(msg);
+          if (isPermissionOrMissing) {
+            this.blockedGroups.add(gid);
+            this.queuedOfflineGroups.delete(gid);
+            this.retryCountByGroup.delete(gid);
+            continue;
+          }
+          // Transient/network failure: preserve pending entry and re-queue with bounded backoff
+          if (pendingEntry) {
+            this.pendingEntryByGroup.set(gid, pendingEntry);
+          }
+          if (!this.isOnline) {
+            this.queuedOfflineGroups.add(gid);
+          } else {
+            const retries = (this.retryCountByGroup.get(gid) || 0) + 1;
+            if (retries <= 3) {
+              this.retryCountByGroup.set(gid, retries);
+              this.pendingGroups.add(gid);
+              retryDelayMs = Math.max(retryDelayMs, Math.min(60_000, 15_000 * retries));
+            } else {
+              this.queuedOfflineGroups.add(gid);
+            }
+          }
+        }
+      }
+    } finally {
+      this.isFlushing = false;
+    }
+
+    if (this.pendingGroups.size > 0 && !this.isPausedForToday() && this.isOnline) {
+      this.scheduleFlush(retryDelayMs);
     }
   }
 
@@ -1593,6 +1657,45 @@ export class GroupPublishBudgetController {
       this.debounceTimer = null;
     }
   }
+}
+
+/**
+ * Pure helper: determines whether an incoming remote group snapshot is fresh enough
+ * to replace an existing cached snapshot (blocks stale reconnect flashes).
+ */
+export function shouldAcceptGroupSnapshot(
+  existing: CachedGroupSnapshot | undefined,
+  incomingDoc: GroupDoc
+): boolean {
+  if (!existing?.doc) return true;
+  const existingUpdated = Number(existing.doc.updatedAt) || 0;
+  const incomingUpdated = Number(incomingDoc.updatedAt) || 0;
+  if (incomingUpdated < existingUpdated) return false;
+  return true;
+}
+
+/**
+ * Pure helper: merges only the current user's published MemberEntry onto the
+ * LATEST cached snapshot so concurrent competitor updates via onSnapshot are never clobbered.
+ */
+export function mergeCachedGroupMemberUpdate(
+  latestCached: CachedGroupSnapshot | undefined,
+  uid: string,
+  myEntry: MemberEntry,
+  now: number
+): CachedGroupSnapshot | null {
+  if (!latestCached) return null;
+  return {
+    ...latestCached,
+    doc: {
+      ...latestCached.doc,
+      updatedAt: Math.max(Number(latestCached.doc.updatedAt) || 0, now),
+      members: {
+        ...latestCached.doc.members,
+        [uid]: myEntry,
+      },
+    },
+  };
 }
 
 // Local Group Snapshot Cache (memory + localStorage)
@@ -1618,8 +1721,17 @@ export function loadCachedGroupSnapshots(): Record<string, CachedGroupSnapshot> 
               continue;
             }
             if (snap && snap.doc && typeof snap.fetchedAt === 'number') {
-              out[gid] = snap;
-              memoryGroupCache.set(gid, snap);
+              const mem = out[gid];
+              const memUpdated = Number(mem?.doc?.updatedAt) || 0;
+              const diskUpdated = Number(snap.doc.updatedAt) || 0;
+              if (
+                !mem ||
+                diskUpdated > memUpdated ||
+                (diskUpdated === memUpdated && snap.fetchedAt > mem.fetchedAt)
+              ) {
+                out[gid] = snap;
+                memoryGroupCache.set(gid, snap);
+              }
             }
           }
         }
@@ -1866,11 +1978,27 @@ export async function leaveGroupInCloud(params: {
 
   if (params.budget.canWrite(1)) {
     const now = Date.now();
-    await updateDoc(doc(db, 'groups', params.groupId), {
-      [`members.${user.uid}`]: deleteField(),
-      updatedAt: now,
-    });
-    params.budget.recordWrite(1);
+    try {
+      await updateDoc(doc(db, 'groups', params.groupId), {
+        [`members.${user.uid}`]: deleteField(),
+        updatedAt: now,
+      });
+      params.budget.recordWrite(1);
+    } catch (err) {
+      if (isQuotaError(err)) {
+        params.budget.pauseForQuotaError();
+      } else {
+        const code = String((err as { code?: string })?.code || '');
+        const msg = err instanceof Error ? err.message : String(err);
+        const alreadyGone =
+          /permission-denied|not-found/i.test(code) ||
+          /no document to update|permission-denied|missing or insufficient permissions/i.test(msg);
+        // If the squad was deleted or user was already removed, proceed cleanly to local cleanup.
+        if (!alreadyGone && !isOfflineOrTokenError(err)) {
+          throw err;
+        }
+      }
+    }
   }
   await deleteMySentCheersInGroup({
     groupId: params.groupId,
@@ -1921,25 +2049,26 @@ export async function publishMyEntryToGroup(params: {
     }
   }
 
-  await updateDoc(doc(db, 'groups', params.groupId), {
-    [`members.${user.uid}`]: sanitizeForFirestore(myEntry),
-    updatedAt: now,
-  });
+  try {
+    await updateDoc(doc(db, 'groups', params.groupId), {
+      [`members.${user.uid}`]: sanitizeForFirestore(myEntry),
+      updatedAt: now,
+    });
+  } catch (err) {
+    if (isQuotaError(err)) {
+      params.budget.pauseForQuotaError();
+      return null;
+    }
+    throw err;
+  }
   params.budget.recordWrite(1);
   params.budget.commitEntryHash(params.groupId, myEntry);
 
-  if (cached) {
-    saveCachedGroupSnapshot({
-      ...cached,
-      doc: {
-        ...cached.doc,
-        updatedAt: now,
-        members: {
-          ...cached.doc.members,
-          [user.uid]: myEntry,
-        },
-      },
-    });
+  // Re-read the LATEST cache after network I/O so competitor onSnapshot updates are preserved
+  const latestCached = loadCachedGroupSnapshots()[params.groupId];
+  const merged = mergeCachedGroupMemberUpdate(latestCached, user.uid, myEntry, now);
+  if (merged) {
+    saveCachedGroupSnapshot(merged);
   }
 
   return myEntry;
@@ -1972,6 +2101,9 @@ export function subscribeToGroupDoc(params: {
       const parsed = sanitizeRemoteGroupDoc(snap.data(), params.todayKey);
       if (!parsed) return;
       const existingCached = loadCachedGroupSnapshots()[params.groupId];
+      if (!shouldAcceptGroupSnapshot(existingCached, parsed)) {
+        return;
+      }
       const cachedSnap: CachedGroupSnapshot = {
         groupId: params.groupId,
         doc: parsed,
@@ -2005,7 +2137,20 @@ export async function fetchGroupSnapshotFromCloud(params: {
   }
 
   const ref = doc(db, 'groups', params.groupId);
-  const snap = await getDoc(ref);
+  let snap;
+  try {
+    snap = await getDoc(ref);
+  } catch (err) {
+    if (isQuotaError(err)) {
+      params.budget.pauseForQuotaError();
+      return loadCachedGroupSnapshots()[params.groupId] || null;
+    }
+    if (isOfflineOrTokenError(err)) {
+      return loadCachedGroupSnapshots()[params.groupId] || null;
+    }
+    handleFirestoreError(err, OperationType.GET, `groups/${params.groupId}`);
+    return loadCachedGroupSnapshots()[params.groupId] || null;
+  }
   params.budget.recordRead(1);
 
   if (!snap.exists()) {

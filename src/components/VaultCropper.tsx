@@ -125,10 +125,11 @@ export const VaultCropper: React.FC<VaultCropperProps> = ({
     tempRot.height = 0;
   }, [origSize.height, origSize.width, rotatedWorkingDims.height, rotatedWorkingDims.width, rotationDeg, source]);
 
+  const previewUrlRef = useRef<string | null>(null);
+
   // Debounced live output preview + byte estimate
   useEffect(() => {
     let cancelled = false;
-    let activeUrl: string | null = null;
     setProcessing(true);
 
     const timer = window.setTimeout(() => {
@@ -142,11 +143,16 @@ export const VaultCropper: React.FC<VaultCropperProps> = ({
             { enhanceText, grayscale: !keepColors }
           );
           if (cancelled) return;
-          activeUrl = URL.createObjectURL(res.blob);
-          setPreviewUrl((prev) => {
-            if (prev) URL.revokeObjectURL(prev);
-            return activeUrl;
-          });
+          const nextUrl = URL.createObjectURL(res.blob);
+          if (cancelled) {
+            URL.revokeObjectURL(nextUrl);
+            return;
+          }
+          if (previewUrlRef.current) {
+            URL.revokeObjectURL(previewUrlRef.current);
+          }
+          previewUrlRef.current = nextUrl;
+          setPreviewUrl(nextUrl);
           setPreviewMeta({
             bytes: res.bytes,
             width: res.width,
@@ -168,10 +174,10 @@ export const VaultCropper: React.FC<VaultCropperProps> = ({
 
   useEffect(() => {
     return () => {
-      setPreviewUrl((prev) => {
-        if (prev) URL.revokeObjectURL(prev);
-        return null;
-      });
+      if (previewUrlRef.current) {
+        URL.revokeObjectURL(previewUrlRef.current);
+        previewUrlRef.current = null;
+      }
     };
   }, []);
 
