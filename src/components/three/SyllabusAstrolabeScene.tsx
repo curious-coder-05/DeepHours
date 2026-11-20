@@ -382,7 +382,7 @@ export const SyllabusAstrolabeScene: React.FC<SyllabusAstrolabeSceneProps> = ({
             const crystalHaloTex = createCrystalHaloTexture(THREE);
             const dustSpriteTex = createSoftDustSpriteTexture(THREE);
 
-            // 1. Central Molten-Gold Geodesic Sun Core
+            // 1. Slimmer Central Molten-Gold Geodesic Sun Core (0.98 sphere / 1.08 wireframe)
             const coreAssembly = new THREE.Group();
             astrolabeGroup.add(coreAssembly);
 
@@ -390,7 +390,7 @@ export const SyllabusAstrolabeScene: React.FC<SyllabusAstrolabeSceneProps> = ({
               uTime: { value: 0 },
             };
             const coreSphereGeo = new THREE.SphereGeometry(
-              1.12,
+              0.98,
               resolution.resolvedQuality === 'lite' ? 28 : 40,
               resolution.resolvedQuality === 'lite' ? 28 : 40
             );
@@ -403,13 +403,13 @@ export const SyllabusAstrolabeScene: React.FC<SyllabusAstrolabeSceneProps> = ({
             coreAssembly.add(coreSphere);
 
             // Slowly rotating golden geodesic wireframe shell wrapping the sun core
-            const wireSrcGeo = new THREE.IcosahedronGeometry(1.22, 1);
+            const wireSrcGeo = new THREE.IcosahedronGeometry(1.08, 1);
             const coreWireGeo = new THREE.EdgesGeometry(wireSrcGeo);
             wireSrcGeo.dispose();
             const coreWireMat = new THREE.LineBasicMaterial({
               color: 0xfbbf24,
               transparent: true,
-              opacity: 0.42,
+              opacity: 0.3,
               blending: THREE.AdditiveBlending,
               depthWrite: false,
             });
@@ -420,12 +420,12 @@ export const SyllabusAstrolabeScene: React.FC<SyllabusAstrolabeSceneProps> = ({
             const coreCoronaMat = new THREE.SpriteMaterial({
               map: coreCoronaTex,
               transparent: true,
-              opacity: 0.86,
+              opacity: 0.8,
               blending: THREE.AdditiveBlending,
               depthWrite: false,
             });
             const coreCoronaSprite = new THREE.Sprite(coreCoronaMat);
-            coreCoronaSprite.scale.set(5.2, 5.2, 1);
+            coreCoronaSprite.scale.set(4.45, 4.45, 1);
             coreAssembly.add(coreCoronaSprite);
 
             // Outer celestial equatorial calibration dial with 72 champagne-gold degree ticks
@@ -619,13 +619,25 @@ export const SyllabusAstrolabeScene: React.FC<SyllabusAstrolabeSceneProps> = ({
               flatShading: true,
             });
             const notStartedMat = new THREE.MeshStandardMaterial({
-              color: 0x1c1917,
-              emissive: 0x3b2f21,
-              emissiveIntensity: 0.24,
-              roughness: 0.16,
-              metalness: 0.88,
+              color: 0x1e1a17,
+              emissive: 0x453522,
+              emissiveIntensity: 0.34,
+              roughness: 0.14,
+              metalness: 0.9,
               flatShading: true,
             });
+            // Crisp champagne-gold Fresnel rim bevel so unstarted obsidian crystals sculpt cleanly on #000000
+            notStartedMat.onBeforeCompile = (shader) => {
+              shader.fragmentShader = shader.fragmentShader.replace(
+                '#include <opaque_fragment>',
+                `
+                  float dhObsRim = pow(1.0 - clamp(dot(normalize(normal), normalize(vViewPosition)), 0.0, 1.0), 1.85);
+                  outgoingLight += vec3(0.88, 0.74, 0.36) * dhObsRim * 0.96;
+                  #include <opaque_fragment>
+                `
+              );
+            };
+            notStartedMat.customProgramCacheKey = () => 'dh-obsidian-champagne-rim-v32';
             const dimmedCrystalMat = new THREE.MeshStandardMaterial({
               color: 0x26211e,
               emissive: 0x000000,
@@ -755,7 +767,7 @@ export const SyllabusAstrolabeScene: React.FC<SyllabusAstrolabeSceneProps> = ({
             const goldGlow = new THREE.Color('#FCD34D');
             const alertGlow = new THREE.Color('#FB7185');
             const amberGlow = new THREE.Color('#F59E0B');
-            const obsidianGlow = new THREE.Color('#5C4B33');
+            const obsidianGlow = new THREE.Color('#7C643C');
             const dimmedHalo = new THREE.Color('#090807');
             const smokedRing = new THREE.Color('#1B1917');
             const brightGold = new THREE.Color('#FDE68A');
@@ -894,7 +906,7 @@ export const SyllabusAstrolabeScene: React.FC<SyllabusAstrolabeSceneProps> = ({
                   haloSc *= isMatch ? 1.14 : 0.25;
                   haloColor.copy(amberGlow);
                 } else {
-                  haloSc *= isMatch ? 0.56 : 0.16;
+                  haloSc *= isMatch ? 0.72 : 0.16;
                   haloColor.copy(obsidianGlow);
                 }
 
@@ -970,15 +982,15 @@ export const SyllabusAstrolabeScene: React.FC<SyllabusAstrolabeSceneProps> = ({
               if (instancedHalos.instanceColor) instancedHalos.instanceColor.needsUpdate = true;
             };
 
-            // Aspect-aware camera framing so outer rings span ~82% viewport width cleanly on mobile & desktop
+            // Closer ~20% full-bleed framing so outer champagne rings sweep seamlessly behind top pills & bottom card
             const computeDefaultRadius = (w = ctx.width, h = ctx.height) => {
               const aspect = Math.max(0.45, w / Math.max(1, h));
               const tanHalfV = Math.tan((42 * Math.PI) / 360);
               const tanHalfH = tanHalfV * aspect;
-              const boundingR = layoutRef.current.maxRadius + 0.36;
-              const distH = boundingR / (0.84 * tanHalfH);
-              const distV = (boundingR * 0.8) / (0.64 * tanHalfV);
-              return Math.max(7.8, distH, distV);
+              const boundingR = layoutRef.current.maxRadius + 0.22;
+              const distH = boundingR / (1.12 * tanHalfH);
+              const distV = (boundingR * 0.66) / (0.86 * tanHalfV);
+              return Math.max(5.8, distH, distV);
             };
 
             let defaultRadius = computeDefaultRadius();
@@ -987,37 +999,37 @@ export const SyllabusAstrolabeScene: React.FC<SyllabusAstrolabeSceneProps> = ({
             let targetAzimuth = 0.3;
             let radius = defaultRadius;
             let targetRadius = defaultRadius;
-            let polar = 1.08;
-            let targetPolar = 1.08;
+            let polar = 1.06;
+            let targetPolar = 1.06;
             // Subtle optical Y offset keeps Astrolabe optically centered between top pills & bottom card
-            const lookTarget = new THREE.Vector3(0, 0.06, 0);
-            const desiredLookTarget = new THREE.Vector3(0, 0.06, 0);
+            const lookTarget = new THREE.Vector3(0, 0.04, 0);
+            const desiredLookTarget = new THREE.Vector3(0, 0.04, 0);
 
             const clampRadius = (val: number) => {
-              const minR = Math.max(5.2, defaultRadius * 0.54);
-              const maxR = Math.max(16.0, defaultRadius * 1.45);
+              const minR = Math.max(4.6, defaultRadius * 0.52);
+              const maxR = Math.max(15.0, defaultRadius * 1.45);
               return Math.max(minR, Math.min(maxR, val));
             };
 
             focusSubjectRef.current = (subId: string) => {
               userZoomed = false;
               if (subId === 'all') {
-                desiredLookTarget.set(0, 0.06, 0);
+                desiredLookTarget.set(0, 0.04, 0);
                 targetRadius = computeDefaultRadius();
-                targetPolar = 1.08;
+                targetPolar = 1.06;
               } else {
                 const ring = layoutRef.current.ringBySubjectId.get(subId);
                 if (ring) {
-                  desiredLookTarget.set(0, 0.06, 0);
+                  desiredLookTarget.set(0, 0.04, 0);
                   const aspect = Math.max(0.45, ctx.width / Math.max(1, ctx.height));
                   const tanHalfV = Math.tan((42 * Math.PI) / 360);
-                  const ringBound = ring.radius + 0.5;
-                  const ringDistH = ringBound / (0.82 * tanHalfV * aspect);
-                  const ringDistV = (ringBound * 0.8) / (0.64 * tanHalfV);
+                  const ringBound = ring.radius + 0.42;
+                  const ringDistH = ringBound / (1.02 * tanHalfV * aspect);
+                  const ringDistV = (ringBound * 0.74) / (0.78 * tanHalfV);
                   targetRadius = clampRadius(
-                    Math.max(defaultRadius * 0.78, 6.8, ringDistH, ringDistV)
+                    Math.max(defaultRadius * 0.74, 5.8, ringDistH, ringDistV)
                   );
-                  targetPolar = Math.max(0.76, Math.min(1.26, 1.02 - ring.tiltX * 0.35));
+                  targetPolar = Math.max(0.76, Math.min(1.26, 1.0 - ring.tiltX * 0.35));
                 }
               }
             };

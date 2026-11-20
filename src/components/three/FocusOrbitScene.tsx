@@ -86,44 +86,62 @@ const ECLIPSE_CORE_FRAGMENT = `
   varying vec3 vLocalPos;
   varying float vRipple;
 
+  float plasmaWave(vec3 p, float t) {
+    float w1 = sin(p.x * 2.4 + t * 0.42) * cos(p.y * 2.2 - t * 0.36);
+    float w2 = sin(p.z * 2.9 - t * 0.31) * cos((p.x + p.y) * 1.9 + t * 0.28);
+    return 0.5 + 0.5 * (w1 * 0.56 + w2 * 0.44);
+  }
+
   float coronaNoise(vec3 p, float t) {
-    float a = sin(p.x * 5.4 + t * 0.9) * cos(p.y * 5.0 - t * 0.75);
-    float b = sin(p.z * 6.2 + t * 1.1) * cos(p.x * 3.9 + p.y * 4.3 - t * 0.62);
+    float a = sin(p.x * 4.8 + t * 0.72) * cos(p.y * 4.4 - t * 0.6);
+    float b = sin(p.z * 5.6 + t * 0.85) * cos(p.x * 3.5 + p.y * 3.8 - t * 0.52);
     return 0.5 + 0.5 * (a * 0.58 + b * 0.42);
   }
 
   void main() {
     vec3 n = normalize(vNormal);
     vec3 v = normalize(vViewDir);
-    float ndv = max(dot(n, v), 0.0);
-    float invNdv = 1.0 - ndv;
+    float ndotv = clamp(dot(n, v), 0.0, 1.0);
+    float f = 1.0 - ndotv;
 
-    // Keep inner disk (dot > 0.45) strictly pitch-dark obsidian so white timer digits pop cleanly
-    float rimMask = smoothstep(0.56, 0.14, ndv);
-    float fresnel = pow(invNdv, 2.8);
-    float razorEdge = pow(invNdv, 5.5);
+    // Continuous soft radial Fresnel falloff (zero flat-black cutoff)
+    float midBlend = pow(f, 1.25);
+    float rimHot = pow(f, 3.1);
+    float razorEdge = pow(f, 5.2);
 
+    float slowPlasma = plasmaWave(vLocalPos, uTime);
     float flare = coronaNoise(vLocalPos, uTime);
-    float flareBoost = 0.82 + flare * (0.28 + uHeat * 0.36);
 
-    // Three-stop incandescent eclipse rim: outer crimson/amber -> molten gold -> white-hot silhouette
-    vec3 midBand = mix(uInnerRimColor, uOuterCoronaColor, clamp(0.18 + uCrimsonWeight * 0.55, 0.0, 0.85));
-    vec3 col = uCenterColor;
-    col += midBand * fresnel * (1.28 + uHeat * 0.55) * flareBoost * rimMask;
-    col += uOuterCoronaColor * pow(invNdv, 2.15) * (0.34 + uCrimsonWeight * 0.52) * flare * rimMask;
-    col += uWhiteHotColor * razorEdge * (1.75 + uHeat * 0.45);
+    // Warm volcanic obsidian-ember interior with slow drifting plasma depth
+    vec3 deepCrimson = mix(vec3(0.62, 0.07, 0.22), uOuterCoronaColor, 0.52);
+    vec3 moltenAmber = uInnerRimColor;
+    vec3 livingCenter = uCenterColor * (0.86 + slowPlasma * 0.36);
+    livingCenter += deepCrimson * (0.14 + slowPlasma * 0.14) * (0.75 + uHeat * 0.35);
+
+    // Blend deep crimson and molten amber deeply inward across 60-70% of orb radius
+    vec3 warmMid = mix(
+      deepCrimson,
+      moltenAmber,
+      clamp(smoothstep(0.18, 0.84, midBlend) * (0.85 - uCrimsonWeight * 0.24), 0.0, 1.0)
+    );
+    float midStrength = clamp(midBlend * (0.88 + uHeat * 0.34) * (0.86 + flare * 0.26), 0.0, 1.0);
+    vec3 col = mix(livingCenter, warmMid * (1.06 + uHeat * 0.28), midStrength);
+
+    // Incandescent solar amber & white-gold rim along the outer limb
+    col += mix(moltenAmber, uWhiteHotColor, 0.55) * rimHot * (1.08 + uHeat * 0.38) * (0.88 + flare * 0.24);
+    col += uWhiteHotColor * razorEdge * (1.15 + uHeat * 0.35);
 
     // Subtle tap ripple highlight
-    col += uWhiteHotColor * clamp(vRipple * 1.35, 0.0, 0.68);
+    col += uWhiteHotColor * clamp(vRipple * 1.15, 0.0, 0.56);
 
-    col *= clamp(uIntensity, 0.45, 1.35);
+    col *= clamp(uIntensity, 0.48, 1.32);
     gl_FragColor = vec4(col, 1.0);
   }
 `;
 
 // ---------------------------------------------------------------------------
-// Outer Atmospheric Corona Shell (SphereGeometry 1.66, BackSide, Additive)
-// Inverse Fresnel fade so atmosphere blooms past the 1.45 silhouette smoothly
+// Outer Atmospheric Corona Shell (SphereGeometry 1.82, BackSide, Additive)
+// Fades strictly to 0.0 before outer geometric silhouette (zero stray red ring)
 // ---------------------------------------------------------------------------
 
 const CORONA_SHELL_VERTEX = `
@@ -155,29 +173,29 @@ const CORONA_SHELL_FRAGMENT = `
   void main() {
     vec3 n = normalize(vNormal);
     vec3 v = normalize(vViewDir);
-    // BackSide normal faces away from camera -> dot(-n, v) is 0 at outer edge, ~0.49 at core rim
-    float backNdv = clamp(dot(-n, v), 0.0, 1.0);
+    float absNdv = clamp(abs(dot(n, v)), 0.0, 1.0);
+
+    // Strictly decay to 0.0 well before the outer geometric edge (absNdv -> 0)
+    float edgeKill = smoothstep(0.08, 0.46, absNdv);
+    float falloff = pow(absNdv, 2.8) * edgeKill;
+    float innerHalo = pow(absNdv, 4.4) * edgeKill;
 
     float ang = atan(vLocalPos.y, vLocalPos.x);
     float plume =
-      0.72 +
-      0.18 * sin(ang * 5.0 + uTime * 0.55) +
-      0.10 * cos(ang * 9.0 - uTime * 0.78);
+      0.82 +
+      0.12 * sin(ang * 4.0 + uTime * 0.48) +
+      0.06 * cos(ang * 7.0 - uTime * 0.64);
 
-    // Smooth atmospheric falloff reaching 0.0 cleanly before the outer shell boundary
-    float softOuter = pow(backNdv, 2.55);
-    float limbRing = pow(backNdv, 4.2);
-
-    vec3 glowCol = mix(uOuterCoronaColor, uInnerRimColor, smoothstep(0.12, 0.56, backNdv));
-    glowCol = mix(glowCol, uWhiteHotColor, limbRing * 0.42);
+    vec3 glowCol = mix(uOuterCoronaColor, uInnerRimColor, smoothstep(0.18, 0.62, absNdv));
+    glowCol = mix(glowCol, uWhiteHotColor, innerHalo * 0.36);
 
     float alpha = clamp(
-      (softOuter * (0.48 + uHeat * 0.34) + limbRing * 0.45) * plume * uIntensity,
+      (falloff * (0.44 + uHeat * 0.3) + innerHalo * 0.34) * plume * uIntensity,
       0.0,
-      0.88
+      0.76
     );
 
-    gl_FragColor = vec4(glowCol * (0.95 + uCrimsonWeight * 0.25) * uIntensity, alpha);
+    gl_FragColor = vec4(glowCol * (0.92 + uCrimsonWeight * 0.22) * uIntensity, alpha);
   }
 `;
 
@@ -523,17 +541,17 @@ export const FocusOrbitScene: React.FC<FocusOrbitSceneProps> = ({
           coronaSprite.scale.set(4.55, 4.55, 1);
           scene.add(coronaSprite);
 
-          // 2. Outer Atmospheric Corona Shell (SphereGeometry 1.66, BackSide, Additive Inverse Fresnel)
+          // 2. Outer Atmospheric Corona Shell (SphereGeometry 1.82, BackSide, Additive — strictly 0.0 before boundary)
           const coronaShellGeo = new THREE.SphereGeometry(
-            1.66,
+            1.82,
             resolution.resolvedQuality === 'lite' ? 28 : 40,
             resolution.resolvedQuality === 'lite' ? 28 : 40
           );
           const coronaShellUniforms = {
             uTime: { value: 0 },
-            uHeat: { value: 0.16 },
+            uHeat: { value: 0.2 },
             uIntensity: { value: 0.96 },
-            uCrimsonWeight: { value: 0.24 },
+            uCrimsonWeight: { value: 0.42 },
             uWhiteHotColor: { value: new THREE.Color(initPalette.whiteHotHex) },
             uInnerRimColor: { value: new THREE.Color(initPalette.innerRimHex) },
             uOuterCoronaColor: { value: new THREE.Color(initPalette.outerCoronaHex) },
@@ -550,18 +568,18 @@ export const FocusOrbitScene: React.FC<FocusOrbitSceneProps> = ({
           const coronaShellMesh = new THREE.Mesh(coronaShellGeo, coronaShellMat);
           coreGroup.add(coronaShellMesh);
 
-          // 3. Commanding Pitch-Dark Obsidian Eclipse Core (SphereGeometry 1.45, 48x48)
+          // 3. Commanding Blended Solar Eclipse Core (SphereGeometry 1.48, 48x48)
           const coreGeo = new THREE.SphereGeometry(
-            1.45,
+            1.48,
             resolution.resolvedQuality === 'lite' ? 32 : 48,
             resolution.resolvedQuality === 'lite' ? 32 : 48
           );
           const coreUniforms = {
             uTime: { value: 0 },
             uPulse: { value: 0.2 },
-            uHeat: { value: 0.16 },
+            uHeat: { value: 0.2 },
             uIntensity: { value: 1.0 },
-            uCrimsonWeight: { value: 0.24 },
+            uCrimsonWeight: { value: 0.42 },
             uTapProgress: { value: 0 },
             uTapOrigin: { value: new THREE.Vector3(0, 0, 1) },
             uCenterColor: { value: new THREE.Color(initPalette.coreCenterHex) },
@@ -577,26 +595,26 @@ export const FocusOrbitScene: React.FC<FocusOrbitSceneProps> = ({
           const coreMesh = new THREE.Mesh(coreGeo, coreMat);
           coreGroup.add(coreMesh);
 
-          // 4. Signature Slowly Rotating Geodesic Wireframe Cage (IcosahedronGeometry 1.68, 1)
-          const cageSrcGeo = new THREE.IcosahedronGeometry(1.68, 1);
+          // 4. Restrained Slowly Rotating Geodesic Wireframe Cage (IcosahedronGeometry 1.72, 1 — opacity 0.11)
+          const cageSrcGeo = new THREE.IcosahedronGeometry(1.72, 1);
           const cageEdgesGeo = new THREE.EdgesGeometry(cageSrcGeo);
           cageSrcGeo.dispose();
           const cageMat = new THREE.LineBasicMaterial({
             color: new THREE.Color(initPalette.wireframeHex),
             transparent: true,
-            opacity: 0.3,
+            opacity: 0.11,
             blending: THREE.AdditiveBlending,
             depthWrite: false,
           });
           const geodesicCage = new THREE.LineSegments(cageEdgesGeo, cageMat);
           coreGroup.add(geodesicCage);
 
-          // 5. Two Razor-Thin Counter-Rotating Tilted Orbital Rings
-          const ringPrimaryGeo = new THREE.TorusGeometry(1.78, 0.0085, 8, 96);
+          // 5. Two Razor-Thin Counter-Rotating Tilted Orbital Rings (Warm Gold & Subtle Champagne)
+          const ringPrimaryGeo = new THREE.TorusGeometry(1.8, 0.008, 8, 96);
           const ringPrimaryMat = new THREE.MeshBasicMaterial({
             color: new THREE.Color(initPalette.ringPrimaryHex),
             transparent: true,
-            opacity: 0.56,
+            opacity: 0.46,
             blending: THREE.AdditiveBlending,
             depthWrite: false,
           });
@@ -605,11 +623,11 @@ export const FocusOrbitScene: React.FC<FocusOrbitSceneProps> = ({
           ringPrimary.rotation.y = Math.PI * 0.14;
           coreGroup.add(ringPrimary);
 
-          const ringSecondaryGeo = new THREE.TorusGeometry(1.9, 0.0068, 8, 96);
+          const ringSecondaryGeo = new THREE.TorusGeometry(1.92, 0.006, 8, 96);
           const ringSecondaryMat = new THREE.MeshBasicMaterial({
             color: new THREE.Color(initPalette.ringSecondaryHex),
             transparent: true,
-            opacity: 0.42,
+            opacity: 0.22,
             blending: THREE.AdditiveBlending,
             depthWrite: false,
           });
@@ -618,12 +636,12 @@ export const FocusOrbitScene: React.FC<FocusOrbitSceneProps> = ({
           ringSecondary.rotation.y = -Math.PI * 0.2;
           coreGroup.add(ringSecondary);
 
-          // 6. Faint Outer Radial Degree Tick Ring
+          // 6. Subtle Muted Champagne-Gold Outer 72-Tick Degree Ring (#D4AF37, opacity 0.16)
           const outerTickGeo = buildOuterTickRingGeometry(THREE, 1.98, 72, 6);
           const outerTickMat = new THREE.LineBasicMaterial({
-            color: new THREE.Color(initPalette.wireframeHex),
+            color: new THREE.Color('#D4AF37'),
             transparent: true,
-            opacity: 0.22,
+            opacity: 0.16,
             blending: THREE.AdditiveBlending,
             depthWrite: false,
           });
@@ -956,7 +974,6 @@ export const FocusOrbitScene: React.FC<FocusOrbitSceneProps> = ({
               tSpriteTint.copy(tInnerRim).lerp(tOuterCorona, currentCrimsonWeight * 0.45);
               coronaSpriteMat.color.lerp(tSpriteTint, damp);
               cageMat.color.lerp(tWireframe, damp);
-              outerTickMat.color.lerp(tWireframe, damp);
               ringPrimaryMat.color.lerp(tRingA, damp);
               ringSecondaryMat.color.lerp(tRingB, damp);
               satMat.color.lerp(tWhiteHot, damp);
@@ -1041,10 +1058,10 @@ export const FocusOrbitScene: React.FC<FocusOrbitSceneProps> = ({
                 }
               }
 
-              cageMat.opacity = (0.3 + currentHeat * 0.08 + breatheGlowBoost * 0.35) * currentDim;
-              ringPrimaryMat.opacity = (0.5 + currentHeat * 0.2 + pulseBoost * 0.18) * currentDim;
-              ringSecondaryMat.opacity = (0.34 + currentCrimsonWeight * 0.3) * currentDim;
-              outerTickMat.opacity = 0.2 * currentDim;
+              cageMat.opacity = (0.11 + currentHeat * 0.025 + breatheGlowBoost * 0.14) * currentDim;
+              ringPrimaryMat.opacity = (0.42 + currentHeat * 0.18 + pulseBoost * 0.16) * currentDim;
+              ringSecondaryMat.opacity = (0.2 + currentHeat * 0.12) * currentDim;
+              outerTickMat.opacity = 0.16 * currentDim;
               particleMat.opacity = (0.64 + currentHeat * 0.24) * currentDim;
               segMat.opacity = 0.86 * currentDim;
 

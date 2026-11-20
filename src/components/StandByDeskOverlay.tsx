@@ -325,6 +325,49 @@ export const StandByDeskOverlay: React.FC<StandByDeskOverlayProps> = ({
           transform: `translate3d(${shiftX}px, ${shiftY}px, 0)`,
         }}
       >
+        {/* Zero-WebGL Crimson + Solar Gold Eclipse Backdrop (shifts with OLED burn-in orbit) */}
+        <div
+          className="dh-standby-eclipse-backdrop"
+          data-testid="standby-eclipse-backdrop"
+          aria-hidden="true"
+        >
+          <div className="dh-standby-eclipse-glow" />
+          <svg
+            className="dh-standby-eclipse-rings"
+            viewBox="0 0 420 420"
+            fill="none"
+            focusable="false"
+          >
+            <g className="dh-standby-ring-cw">
+              <circle
+                cx="210"
+                cy="210"
+                r="146"
+                stroke="currentColor"
+                strokeOpacity="0.2"
+                strokeWidth="0.75"
+                strokeDasharray="18 8 4 8"
+              />
+              <line x1="210" y1="58" x2="210" y2="68" stroke="currentColor" strokeOpacity="0.32" strokeWidth="0.9" />
+              <line x1="210" y1="352" x2="210" y2="362" stroke="currentColor" strokeOpacity="0.32" strokeWidth="0.9" />
+              <line x1="58" y1="210" x2="68" y2="210" stroke="currentColor" strokeOpacity="0.32" strokeWidth="0.9" />
+              <line x1="352" y1="210" x2="362" y2="210" stroke="currentColor" strokeOpacity="0.32" strokeWidth="0.9" />
+            </g>
+            <g className="dh-standby-ring-ccw">
+              <ellipse
+                cx="210"
+                cy="210"
+                rx="174"
+                ry="162"
+                transform="rotate(-18 210 210)"
+                stroke="var(--standby-ring-crimson, rgba(225, 29, 72, 0.24))"
+                strokeWidth="0.7"
+                strokeDasharray="34 12"
+              />
+            </g>
+          </svg>
+        </div>
+
         {mode === 'focus' ? (
           <div className="dh-standby-focus-core">
             <div className="dh-standby-meta">

@@ -1577,6 +1577,11 @@ small,
   border: 1px solid var(--line);
 }
 
+[data-t='dark'][data-amoled='1'] .card.timer-shell {
+  background: #000000;
+  border-color: rgba(255, 255, 255, 0.05);
+}
+
 .timer-shell.running {
   border-color: color-mix(in srgb, var(--ok) 55%, var(--line));
 }
@@ -1621,7 +1626,7 @@ small,
   letter-spacing: -0.03em;
   margin: 10px 0 6px;
   font-variant-numeric: tabular-nums;
-  text-shadow: 0 2px 18px rgba(0, 0, 0, 0.42);
+  text-shadow: 0 2px 18px rgba(0, 0, 0, 0.78);
 }
 
 [data-t='light'] .big-clock {
@@ -4849,6 +4854,7 @@ body.desk-mode .retro-dial-svg {
 }
 
 .dh-standby-stage {
+  position: relative;
   flex: 1;
   width: 100%;
   max-width: 980px;
@@ -4861,7 +4867,97 @@ body.desk-mode .retro-dial-svg {
   transition: transform 1.2s var(--ease-out);
 }
 
+/* Zero-WebGL Crimson + Solar Gold Eclipse Backdrop inside StandBy OLED Pixel-Shift Stage */
+.dh-standby-eclipse-backdrop {
+  position: absolute;
+  left: 50%;
+  top: 50%;
+  width: min(86vmin, 460px);
+  height: min(86vmin, 460px);
+  transform: translate(-50%, -50%);
+  z-index: 0;
+  pointer-events: none;
+  display: grid;
+  place-items: center;
+  color: #f5c451;
+  transition: opacity var(--dur-slow) var(--ease-out);
+}
+
+.dh-standby-eclipse-glow {
+  position: absolute;
+  inset: 0;
+  border-radius: 50%;
+  background:
+    radial-gradient(
+      circle at 50% 50%,
+      rgba(245, 158, 11, 0.16) 0%,
+      rgba(225, 29, 72, 0.22) 34%,
+      rgba(159, 18, 57, 0.1) 56%,
+      rgba(0, 0, 0, 0) 76%
+    );
+}
+
+.dh-standby-eclipse-rings {
+  position: relative;
+  width: 100%;
+  height: 100%;
+  overflow: visible;
+}
+
+.dh-standby-ring-cw {
+  transform-origin: 210px 210px;
+  animation: dhStandbySpinCW 56s linear infinite;
+}
+
+.dh-standby-ring-ccw {
+  transform-origin: 210px 210px;
+  animation: dhStandbySpinCCW 74s linear infinite;
+}
+
+@keyframes dhStandbySpinCW {
+  from {
+    transform: rotate(0deg);
+  }
+  to {
+    transform: rotate(360deg);
+  }
+}
+
+@keyframes dhStandbySpinCCW {
+  from {
+    transform: rotate(360deg);
+  }
+  to {
+    transform: rotate(0deg);
+  }
+}
+
+.dh-standby-overlay.is-night-dim .dh-standby-eclipse-backdrop {
+  opacity: 0.35;
+  color: #991b1b;
+  --standby-ring-crimson: rgba(153, 27, 27, 0.24);
+}
+
+.dh-standby-overlay.is-night-dim .dh-standby-eclipse-glow {
+  background:
+    radial-gradient(
+      circle at 50% 50%,
+      rgba(153, 27, 27, 0.28) 0%,
+      rgba(127, 29, 29, 0.16) 42%,
+      rgba(0, 0, 0, 0) 74%
+    );
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .dh-standby-ring-cw,
+  .dh-standby-ring-ccw {
+    animation: none !important;
+  }
+}
+
 .dh-standby-focus-core {
+  position: relative;
+  z-index: 2;
   display: flex;
   flex-direction: column;
   align-items: center;
@@ -4926,6 +5022,8 @@ body.desk-mode .retro-dial-svg {
 
 /* StandBy Exam Mode Layout (Portrait & Landscape Responsive) */
 .dh-standby-exam-core {
+  position: relative;
+  z-index: 2;
   width: 100%;
   display: flex;
   flex-direction: column;
@@ -5971,6 +6069,281 @@ body.desk-mode .retro-dial-svg {
   border-radius: 16px;
   background: rgba(14, 15, 19, 0.78);
   border: 1px solid rgba(255, 255, 255, 0.1);
+}
+
+/* ============================================================================
+   v32: Offline 3-Fader Ambient Sound Mixer (Focus View)
+   ============================================================================ */
+.dh-mixer-card {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.dh-mixer-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+}
+
+.dh-mixer-summary-btn {
+  flex: 1;
+  min-width: 0;
+  min-height: 44px;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 2px 0;
+  border: 0;
+  background: transparent;
+  color: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+
+.dh-mixer-icon-wrap {
+  width: 34px;
+  height: 34px;
+  border-radius: 10px;
+  display: grid;
+  place-items: center;
+  flex-shrink: 0;
+  background: var(--sf-2);
+  border: 1px solid var(--line);
+  color: var(--tx-2);
+  transition: background-color 150ms ease, border-color 150ms ease, color 150ms ease;
+}
+
+.dh-mixer-icon-wrap.is-live {
+  background: var(--ac-soft);
+  border-color: var(--ac-bd);
+  color: var(--ac-ink);
+}
+
+.dh-mixer-summary-copy {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+  gap: 2px;
+}
+
+.dh-mixer-title {
+  font-size: 15px;
+  font-weight: 600;
+  color: var(--tx);
+  line-height: 1.2;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.dh-mixer-subtitle {
+  font-size: 13px;
+  color: var(--tx-2);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.dh-mixer-header-actions {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  flex-shrink: 0;
+}
+
+.dh-mixer-play-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 5px;
+  min-height: 38px;
+  padding: 0 10px;
+  border-radius: 10px;
+  background: var(--sf-2);
+  border: 1px solid var(--line);
+  color: var(--tx);
+  font-size: 13px;
+  font-weight: 600;
+  white-space: nowrap;
+  cursor: pointer;
+  transition: transform 110ms ease, background-color 150ms ease, border-color 150ms ease, color 150ms ease;
+}
+
+.dh-mixer-play-btn:active {
+  transform: scale(0.98);
+}
+
+.dh-mixer-play-btn.is-live {
+  background: var(--ac-soft);
+  border-color: var(--ac-bd);
+  color: var(--ac-ink);
+}
+
+.dh-mixer-expand-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 2px;
+  min-width: 40px;
+  min-height: 38px;
+  padding: 0 7px;
+  border-radius: 10px;
+  background: var(--sf-2);
+  border: 1px solid var(--line);
+  color: var(--tx-2);
+  cursor: pointer;
+  transition: background-color 150ms ease, border-color 150ms ease, color 150ms ease;
+}
+
+.dh-mixer-expand-btn.is-open {
+  border-color: var(--line-strong);
+  color: var(--tx);
+}
+
+.dh-mixer-chevron {
+  transition: transform 180ms var(--ease-out);
+}
+
+.dh-mixer-expand-btn.is-open .dh-mixer-chevron {
+  transform: rotate(180deg);
+}
+
+.dh-mixer-preset-rail {
+  margin: 0;
+}
+
+.dh-mixer-faders {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding-top: 10px;
+  border-top: 1px solid var(--hairline, var(--line));
+}
+
+.dh-mixer-fader-row {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.dh-mixer-fader-meta {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+}
+
+.dh-mixer-fader-label {
+  font-size: 14px;
+  font-weight: 500;
+  color: var(--tx-2);
+}
+
+.dh-mixer-fader-label.is-live {
+  color: var(--tx);
+  font-weight: 600;
+}
+
+.dh-mixer-fader-val {
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--tx-2);
+  min-width: 38px;
+  text-align: right;
+}
+
+.dh-mixer-range,
+input[type='range'].dh-mixer-range {
+  -webkit-appearance: none;
+  appearance: none;
+  width: 100%;
+  height: 34px;
+  min-height: 34px;
+  margin: 0;
+  padding: 0;
+  border: 0;
+  border-radius: 0;
+  background: transparent;
+  box-shadow: none;
+  cursor: pointer;
+}
+
+.dh-mixer-range::-webkit-slider-runnable-track {
+  height: 5px;
+  border-radius: 99px;
+  background: linear-gradient(
+    to right,
+    var(--ac) 0%,
+    var(--ac) var(--dh-range-pct, 0%),
+    var(--sf-3) var(--dh-range-pct, 0%),
+    var(--sf-3) 100%
+  );
+}
+
+.dh-mixer-range::-webkit-slider-thumb {
+  -webkit-appearance: none;
+  appearance: none;
+  width: 18px;
+  height: 18px;
+  margin-top: -6.5px;
+  border-radius: 50%;
+  background: var(--tx);
+  border: 2px solid var(--bg);
+  box-shadow: 0 1px 4px rgba(0, 0, 0, 0.45);
+}
+
+.dh-mixer-range::-moz-range-track {
+  height: 5px;
+  border-radius: 99px;
+  background: var(--sf-3);
+}
+
+.dh-mixer-range::-moz-range-progress {
+  height: 5px;
+  border-radius: 99px;
+  background: var(--ac);
+}
+
+.dh-mixer-range::-moz-range-thumb {
+  width: 18px;
+  height: 18px;
+  border-radius: 50%;
+  background: var(--tx);
+  border: 2px solid var(--bg);
+}
+
+.dh-mixer-fader-foot {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  padding-top: 4px;
+}
+
+.dh-mixer-offline-note {
+  font-size: 13px;
+  color: var(--tx-3);
+}
+
+.dh-mixer-master-mute {
+  border: 1px solid var(--line);
+  background: var(--sf-2);
+  color: var(--tx-2);
+  border-radius: 9px;
+  padding: 5px 10px;
+  min-height: 34px;
+  font-size: 13px;
+  font-weight: 600;
+  white-space: nowrap;
+  flex-shrink: 0;
+  cursor: pointer;
+}
+
+.dh-mixer-master-mute:hover {
+  color: var(--tx);
+  border-color: var(--line-strong);
 }
 }
 

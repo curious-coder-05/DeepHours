@@ -422,9 +422,9 @@ export function buildSyllabusAstrolabeLayout(
   const ringBySubjectId = new Map<string, AstrolabeRingSpec>();
 
   const subCount = activeSubjects.length;
-  // Clear central molten-gold geodesic sun core (radius 1.12, wireframe cage 1.22) + 0.20 faceted crystals
-  const baseRadius = subCount <= 3 ? 2.18 : 1.98;
-  const radiusStep = subCount <= 4 ? 0.56 : Math.max(0.44, 2.35 / Math.max(1, subCount - 1));
+  // Clear slimmer central geodesic sun core (0.98 sphere, 1.08 wireframe) with wider sweeping orbital tracks
+  const baseRadius = subCount <= 3 ? 2.15 : 1.98;
+  const radiusStep = subCount <= 4 ? 0.68 : Math.max(0.52, 2.75 / Math.max(1, subCount - 1));
 
   activeSubjects.forEach((sub, sIdx) => {
     const subChapters = chapters.filter((ch) => ch.subjectId === sub.id);
@@ -503,7 +503,7 @@ export function buildSyllabusAstrolabeLayout(
 }
 
 // ---------------------------------------------------------------------------
-// v30: Focus Orb Solar Eclipse Palette & Session Heat Helpers
+// v32: Focus Orb Solar Eclipse Palette & Session Heat Helpers
 // ---------------------------------------------------------------------------
 
 export type FocusOrbStyle = 'solar-eclipse' | 'lumen-gold' | 'crimson-ember';
@@ -529,41 +529,41 @@ const FOCUS_ORB_PALETTES: Record<FocusOrbStyle, FocusOrbPalette> = {
   'solar-eclipse': {
     id: 'solar-eclipse',
     label: 'Solar Eclipse',
-    coreCenterHex: '#020102',
-    whiteHotHex: '#FFF3B0',
-    innerRimHex: '#F59E0B',
-    outerCoronaHex: '#E11D48',
-    wireframeHex: '#F5C451',
-    ringPrimaryHex: '#FBBF24',
-    ringSecondaryHex: '#E11D48',
-    emberPrimaryHex: '#FDE68A',
+    coreCenterHex: '#240A07',
+    whiteHotHex: '#FEF08A',
+    innerRimHex: '#D97706',
+    outerCoronaHex: '#DC2626',
+    wireframeHex: '#D4AF37',
+    ringPrimaryHex: '#F59E0B',
+    ringSecondaryHex: '#D4AF37',
+    emberPrimaryHex: '#FEF08A',
     emberSecondaryHex: '#F43F5E',
   },
   'lumen-gold': {
     id: 'lumen-gold',
     label: 'Lumen Gold',
-    coreCenterHex: '#030201',
-    whiteHotHex: '#FFF3B0',
+    coreCenterHex: '#261604',
+    whiteHotHex: '#FEF08A',
     innerRimHex: '#F59E0B',
     outerCoronaHex: '#B45309',
-    wireframeHex: '#FCD34D',
+    wireframeHex: '#D4AF37',
     ringPrimaryHex: '#FDE68A',
-    ringSecondaryHex: '#D97706',
-    emberPrimaryHex: '#FFF3B0',
+    ringSecondaryHex: '#D4AF37',
+    emberPrimaryHex: '#FEF08A',
     emberSecondaryHex: '#F59E0B',
   },
   'crimson-ember': {
     id: 'crimson-ember',
     label: 'Crimson Ember',
-    coreCenterHex: '#040102',
-    whiteHotHex: '#FDA4AF',
-    innerRimHex: '#EF4444',
-    outerCoronaHex: '#991B1B',
-    wireframeHex: '#FB7185',
+    coreCenterHex: '#2B070B',
+    whiteHotHex: '#FECDD3',
+    innerRimHex: '#DC2626',
+    outerCoronaHex: '#9F1239',
+    wireframeHex: '#D4AF37',
     ringPrimaryHex: '#FB7185',
-    ringSecondaryHex: '#DC2626',
+    ringSecondaryHex: '#D4AF37',
     emberPrimaryHex: '#FDA4AF',
-    emberSecondaryHex: '#EF4444',
+    emberSecondaryHex: '#E11D48',
   },
 };
 
@@ -620,21 +620,20 @@ export function saveFocusOrbStyle(
 }
 
 export interface FocusSessionHeatMetrics {
-  /** Normalized 0..1 session heat progression (0 = idle/start, ~0.92 at 60m, 1.0 in overtime) */
+  /** Normalized 0..1 session heat progression (0.20 at idle, ~0.93 at 60m, 1.0 in overtime) */
   heat: number;
   /** Subtle outer corona scale multiplier (1.0 .. 1.24) */
   coronaScale: number;
   /** Ember orbital drift speed multiplier */
   emberSpeed: number;
-  /** Weight of the blazing outer crimson corona vs Lumen gold inner corona (0..1) */
+  /** Weight of the glowing crimson mid/outer blend vs molten amber (0..1) */
   crimsonWeight: number;
 }
 
 /**
  * Computes calm, monotonic Session Heat progression for the Solar Eclipse Focus Orb.
- * Idle or early sessions emphasize the molten Lumen gold inner corona; as a live Focus
- * or Full Mock session deepens from 0m toward 60m+, the crimson outer corona and ember
- * drift gently intensify without distracting from the high-contrast center digits.
+ * Shows clear crimson-and-gold richness immediately at 00:00:00 and intensifies gently
+ * as a live Focus or Full Mock session deepens toward 60m+ and overtime.
  */
 export function computeFocusSessionHeat(params: {
   status: 'idle' | 'running' | 'paused';
@@ -648,28 +647,28 @@ export function computeFocusSessionHeat(params: {
 
   if (phase === 'break') {
     return {
-      heat: 0.08,
+      heat: 0.14,
       coronaScale: 1.0,
       emberSpeed: 0.38,
-      crimsonWeight: 0.14,
+      crimsonWeight: 0.18,
     };
   }
 
   if (status === 'idle') {
     return {
-      heat: 0.12,
-      coronaScale: 1.02,
-      emberSpeed: 0.45,
-      crimsonWeight: 0.22,
+      heat: 0.2,
+      coronaScale: 1.03,
+      emberSpeed: 0.46,
+      crimsonWeight: 0.42,
     };
   }
 
   // Smooth ease-out curve from 0m -> 60m (3,600,000 ms)
   const minsRatio = Math.min(1, safeMs / 3_600_000);
   const curved = 1 - Math.pow(1 - minsRatio, 1.45);
-  let heat = 0.18 + curved * 0.74; // 0.18 at 0m -> 0.92 at 60m
+  let heat = 0.24 + curved * 0.69; // 0.24 at 0m -> 0.93 at 60m
   if (safeOvertime > 0) {
-    heat = Math.min(1, heat + 0.08 + Math.min(0.08, safeOvertime / 1_800_000));
+    heat = Math.min(1, heat + 0.07 + Math.min(0.07, safeOvertime / 1_800_000));
   }
   if (status === 'paused') {
     heat *= 0.65;
@@ -680,7 +679,7 @@ export function computeFocusSessionHeat(params: {
     heat: clampedHeat,
     coronaScale: 1.0 + clampedHeat * 0.22,
     emberSpeed: status === 'paused' ? 0.18 : 0.52 + clampedHeat * 0.78,
-    crimsonWeight: 0.24 + clampedHeat * 0.68,
+    crimsonWeight: 0.44 + clampedHeat * 0.48,
   };
 }
 

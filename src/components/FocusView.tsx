@@ -46,6 +46,22 @@ import { computeMinDayStreak } from '../utils/insights';
 import { useTimerTick } from '../utils/timerTicker';
 import { triggerHaptic } from '../utils/haptics';
 import {
+  AMBIENT_CHANNEL_META,
+  AMBIENT_MIXER_EVENT,
+  AMBIENT_PRESETS,
+  applyAmbientPreset,
+  formatAmbientMixSummary,
+  hasActiveAmbientAudio,
+  loadAmbientMixerState,
+  saveAmbientMixerState,
+  setAmbientChannelLevel,
+  toggleAmbientMute,
+  type AmbientChannelKey,
+  type AmbientMixerState,
+  type SelectableAmbientPresetId,
+} from '../utils/ambientMixer';
+import { ensureAudioEngine, syncAmbientMixer } from '../utils/audioEngine';
+import {
   ALL_SUBJECTS_COLOR,
   ALL_SUBJECTS_LABEL,
   ALL_SUBJECTS_MOCK_ID,
@@ -150,13 +166,6 @@ const TIMER_STYLE_LABELS: Record<TimerAesthetic, string> = {
   retro: 'Analog',
 };
 
-const SOUNDSCAPE_ITEMS: Array<[SoundscapeMode, string]> = [
-  ['off', 'Off'],
-  ['brown', 'Brown noise'],
-  ['pink', 'Pink noise'],
-  ['rain', 'Soft rain'],
-];
-
 export const FocusView: React.FC<FocusViewProps> = ({
   state,
   todayKey,
@@ -180,19 +189,72 @@ export const FocusView: React.FC<FocusViewProps> = ({
   onTogglePomoPhase,
   onStopAndReflect,
   onOpenTimerConfig,
-  onSetSoundscape,
-  onSetSoundVolume,
+  onSetSoundscape: _legacySetSoundscape,
+  onSetSoundVolume: _legacySetSoundVolume,
   onAddTodo,
   onToggleTodo,
   onDeleteTodo,
   onOpenManualSession,
   onEditSession,
 }) => {
+  void _legacySetSoundscape;
+  void _legacySetSoundVolume;
   const t = state.activeTimer;
   const activeSubjects = useMemo(
     () => state.subjects.filter((s) => !s.arch),
     [state.subjects]
   );
+
+  // v32: 3-fader Offline Ambient Sound Mixer (persisted strictly in localStorage)
+  const [ambientMixer, setAmbientMixer] = useState<AmbientMixerState>(() =>
+    loadAmbientMixerState()
+  );
+  const [mixerExpanded, setMixerExpanded] = useState<boolean>(false);
+
+  useEffect(() => {
+    if (typeof window === 'undefined') return;
+    const onMixerEvent = (ev: Event) => {
+      const custom = ev as CustomEvent<AmbientMixerState>;
+      if (custom.detail) {
+        setAmbientMixer(custom.detail);
+      }
+    };
+    const onStorage = (ev: StorageEvent) => {
+      if (ev.key === 'dh_ambient_mixer_v1') {
+        setAmbientMixer(loadAmbientMixerState());
+      }
+    };
+    window.addEventListener(AMBIENT_MIXER_EVENT, onMixerEvent);
+    window.addEventListener('storage', onStorage);
+    return () => {
+      window.removeEventListener(AMBIENT_MIXER_EVENT, onMixerEvent);
+      window.removeEventListener('storage', onStorage);
+    };
+  }, []);
+
+  const commitAmbientMixer = (next: AmbientMixerState) => {
+    ensureAudioEngine();
+    setAmbientMixer(next);
+    saveAmbientMixerState(next);
+    syncAmbientMixer(next, true);
+  };
+
+  const handleSelectAmbientPreset = (presetId: SelectableAmbientPresetId) => {
+    triggerHaptic('tap');
+    const next = applyAmbientPreset(ambientMixer, presetId);
+    commitAmbientMixer(next);
+  };
+
+  const handleAmbientChannelChange = (key: AmbientChannelKey, value: number) => {
+    const next = setAmbientChannelLevel(ambientMixer, key, value);
+    commitAmbientMixer(next);
+  };
+
+  const handleToggleAmbientMute = () => {
+    triggerHaptic('tap');
+    const next = toggleAmbientMute(ambientMixer);
+    commitAmbientMixer(next);
+  };
 
   const [examState, setExamState] = useState<ExamClockState>(
     () => loadActiveExamClockState() || createInitialExamClockState()
@@ -713,11 +775,7 @@ export const FocusView: React.FC<FocusViewProps> = ({
               position: 'relative',
               zIndex: 2,
               pointerEvents: 'none',
-              padding: show3dCore ? '10px 18px' : '0 8px',
-              borderRadius: show3dCore ? '999px' : undefined,
-              background: show3dCore
-                ? 'radial-gradient(ellipse at center, rgba(2, 1, 2, 0.36) 0%, rgba(2, 1, 2, 0.14) 38%, transparent 60%)'
-                : undefined,
+              padding: show3dCore ? '6px 14px' : '0 8px',
             }}
           >
             {aesthetic === 'retro' ? (
@@ -1243,80 +1301,151 @@ export const FocusView: React.FC<FocusViewProps> = ({
       </div>
       )}
 
-      {/* 3. Focus Sounds Card */}
-      <Card className="hide-desk dh-today-card">
-        <div className="split" style={{ marginBottom: 10 }}>
-          <div className="row" style={{ gap: 8 }}>
-            {state.set.soundscape === 'off' ? (
-              <VolumeX size={18} strokeWidth={1.75} style={{ color: 'var(--tx-2)' }} />
-            ) : (
-              <Volume2 size={18} strokeWidth={1.75} style={{ color: 'var(--ac-ink)' }} />
-            )}
-            <div>
-              <h3 style={{ margin: 0, fontSize: 18 }}>Focus sounds</h3>
-              <small style={{ fontSize: 13 }}>
-                Offline ambient audio while the timer runs
-              </small>
-            </div>
-          </div>
-          {state.set.soundscape !== 'off' && (
+      {/* 3. Offline 3-Fader Ambient Sound Mixer */}
+      <Card className="hide-desk dh-today-card dh-mixer-card" data-testid="ambient-mixer-card">
+        <div className="dh-mixer-header">
+          <button
+            type="button"
+            className="dh-mixer-summary-btn"
+            aria-expanded={mixerExpanded}
+            aria-controls="dhAmbientMixerFaders"
+            onClick={() => {
+              triggerHaptic('tap');
+              setMixerExpanded((v) => !v);
+            }}
+          >
             <span
-              className="pill"
-              style={{
-                background: 'color-mix(in srgb, var(--ok) 15%, transparent)',
-                color: 'var(--ok-ink)',
-                fontSize: 13,
-                padding: '2px 10px',
-              }}
+              className={`dh-mixer-icon-wrap ${hasActiveAmbientAudio(ambientMixer) ? 'is-live' : ''}`}
+              aria-hidden="true"
             >
-              Active
+              {hasActiveAmbientAudio(ambientMixer) ? (
+                <Volume2 size={18} strokeWidth={1.75} />
+              ) : (
+                <VolumeX size={18} strokeWidth={1.75} />
+              )}
             </span>
-          )}
-        </div>
+            <span className="dh-mixer-summary-copy">
+              <span className="dh-mixer-title">Focus sounds</span>
+              <span className="dh-mixer-subtitle tabular-nums" data-testid="ambient-mixer-summary">
+                {formatAmbientMixSummary(ambientMixer)}
+              </span>
+            </span>
+          </button>
 
-        <div
-          className="dh-edge-fade-rail"
-          style={{
-            marginBottom: state.set.soundscape !== 'off' ? 12 : 0,
-          }}
-        >
-          {SOUNDSCAPE_ITEMS.map(([k, lbl]) => (
-            <Chip
-              key={k}
-              selected={state.set.soundscape === k}
+          <div className="dh-mixer-header-actions">
+            <button
+              type="button"
+              className={`dh-mixer-play-btn ${hasActiveAmbientAudio(ambientMixer) ? 'is-live' : ''}`}
+              aria-label={
+                hasActiveAmbientAudio(ambientMixer)
+                  ? 'Mute ambient mixer'
+                  : 'Play ambient mixer'
+              }
+              aria-pressed={hasActiveAmbientAudio(ambientMixer)}
+              data-testid="ambient-mixer-mute-toggle"
+              onClick={handleToggleAmbientMute}
+            >
+              {hasActiveAmbientAudio(ambientMixer) ? (
+                <>
+                  <VolumeX size={15} strokeWidth={1.75} aria-hidden="true" />
+                  <span>Mute</span>
+                </>
+              ) : (
+                <>
+                  <Play size={14} strokeWidth={2} aria-hidden="true" />
+                  <span>Play</span>
+                </>
+              )}
+            </button>
+
+            <button
+              type="button"
+              className={`dh-mixer-expand-btn ${mixerExpanded ? 'is-open' : ''}`}
+              aria-label={mixerExpanded ? 'Collapse mixer faders' : 'Expand mixer faders'}
+              aria-expanded={mixerExpanded}
+              aria-controls="dhAmbientMixerFaders"
+              data-testid="ambient-mixer-expand-toggle"
               onClick={() => {
                 triggerHaptic('tap');
-                onSetSoundscape(k);
+                setMixerExpanded((v) => !v);
               }}
             >
-              {lbl}
-            </Chip>
-          ))}
+              <SlidersHorizontal size={15} strokeWidth={1.75} aria-hidden="true" />
+              <ChevronDown size={15} strokeWidth={1.75} className="dh-mixer-chevron" aria-hidden="true" />
+            </button>
+          </div>
         </div>
 
-        {state.set.soundscape !== 'off' && (
-          <div className="row" style={{ gap: 10 }}>
-            <small style={{ fontSize: 13, minWidth: 52 }}>Volume</small>
-            <input
-              type="range"
-              min="0.05"
-              max="0.95"
-              step="0.05"
-              value={state.set.soundVol || 0.35}
-              onChange={(e) => onSetSoundVolume(parseFloat(e.target.value))}
-              aria-label="Focus sound volume"
-              style={{ flex: 1, minHeight: 24, padding: 0 }}
-            />
-            <small
-              style={{
-                width: 42,
-                textAlign: 'right',
-                fontSize: 13,
-                fontVariantNumeric: 'tabular-nums',
-              }}
-            >
-              {Math.round((state.set.soundVol || 0.35) * 100)}%
-            </small>
+        {/* 1-Tap Preset Chips */}
+        <div className="dh-edge-fade-rail dh-mixer-preset-rail" role="group" aria-label="Ambient sound presets">
+          {AMBIENT_PRESETS.map((preset) => {
+            const isSelected =
+              preset.id === 'off'
+                ? ambientMixer.preset === 'off'
+                : ambientMixer.preset === preset.id && !ambientMixer.muted;
+            return (
+              <Chip
+                key={preset.id}
+                selected={isSelected}
+                onClick={() => handleSelectAmbientPreset(preset.id)}
+              >
+                {preset.label}
+              </Chip>
+            );
+          })}
+        </div>
+
+        {/* Collapsible 3-Channel Tactile Faders */}
+        {mixerExpanded && (
+          <div id="dhAmbientMixerFaders" className="dh-mixer-faders" data-testid="ambient-mixer-faders">
+            {AMBIENT_CHANNEL_META.map((ch) => {
+              const val = ambientMixer.channels[ch.key];
+              const isActiveCh = val > 0 && !ambientMixer.muted;
+              return (
+                <div key={ch.key} className="dh-mixer-fader-row">
+                  <div className="dh-mixer-fader-meta">
+                    <label
+                      htmlFor={`dh-fader-${ch.key}`}
+                      className={`dh-mixer-fader-label ${isActiveCh ? 'is-live' : ''}`}
+                    >
+                      {ch.label}
+                    </label>
+                    <span className="dh-mixer-fader-val tabular-nums">{val}%</span>
+                  </div>
+                  <input
+                    id={`dh-fader-${ch.key}`}
+                    type="range"
+                    min={0}
+                    max={100}
+                    step={1}
+                    value={val}
+                    aria-label={`${ch.label} level`}
+                    className="dh-mixer-range"
+                    style={
+                      {
+                        '--dh-range-pct': `${val}%`,
+                      } as React.CSSProperties
+                    }
+                    onChange={(e) =>
+                      handleAmbientChannelChange(ch.key, Number(e.target.value))
+                    }
+                  />
+                </div>
+              );
+            })}
+
+            <div className="dh-mixer-fader-foot">
+              <span className="dh-mixer-offline-note">
+                100% offline Web Audio synthesis
+              </span>
+              <button
+                type="button"
+                className="dh-mixer-master-mute"
+                onClick={handleToggleAmbientMute}
+              >
+                {hasActiveAmbientAudio(ambientMixer) ? 'Master mute' : 'Unmute mix'}
+              </button>
+            </div>
           </div>
         )}
       </Card>

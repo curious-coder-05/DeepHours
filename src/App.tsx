@@ -112,8 +112,15 @@ import {
   beep,
   ensureAudioEngine,
   setSoundscapeVolume,
-  updateSoundscape,
+  stopAmbientMixer,
+  syncAmbientMixer,
 } from './utils/audioEngine';
+import {
+  AMBIENT_MIXER_EVENT,
+  hasActiveAmbientAudio,
+  loadAmbientMixerState,
+  type AmbientMixerState,
+} from './utils/ambientMixer';
 import { useFloatingTimerPiP } from './hooks/useFloatingTimerPiP';
 import { useWakeLock } from './hooks/useWakeLock';
 import {
@@ -967,14 +974,36 @@ export default function App() {
     });
   }, []);
 
-  // Soundscape sync
+  // v32: 3-Fader Offline Ambient Sound Mixer lifecycle (auto-starts with timer, releases cleanly on pause/stop/unmount)
+  const prevTimerStatusRef = useRef<string | undefined>(state.activeTimer?.status);
   useEffect(() => {
-    updateSoundscape(
-      state.set.soundscape,
-      state.activeTimer?.status === 'running',
-      state.set.soundVol ?? 0.35
-    );
-  }, [state.set.soundscape, state.activeTimer?.status, state.set.soundVol]);
+    const curStatus = state.activeTimer?.status;
+    const prevStatus = prevTimerStatusRef.current;
+    prevTimerStatusRef.current = curStatus;
+
+    if (curStatus === 'running') {
+      const mixer = loadAmbientMixerState();
+      if (hasActiveAmbientAudio(mixer)) {
+        syncAmbientMixer(mixer, true);
+      }
+    } else if (prevStatus === 'running') {
+      stopAmbientMixer();
+    }
+  }, [state.activeTimer?.status]);
+
+  useEffect(() => {
+    if (typeof window === 'undefined') return;
+    const onMixerChange = (ev: Event) => {
+      const custom = ev as CustomEvent<AmbientMixerState>;
+      const next = custom.detail || loadAmbientMixerState();
+      syncAmbientMixer(next, hasActiveAmbientAudio(next));
+    };
+    window.addEventListener(AMBIENT_MIXER_EVENT, onMixerChange);
+    return () => {
+      window.removeEventListener(AMBIENT_MIXER_EVENT, onMixerChange);
+      stopAmbientMixer();
+    };
+  }, []);
 
   // Milestone 2: Cloud Sync Controller & Firebase Auth lifecycle (serialized + coalesced)
   const syncInFlightRef = useRef<Promise<SyncStatus> | null>(null);

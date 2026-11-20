@@ -227,10 +227,13 @@ describe('scene3dHelpers — FPS Governor, Study City, Astrolabe, Solar Eclipse 
     const solar = getFocusOrbPalette('solar-eclipse');
     const gold = getFocusOrbPalette('lumen-gold');
     const crimson = getFocusOrbPalette('crimson-ember');
-    assert.equal(solar.coreCenterHex, '#020102');
-    assert.equal(solar.whiteHotHex, '#FFF3B0');
-    assert.equal(solar.innerRimHex, '#F59E0B');
-    assert.equal(solar.wireframeHex, '#F5C451');
+    assert.equal(solar.coreCenterHex, '#240A07');
+    assert.equal(gold.coreCenterHex, '#261604');
+    assert.equal(crimson.coreCenterHex, '#2B070B');
+    assert.equal(solar.whiteHotHex, '#FEF08A');
+    assert.equal(solar.innerRimHex, '#D97706');
+    assert.equal(solar.wireframeHex, '#D4AF37');
+    assert.equal(solar.ringSecondaryHex, '#D4AF37');
     assert.notEqual(gold.outerCoronaHex, crimson.outerCoronaHex);
 
     // Safe persistence with mock storage
