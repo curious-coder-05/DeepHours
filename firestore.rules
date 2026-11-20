@@ -66,7 +66,7 @@ service cloud.firestore {
         && m.keys().hasAll(['nick', 'emoji', 'joinedAt', 'updatedAt', 'sh'])
         && m.keys().hasOnly([
           'nick','emoji','examYear','joinedAt','updatedAt','sh','paused',
-          'days','xpDays','xpTotal','streak','consistency','mocks','live','weeks'
+          'days','xpDays','xpTotal','streak','consistency','mocks','live','activeSession','weeks'
         ])
         && m.nick is string && m.nick.size() >= 2 && m.nick.size() <= 20
         && m.emoji is string && m.emoji.size() >= 1 && m.emoji.size() <= 8
@@ -91,6 +91,16 @@ service cloud.firestore {
           && m.live.since is int && m.live.until is int
           && m.live.until > m.live.since
           && m.live.until - m.live.since <= 7200000
+        ))
+        && (!('activeSession' in m) || m.activeSession == null || (
+          m.activeSession is map
+          && m.activeSession.keys().hasAll(['startedAt','subjectLabel','subjectColor'])
+          && m.activeSession.keys().hasOnly(['startedAt','subjectLabel','subjectColor'])
+          && m.activeSession.startedAt is number && m.activeSession.startedAt > 0
+          && m.activeSession.subjectLabel is string
+          && m.activeSession.subjectLabel.size() >= 1 && m.activeSession.subjectLabel.size() <= 40
+          && m.activeSession.subjectColor is string
+          && m.activeSession.subjectColor.size() >= 1 && m.activeSession.subjectColor.size() <= 24
         ))
         && (!('weeks' in m) || (m.weeks is map && m.weeks.size() <= 14));
     }

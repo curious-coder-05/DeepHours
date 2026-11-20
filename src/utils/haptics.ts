@@ -1,4 +1,4 @@
-export type HapticPattern = 'tap' | 'success' | 'stop';
+export type HapticPattern = 'tap' | 'success' | 'stop' | 'overtime';
 
 export interface HapticEnvironment {
   vibrate?: ((pattern: number | number[]) => boolean) | null;
@@ -9,6 +9,7 @@ const PATTERN_MS: Record<HapticPattern, number | number[]> = {
   tap: 8,
   success: [10, 24, 14],
   stop: 14,
+  overtime: [30, 50, 30, 50, 45],
 };
 
 /**

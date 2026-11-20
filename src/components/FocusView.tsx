@@ -21,6 +21,7 @@ import {
   ListChecks,
   ChevronDown,
   Clock,
+  Lightbulb,
 } from 'lucide-react';
 import type {
   ActiveTimerMode,
@@ -34,15 +35,53 @@ import {
   fmtHMS,
   fmtHMShort,
   fmtMS,
+  getDayTotalStudyMs,
   getSessionHeading,
   getStudyQuoteForTimer,
   getSubject,
   getTimerMetrics,
   getTodaySubjectMs,
 } from '../utils/studyLogic';
+import { computeMinDayStreak } from '../utils/insights';
 import { useTimerTick } from '../utils/timerTicker';
 import { triggerHaptic } from '../utils/haptics';
+import {
+  ALL_SUBJECTS_COLOR,
+  ALL_SUBJECTS_LABEL,
+  ALL_SUBJECTS_MOCK_ID,
+  isAllSubjectsMockId,
+  resolveSubjectOnModeSwitch,
+} from '../utils/focusSessionHelpers';
+import {
+  formatProofDateLabel,
+  type ProofCardPayload,
+} from '../utils/proofCardCanvas';
+import {
+  acknowledgeOvertimeAlerts,
+  clearActiveExamClockState,
+  computeExamClockSnapshot,
+  createInitialExamClockState,
+  finishExamClock,
+  loadActiveExamClockState,
+  loadExamPaceRecords,
+  pauseExamClock,
+  playExamOvertimeAlert,
+  resumeExamClock,
+  saveActiveExamClockState,
+  saveExamPaceRecord,
+  startExamClock,
+  switchExamSection,
+  updateExamSectionConfig,
+  type ExamClockState,
+  type ExamPaceRecord,
+  type ExamSectionId,
+} from '../utils/examClock';
+import type { ParkedThought } from '../utils/parkingLot';
 import { BottomSheet } from './BottomSheet';
+import { ExamClockView } from './ExamClockView';
+import { ExamBleedSheet } from './ExamBleedSheet';
+import { ParkingLotSheet } from './ParkingLotSheet';
+import { StandByDeskOverlay } from './StandByDeskOverlay';
 import {
   BarChart,
   Button,
@@ -61,7 +100,15 @@ export interface FocusViewProps {
   sel: string;
   todayKey: string;
   deskMode: boolean;
+  parkedThoughts: ParkedThought[];
   onToggleDeskMode: () => void;
+  onSetDeskMode: (enabled: boolean) => void;
+  onAddParkedThought: (text: string, meta?: { subjectId?: string; chapterId?: string }) => void;
+  onRemoveParkedThought: (id: string) => void;
+  onLogExamMockScore: (record: ExamPaceRecord) => void;
+  onLogExamHallSession?: (record: ExamPaceRecord) => void;
+  onExamHallPresenceChange?: (presence: { running: boolean; startedAt: number } | null) => void;
+  onOpenProofCard?: (payload: ProofCardPayload) => void;
   onOpenPiP: () => void;
   onSwitchTopic: (subjectId: string, heading: string, chapterId?: string) => void;
   onSetMode: (mode: ActiveTimerMode) => void;
@@ -87,10 +134,13 @@ export interface FocusViewProps {
   onEditSession: (sesId: string) => void;
 }
 
-const TIMER_MODES: Array<{ value: ActiveTimerMode; label: string }> = [
+type FocusUiMode = ActiveTimerMode | 'examHall';
+
+const FOCUS_UI_MODES: Array<{ value: FocusUiMode; label: string }> = [
   { value: 'pomo', label: 'Pomodoro' },
   { value: 'countdown', label: 'Countdown' },
   { value: 'stopwatch', label: 'Stopwatch' },
+  { value: 'examHall', label: 'Exam Hall' },
   { value: 'fullMock', label: 'Full mock' },
 ];
 
@@ -111,7 +161,15 @@ export const FocusView: React.FC<FocusViewProps> = ({
   state,
   todayKey,
   deskMode,
+  parkedThoughts,
   onToggleDeskMode,
+  onSetDeskMode,
+  onAddParkedThought,
+  onRemoveParkedThought,
+  onLogExamMockScore,
+  onLogExamHallSession,
+  onExamHallPresenceChange,
+  onOpenProofCard,
   onOpenPiP,
   onSwitchTopic,
   onSetMode,
@@ -136,9 +194,33 @@ export const FocusView: React.FC<FocusViewProps> = ({
     [state.subjects]
   );
 
-  const [selectedSubjectId, setSelectedSubjectId] = useState<string>(
-    t?.subjectId || activeSubjects[0]?.id || 'sub_phy'
+  const [examState, setExamState] = useState<ExamClockState>(
+    () => loadActiveExamClockState() || createInitialExamClockState()
   );
+  const [paceRecords, setPaceRecords] = useState<ExamPaceRecord[]>(() =>
+    loadExamPaceRecords()
+  );
+  const [bleedSheetRecord, setBleedSheetRecord] = useState<ExamPaceRecord | null>(null);
+  const [examHallSelected, setExamHallSelected] = useState<boolean>(() => {
+    const activeExam = loadActiveExamClockState();
+    return Boolean(activeExam && (activeExam.status === 'running' || activeExam.status === 'paused'));
+  });
+  const [deskOverlayMode, setDeskOverlayMode] = useState<'focus' | 'exam'>('focus');
+  const [parkingSheetOpen, setParkingSheetOpen] = useState<boolean>(false);
+
+  const firstSingleSubjectId = activeSubjects[0]?.id || 'sub_phy';
+  const [rememberedSingleSubjectId, setRememberedSingleSubjectId] = useState<string>(() => {
+    if (t?.subjectId && !isAllSubjectsMockId(t.subjectId)) return t.subjectId;
+    return firstSingleSubjectId;
+  });
+
+  const [selectedSubjectId, setSelectedSubjectId] = useState<string>(() => {
+    if (t?.subjectId) return t.subjectId;
+    if ((state.set.defaultMode || 'pomo') === 'fullMock') {
+      return ALL_SUBJECTS_MOCK_ID;
+    }
+    return firstSingleSubjectId;
+  });
   const [selectedChapterId, setSelectedChapterId] = useState<string>(
     t?.chapterId || ''
   );
@@ -150,26 +232,123 @@ export const FocusView: React.FC<FocusViewProps> = ({
   const [breatheCue, setBreatheCue] = useState<string | null>(null);
 
   useEffect(() => {
-    if (t?.subjectId) setSelectedSubjectId(t.subjectId);
+    if (t?.subjectId) {
+      setSelectedSubjectId(t.subjectId);
+      if (!isAllSubjectsMockId(t.subjectId)) {
+        setRememberedSingleSubjectId(t.subjectId);
+      }
+    }
     if (t?.chapterId !== undefined) setSelectedChapterId(t.chapterId || '');
     if (t?.heading) setHeadingInput(t.heading);
   }, [t?.subjectId, t?.chapterId, t?.heading]);
 
-  const effectiveSubId = activeSubjects.some((s) => s.id === selectedSubjectId)
-    ? selectedSubjectId
-    : activeSubjects[0]?.id || 'sub_phy';
-  const curSubject = getSubject(state, effectiveSubId);
+  // Persist active Exam Hall chess-clock state strictly in localStorage (zero Firestore writes)
+  useEffect(() => {
+    saveActiveExamClockState(examState);
+  }, [examState]);
 
-  const subjectChapters = useMemo(
-    () => state.chapters.filter((ch) => ch.subjectId === effectiveSubId),
-    [state.chapters, effectiveSubId]
-  );
-  const effectiveChapId = subjectChapters.some((ch) => ch.id === selectedChapterId)
-    ? selectedChapterId
-    : '';
-  const curChapter = subjectChapters.find((ch) => ch.id === effectiveChapId);
+  // Bridge Exam Hall running state to App.tsx for Spark-quota-safe Live Co-Study Aura
+  useEffect(() => {
+    if (!onExamHallPresenceChange) return;
+    if (examState.status === 'running' && examState.startedAt) {
+      onExamHallPresenceChange({ running: true, startedAt: examState.startedAt });
+    } else {
+      onExamHallPresenceChange(null);
+    }
+  }, [examState.status, examState.startedAt, onExamHallPresenceChange]);
+
+  // Single-fire overtime crossing monitor strictly while Exam Hall clock is running
+  useEffect(() => {
+    if (examState.status !== 'running') return;
+    const checkOvertime = () => {
+      const snap = computeExamClockSnapshot(examState, Date.now());
+      if (snap.newlyOvertimeSectionIds.length > 0) {
+        playExamOvertimeAlert(Boolean(state.set.snd));
+        setExamState((prev) =>
+          acknowledgeOvertimeAlerts(prev, snap.newlyOvertimeSectionIds)
+        );
+      }
+    };
+    checkOvertime();
+    const id = setInterval(checkOvertime, 1000);
+    return () => clearInterval(id);
+  }, [examState, state.set.snd]);
+
+  const handleUpdateExamSection = (
+    sectionId: ExamSectionId,
+    patch: { budgetMins?: number; enabled?: boolean }
+  ) => {
+    setExamState((prev) => updateExamSectionConfig(prev, sectionId, patch));
+  };
+
+  const handleStartExam = (initialSectionId: ExamSectionId) => {
+    setExamState((prev) => startExamClock(prev, initialSectionId, Date.now()));
+  };
+
+  const handleSwitchExamSection = (sectionId: ExamSectionId) => {
+    setExamState((prev) => switchExamSection(prev, sectionId, Date.now()));
+  };
+
+  const handleToggleExamPause = () => {
+    setExamState((prev) =>
+      prev.status === 'running'
+        ? pauseExamClock(prev, Date.now())
+        : resumeExamClock(prev, Date.now())
+    );
+  };
+
+  const handleFinishExam = () => {
+    const now = Date.now();
+    const { record } = finishExamClock(examState, now);
+    clearActiveExamClockState();
+    const updatedRecords = saveExamPaceRecord(record);
+    setPaceRecords(updatedRecords);
+    setExamState(createInitialExamClockState(examState.sections));
+    onSetDeskMode(false);
+    onLogExamHallSession?.(record);
+    setBleedSheetRecord(record);
+  };
+
+  const handleResetExamIdle = () => {
+    clearActiveExamClockState();
+    setExamState((prev) => createInitialExamClockState(prev.sections));
+    if (deskOverlayMode === 'exam') {
+      onSetDeskMode(false);
+    }
+  };
 
   const curMode: ActiveTimerMode = t?.mode || state.set.defaultMode || 'pomo';
+  const isAllSubjectsSelected = isAllSubjectsMockId(selectedSubjectId);
+  const effectiveSubId = isAllSubjectsSelected
+    ? ALL_SUBJECTS_MOCK_ID
+    : activeSubjects.some((s) => s.id === selectedSubjectId)
+      ? selectedSubjectId
+      : firstSingleSubjectId;
+  const curSubject = isAllSubjectsSelected
+    ? {
+        id: ALL_SUBJECTS_MOCK_ID,
+        name: ALL_SUBJECTS_LABEL,
+        e: '📝',
+        color: ALL_SUBJECTS_COLOR,
+        dailyGoalMins: 0,
+        arch: 0 as const,
+        todos: [],
+      }
+    : getSubject(state, effectiveSubId);
+
+  const subjectChapters = useMemo(
+    () =>
+      isAllSubjectsSelected
+        ? []
+        : state.chapters.filter((ch) => ch.subjectId === effectiveSubId),
+    [state.chapters, effectiveSubId, isAllSubjectsSelected]
+  );
+  const effectiveChapId =
+    !isAllSubjectsSelected && subjectChapters.some((ch) => ch.id === selectedChapterId)
+      ? selectedChapterId
+      : '';
+  const curChapter = subjectChapters.find((ch) => ch.id === effectiveChapId);
+
   const isStopwatch = curMode === 'stopwatch';
   const aesthetic: TimerAesthetic = state.set.timerAesthetic || 'neon';
   useTimerTick(t?.status === 'running');
@@ -189,6 +368,9 @@ export const FocusView: React.FC<FocusViewProps> = ({
     isStopwatch || displayMs >= 3600000 ? fmtHMS(displayMs) : fmtMS(displayMs);
 
   const todaySubMs = getTodaySubjectMs(state, curSubject.id, todayKey, true);
+  const todayTotalMs =
+    getDayTotalStudyMs(state, todayKey) +
+    (t && m && t.phase !== 'break' ? m.sliceActiveMs : 0);
   const todaySessions = useMemo(
     () =>
       [...state.sessions.filter((s) => s.dayKey === todayKey)].sort(
@@ -226,8 +408,24 @@ export const FocusView: React.FC<FocusViewProps> = ({
     t && t.targetMs ? ((t.targetMs / 60000) % 60) * 6 : null;
 
   const activeHeadingDisplay = t
-    ? t.heading || `${curSubject.name} Study`
-    : headingInput.trim() || curChapter?.name || `${curSubject.name} Study`;
+    ? t.heading || (isAllSubjectsSelected ? 'Full Mock' : `${curSubject.name} Study`)
+    : headingInput.trim() ||
+      curChapter?.name ||
+      (isAllSubjectsSelected ? 'Full Mock' : `${curSubject.name} Study`);
+
+  const activeSubjectPillText = isAllSubjectsSelected
+    ? `${ALL_SUBJECTS_LABEL} · ${
+        activeHeadingDisplay && activeHeadingDisplay !== `${ALL_SUBJECTS_LABEL} Study`
+          ? activeHeadingDisplay
+          : 'Full Mock'
+      }`
+    : `${curSubject.e} ${curSubject.name}${curChapter ? ` · ${curChapter.name}` : ''}${
+        activeHeadingDisplay && activeHeadingDisplay !== `${curSubject.name} Study`
+          ? ` · ${activeHeadingDisplay}`
+          : curMode === 'fullMock'
+            ? ' · Full Mock'
+            : ''
+      }`;
 
   const targetMins = t
     ? t.targetMs > 0
@@ -271,21 +469,70 @@ export const FocusView: React.FC<FocusViewProps> = ({
         : 'Paused'
     : 'Ready';
 
-  const show3dCore = !deskMode && state.set.ui3d !== 'off';
+  const show3dCore = !deskMode && !examHallSelected && state.set.ui3d !== 'off';
+  const activeUiMode: FocusUiMode = examHallSelected ? 'examHall' : curMode;
 
   return (
     <div>
-      {/* 1. Non-Wrapping Mode Switcher */}
+      {/* 1. Non-Wrapping Mode Switcher (including Exam Hall Chess-Clock) */}
       <div className="hide-desk" style={{ marginBottom: 14 }}>
         <Segmented
           aria-label="Timer mode"
-          value={curMode}
-          onChange={onSetMode}
-          options={TIMER_MODES}
+          value={activeUiMode}
+          onChange={(nextMode: FocusUiMode) => {
+            if (nextMode === 'examHall') {
+              setExamHallSelected(true);
+            } else {
+              const prevMode = curMode;
+              setExamHallSelected(false);
+              if (!t) {
+                const resolved = resolveSubjectOnModeSwitch({
+                  prevMode,
+                  nextMode,
+                  currentSubjectId: effectiveSubId,
+                  rememberedSingleSubjectId,
+                  fallbackSubjectId: firstSingleSubjectId,
+                });
+                setSelectedSubjectId(resolved.nextSubjectId);
+                setRememberedSingleSubjectId(resolved.nextRememberedSingleSubjectId);
+                if (resolved.clearChapter) {
+                  setSelectedChapterId('');
+                }
+                if (
+                  nextMode === 'fullMock' &&
+                  (!headingInput.trim() || headingInput.trim() === `${curSubject.name} Study`)
+                ) {
+                  setHeadingInput('');
+                }
+              }
+              onSetMode(nextMode);
+            }
+          }}
+          options={FOCUS_UI_MODES}
         />
       </div>
 
-      {/* 2. Primary Focus Core Hero Card */}
+      {/* 2A. NEET 3-Hour Chess-Clock Exam Hall Mode */}
+      {examHallSelected ? (
+        <ExamClockView
+          examState={examState}
+          paceRecords={paceRecords}
+          parkedCount={parkedThoughts.length}
+          onUpdateSection={handleUpdateExamSection}
+          onStartExam={handleStartExam}
+          onSwitchSection={handleSwitchExamSection}
+          onTogglePause={handleToggleExamPause}
+          onFinishExam={handleFinishExam}
+          onResetIdle={handleResetExamIdle}
+          onOpenDeskMode={() => {
+            setDeskOverlayMode('exam');
+            onSetDeskMode(true);
+          }}
+          onOpenParkingLot={() => setParkingSheetOpen(true)}
+          onInspectRecord={(rec) => setBleedSheetRecord(rec)}
+        />
+      ) : (
+      /* 2B. Primary Focus Core Hero Card */
       <div
         className={`card timer-shell aesthetic-${aesthetic} ${
           m ? (m.status === 'running' ? 'running' : 'paused') : ''
@@ -327,9 +574,7 @@ export const FocusView: React.FC<FocusViewProps> = ({
             <button
               type="button"
               onClick={() => setTopicSheetOpen(true)}
-              aria-label={`Change study subject or topic. Current: ${curSubject.name}${
-                curChapter ? `, ${curChapter.name}` : ''
-              }`}
+              aria-label={`Change study subject or topic. Current: ${activeSubjectPillText}`}
               style={{
                 display: 'inline-flex',
                 alignItems: 'center',
@@ -362,11 +607,7 @@ export const FocusView: React.FC<FocusViewProps> = ({
                   whiteSpace: 'nowrap',
                 }}
               >
-                {curSubject.e} {curSubject.name}
-                {curChapter ? ` · ${curChapter.name}` : ''}
-                {activeHeadingDisplay && activeHeadingDisplay !== `${curSubject.name} Study`
-                  ? ` · ${activeHeadingDisplay}`
-                  : ''}
+                {activeSubjectPillText}
               </span>
               <ChevronDown size={14} strokeWidth={2} style={{ color: 'var(--tx-2)', flexShrink: 0 }} />
             </button>
@@ -831,7 +1072,7 @@ export const FocusView: React.FC<FocusViewProps> = ({
           )}
         </div>
 
-        {/* Compact Icon Action Row (Durations, Desk Mode, PiP, Topic Sheet, Log Hours) */}
+        {/* Compact Action Row (Park Thought when active, Durations, Desk Mode, PiP, Topic) */}
         <div
           className="row hide-desk"
           style={{
@@ -841,6 +1082,25 @@ export const FocusView: React.FC<FocusViewProps> = ({
             marginBottom: 10,
           }}
         >
+          {t && (
+            <button
+              type="button"
+              className="dh-glass-btn dh-park-trigger-pill"
+              onClick={() => {
+                triggerHaptic('tap');
+                setParkingSheetOpen(true);
+              }}
+              aria-label={`Park a thought without pausing timer${
+                parkedThoughts.length > 0 ? ` (${parkedThoughts.length} parked)` : ''
+              }`}
+            >
+              <Lightbulb size={15} strokeWidth={1.8} style={{ color: 'var(--ac-ink)' }} aria-hidden="true" />
+              <span>Park thought</span>
+              {parkedThoughts.length > 0 && (
+                <span className="dh-park-badge tabular-nums">{parkedThoughts.length}</span>
+              )}
+            </button>
+          )}
           <Button
             variant="ghost"
             size="sm"
@@ -853,7 +1113,11 @@ export const FocusView: React.FC<FocusViewProps> = ({
             variant="ghost"
             size="sm"
             icon={<Maximize2 size={15} strokeWidth={1.75} />}
-            onClick={onToggleDeskMode}
+            onClick={() => {
+              triggerHaptic('tap');
+              setDeskOverlayMode('focus');
+              onToggleDeskMode();
+            }}
           >
             Desk mode
           </Button>
@@ -931,18 +1195,27 @@ export const FocusView: React.FC<FocusViewProps> = ({
           </div>
         )}
 
-        {/* Purity & Today's Subject Total */}
+        {/* Purity & Today's Subject / Total Readout */}
         <div className="purity-bar" style={{ marginBottom: 4 }}>
           <span>
             Focus purity <b id="livePurity">{m ? m.purity : 100}%</b>
           </span>
           <span>·</span>
           <span>
-            Today {curSubject.name} <b id="liveTodaySub">{fmtHMShort(todaySubMs)}</b>
+            {isAllSubjectsSelected ? (
+              <>
+                Today total <b id="liveTodaySub">{fmtHMShort(todayTotalMs)}</b>
+              </>
+            ) : (
+              <>
+                Today {curSubject.name}{' '}
+                <b id="liveTodaySub">{fmtHMShort(todaySubMs)}</b>
+              </>
+            )}
           </span>
         </div>
 
-        {/* Desk Mode Controls */}
+        {/* Desk Mode Controls (legacy fallback hidden when StandByDeskOverlay is active) */}
         {deskMode && (
           <div
             className="row"
@@ -967,6 +1240,7 @@ export const FocusView: React.FC<FocusViewProps> = ({
           </div>
         )}
       </div>
+      )}
 
       {/* 3. Focus Sounds Card */}
       <Card className="hide-desk dh-today-card">
@@ -1308,6 +1582,31 @@ export const FocusView: React.FC<FocusViewProps> = ({
         <div className="dh-sheet-field">
           <span className="dh-sheet-field-label">Subject</span>
           <div className="dh-edge-fade-rail">
+            {curMode === 'fullMock' && (
+              <Chip
+                key={ALL_SUBJECTS_MOCK_ID}
+                selected={isAllSubjectsSelected}
+                colorDot={ALL_SUBJECTS_COLOR}
+                onClick={() => {
+                  triggerHaptic('tap');
+                  setSelectedSubjectId(ALL_SUBJECTS_MOCK_ID);
+                  setSelectedChapterId('');
+                  const nextHeading =
+                    headingInput.trim() &&
+                    headingInput.trim() !== `${curSubject.name} Study`
+                      ? headingInput.trim()
+                      : 'Full Mock';
+                  if (t) {
+                    setHeadingInput(nextHeading);
+                    onSwitchTopic(ALL_SUBJECTS_MOCK_ID, nextHeading, undefined);
+                  } else {
+                    setHeadingInput('');
+                  }
+                }}
+              >
+                All subjects (Full mock)
+              </Chip>
+            )}
             {activeSubjects.map((s) => (
               <Chip
                 key={s.id}
@@ -1316,13 +1615,17 @@ export const FocusView: React.FC<FocusViewProps> = ({
                 onClick={() => {
                   triggerHaptic('tap');
                   setSelectedSubjectId(s.id);
+                  setRememberedSingleSubjectId(s.id);
                   setSelectedChapterId('');
                   if (t) {
                     const nextHeading =
                       headingInput.trim() &&
-                      headingInput.trim() !== `${curSubject.name} Study`
+                      headingInput.trim() !== `${curSubject.name} Study` &&
+                      headingInput.trim() !== 'Full Mock'
                         ? headingInput.trim()
-                        : `${s.name} Study`;
+                        : curMode === 'fullMock'
+                          ? `${s.name} Mock`
+                          : `${s.name} Study`;
                     setHeadingInput(nextHeading);
                     onSwitchTopic(s.id, nextHeading, undefined);
                   }
@@ -1334,27 +1637,29 @@ export const FocusView: React.FC<FocusViewProps> = ({
           </div>
         </div>
 
-        <div className="dh-sheet-field">
-          <span className="dh-sheet-field-label">Syllabus chapter</span>
-          <Select
-            aria-label="Link syllabus chapter"
-            title={`Link ${curSubject.name} chapter`}
-            value={effectiveChapId}
-            options={chapterOptions}
-            onChange={(nextChapId) => {
-              setSelectedChapterId(nextChapId);
-              const chap = subjectChapters.find((c) => c.id === nextChapId);
-              const nextHeading = chap
-                ? chap.name
-                : headingInput.trim() || `${curSubject.name} Study`;
-              if (chap) setHeadingInput(chap.name);
-              if (t) {
-                onSwitchTopic(effectiveSubId, nextHeading, nextChapId || undefined);
-              }
-            }}
-            placeholder="General subject study"
-          />
-        </div>
+        {!isAllSubjectsSelected && (
+          <div className="dh-sheet-field">
+            <span className="dh-sheet-field-label">Syllabus chapter</span>
+            <Select
+              aria-label="Link syllabus chapter"
+              title={`Link ${curSubject.name} chapter`}
+              value={effectiveChapId}
+              options={chapterOptions}
+              onChange={(nextChapId) => {
+                setSelectedChapterId(nextChapId);
+                const chap = subjectChapters.find((c) => c.id === nextChapId);
+                const nextHeading = chap
+                  ? chap.name
+                  : headingInput.trim() || `${curSubject.name} Study`;
+                if (chap) setHeadingInput(chap.name);
+                if (t) {
+                  onSwitchTopic(effectiveSubId, nextHeading, nextChapId || undefined);
+                }
+              }}
+              placeholder="General subject study"
+            />
+          </div>
+        )}
 
         <div className="dh-sheet-field">
           <label htmlFor="sessionHeadingInput" className="dh-sheet-field-label">
@@ -1406,6 +1711,70 @@ export const FocusView: React.FC<FocusViewProps> = ({
           )}
         </div>
       </BottomSheet>
+
+      {/* AMOLED StandBy Desk Mode Overlay (Unified Focus + Exam Hall) */}
+      <StandByDeskOverlay
+        open={deskMode}
+        mode={deskOverlayMode}
+        state={state}
+        examState={examState}
+        parkedCount={parkedThoughts.length}
+        parkingSheetOpen={parkingSheetOpen}
+        onExit={() => onSetDeskMode(false)}
+        onOpenParkingLot={() => setParkingSheetOpen(true)}
+        onToggleFocusPause={onTogglePause}
+        onStopFocus={onStopAndReflect}
+        onSwitchExamSection={handleSwitchExamSection}
+        onToggleExamPause={handleToggleExamPause}
+        onFinishExam={handleFinishExam}
+      />
+
+      {/* Mid-Session Parking Lot Scratchpad Sheet */}
+      <ParkingLotSheet
+        open={parkingSheetOpen}
+        onClose={() => setParkingSheetOpen(false)}
+        thoughts={parkedThoughts}
+        onAddThought={(text) =>
+          onAddParkedThought(text, {
+            subjectId: t?.subjectId || effectiveSubId,
+            chapterId: t?.chapterId || effectiveChapId || undefined,
+          })
+        }
+        onRemoveThought={onRemoveParkedThought}
+      />
+
+      {/* Post-Exam Target-vs-Actual Bleed Diagnostic Sheet */}
+      <ExamBleedSheet
+        record={bleedSheetRecord}
+        onClose={() => setBleedSheetRecord(null)}
+        onLogMockScore={(rec) => {
+          setBleedSheetRecord(null);
+          onLogExamMockScore(rec);
+        }}
+        onShareProofCard={
+          onOpenProofCard
+            ? (rec) => {
+                const streakInfo = computeMinDayStreak(state, todayKey);
+                setBleedSheetRecord(null);
+                onOpenProofCard({
+                  kind: 'session',
+                  durationMs: rec.totalElapsedMs,
+                  subjectLabel: 'All Subjects · Exam Hall',
+                  subjectColor: ALL_SUBJECTS_COLOR,
+                  topicHeading: 'Exam Hall · NEET Mock',
+                  focusPurity: 100,
+                  streakDays: streakInfo.streak,
+                  dateLabel: formatProofDateLabel(todayKey),
+                  dayKey: todayKey,
+                  modeLabel: 'Exam Hall',
+                  subtitle: `${rec.sections.length} sections · ${rec.switchCount} switch${
+                    rec.switchCount === 1 ? '' : 'es'
+                  }`,
+                });
+              }
+            : undefined
+        }
+      />
     </div>
   );
 };

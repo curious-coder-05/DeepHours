@@ -6,6 +6,7 @@ import {
   ChevronRight,
   Flame,
   Plus,
+  Share2,
 } from 'lucide-react';
 import type { PulseHabitState, StatsSubTab } from '../types';
 import {
@@ -62,6 +63,7 @@ interface StatsViewProps {
   onOpenManualSession: (defaultSubjectId?: string) => void;
   onEditSession?: (sessionId: string) => void;
   onSelectDateInToday?: (dayKey: string) => void;
+  onShareTodayProof?: () => void;
   onToast?: (msg: string) => void;
 }
 
@@ -76,6 +78,7 @@ export const StatsView: React.FC<StatsViewProps> = ({
   onOpenManualSession,
   onEditSession,
   onSelectDateInToday,
+  onShareTodayProof,
   onToast,
 }) => {
   const summary = useMemo(
@@ -358,7 +361,7 @@ export const StatsView: React.FC<StatsViewProps> = ({
                 </p>
               </div>
 
-              <div className="flex items-center gap-4">
+              <div className="flex flex-wrap items-center gap-3">
                 <div className="rounded-xl border border-[var(--line)] bg-[var(--sf-2)] px-3.5 py-2.5">
                   <span className="mb-1 block text-[13px] text-[var(--tx-2)]">
                     Last 7 days trend
@@ -372,6 +375,17 @@ export const StatsView: React.FC<StatsViewProps> = ({
                     label="7-day study minutes sparkline"
                   />
                 </div>
+                {onShareTodayProof && (
+                  <Button
+                    variant="secondary"
+                    size="sm"
+                    className="dh-glass-btn"
+                    icon={<Share2 size={14} strokeWidth={1.9} />}
+                    onClick={onShareTodayProof}
+                  >
+                    Share today&apos;s proof
+                  </Button>
+                )}
               </div>
             </div>
 

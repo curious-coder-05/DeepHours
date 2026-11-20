@@ -5,10 +5,22 @@ import {
   GROUP_PUBLISH_DEBOUNCE_MS,
   GROUP_PUBLISH_MIN_INTERVAL_MS,
   GroupPublishBudgetController,
+  LIVE_AURA_MAX_AGE_MS,
+  LIVE_AURA_MAX_FUTURE_MS,
+  LIVE_AURA_START_DEBOUNCE_MS,
+  LiveAuraPresenceController,
+  buildActiveSessionAuraPayload,
   buildMyMemberEntry,
+  formatLiveAuraElapsed,
+  getActiveStudyingNowMembers,
   hashMemberEntry,
+  isLiveAuraActive,
+  loadLiveAuraPrivacyEnabled,
   mergeCachedGroupMemberUpdate,
+  sanitizeActiveSessionAura,
+  saveLiveAuraPrivacyEnabled,
   shouldAcceptGroupSnapshot,
+  type ActiveSessionAura,
   type CachedGroupSnapshot,
   type GroupDoc,
 } from './groups.ts';
@@ -219,3 +231,212 @@ describe('Community Squad Auto-Publish Diff-Check & Immediate Live Flush', () =>
     assert.equal(merged.doc.updatedAt, 6000);
   });
 });
+
+describe('Zero-Chat Live Co-Study Aura (v29)', () => {
+  it('debounces session start by 15s (skipping quick start-cancel), publishes once without heartbeats, and clears cleanly to null on stop', async (t) => {
+    t.mock.timers.enable({ apis: ['Date', 'setTimeout'] });
+    t.mock.timers.setTime(new Date('2026-11-20T09:00:00Z').getTime());
+
+    assert.equal(LIVE_AURA_START_DEBOUNCE_MS, 15_000);
+
+    const published: Array<ActiveSessionAura | null> = [];
+    const ctrl = new LiveAuraPresenceController({
+      enabled: true,
+      onPublish: (aura) => {
+        published.push(aura);
+      },
+    });
+
+    const phyAura: ActiveSessionAura = {
+      startedAt: Date.now(),
+      subjectLabel: 'Physics',
+      subjectColor: '#60A5FA',
+    };
+
+    // 1. Accidental start + cancel within 10s -> 0 writes!
+    ctrl.handleSessionChange(phyAura);
+    t.mock.timers.tick(10_000);
+    assert.equal(published.length, 0);
+    ctrl.handleSessionChange(null);
+    t.mock.timers.tick(20_000);
+    assert.equal(published.length, 0);
+
+    // 2. Confirmed start past 15s -> exactly 1 write, even after 2 hours (zero heartbeats!)
+    ctrl.handleSessionChange(phyAura);
+    t.mock.timers.tick(14_999);
+    assert.equal(published.length, 0);
+    t.mock.timers.tick(1);
+    assert.equal(published.length, 1);
+    assert.deepEqual(published[0], phyAura);
+
+    // Wait 2 hours: zero periodic heartbeat writes!
+    t.mock.timers.tick(2 * 60 * 60_000);
+    assert.equal(published.length, 1);
+
+    // 3. Pause / Stop -> exactly 1 immediate null clear write
+    ctrl.handleSessionChange(null);
+    assert.equal(published.length, 2);
+    assert.equal(published[1], null);
+
+    // Duplicate stop emits 0 extra writes
+    ctrl.handleSessionChange(null);
+    assert.equal(published.length, 2);
+
+    ctrl.dispose();
+  });
+
+  it('respects local privacy opt-out by skipping start writes and clearing active published aura', async (t) => {
+    t.mock.timers.enable({ apis: ['Date', 'setTimeout'] });
+    t.mock.timers.setTime(new Date('2026-11-20T10:00:00Z').getTime());
+
+    const published: Array<ActiveSessionAura | null> = [];
+    const ctrl = new LiveAuraPresenceController({
+      enabled: false,
+      onPublish: (aura) => {
+        published.push(aura);
+      },
+    });
+
+    const aura: ActiveSessionAura = {
+      startedAt: Date.now(),
+      subjectLabel: 'Biology',
+      subjectColor: '#34D399',
+    };
+
+    // Disabled -> 0 writes
+    ctrl.handleSessionChange(aura);
+    t.mock.timers.tick(60_000);
+    assert.equal(published.length, 0);
+
+    // Enable -> publishes after 15s
+    ctrl.setEnabled(true);
+    ctrl.handleSessionChange(aura);
+    t.mock.timers.tick(15_000);
+    assert.equal(published.length, 1);
+
+    // Turn privacy switch OFF while studying -> immediately clears to null
+    ctrl.setEnabled(false);
+    assert.equal(published.length, 2);
+    assert.equal(published[1], null);
+
+    // Storage persistence helper check
+    const mem = new Map<string, string>();
+    const fakeStore = {
+      getItem: (k: string) => mem.get(k) ?? null,
+      setItem: (k: string, v: string) => {
+        mem.set(k, v);
+      },
+    };
+    assert.equal(loadLiveAuraPrivacyEnabled(fakeStore), true);
+    saveLiveAuraPrivacyEnabled(false, fakeStore);
+    assert.equal(loadLiveAuraPrivacyEnabled(fakeStore), false);
+    saveLiveAuraPrivacyEnabled(true, fakeStore);
+    assert.equal(loadLiveAuraPrivacyEnabled(fakeStore), true);
+
+    ctrl.dispose();
+  });
+
+  it('filters out stale (>6h) and future (>5m) activeSession auras and formats live durations cleanly', () => {
+    const now = Date.parse('2026-11-20T12:00:00Z');
+    assert.equal(LIVE_AURA_MAX_AGE_MS, 21_600_000);
+    assert.equal(LIVE_AURA_MAX_FUTURE_MS, 300_000);
+
+    const freshAura: ActiveSessionAura = {
+      startedAt: now - 42 * 60_000,
+      subjectLabel: 'Physics',
+      subjectColor: '#60A5FA',
+    };
+    const staleAura: ActiveSessionAura = {
+      startedAt: now - LIVE_AURA_MAX_AGE_MS - 1_000,
+      subjectLabel: 'Chemistry',
+      subjectColor: '#F59E0B',
+    };
+    const futureAura: ActiveSessionAura = {
+      startedAt: now + LIVE_AURA_MAX_FUTURE_MS + 1_000,
+      subjectLabel: 'Biology',
+      subjectColor: '#34D399',
+    };
+
+    assert.equal(isLiveAuraActive(freshAura, now), true);
+    assert.equal(isLiveAuraActive(staleAura, now), false);
+    assert.equal(isLiveAuraActive(futureAura, now), false);
+    assert.equal(isLiveAuraActive(null, now), false);
+
+    assert.equal(formatLiveAuraElapsed(now - 20_000, now), '<1m');
+    assert.equal(formatLiveAuraElapsed(now - 42 * 60_000, now), '42m');
+    assert.equal(formatLiveAuraElapsed(now - 72 * 60_000, now), '1h 12m');
+    assert.equal(formatLiveAuraElapsed(now - 120 * 60_000, now), '2h');
+
+    // Sanitizer rejects invalid colors/empty labels
+    assert.equal(sanitizeActiveSessionAura({ startedAt: now, subjectLabel: '' }), null);
+    const sanitized = sanitizeActiveSessionAura({
+      startedAt: now,
+      subjectLabel: 'Physics',
+      subjectColor: 'javascript:alert(1)',
+    });
+    assert.deepEqual(sanitized, {
+      startedAt: now,
+      subjectLabel: 'Physics',
+      subjectColor: '#F5C451',
+    });
+
+    // Squad filtering only keeps active members (excludes stale >6h and future >5m)
+    const state = createBlankState();
+    const baseEntry = buildMyMemberEntry(state, '2026-11-20', {
+      joinedAt: 1000,
+      sh: { ...DEFAULT_SHARING_FLAGS, l: true },
+      now,
+    });
+    const doc: GroupDoc = {
+      name: 'NEET 2027',
+      emoji: '🩺',
+      ownerUid: 'u1',
+      createdAt: 1000,
+      updatedAt: now,
+      memberCap: 30,
+      mockBoard: true,
+      members: {
+        u1: { ...baseEntry, nick: 'ActiveKid', activeSession: freshAura },
+        u2: { ...baseEntry, nick: 'StaleGhost', activeSession: staleAura },
+        u3: { ...baseEntry, nick: 'FutureClock', activeSession: futureAura },
+        u4: { ...baseEntry, nick: 'PrivateUser', sh: { ...DEFAULT_SHARING_FLAGS, l: false }, activeSession: freshAura },
+      },
+    };
+    const active = getActiveStudyingNowMembers(doc, now, now);
+    assert.equal(active.length, 1);
+    assert.equal(active[0].uid, 'u1');
+    assert.equal(active[0].subjectLabel, 'Physics');
+    assert.equal(active[0].elapsedLabel, '42m');
+    assert.equal(active[0].isLiveAura, true);
+  });
+
+  it('builds canonical aura payloads for Full Mock, Exam Hall, and single subjects', () => {
+    const ts = 1_760_000_000_000;
+    assert.deepEqual(
+      buildActiveSessionAuraPayload({
+        startedAt: ts,
+        isExamHall: true,
+      }),
+      { startedAt: ts, subjectLabel: 'Exam Hall', subjectColor: '#F5C451' }
+    );
+    assert.deepEqual(
+      buildActiveSessionAuraPayload({
+        startedAt: ts,
+        mode: 'fullMock',
+        subjectId: 'sub_All_Subjects',
+      }),
+      { startedAt: ts, subjectLabel: 'Full Mock', subjectColor: '#F5C451' }
+    );
+    assert.deepEqual(
+      buildActiveSessionAuraPayload({
+        startedAt: ts,
+        mode: 'pomodoro',
+        subjectId: 'sub_phy',
+        subjectName: 'Physics',
+        subjectColor: '#60A5FA',
+      }),
+      { startedAt: ts, subjectLabel: 'Physics', subjectColor: '#60A5FA' }
+    );
+  });
+});
+

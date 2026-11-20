@@ -30,6 +30,7 @@ import {
   Edit3,
   CornerDownRight,
   RotateCcw,
+  Share2,
 } from 'lucide-react';
 import type {
   ActiveTimerMode,
@@ -141,6 +142,7 @@ export interface TodayViewProps {
   ) => void;
   onSetMood: (val: number) => void;
   onSetNote: (txt: string) => void;
+  onShareTodayProof?: () => void;
 }
 
 const MOOD_ITEMS: Array<[number, string, string]> = [
@@ -186,6 +188,7 @@ export const TodayView: React.FC<TodayViewProps> = ({
   onUpdateWellbeing,
   onSetMood,
   onSetNote,
+  onShareTodayProof,
 }) => {
   const [quickSubjectId, setQuickSubjectId] = useState<string>(
     () => state.subjects.find((s) => !s.arch)?.id || 'sub_phy'
@@ -997,28 +1000,52 @@ export const TodayView: React.FC<TodayViewProps> = ({
                   <div
                     style={{
                       display: 'flex',
-                      alignItems: 'baseline',
+                      alignItems: 'center',
+                      justifyContent: 'space-between',
                       gap: 10,
                       flexWrap: 'wrap',
                     }}
                   >
-                    <b
+                    <div
                       style={{
-                        fontSize: 'clamp(36px, 8vw, 46px)',
-                        fontWeight: 700,
-                        lineHeight: 1.02,
-                        letterSpacing: '-0.025em',
-                        color: 'var(--ac-ink)',
-                        fontVariantNumeric: 'tabular-nums',
+                        display: 'flex',
+                        alignItems: 'baseline',
+                        gap: 10,
+                        flexWrap: 'wrap',
                       }}
                     >
-                      {fmtHMShort(selectedDayTotalMs)}
-                    </b>
-                    <span style={{ fontSize: 14, color: 'var(--tx-2)' }}>
-                      {studyProg.goalMs > 0
-                        ? `of ${fmtDuration(studyProg.goalMs)} goal`
-                        : pluralize(selectedDaySessions.length, 'session')}
-                    </span>
+                      <b
+                        style={{
+                          fontSize: 'clamp(36px, 8vw, 46px)',
+                          fontWeight: 700,
+                          lineHeight: 1.02,
+                          letterSpacing: '-0.025em',
+                          color: 'var(--ac-ink)',
+                          fontVariantNumeric: 'tabular-nums',
+                        }}
+                      >
+                        {fmtHMShort(selectedDayTotalMs)}
+                      </b>
+                      <span style={{ fontSize: 14, color: 'var(--tx-2)' }}>
+                        {studyProg.goalMs > 0
+                          ? `of ${fmtDuration(studyProg.goalMs)} goal`
+                          : pluralize(selectedDaySessions.length, 'session')}
+                      </span>
+                    </div>
+                    {onShareTodayProof && (
+                      <button
+                        type="button"
+                        className="dh-glass-btn dh-proof-trigger-pill"
+                        onClick={() => {
+                          triggerHaptic('tap');
+                          onShareTodayProof();
+                        }}
+                        aria-label="Share today's study proof card"
+                      >
+                        <Share2 size={14} strokeWidth={1.9} aria-hidden="true" />
+                        <span>Share proof</span>
+                      </button>
+                    )}
                   </div>
                   <p
                     style={{

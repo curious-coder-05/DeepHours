@@ -18,7 +18,7 @@
     },
     "StudyGroupDoc": {
       "title": "StudyGroupDoc",
-      "description": "Private invite-code study group document holding up to 50 anonymous member stat entries",
+      "description": "Private invite-code study group document holding up to 50 anonymous member stat entries (each with optional bounded activeSession live co-study aura: { startedAt, subjectLabel, subjectColor } | null)",
       "type": "object",
       "properties": {
         "name": {

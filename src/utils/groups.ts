@@ -48,10 +48,16 @@ export const GROUP_PUBLISH_MIN_INTERVAL_MS = 10_000; // 10 seconds minimum inter
 export const GROUP_CACHE_STALE_MS = 5 * 60_000; // 5 minutes
 export const GROUP_AUTO_REFRESH_MS = 3 * 60_000; // legacy constant kept for exports
 export const GROUP_MANUAL_REFRESH_COOLDOWN_MS = 60_000; // 60 seconds
-export const GROUP_LIVE_DURATION_MS = 60 * 60_000; // 60 minutes
-export const GROUP_LIVE_REFRESH_MS = 45 * 60_000; // 45 minutes
+export const GROUP_LIVE_DURATION_MS = 60 * 60_000; // 60 minutes (legacy read fallback)
+export const GROUP_LIVE_REFRESH_MS = 45 * 60_000; // legacy constant kept for exports
 export const GROUP_LIVE_PAUSE_CLEAR_MS = 6_000; // 6 seconds
-export const GROUP_LIVE_FETCH_MAX_AGE_MS = 15 * 60_000; // 15 minutes
+export const GROUP_LIVE_FETCH_MAX_AGE_MS = 15 * 60_000; // 15 minutes (legacy live fallback)
+
+/** Spark-quota-safe Zero-Chat Live Co-Study Aura constants (v29) */
+export const LIVE_AURA_START_DEBOUNCE_MS = 15_000; // 15s debounce skips accidental start-cancel taps
+export const LIVE_AURA_MAX_AGE_MS = 6 * 60 * 60_000; // 6h stale guard (21,600,000 ms)
+export const LIVE_AURA_MAX_FUTURE_MS = 5 * 60_000; // 5m future-clock guard
+export const LIVE_AURA_PRIVACY_STORAGE_KEY = 'dh_live_aura_enabled_v1';
 
 export type CheerEmoji = '👏' | '🔥' | '💪';
 export const ALLOWED_CHEER_EMOJIS: readonly CheerEmoji[] = ['👏', '🔥', '💪'];
@@ -64,6 +70,12 @@ export interface GroupGoal {
 export interface GroupLiveStatus {
   since: number;
   until: number;
+}
+
+export interface ActiveSessionAura {
+  startedAt: number;
+  subjectLabel: string;
+  subjectColor: string;
 }
 
 export interface GroupMockEntry {
@@ -87,6 +99,7 @@ export interface MemberEntry {
   consistency?: number;
   mocks?: GroupMockEntry[];
   live?: GroupLiveStatus | null;
+  activeSession?: ActiveSessionAura | null;
   weeks?: Record<string, GroupWeekHistoryEntry>;
 }
 
@@ -365,6 +378,8 @@ export function sanitizeRemoteMemberEntry(
     }
   }
 
+  const activeSession = sanitizeActiveSessionAura(rec.activeSession);
+
   const weeks: Record<string, GroupWeekHistoryEntry> = {};
   if (rec.weeks && typeof rec.weeks === 'object' && !Array.isArray(rec.weeks)) {
     const entries: Array<[string, GroupWeekHistoryEntry]> = [];
@@ -396,6 +411,7 @@ export function sanitizeRemoteMemberEntry(
     ...(sh.s && !paused ? { streak: streak ?? 0, consistency: consistency ?? 0 } : {}),
     ...(sh.m && !paused ? { mocks } : {}),
     ...(sh.l && !paused && live ? { live } : {}),
+    ...(sh.l && !paused && activeSession ? { activeSession } : {}),
     ...(Object.keys(weeks).length > 0 ? { weeks } : {}),
   };
 }
@@ -482,6 +498,7 @@ export function buildMyMemberEntry(
     sh: GroupSharingFlags;
     paused?: boolean;
     live?: GroupLiveStatus | null;
+    activeSession?: ActiveSessionAura | null;
     groupId?: string;
     existingWeeks?: Record<string, GroupWeekHistoryEntry>;
     now?: number;
@@ -603,7 +620,7 @@ export function buildMyMemberEntry(
     }
   }
 
-  // 6. Live studying status
+  // 6. Live studying status (legacy `live` + v29 zero-heartbeat `activeSession`)
   const live =
     sh.l && options.live && options.live.until > now
       ? {
@@ -611,6 +628,11 @@ export function buildMyMemberEntry(
           until: Math.floor(options.live.until),
         }
       : undefined;
+
+  const sanitizedActiveSession =
+    sh.l && options.activeSession
+      ? sanitizeActiveSessionAura(options.activeSession)
+      : null;
 
   return {
     nick,
@@ -624,6 +646,7 @@ export function buildMyMemberEntry(
     ...(sh.s ? { streak, consistency } : {}),
     ...(sh.m ? { mocks } : {}),
     ...(live ? { live } : {}),
+    activeSession: sanitizedActiveSession,
     ...(Object.keys(weeksMap).length > 0 ? { weeks: weeksMap } : {}),
   };
 }
@@ -1091,32 +1114,311 @@ export function computeWeeklyGroupGoalProgress(
   };
 }
 
+export function sanitizeActiveSessionAura(
+  raw: unknown
+): ActiveSessionAura | null {
+  if (!raw || typeof raw !== 'object' || Array.isArray(raw)) return null;
+  const rec = raw as Record<string, unknown>;
+  const startedAt = Number(rec.startedAt);
+  if (!Number.isFinite(startedAt) || startedAt <= 0) return null;
+  const subjectLabel = sanitizePlainText(rec.subjectLabel, 40, '');
+  if (!subjectLabel) return null;
+  const rawColor =
+    typeof rec.subjectColor === 'string' ? rec.subjectColor.trim() : '';
+  const safeColor =
+    /^#[0-9a-fA-F]{3,8}$/.test(rawColor) ||
+    /^(?:rgb|hsl)a?\([0-9.,%\s]+\)$/.test(rawColor)
+      ? rawColor.slice(0, 24)
+      : '#F5C451';
+  return {
+    startedAt: Math.floor(startedAt),
+    subjectLabel,
+    subjectColor: safeColor,
+  };
+}
+
 /**
- * Returns members who are actively studying right now (Milestone 2.1):
- * - sh.l is true and !paused
- * - live.until > now
- * - snapshot fetchedAt is < 15 minutes ago
+ * Staleness protection for zero-heartbeat Live Co-Study Aura:
+ * - Returns false if null/invalid
+ * - Treats sessions older than 6 hours (`now - startedAt > 21_600_000`) as inactive
+ * - Treats future timestamps > 5 minutes ahead (`startedAt - now > 300_000`) as inactive
+ */
+export function isLiveAuraActive(
+  activeSession: ActiveSessionAura | null | undefined,
+  now = Date.now()
+): boolean {
+  if (!activeSession) return false;
+  const startedAt = Number(activeSession.startedAt);
+  if (!Number.isFinite(startedAt) || startedAt <= 0) return false;
+  if (now - startedAt > LIVE_AURA_MAX_AGE_MS) return false;
+  if (startedAt - now > LIVE_AURA_MAX_FUTURE_MS) return false;
+  return Boolean(
+    typeof activeSession.subjectLabel === 'string' &&
+      activeSession.subjectLabel.trim().length > 0
+  );
+}
+
+export function formatLiveAuraElapsed(
+  startedAt: number,
+  now = Date.now()
+): string {
+  const diffMs = Math.max(0, now - startedAt);
+  const totalMins = Math.floor(diffMs / 60_000);
+  if (totalMins < 1) return '<1m';
+  if (totalMins < 60) return `${totalMins}m`;
+  const h = Math.floor(totalMins / 60);
+  const m = totalMins % 60;
+  return m > 0 ? `${h}h ${m}m` : `${h}h`;
+}
+
+export function buildActiveSessionAuraPayload(params: {
+  startedAt: number;
+  mode?: string;
+  subjectId?: string;
+  subjectName?: string;
+  subjectColor?: string;
+  isExamHall?: boolean;
+}): ActiveSessionAura {
+  const startedAt = Math.max(1, Math.floor(params.startedAt || Date.now()));
+  if (params.isExamHall) {
+    return {
+      startedAt,
+      subjectLabel: 'Exam Hall',
+      subjectColor: '#F5C451',
+    };
+  }
+  const subNorm = String(params.subjectId || '').toLowerCase();
+  const isAllSubjects =
+    subNorm === 'sub_all_subjects' ||
+    subNorm === 'sub_general' ||
+    subNorm === 'all_subjects';
+  if (params.mode === 'fullMock' && isAllSubjects) {
+    return {
+      startedAt,
+      subjectLabel: 'Full Mock',
+      subjectColor: '#F5C451',
+    };
+  }
+  const cleanLabel = sanitizePlainText(
+    params.subjectName || (params.mode === 'fullMock' ? 'Full Mock' : 'Deep Study'),
+    40,
+    'Deep Study'
+  );
+  const rawColor = (params.subjectColor || '').trim();
+  const safeColor =
+    /^#[0-9a-fA-F]{3,8}$/.test(rawColor) ? rawColor.slice(0, 24) : '#F5C451';
+  return {
+    startedAt,
+    subjectLabel: cleanLabel,
+    subjectColor: safeColor,
+  };
+}
+
+export function loadLiveAuraPrivacyEnabled(
+  storage?: Pick<Storage, 'getItem'>
+): boolean {
+  try {
+    const store =
+      storage || (typeof window !== 'undefined' ? window.localStorage : null);
+    if (!store) return true;
+    const raw = store.getItem(LIVE_AURA_PRIVACY_STORAGE_KEY);
+    if (raw === null) return true;
+    return raw !== '0' && raw !== 'false';
+  } catch {
+    return true;
+  }
+}
+
+export function saveLiveAuraPrivacyEnabled(
+  enabled: boolean,
+  storage?: Pick<Storage, 'setItem'>
+): void {
+  try {
+    const store =
+      storage || (typeof window !== 'undefined' ? window.localStorage : null);
+    if (!store) return;
+    store.setItem(LIVE_AURA_PRIVACY_STORAGE_KEY, enabled ? '1' : '0');
+  } catch {
+    // Ignore storage errors
+  }
+}
+
+function areActiveAurasEqual(
+  a: ActiveSessionAura | null,
+  b: ActiveSessionAura | null
+): boolean {
+  if (a === b) return true;
+  if (!a || !b) return false;
+  return (
+    a.startedAt === b.startedAt &&
+    a.subjectLabel === b.subjectLabel &&
+    a.subjectColor === b.subjectColor
+  );
+}
+
+/**
+ * Spark-quota-safe zero-heartbeat Live Co-Study Aura controller:
+ * - Debounces start writes by 15 seconds so quick start-cancel taps consume 0 writes.
+ * - Publishes ONCE on confirmed session start and ONCE (`null`) on pause/stop/signout.
+ * - Never schedules periodic keepalive/heartbeat writes while studying.
+ * - Honors local privacy toggle (`setEnabled(false)` skips all writes & clears any published aura).
+ */
+export class LiveAuraPresenceController {
+  private readonly debounceMs: number;
+  private readonly onPublish: (aura: ActiveSessionAura | null) => void | Promise<void>;
+  private readonly scheduleTimer: (fn: () => void, ms: number) => ReturnType<typeof setTimeout>;
+  private readonly cancelTimer: (id: ReturnType<typeof setTimeout>) => void;
+
+  private enabled: boolean;
+  private pendingTimer: ReturnType<typeof setTimeout> | null = null;
+  private pendingAura: ActiveSessionAura | null = null;
+  private publishedAura: ActiveSessionAura | null = null;
+
+  constructor(opts: {
+    debounceMs?: number;
+    enabled?: boolean;
+    onPublish: (aura: ActiveSessionAura | null) => void | Promise<void>;
+    scheduleTimer?: (fn: () => void, ms: number) => ReturnType<typeof setTimeout>;
+    cancelTimer?: (id: ReturnType<typeof setTimeout>) => void;
+  }) {
+    this.debounceMs = opts.debounceMs ?? LIVE_AURA_START_DEBOUNCE_MS;
+    this.enabled = opts.enabled ?? true;
+    this.onPublish = opts.onPublish;
+    this.scheduleTimer = opts.scheduleTimer ?? ((fn, ms) => setTimeout(fn, ms));
+    this.cancelTimer = opts.cancelTimer ?? ((id) => clearTimeout(id));
+  }
+
+  private clearPending(): void {
+    if (this.pendingTimer !== null) {
+      this.cancelTimer(this.pendingTimer);
+      this.pendingTimer = null;
+    }
+    this.pendingAura = null;
+  }
+
+  public getPublishedAura(): ActiveSessionAura | null {
+    return this.publishedAura;
+  }
+
+  public setEnabled(enabled: boolean): void {
+    this.enabled = enabled;
+    if (!enabled) {
+      this.clearPending();
+      if (this.publishedAura !== null) {
+        this.publishedAura = null;
+        void this.onPublish(null);
+      }
+    }
+  }
+
+  public handleSessionChange(nextAura: ActiveSessionAura | null): void {
+    if (!this.enabled) {
+      this.clearPending();
+      if (this.publishedAura !== null) {
+        this.publishedAura = null;
+        void this.onPublish(null);
+      }
+      return;
+    }
+
+    if (!nextAura) {
+      this.clearPending();
+      if (this.publishedAura !== null) {
+        this.publishedAura = null;
+        void this.onPublish(null);
+      }
+      return;
+    }
+
+    if (areActiveAurasEqual(this.publishedAura, nextAura)) {
+      this.clearPending();
+      return;
+    }
+
+    if (areActiveAurasEqual(this.pendingAura, nextAura) && this.pendingTimer !== null) {
+      return;
+    }
+
+    this.clearPending();
+    this.pendingAura = nextAura;
+    this.pendingTimer = this.scheduleTimer(() => {
+      this.pendingTimer = null;
+      const toPublish = this.pendingAura;
+      this.pendingAura = null;
+      if (!this.enabled || !toPublish) return;
+      if (areActiveAurasEqual(this.publishedAura, toPublish)) return;
+      this.publishedAura = toPublish;
+      void this.onPublish(toPublish);
+    }, this.debounceMs);
+  }
+
+  public async clearImmediately(): Promise<void> {
+    this.clearPending();
+    if (this.publishedAura !== null) {
+      this.publishedAura = null;
+      await this.onPublish(null);
+    }
+  }
+
+  public dispose(): void {
+    this.clearPending();
+  }
+}
+
+export interface StudyingNowMember {
+  uid: string;
+  nick: string;
+  emoji: string;
+  since: number;
+  until: number;
+  elapsedMins: number;
+  elapsedLabel: string;
+  subjectLabel: string;
+  subjectColor: string;
+  isLiveAura: boolean;
+}
+
+/**
+ * Returns members who are actively studying right now:
+ * - Prefers v29 zero-heartbeat `activeSession` validated via `isLiveAuraActive` (<= 6h stale guard, <= 5m future guard)
+ * - Falls back to legacy `entry.live` (when snapshot fetchedAt < 15m ago) for backward compatibility
  */
 export function getActiveStudyingNowMembers(
   group: GroupDoc,
   fetchedAt: number,
   now = Date.now()
-): Array<{ uid: string; nick: string; emoji: string; since: number; until: number; elapsedMins: number }> {
-  if (now - fetchedAt >= GROUP_LIVE_FETCH_MAX_AGE_MS) {
-    return [];
-  }
-  const active: Array<{
-    uid: string;
-    nick: string;
-    emoji: string;
-    since: number;
-    until: number;
-    elapsedMins: number;
-  }> = [];
+): StudyingNowMember[] {
+  const legacyFresh = now - fetchedAt < GROUP_LIVE_FETCH_MAX_AGE_MS;
+  const active: StudyingNowMember[] = [];
+
   for (const [uid, entry] of Object.entries(group.members || {})) {
-    if (!entry || entry.paused || !entry.sh?.l || !entry.live) continue;
-    if (entry.live.until > now && entry.live.since <= now + 60_000) {
-      const elapsedMins = Math.max(1, Math.floor((now - entry.live.since) / 60000));
+    if (!entry || entry.paused || !entry.sh?.l) continue;
+
+    if (isLiveAuraActive(entry.activeSession, now) && entry.activeSession) {
+      const startedAt = entry.activeSession.startedAt;
+      const elapsedMins = Math.max(1, Math.floor((now - startedAt) / 60_000));
+      active.push({
+        uid,
+        nick: entry.nick,
+        emoji: entry.emoji,
+        since: startedAt,
+        until: startedAt + LIVE_AURA_MAX_AGE_MS,
+        elapsedMins,
+        elapsedLabel: formatLiveAuraElapsed(startedAt, now),
+        subjectLabel: entry.activeSession.subjectLabel,
+        subjectColor: entry.activeSession.subjectColor,
+        isLiveAura: true,
+      });
+      continue;
+    }
+
+    if (
+      legacyFresh &&
+      entry.live &&
+      entry.live.until > now &&
+      entry.live.since <= now + 60_000
+    ) {
+      const elapsedMins = Math.max(1, Math.floor((now - entry.live.since) / 60_000));
       active.push({
         uid,
         nick: entry.nick,
@@ -1124,9 +1426,14 @@ export function getActiveStudyingNowMembers(
         since: entry.live.since,
         until: entry.live.until,
         elapsedMins,
+        elapsedLabel: formatLiveAuraElapsed(entry.live.since, now),
+        subjectLabel: 'Studying',
+        subjectColor: '#F5C451',
+        isLiveAura: false,
       });
     }
   }
+
   active.sort((a, b) => b.elapsedMins - a.elapsedMins || a.nick.localeCompare(b.nick));
   return active;
 }
@@ -2016,6 +2323,7 @@ export async function publishMyEntryToGroup(params: {
   sh: GroupSharingFlags;
   paused?: boolean;
   live?: GroupLiveStatus | null;
+  activeSession?: ActiveSessionAura | null;
   budget: GroupPublishBudgetController;
   force?: boolean;
 }): Promise<MemberEntry | null> {
@@ -2033,6 +2341,7 @@ export async function publishMyEntryToGroup(params: {
     sh: params.sh,
     paused: params.paused,
     live: params.live,
+    activeSession: params.activeSession,
     groupId: params.groupId,
     existingWeeks,
     now,

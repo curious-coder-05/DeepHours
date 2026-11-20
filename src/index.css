@@ -4512,6 +4512,1327 @@ body.desk-mode .retro-dial-svg {
   max-width: 100%;
   min-width: 0;
 }
+
+/* ============================================================================
+   v28 — StandBy Desk Mode, NEET Chess-Clock Exam Hall & Parking Lot
+   ============================================================================ */
+
+/* 1.5s Press-and-Hold Radial Progress Button */
+.dh-hold-btn {
+  position: relative;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  min-height: 48px;
+  padding: 0 16px 0 10px;
+  border-radius: 14px;
+  background: color-mix(in srgb, var(--err) 14%, rgba(20, 12, 14, 0.82));
+  border: 1px solid color-mix(in srgb, var(--err) 40%, rgba(255, 255, 255, 0.08));
+  color: var(--err-ink);
+  font-size: 14px;
+  font-weight: 600;
+  white-space: nowrap;
+  user-select: none;
+  -webkit-user-select: none;
+  touch-action: none;
+  backdrop-filter: blur(14px);
+  -webkit-backdrop-filter: blur(14px);
+  transition:
+    transform var(--dur-fast) var(--ease-out),
+    background-color var(--dur-fast) var(--ease-out),
+    border-color var(--dur-fast) var(--ease-out);
+}
+
+.dh-hold-btn.is-compact {
+  min-height: 42px;
+  padding: 0 14px 0 8px;
+  font-size: 13px;
+}
+
+.dh-hold-btn.is-holding {
+  transform: scale(0.97);
+  background: color-mix(in srgb, var(--err) 24%, rgba(26, 12, 15, 0.92));
+  border-color: color-mix(in srgb, var(--err) 72%, rgba(255, 255, 255, 0.16));
+}
+
+.dh-hold-ring-wrap {
+  position: relative;
+  width: 28px;
+  height: 28px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
+}
+
+.dh-hold-ring-svg {
+  position: absolute;
+  inset: 0;
+}
+
+.dh-hold-ring-icon {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.dh-hold-btn-label {
+  line-height: 1;
+}
+
+/* Park Thought Trigger & Badge */
+.dh-park-trigger-pill {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  min-height: 36px;
+  padding: 0 12px;
+  border-radius: 99px;
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--tx);
+  white-space: nowrap;
+}
+
+.dh-park-badge {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 19px;
+  height: 19px;
+  padding: 0 5px;
+  border-radius: 99px;
+  background: var(--ac-soft);
+  border: 1px solid color-mix(in srgb, var(--ac) 36%, transparent);
+  color: var(--ac-ink);
+  font-size: 12px;
+  font-weight: 700;
+  line-height: 1;
+}
+
+/* Parking Lot Sheet & Wrap-Up Parked List */
+.dh-parking-form {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.dh-parking-input {
+  flex: 1;
+  min-width: 0;
+  min-height: 48px;
+  font-size: 14px;
+}
+
+.dh-parking-list,
+.dh-wrapup-parked-list {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.dh-parking-list-head {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--tx-2);
+}
+
+.dh-parking-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  padding: 10px 12px;
+  border-radius: 12px;
+  background: var(--sf-2);
+  border: 1px solid var(--hairline);
+}
+
+.dh-parking-row-text {
+  font-size: 14px;
+  color: var(--tx);
+  line-height: 1.35;
+  min-width: 0;
+  flex: 1;
+  word-break: break-word;
+}
+
+.dh-parking-dismiss-btn {
+  width: 34px;
+  height: 34px;
+  min-width: 34px;
+  min-height: 34px;
+  padding: 0;
+  border-radius: 10px;
+  background: transparent;
+  border: 1px solid var(--hairline);
+  color: var(--tx-3);
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
+}
+
+.dh-parking-dismiss-btn:hover:not(:disabled) {
+  background: var(--sf-3);
+  color: var(--tx);
+}
+
+.dh-wrapup-parked-row {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding: 10px 12px;
+  border-radius: 13px;
+  background: var(--glass-pill);
+  border: 1px solid var(--glass-bd);
+}
+
+.dh-wrapup-parked-text {
+  font-size: 14px;
+  color: var(--tx);
+  line-height: 1.38;
+  word-break: break-word;
+}
+
+.dh-wrapup-parked-actions {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+}
+
+.dh-wrapup-task-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  min-height: 34px;
+  padding: 0 11px;
+  border-radius: 10px;
+  font-size: 13px;
+  font-weight: 600;
+}
+
+/* ============================================================================
+   AMOLED StandBy Desk Mode Overlay (Pure #000000, Zero WebGL, OLED Shift)
+   ============================================================================ */
+.dh-standby-overlay {
+  position: fixed;
+  inset: 0;
+  z-index: 60;
+  background: #000000;
+  color: #f3f5f8;
+  display: flex;
+  flex-direction: column;
+  justify-content: space-between;
+  align-items: center;
+  padding: calc(14px + var(--sa)) calc(16px + env(safe-area-inset-right, 0px))
+    calc(18px + var(--sb)) calc(16px + env(safe-area-inset-left, 0px));
+  overflow: hidden;
+  user-select: none;
+  -webkit-user-select: none;
+  touch-action: manipulation;
+}
+
+.dh-standby-overlay.is-night-dim {
+  color: #c2512b;
+}
+
+.dh-standby-overlay.is-night-dim .dh-standby-subject-label,
+.dh-standby-overlay.is-night-dim .dh-standby-exam-label,
+.dh-standby-overlay.is-night-dim .dh-standby-pad-name,
+.dh-standby-overlay.is-night-dim .dh-standby-pad-foot,
+.dh-standby-overlay.is-night-dim .dh-standby-pad-visits {
+  color: #8f371c;
+}
+
+.dh-standby-overlay.is-night-dim .dh-standby-clock,
+.dh-standby-overlay.is-night-dim .dh-standby-exam-total,
+.dh-standby-overlay.is-night-dim .dh-standby-pad-clock {
+  color: #c9562e;
+}
+
+.dh-standby-overlay.is-night-dim .dh-standby-pad {
+  background: #050201;
+  border-color: rgba(184, 74, 39, 0.24);
+}
+
+.dh-standby-overlay.is-night-dim .dh-standby-pad.is-active {
+  background: #0d0402;
+  border-color: rgba(201, 86, 46, 0.65);
+}
+
+.dh-standby-bar {
+  width: 100%;
+  max-width: 960px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  flex-wrap: wrap;
+  opacity: 0;
+  pointer-events: none;
+  transform: translateY(-6px);
+  transition:
+    opacity var(--dur-mid) var(--ease-out),
+    transform var(--dur-mid) var(--ease-out);
+  z-index: 4;
+}
+
+.dh-standby-bar-top {
+  flex-wrap: nowrap;
+  align-items: flex-start;
+}
+
+.dh-standby-bar-bottom {
+  justify-content: center;
+  gap: 10px;
+  transform: translateY(6px);
+}
+
+.dh-standby-bar.is-visible {
+  opacity: 1;
+  pointer-events: auto;
+  transform: translateY(0);
+}
+
+.dh-standby-bar-group {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  flex-wrap: wrap;
+  flex: 1 1 auto;
+  min-width: 0;
+}
+
+.dh-standby-exit-pill {
+  flex-shrink: 0;
+}
+
+.dh-standby-pill {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 5px;
+  min-height: 40px;
+  padding: 0 11px;
+  border-radius: 12px;
+  background: rgba(20, 23, 29, 0.78);
+  border: 1px solid rgba(255, 255, 255, 0.12);
+  color: #e6ebf2;
+  font-size: 13px;
+  font-weight: 600;
+  white-space: nowrap;
+  backdrop-filter: blur(16px);
+  -webkit-backdrop-filter: blur(16px);
+}
+
+.dh-standby-pill.is-active {
+  background: rgba(245, 196, 81, 0.16);
+  border-color: rgba(245, 196, 81, 0.44);
+  color: #f5c451;
+}
+
+.dh-standby-transport-pill {
+  min-height: 48px;
+  padding: 0 18px;
+  font-size: 14px;
+}
+
+.dh-standby-hint {
+  font-size: 13px;
+  color: rgba(255, 255, 255, 0.45);
+}
+
+.dh-standby-stage {
+  flex: 1;
+  width: 100%;
+  max-width: 980px;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  will-change: transform;
+  transition: transform 1.2s var(--ease-out);
+}
+
+.dh-standby-focus-core {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  text-align: center;
+  gap: 12px;
+  width: 100%;
+  padding: 0 8px;
+}
+
+.dh-standby-meta {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  max-width: 92vw;
+  font-size: 15px;
+  font-weight: 500;
+  color: rgba(243, 245, 248, 0.62);
+}
+
+.dh-standby-subject-dot {
+  width: 9px;
+  height: 9px;
+  border-radius: 50%;
+  flex-shrink: 0;
+}
+
+.dh-standby-subject-label {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.dh-standby-paused-tag {
+  padding: 2px 8px;
+  border-radius: 99px;
+  background: rgba(245, 196, 81, 0.14);
+  border: 1px solid rgba(245, 196, 81, 0.34);
+  color: #f5c451;
+  font-size: 13px;
+  font-weight: 600;
+  flex-shrink: 0;
+}
+
+.dh-standby-clock {
+  font-family: var(--font-mono);
+  font-size: clamp(4.1rem, 20vw, 10rem);
+  font-weight: 700;
+  line-height: 1;
+  letter-spacing: -0.04em;
+  color: #f5f7fa;
+  white-space: nowrap;
+}
+
+.dh-standby-overtime {
+  font-family: var(--font-mono);
+  font-size: 15px;
+  font-weight: 600;
+  color: var(--ok-ink);
+}
+
+/* StandBy Exam Mode Layout (Portrait & Landscape Responsive) */
+.dh-standby-exam-core {
+  width: 100%;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 14px;
+}
+
+.dh-standby-exam-header {
+  display: flex;
+  align-items: baseline;
+  justify-content: center;
+  gap: 12px;
+  flex-wrap: wrap;
+}
+
+.dh-standby-exam-label {
+  font-size: 14px;
+  font-weight: 600;
+  color: rgba(243, 245, 248, 0.56);
+}
+
+.dh-standby-exam-total {
+  font-family: var(--font-mono);
+  font-size: clamp(1.65rem, 6vw, 2.5rem);
+  font-weight: 700;
+  line-height: 1.05;
+  letter-spacing: -0.03em;
+  color: #f5f7fa;
+}
+
+.dh-standby-exam-total.is-overtime {
+  color: var(--err-ink);
+}
+
+.dh-standby-exam-grid {
+  width: 100%;
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 10px;
+}
+
+.dh-standby-pad {
+  display: flex;
+  flex-direction: column;
+  justify-content: space-between;
+  align-items: flex-start;
+  gap: 8px;
+  min-height: 124px;
+  padding: 14px;
+  border-radius: 18px;
+  background: #08090c;
+  border: 1.5px solid rgba(255, 255, 255, 0.1);
+  color: #f3f5f8;
+  text-align: left;
+  transition:
+    transform var(--dur-fast) var(--ease-out),
+    border-color var(--dur-fast) var(--ease-out),
+    background-color var(--dur-fast) var(--ease-out);
+}
+
+.dh-standby-pad:active {
+  transform: scale(0.98);
+}
+
+.dh-standby-pad.is-active {
+  background: color-mix(in srgb, var(--pad-color, var(--ac)) 12%, #07080a);
+  border-color: var(--pad-color, var(--ac));
+}
+
+.dh-standby-pad-top {
+  width: 100%;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 6px;
+}
+
+.dh-standby-pad-name {
+  font-size: 14px;
+  font-weight: 600;
+  color: rgba(243, 245, 248, 0.85);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.dh-standby-pad-visits {
+  font-size: 13px;
+  font-weight: 600;
+  color: rgba(243, 245, 248, 0.5);
+  flex-shrink: 0;
+}
+
+.dh-standby-pad-clock {
+  font-family: var(--font-mono);
+  font-size: clamp(1.35rem, 6.2vw, 2.35rem);
+  font-weight: 700;
+  line-height: 1.05;
+  letter-spacing: -0.03em;
+  color: #ffffff;
+  white-space: nowrap;
+}
+
+.dh-standby-pad.is-overtime .dh-standby-pad-clock {
+  color: var(--err-ink);
+  font-size: clamp(1rem, 4.15vw, 2.05rem);
+}
+
+.dh-standby-pad-foot {
+  font-size: 13px;
+  color: rgba(243, 245, 248, 0.52);
+  line-height: 1.2;
+}
+
+/* Landscape Mobile StandBy Optimization (e.g. 800x360) */
+@media (orientation: landscape) and (max-height: 460px) {
+  .dh-standby-overlay {
+    padding: 8px 16px 10px;
+  }
+  .dh-standby-clock {
+    font-size: clamp(3.6rem, 15vw, 6.8rem);
+  }
+  .dh-standby-exam-core {
+    gap: 8px;
+  }
+  .dh-standby-exam-total {
+    font-size: 1.55rem;
+  }
+  .dh-standby-exam-grid {
+    grid-template-columns: repeat(4, minmax(0, 1fr));
+    gap: 8px;
+  }
+  .dh-standby-exam-grid.cols-3 {
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+  }
+  .dh-standby-pad {
+    min-height: 108px;
+    padding: 10px 12px;
+    gap: 4px;
+  }
+  .dh-standby-pad-clock,
+  .dh-standby-pad.is-overtime .dh-standby-pad-clock {
+    font-size: clamp(1.08rem, 2.75vw, 1.75rem);
+  }
+  .dh-standby-pill {
+    min-height: 36px;
+    padding: 0 10px;
+  }
+  .dh-standby-transport-pill,
+  .dh-standby-overlay .dh-hold-btn {
+    min-height: 40px;
+  }
+}
+
+/* ============================================================================
+   Exam Hall — NEET 3-Hour Chess-Clock View & Bleed Diagnostic Sheet
+   ============================================================================ */
+.dh-exam-wrap {
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+  margin-bottom: 14px;
+}
+
+.dh-exam-title {
+  margin: 0;
+  font-size: 19px;
+  font-weight: 700;
+  letter-spacing: -0.02em;
+  color: var(--tx);
+}
+
+.dh-exam-sub {
+  margin: 4px 0 0;
+  font-size: 13px;
+  color: var(--tx-2);
+  line-height: 1.4;
+}
+
+.dh-exam-total-badge {
+  flex-shrink: 0;
+  padding: 5px 10px;
+  border-radius: 99px;
+  background: var(--ac-soft);
+  border: 1px solid color-mix(in srgb, var(--ac) 32%, transparent);
+  color: var(--ac-ink);
+  font-size: 13px;
+  font-weight: 700;
+  white-space: nowrap;
+}
+
+.dh-exam-budget-list {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  margin-bottom: 14px;
+}
+
+.dh-exam-budget-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  padding: 10px 12px;
+  border-radius: 13px;
+  background: var(--sf-2);
+  border: 1px solid var(--hairline);
+}
+
+.dh-exam-budget-row.is-disabled {
+  opacity: 0.65;
+}
+
+.dh-exam-budget-left {
+  display: flex;
+  align-items: center;
+  gap: 9px;
+  min-width: 0;
+}
+
+.dh-exam-budget-name {
+  font-size: 14px;
+  font-weight: 600;
+  color: var(--tx);
+}
+
+.dh-exam-budget-controls {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  flex-shrink: 0;
+}
+
+.dh-exam-stepper {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.dh-exam-step-btn {
+  width: 34px;
+  height: 34px;
+  min-width: 34px;
+  min-height: 34px;
+  padding: 0;
+  border-radius: 10px;
+  font-size: 16px;
+  font-weight: 600;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.dh-exam-step-val {
+  min-width: 42px;
+  text-align: center;
+  font-size: 14px;
+  font-weight: 700;
+  color: var(--tx);
+}
+
+.dh-exam-start-picker {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  margin-bottom: 16px;
+}
+
+.dh-exam-start-chips {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
+.dh-exam-start-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  min-height: 38px;
+  padding: 0 12px;
+  border-radius: 99px;
+  background: var(--sf-2);
+  border: 1px solid var(--hairline);
+  color: var(--tx-2);
+  font-size: 13px;
+  font-weight: 600;
+}
+
+.dh-exam-start-chip.is-selected {
+  background: var(--ac-soft);
+  border-color: color-mix(in srgb, var(--ac) 48%, transparent);
+  color: var(--tx);
+}
+
+.dh-exam-live-head {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 10px;
+  margin-bottom: 14px;
+  flex-wrap: wrap;
+}
+
+.dh-exam-live-eyebrow {
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--tx-2);
+}
+
+.dh-exam-live-dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: var(--warn);
+}
+
+.dh-exam-live-dot.is-running {
+  background: var(--ok);
+}
+
+.dh-exam-live-total {
+  font-family: var(--font-mono);
+  font-size: clamp(1.85rem, 7vw, 2.5rem);
+  font-weight: 700;
+  line-height: 1.1;
+  letter-spacing: -0.03em;
+  color: var(--tx);
+  margin-top: 4px;
+}
+
+.dh-exam-live-total.is-overtime {
+  color: var(--err-ink);
+}
+
+.dh-exam-live-top-actions {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  flex-shrink: 0;
+}
+
+.dh-exam-icon-pill {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  min-height: 38px;
+  padding: 0 11px;
+  border-radius: 11px;
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--tx);
+}
+
+.dh-exam-pads-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 10px;
+  margin-bottom: 14px;
+}
+
+.dh-exam-pad {
+  display: flex;
+  flex-direction: column;
+  justify-content: space-between;
+  align-items: flex-start;
+  gap: 8px;
+  min-height: 118px;
+  padding: 13px 12px;
+  border-radius: 16px;
+  background: var(--sf-2);
+  border: 1.5px solid var(--hairline);
+  color: var(--tx);
+  text-align: left;
+  min-width: 0;
+  transition:
+    transform var(--dur-fast) var(--ease-out),
+    border-color var(--dur-fast) var(--ease-out),
+    background-color var(--dur-fast) var(--ease-out);
+}
+
+.dh-exam-pad:active {
+  transform: scale(0.98);
+}
+
+.dh-exam-pad.is-active {
+  background: color-mix(in srgb, var(--pad-color, var(--ac)) 12%, var(--sf-1));
+  border-color: var(--pad-color, var(--ac));
+}
+
+.dh-exam-pad-top {
+  width: 100%;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 6px;
+}
+
+.dh-exam-pad-name {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 13.5px;
+  font-weight: 600;
+  color: var(--tx);
+  min-width: 0;
+  flex: 1 1 auto;
+}
+
+.dh-exam-pad-name-text {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.dh-exam-pad-visits {
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--tx-3);
+  flex-shrink: 0;
+}
+
+.dh-exam-pad-clock {
+  font-family: var(--font-mono);
+  font-size: clamp(1.18rem, 5vw, 1.8rem);
+  font-weight: 700;
+  line-height: 1.08;
+  letter-spacing: -0.03em;
+  color: var(--tx);
+  white-space: nowrap;
+  max-width: 100%;
+}
+
+.dh-exam-pad.is-overtime .dh-exam-pad-clock {
+  color: var(--err-ink);
+  font-size: clamp(0.95rem, 3.85vw, 1.65rem);
+}
+
+.dh-exam-pad-meta {
+  font-size: 13px;
+  color: var(--tx-2);
+  line-height: 1.25;
+}
+
+.dh-exam-pad-overtime-label {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  color: var(--err-ink);
+  font-weight: 600;
+}
+
+/* Slow Amber-to-Crimson Border Pulse for Silent-Room Overtime Awareness */
+@keyframes examOvertimeBorderPulse {
+  0%,
+  100% {
+    border-color: #f59e0b;
+  }
+  50% {
+    border-color: #ef4444;
+  }
+}
+
+.dh-exam-overtime-pulse {
+  animation: examOvertimeBorderPulse 2.4s ease-in-out infinite;
+}
+
+.dh-exam-live-controls {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
+.dh-exam-discard-btn {
+  width: 44px;
+  height: 44px;
+  min-width: 44px;
+  min-height: 44px;
+  padding: 0;
+  border-radius: 12px;
+  background: var(--sf-2);
+  border: 1px solid var(--hairline);
+  color: var(--tx-3);
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.dh-exam-discard-btn:hover:not(:disabled) {
+  color: var(--tx);
+  border-color: var(--line);
+}
+
+.dh-exam-history-row {
+  width: 100%;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  padding: 11px 12px;
+  border-radius: 13px;
+  background: var(--sf-2);
+  border: 1px solid var(--hairline);
+  color: var(--tx);
+}
+
+.dh-exam-history-title {
+  font-size: 14px;
+  font-weight: 600;
+  color: var(--tx);
+}
+
+.dh-exam-history-sub {
+  font-size: 13px;
+  color: var(--tx-2);
+  margin-top: 2px;
+}
+
+.dh-exam-history-link {
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--ac-ink);
+  flex-shrink: 0;
+}
+
+/* Exam Bleed Diagnostic Sheet */
+.dh-bleed-summary-strip {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 8px;
+}
+
+.dh-bleed-stat-box {
+  padding: 11px 12px;
+  border-radius: 13px;
+  background: var(--glass-pill);
+  border: 1px solid var(--glass-bd);
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.dh-bleed-stat-label {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 13px;
+  color: var(--tx-2);
+}
+
+.dh-bleed-stat-val {
+  font-size: 18px;
+  font-weight: 700;
+  color: var(--tx);
+}
+
+.dh-bleed-table {
+  display: flex;
+  flex-direction: column;
+  gap: 7px;
+}
+
+.dh-bleed-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  padding: 10px 12px;
+  border-radius: 13px;
+  background: var(--sf-2);
+  border: 1px solid var(--hairline);
+}
+
+.dh-bleed-row-left {
+  display: flex;
+  align-items: center;
+  gap: 9px;
+  min-width: 0;
+}
+
+.dh-bleed-dot {
+  width: 9px;
+  height: 9px;
+  border-radius: 50%;
+  flex-shrink: 0;
+}
+
+.dh-bleed-sec-name {
+  font-size: 14px;
+  font-weight: 600;
+  color: var(--tx);
+}
+
+.dh-bleed-sec-visits {
+  font-size: 13px;
+  color: var(--tx-3);
+}
+
+.dh-bleed-row-right {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-end;
+  gap: 2px;
+  flex-shrink: 0;
+}
+
+.dh-bleed-ratio {
+  font-size: 14px;
+  font-weight: 600;
+  color: var(--tx);
+}
+
+.dh-bleed-delta {
+  font-size: 13px;
+  font-weight: 600;
+}
+
+.dh-bleed-delta.is-bleed {
+  color: var(--err-ink);
+}
+
+.dh-bleed-delta.is-starved {
+  color: var(--warn-ink);
+}
+
+.dh-bleed-delta.is-target {
+  color: var(--ok-ink);
+}
+
+.dh-bleed-timeline {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.dh-bleed-visit-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 8px 11px;
+  border-radius: 11px;
+  background: var(--sf-2);
+  border: 1px solid var(--hairline);
+  font-size: 13px;
+}
+
+.dh-bleed-visit-idx {
+  color: var(--tx-3);
+  min-width: 20px;
+}
+
+.dh-bleed-visit-name {
+  flex: 1;
+  min-width: 0;
+  color: var(--tx);
+  font-weight: 600;
+}
+
+.dh-bleed-visit-dur {
+  font-family: var(--font-mono);
+  color: var(--tx-2);
+  font-weight: 600;
+}
+
+/* ============================================================================
+   v29 Study Proof Cards & Zero-Chat Live Co-Study Aura
+   ============================================================================ */
+
+.dh-proof-trigger-pill {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  min-height: 36px;
+  padding: 0 12px;
+  border-radius: 99px;
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--tx);
+  white-space: nowrap;
+  flex-shrink: 0;
+}
+
+.dh-proof-sheet {
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+}
+
+.dh-proof-preview-frame {
+  width: 100%;
+  max-width: 340px;
+  margin: 0 auto;
+  aspect-ratio: 4 / 5;
+  border-radius: 20px;
+  overflow: hidden;
+  background: #000000;
+  border: 1px solid var(--glass-bd);
+  box-shadow: var(--glass-specular);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.dh-proof-preview-img {
+  width: 100%;
+  height: 100%;
+  object-fit: contain;
+  display: block;
+}
+
+.dh-proof-preview-placeholder {
+  font-size: 13px;
+  color: var(--tx-2);
+  padding: 20px;
+  text-align: center;
+}
+
+.dh-proof-privacy-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 12px 14px;
+  border-radius: 14px;
+  background: var(--sf-2);
+  border: 1px solid var(--hairline);
+}
+
+.dh-proof-privacy-copy {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 0;
+}
+
+.dh-proof-privacy-title {
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  font-size: 14px;
+  font-weight: 600;
+  color: var(--tx);
+}
+
+.dh-proof-privacy-sub {
+  font-size: 13px;
+  color: var(--tx-2);
+  line-height: 1.35;
+}
+
+.dh-proof-share-cta {
+  width: 100%;
+  min-height: 50px;
+  border-radius: 14px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  font-size: 15px;
+  font-weight: 700;
+}
+
+.dh-btn-gold {
+  background: #f5c451;
+  color: #0b0d10;
+  border: 1px solid color-mix(in srgb, #f5c451 80%, #ffffff);
+  cursor: pointer;
+  transition: transform 0.14s ease, filter 0.14s ease;
+}
+
+.dh-btn-gold:hover:not(:disabled) {
+  filter: brightness(1.05);
+}
+
+.dh-btn-gold:active:not(:disabled) {
+  transform: scale(0.985);
+}
+
+.dh-btn-gold:disabled {
+  opacity: 0.55;
+  cursor: not-allowed;
+}
+
+/* Zero-Chat Live Co-Study Aura */
+.dh-aura-strip {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  padding: 12px 14px;
+  border-radius: 14px;
+  background: var(--sf-2);
+  border: 1px solid color-mix(in srgb, #f5c451 28%, var(--line));
+}
+
+.dh-aura-strip-head {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.dh-aura-dot-live {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: #f5c451;
+  animation: dhAuraDotBreath 2.6s ease-in-out infinite;
+  flex-shrink: 0;
+}
+
+.dh-aura-strip-items {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.dh-aura-pill {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 8px 10px;
+  border-radius: 12px;
+  background: var(--sf-1);
+  border: 1px solid var(--hairline);
+  min-width: 0;
+  max-width: 100%;
+}
+
+.dh-aura-avatar-mini {
+  width: 34px;
+  height: 34px;
+  border-radius: 10px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 17px;
+  background: var(--sf-2);
+  border: 1px solid #f5c451;
+  flex-shrink: 0;
+}
+
+.dh-aura-ring-pulse {
+  box-shadow: 0 0 0 0 rgba(245, 196, 81, 0.42);
+  animation: dhAuraRingPulse 2.8s cubic-bezier(0.22, 1, 0.36, 1) infinite;
+}
+
+@keyframes dhAuraRingPulse {
+  0% {
+    box-shadow: 0 0 0 0 rgba(245, 196, 81, 0.42);
+  }
+  70% {
+    box-shadow: 0 0 0 6px rgba(245, 196, 81, 0);
+  }
+  100% {
+    box-shadow: 0 0 0 0 rgba(245, 196, 81, 0);
+  }
+}
+
+@keyframes dhAuraDotBreath {
+  0%,
+  100% {
+    opacity: 1;
+    transform: scale(1);
+  }
+  50% {
+    opacity: 0.45;
+    transform: scale(0.82);
+  }
+}
+
+.dh-aura-wave-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 5px;
+  min-height: 34px;
+  padding: 0 11px;
+  border-radius: 99px;
+  background: var(--glass-pill);
+  border: 1px solid color-mix(in srgb, #f5c451 35%, var(--glass-bd));
+  color: var(--ac-ink);
+  font-size: 13px;
+  font-weight: 600;
+  white-space: nowrap;
+  flex-shrink: 0;
+  cursor: pointer;
+  transition: background-color 0.14s ease, transform 0.12s ease;
+}
+
+.dh-aura-wave-btn:hover {
+  background: var(--ac-soft);
+}
+
+.dh-aura-wave-btn:active {
+  transform: scale(0.96);
+}
+
+.dh-aura-wave-btn.is-waved {
+  border-color: color-mix(in srgb, var(--ok) 45%, var(--line));
+  color: var(--ok-ink);
+  background: color-mix(in srgb, var(--ok) 12%, transparent);
+}
 }
 
 @media (prefers-reduced-motion: reduce) {

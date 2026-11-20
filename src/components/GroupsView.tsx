@@ -6,9 +6,11 @@ import {
   ChevronUp,
   Copy,
   Crown,
+  Hand,
   KeyRound,
   Lock,
   Plus,
+  Radio,
   RefreshCw,
   Share2,
   ShieldCheck,
@@ -24,6 +26,7 @@ import type {
 } from '../types';
 import {
   ALLOWED_CHEER_EMOJIS,
+  type ActiveSessionAura,
   type CachedGroupSnapshot,
   type CheerEmoji,
   DEFAULT_SHARING_FLAGS,
@@ -43,8 +46,10 @@ import {
   createGroupInCloud,
   fetchGroupSnapshotFromCloud,
   formatGroupCode,
+  formatLiveAuraElapsed,
   formatMinutesAsHoursMins,
   getActiveStudyingNowMembers,
+  isLiveAuraActive,
   joinGroupInCloud,
   leaveGroupInCloud,
   loadCachedGroupSnapshots,
@@ -716,6 +721,9 @@ interface GroupsViewProps {
     standing: { rank: number; of: number; minutes: number; xp: number }
   ) => void;
   onGoToFocus?: () => void;
+  liveAuraEnabled?: boolean;
+  onToggleLiveAuraEnabled?: (enabled: boolean) => void;
+  activeSessionAura?: ActiveSessionAura | null;
   showToast: (msg: string) => void;
 }
 
@@ -732,6 +740,9 @@ export const GroupsView: React.FC<GroupsViewProps> = ({
   onUpdateGroupsConfig,
   onRecordWeekHistory,
   onGoToFocus,
+  liveAuraEnabled = true,
+  onToggleLiveAuraEnabled,
+  activeSessionAura = null,
   showToast,
 }) => {
   const groupsConfig: GroupsUserConfig = state.groupsConfig || {
@@ -800,11 +811,30 @@ export const GroupsView: React.FC<GroupsViewProps> = ({
   const [sentCheersLocal, setSentCheersLocal] = useState<Record<string, CheerEmoji>>({});
 
   const cleanupRanForGroupRef = useRef<Set<string>>(new Set());
+  const [isPageVisible, setIsPageVisible] = useState<boolean>(() =>
+    typeof document === 'undefined' ? true : document.visibilityState === 'visible'
+  );
 
   useEffect(() => {
+    if (typeof document === 'undefined') return;
+    const onVis = () => {
+      const visible = document.visibilityState === 'visible';
+      setIsPageVisible(visible);
+      if (visible && isActive) {
+        setNowTick(Date.now());
+      }
+    };
+    document.addEventListener('visibilitychange', onVis);
+    return () => document.removeEventListener('visibilitychange', onVis);
+  }, [isActive]);
+
+  // Tick local aura durations every 30s strictly while Community tab is active and page is visible
+  useEffect(() => {
+    if (!isActive || !isPageVisible) return;
+    setNowTick(Date.now());
     const iv = setInterval(() => setNowTick(Date.now()), 30_000);
     return () => clearInterval(iv);
-  }, []);
+  }, [isActive, isPageVisible]);
 
   const myPersonalStats = useMemo(() => {
     const xpByDay = computeXpByDay(state);
@@ -1003,21 +1033,6 @@ export const GroupsView: React.FC<GroupsViewProps> = ({
     ]
   );
 
-  const [isPageVisible, setIsPageVisible] = useState<boolean>(() =>
-    typeof document === 'undefined' ? true : document.visibilityState === 'visible'
-  );
-
-  useEffect(() => {
-    if (typeof document === 'undefined') return;
-    const onVisibilityChange = () => {
-      setIsPageVisible(document.visibilityState === 'visible');
-    };
-    document.addEventListener('visibilitychange', onVisibilityChange);
-    return () => {
-      document.removeEventListener('visibilitychange', onVisibilityChange);
-    };
-  }, []);
-
   const onUpdateGroupsConfigRef = useRef(onUpdateGroupsConfig);
   onUpdateGroupsConfigRef.current = onUpdateGroupsConfig;
   const onRecordWeekHistoryRef = useRef(onRecordWeekHistory);
@@ -1185,6 +1200,7 @@ export const GroupsView: React.FC<GroupsViewProps> = ({
         sh: activeGroupPref.sh,
         paused: activeGroupPref.paused,
         live: liveStatus,
+        activeSession: liveAuraEnabled ? activeSessionAura : null,
         budget: groupBudget,
         force: true,
       });
@@ -1395,6 +1411,8 @@ export const GroupsView: React.FC<GroupsViewProps> = ({
         sh: nextSh,
         paused: nextPaused,
         live: nextSh.l && !nextPaused ? liveStatus : null,
+        activeSession:
+          nextSh.l && !nextPaused && liveAuraEnabled ? activeSessionAura : null,
         budget: groupBudget,
         force: true,
       });
@@ -1944,6 +1962,36 @@ export const GroupsView: React.FC<GroupsViewProps> = ({
           />
         </div>
 
+        {/* Local Live Co-Study Aura Privacy Toggle (zero-heartbeat, 15s start debounce) */}
+        {onToggleLiveAuraEnabled && (
+          <div className="split gap-3 rounded-xl border border-[var(--line)] bg-[var(--sf-2)] px-3.5 py-2.5">
+            <div className="min-w-0">
+              <div className="flex items-center gap-2 text-[13.5px] font-semibold text-[var(--tx)]">
+                <Radio
+                  size={15}
+                  strokeWidth={1.9}
+                  style={{
+                    color: liveAuraEnabled ? 'var(--ac-ink)' : 'var(--tx-3)',
+                    flexShrink: 0,
+                  }}
+                  aria-hidden="true"
+                />
+                <span>Share live study aura</span>
+              </div>
+              <p className="mt-0.5 text-[13px] text-[var(--tx-2)]">
+                {liveAuraEnabled
+                  ? 'Shows a quiet subject aura while studying (zero chat, zero heartbeats).'
+                  : 'Invisible mode active — zero live presence updates are sent.'}
+              </p>
+            </div>
+            <Switch
+              checked={liveAuraEnabled}
+              onChange={(checked) => onToggleLiveAuraEnabled(checked)}
+              aria-label="Share live study aura"
+            />
+          </div>
+        )}
+
         {showMyXpDrawer && (
           <div className="space-y-3 border-t border-[var(--line)] pt-3 text-[13px]">
             <div className="split">
@@ -2426,18 +2474,58 @@ export const GroupsView: React.FC<GroupsViewProps> = ({
                   </div>
                 </div>
 
-                {/* Studying Now Strip */}
+                {/* Live Co-Study Aura Strip */}
                 {studyingNowList.length > 0 && (
-                  <div className="rounded-xl border border-[var(--line)] bg-[var(--sf-2)] px-3.5 py-2.5 text-[13px]">
-                    <strong className="text-[var(--ok-ink)]">
-                      Studying right now ({studyingNowList.length}):
-                    </strong>{' '}
-                    {studyingNowList.map((m, idx) => (
-                      <span key={m.uid}>
-                        {idx > 0 ? ' · ' : ''}
-                        {m.emoji} <strong>{m.nick}</strong> ({m.elapsedMins}m)
-                      </span>
-                    ))}
+                  <div className="dh-aura-strip">
+                    <div className="dh-aura-strip-head">
+                      <span className="dh-aura-dot-live" aria-hidden="true" />
+                      <strong className="text-[13.5px] text-[var(--tx)]">
+                        Studying live ({studyingNowList.length})
+                      </strong>
+                    </div>
+                    <div className="dh-aura-strip-items">
+                      {studyingNowList.map((m) => {
+                        const isSelf = m.uid === myUid;
+                        const wavedToday =
+                          sentCheersLocal[`${activeGroupId}_${m.uid}_${todayKey}`] === '👏';
+                        return (
+                          <div key={m.uid} className="dh-aura-pill">
+                            <span className="dh-aura-avatar-mini dh-aura-ring-pulse">
+                              {m.emoji}
+                            </span>
+                            <div className="min-w-0">
+                              <div className="truncate text-[13px] font-semibold text-[var(--tx)]">
+                                {m.nick}
+                                {isSelf ? ' (You)' : ''}
+                              </div>
+                              <div className="tnum flex items-center gap-1.5 text-[13px] text-[var(--tx-2)]">
+                                <span
+                                  className="h-2 w-2 shrink-0 rounded-full"
+                                  style={{ background: m.subjectColor }}
+                                  aria-hidden="true"
+                                />
+                                <span className="truncate">
+                                  {m.subjectLabel} · {m.elapsedLabel}
+                                </span>
+                              </div>
+                            </div>
+                            {!isSelf && (
+                              <button
+                                type="button"
+                                className={`dh-aura-wave-btn ${wavedToday ? 'is-waved' : ''}`}
+                                aria-label={`Send silent focus wave to ${m.nick}`}
+                                onClick={() =>
+                                  handleSendCheer(m.uid, m.nick, '👏')
+                                }
+                              >
+                                <Hand size={13} strokeWidth={2} aria-hidden="true" />
+                                <span>{wavedToday ? 'Waved' : 'Wave'}</span>
+                              </button>
+                            )}
+                          </div>
+                        );
+                      })}
+                    </div>
                   </div>
                 )}
 
@@ -2803,7 +2891,13 @@ export const GroupsView: React.FC<GroupsViewProps> = ({
                                   {rankBadge}
                                 </span>
 
-                                <div className="relative flex h-10 w-10 shrink-0 items-center justify-center rounded-xl border border-[var(--line)] bg-[var(--sf-2)]">
+                                <div
+                                  className={`relative flex h-10 w-10 shrink-0 items-center justify-center rounded-xl border bg-[var(--sf-2)] ${
+                                    isLiveNow
+                                      ? 'dh-aura-ring-pulse border-[var(--ac)]'
+                                      : 'border-[var(--line)]'
+                                  }`}
+                                >
                                   <span className="text-[20px] leading-none">
                                     {row.entry.emoji}
                                   </span>
@@ -2820,7 +2914,7 @@ export const GroupsView: React.FC<GroupsViewProps> = ({
                                     className="absolute -bottom-0.5 -right-0.5 h-3 w-3 rounded-full border-2 border-[var(--sf-1)]"
                                     style={{
                                       background: isLiveNow
-                                        ? 'var(--ok)'
+                                        ? '#F5C451'
                                         : row.entry.paused
                                           ? 'var(--warn)'
                                           : memberTodayMins > 0
@@ -2848,49 +2942,61 @@ export const GroupsView: React.FC<GroupsViewProps> = ({
                                         <span>{memberTimeBadge.label}</span>
                                       </span>
                                     )}
-                                      {isLiveNow && (
+                                    {isLiveNow && liveMemberInfo && (
+                                      <span
+                                        title={liveTooltipText}
+                                        className="tnum inline-flex items-center gap-1.5 rounded-md border border-[var(--ac-line)] bg-[var(--ac-soft)] px-2 py-0.5 text-[13px] font-semibold text-[var(--ac-ink)]"
+                                      >
                                         <span
-                                          title={liveTooltipText}
-                                          className="inline-flex items-center gap-1.5 rounded-md bg-[var(--sf-2)] px-2 py-0.5 text-[13px] font-medium text-[var(--ok-ink)]"
-                                        >
-                                          <span className="h-1.5 w-1.5 rounded-full bg-[var(--ok)]" />
-                                          Studying now
+                                          className="h-2 w-2 rounded-full"
+                                          style={{ background: liveMemberInfo.subjectColor }}
+                                        />
+                                        <span>
+                                          {liveMemberInfo.subjectLabel} ·{' '}
+                                          {isLiveAuraActive(row.entry.activeSession, nowTick) &&
+                                          row.entry.activeSession
+                                            ? formatLiveAuraElapsed(
+                                                row.entry.activeSession.startedAt,
+                                                nowTick
+                                              )
+                                            : liveMemberInfo.elapsedLabel}
                                         </span>
-                                      )}
-                                      {isPaceTarget && (
-                                        <span className="rounded-md bg-[var(--sf-2)] px-2 py-0.5 text-[13px] font-medium text-[var(--ac-ink)]">
-                                          Target
-                                        </span>
-                                      )}
-                                    </div>
-                                    <div className="text-[13px] text-[var(--tx-2)]">
-                                      Updated{' '}
-                                      {formatRelativeAgo(row.entry.updatedAt, nowTick)}
-                                      {row.subLabel ? ` · ${row.subLabel}` : ''} ·{' '}
-                                      <span className="text-[var(--ac-ink)]">
-                                        {isExpanded ? 'Hide ▴' : 'Compare ▾'}
                                       </span>
-                                    </div>
+                                    )}
+                                    {isPaceTarget && (
+                                      <span className="rounded-md bg-[var(--sf-2)] px-2 py-0.5 text-[13px] font-medium text-[var(--ac-ink)]">
+                                        Target
+                                      </span>
+                                    )}
+                                  </div>
+                                  <div className="text-[13px] text-[var(--tx-2)]">
+                                    Updated{' '}
+                                    {formatRelativeAgo(row.entry.updatedAt, nowTick)}
+                                    {row.subLabel ? ` · ${row.subLabel}` : ''} ·{' '}
+                                    <span className="text-[var(--ac-ink)]">
+                                      {isExpanded ? 'Hide ▴' : 'Compare ▾'}
+                                    </span>
                                   </div>
                                 </div>
+                              </div>
 
-                                <div
-                                  className="flex items-center gap-2"
-                                  onClick={(e) => e.stopPropagation()}
-                                >
-                                  <div className="text-right">
-                                    <div className="flex items-center justify-end gap-1.5">
-                                      {(rowRankTrend.direction === 'up' ||
-                                        rowRankTrend.direction === 'down') && (
-                                        <span
-                                          className="tnum rounded bg-[var(--sf-2)] px-1.5 py-0.5 text-[13px] font-semibold"
-                                          style={{
-                                            color:
-                                              rowRankTrend.direction === 'up'
-                                                ? 'var(--ok-ink)'
-                                                : 'var(--err-ink)',
-                                          }}
-                                        >
+                              <div
+                                className="flex items-center gap-2"
+                                onClick={(e) => e.stopPropagation()}
+                              >
+                                <div className="text-right">
+                                  <div className="flex items-center justify-end gap-1.5">
+                                    {(rowRankTrend.direction === 'up' ||
+                                      rowRankTrend.direction === 'down') && (
+                                      <span
+                                        className="tnum rounded bg-[var(--sf-2)] px-1.5 py-0.5 text-[13px] font-semibold"
+                                        style={{
+                                          color:
+                                            rowRankTrend.direction === 'up'
+                                              ? 'var(--ok-ink)'
+                                              : 'var(--err-ink)',
+                                        }}
+                                      >
                                         {rowRankTrend.direction === 'up' ? '▲' : '▼'}
                                         {rowRankTrend.delta > 1
                                           ? rowRankTrend.delta
@@ -2903,7 +3009,28 @@ export const GroupsView: React.FC<GroupsViewProps> = ({
                                   </div>
                                 </div>
 
-                                {!isMe && (
+                                {!isMe && isLiveNow && (
+                                  <button
+                                    type="button"
+                                    onClick={() =>
+                                      handleSendCheer(
+                                        row.uid,
+                                        row.entry.nick,
+                                        '👏'
+                                      )
+                                    }
+                                    aria-label={`Send silent focus wave to ${row.entry.nick}`}
+                                    title={`Wave silently at ${row.entry.nick}`}
+                                    className={`dh-aura-wave-btn ${
+                                      sentCheer === '👏' ? 'is-waved' : ''
+                                    }`}
+                                  >
+                                    <Hand size={13} strokeWidth={2} aria-hidden="true" />
+                                    <span>{sentCheer === '👏' ? 'Waved' : 'Wave'}</span>
+                                  </button>
+                                )}
+
+                                {!isMe && !isLiveNow && (
                                   <div className="flex items-center gap-1">
                                     {ALLOWED_CHEER_EMOJIS.map((ce) => (
                                       <button

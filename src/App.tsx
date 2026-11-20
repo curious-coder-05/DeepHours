@@ -80,11 +80,27 @@ import {
   saveMockDiagnostic,
 } from './utils/mockDiagnostics';
 import type {
+  ActiveSessionAura,
   GroupLiveStatus,
   GroupPublishBudgetController,
+  LiveAuraPresenceController,
 } from './utils/groups';
 import type { SyncBudgetController } from './utils/cloudSync';
 import { emitTimerTick } from './utils/timerTicker';
+import {
+  ALL_SUBJECTS_COLOR,
+  ALL_SUBJECTS_LABEL,
+  ALL_SUBJECTS_MOCK_ID,
+  buildExamHallStudySession,
+  hasLoggedExamHallRecord,
+  isAllSubjectsMockId,
+  markExamHallRecordLogged,
+} from './utils/focusSessionHelpers';
+import {
+  buildDailyProofPayload,
+  formatProofDateLabel,
+  type ProofCardPayload,
+} from './utils/proofCardCanvas';
 import {
   loadInitialState,
   persistState,
@@ -99,6 +115,7 @@ import {
   updateSoundscape,
 } from './utils/audioEngine';
 import { useFloatingTimerPiP } from './hooks/useFloatingTimerPiP';
+import { useWakeLock } from './hooks/useWakeLock';
 import {
   LUMEN_ACCENT,
   getAmoledPref,
@@ -117,6 +134,7 @@ import { KeyboardShortcutsSheet } from './components/KeyboardShortcutsSheet';
 import type { OnboardingResult } from './components/OnboardingSheet';
 import type { SettingsSection } from './components/SettingsView';
 import { SettingsDrawer } from './components/SettingsDrawer';
+import { ProofCardSheet } from './components/ProofCardSheet';
 import { StreakDetailSheet } from './components/StatusRow';
 import type { VaultCaptureRequest } from './components/VaultView';
 import { SessionWrapUpSheet } from './components/SessionWrapUpSheet';
@@ -126,6 +144,15 @@ import {
   shouldOpenSessionWrapUp,
   type SessionWrapUpSummary,
 } from './utils/sessionWrapUp';
+import {
+  addParkedThought,
+  buildTaskPayloadFromThought,
+  loadParkedThoughts,
+  removeParkedThought,
+  saveParkedThoughts,
+  type ParkedThought,
+} from './utils/parkingLot';
+import { formatExamRecordNote, type ExamPaceRecord } from './utils/examClock';
 import {
   detectRewardMilestone,
   type RewardMilestonePayload,
@@ -252,6 +279,9 @@ export default function App() {
   const [vaultCaptureRequest, setVaultCaptureRequest] =
     useState<VaultCaptureRequest | null>(null);
   const [sessionWrapUp, setSessionWrapUp] = useState<SessionWrapUpSummary | null>(null);
+  const [parkedThoughts, setParkedThoughts] = useState<ParkedThought[]>(() =>
+    loadParkedThoughts()
+  );
   const [statsSubTab, setStatsSubTab] = useState<StatsSubTab>('summary');
   const [sel, setSel] = useState<string>(() => logicalKey(new Date(), 0));
   const [cat, setCat] = useState<'All' | HabitCategory>('All');
@@ -356,12 +386,31 @@ export default function App() {
   const lastActiveLiveRef = useRef<GroupLiveStatus | null>(null);
   const groupBudgetRef = useRef<GroupPublishBudgetController | null>(null);
 
+  const [proofCardPayload, setProofCardPayload] = useState<ProofCardPayload | null>(null);
+  const [liveAuraEnabled, setLiveAuraEnabled] = useState<boolean>(() => {
+    try {
+      const raw = localStorage.getItem('dh_live_aura_enabled_v1');
+      if (raw === null) return true;
+      return raw !== '0' && raw !== 'false';
+    } catch {
+      return true;
+    }
+  });
+  const liveAuraEnabledRef = useRef<boolean>(liveAuraEnabled);
+  liveAuraEnabledRef.current = liveAuraEnabled;
+  const [examHallPresence, setExamHallPresence] = useState<{
+    running: boolean;
+    startedAt: number;
+  } | null>(null);
+  const publishedAuraRef = useRef<ActiveSessionAura | null>(null);
+  const auraControllerRef = useRef<LiveAuraPresenceController | null>(null);
+
   const syncLiveStatusForState = useCallback(
     (targetState: PulseHabitState, liveDurationMs = 60 * 60_000): GroupLiveStatus | null => {
       const hasLiveGroup = (targetState.groupsConfig?.joined || []).some(
         (g) => g.sh.l && !g.paused
       );
-      if (!hasLiveGroup) {
+      if (!hasLiveGroup || !liveAuraEnabledRef.current) {
         liveStatusRef.current = null;
         return null;
       }
@@ -406,9 +455,9 @@ export default function App() {
         const joined = curState.groupsConfig?.joined?.find((j) => j.groupId === groupId);
         if (!joined) return;
         const curToday = logicalKey(new Date(), curState.set.dayResetHour ?? 0);
-        const liveForGroup =
-          joined.sh.l && !joined.paused
-            ? syncLiveStatusForState(curState, gm.GROUP_LIVE_DURATION_MS)
+        const auraForGroup =
+          joined.sh.l && !joined.paused && liveAuraEnabledRef.current
+            ? publishedAuraRef.current
             : null;
         await gm.publishMyEntryToGroup({
           groupId,
@@ -417,18 +466,20 @@ export default function App() {
           joinedAt: joined.joinedAt,
           sh: joined.sh,
           paused: joined.paused,
-          live: liveForGroup,
+          live: null,
+          activeSession: auraForGroup,
           budget: groupBudgetRef.current,
         });
       });
       setGroupBudgetReady(true);
     }
     return groupBudgetRef.current;
-  }, [syncLiveStatusForState]);
+  }, []);
 
   const toastTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const firedRemindersRef = useRef<Set<string>>(new Set());
-  const wakeLockRef = useRef<WakeLockSentinel | null>(null);
+  const parkedThoughtsRef = useRef<ParkedThought[]>(parkedThoughts);
+  parkedThoughtsRef.current = parkedThoughts;
   const waitingSwRef = useRef<ServiceWorker | null>(null);
   const swReloadRequestedRef = useRef(false);
 
@@ -537,23 +588,13 @@ export default function App() {
           }
         });
       }
-      // Queue debounced group stats publish for joined groups when relevant state changes
+      // Queue debounced group stats publish for joined groups when relevant stats change
+      // (Live aura start/stop is managed separately by the 15s-debounced zero-heartbeat controller)
       if (authUserRef.current) {
         const joinedList = stamped.groupsConfig?.joined || [];
         if (joinedList.length > 0) {
           const prevActive = prev.activeTimer;
           const nextActive = stamped.activeTimer;
-          const prevRunning = Boolean(
-            prevActive && prevActive.status === 'running' && prevActive.phase !== 'break'
-          );
-          const nextRunning = Boolean(
-            nextActive && nextActive.status === 'running' && nextActive.phase !== 'break'
-          );
-          const justStartedTimer =
-            nextRunning &&
-            (!prevActive ||
-              prevActive.startTs !== nextActive?.startTs ||
-              (!prevRunning && prevActive.phase === 'break'));
           const justStoppedTimer = Boolean(
             prevActive &&
               prevActive.phase !== 'break' &&
@@ -561,25 +602,23 @@ export default function App() {
           );
 
           const curToday = logicalKey(new Date(), stamped.set.dayResetHour ?? 0);
+          const activeAura = liveAuraEnabledRef.current
+            ? publishedAuraRef.current
+            : null;
+
           if (groupsCache && groupBudgetRef.current) {
-            const nextLive = syncLiveStatusForState(
-              stamped,
-              groupsCache.GROUP_LIVE_DURATION_MS
-            );
             const immediateGroupIds: string[] = [];
             for (const g of joinedList) {
               const entry = groupsCache.buildMyMemberEntry(stamped, curToday, {
                 joinedAt: g.joinedAt,
                 sh: g.sh,
                 paused: g.paused,
-                live: g.sh.l && !g.paused ? nextLive : null,
+                live: null,
+                activeSession: g.sh.l && !g.paused ? activeAura : null,
                 groupId: g.groupId,
               });
               groupBudgetRef.current.markGroupDirty(g.groupId, entry);
-              if (
-                (justStartedTimer && g.sh.l && !g.paused) ||
-                (justStoppedTimer && !g.paused)
-              ) {
+              if (justStoppedTimer && !g.paused) {
                 immediateGroupIds.push(g.groupId);
               }
             }
@@ -594,24 +633,21 @@ export default function App() {
                   new Date(),
                   latest.set.dayResetHour ?? 0
                 );
-                const nextLive = syncLiveStatusForState(
-                  latest,
-                  gm.GROUP_LIVE_DURATION_MS
-                );
+                const latestAura = liveAuraEnabledRef.current
+                  ? publishedAuraRef.current
+                  : null;
                 const immediateGroupIds: string[] = [];
                 for (const g of latest.groupsConfig?.joined || []) {
                   const entry = gm.buildMyMemberEntry(latest, latestToday, {
                     joinedAt: g.joinedAt,
                     sh: g.sh,
                     paused: g.paused,
-                    live: g.sh.l && !g.paused ? nextLive : null,
+                    live: null,
+                    activeSession: g.sh.l && !g.paused ? latestAura : null,
                     groupId: g.groupId,
                   });
                   budget.markGroupDirty(g.groupId, entry);
-                  if (
-                    (justStartedTimer && g.sh.l && !g.paused) ||
-                    (justStoppedTimer && !g.paused)
-                  ) {
+                  if (justStoppedTimer && !g.paused) {
                     immediateGroupIds.push(g.groupId);
                   }
                 }
@@ -624,7 +660,7 @@ export default function App() {
         }
       }
     }
-  }, [ensureGroupBudget, syncLiveStatusForState]);
+  }, [ensureGroupBudget]);
 
   const updateAndSave = useCallback(
     (updater: (prev: PulseHabitState) => PulseHabitState) => {
@@ -906,38 +942,30 @@ export default function App() {
     document.body.classList.toggle('desk-mode', deskMode);
   }, [deskMode]);
 
-  // Screen Wake Lock sync
-  const syncWakeLock = useCallback(async () => {
-    const shouldLock = state.activeTimer?.status === 'running' || deskMode;
-    if (typeof navigator === 'undefined' || !('wakeLock' in navigator)) return;
-    try {
-      if (
-        shouldLock &&
-        !wakeLockRef.current &&
-        document.visibilityState === 'visible'
-      ) {
-        const sentinel = await navigator.wakeLock.request('screen');
-        sentinel.addEventListener('release', () => {
-          wakeLockRef.current = null;
-        });
-        wakeLockRef.current = sentinel;
-      } else if (!shouldLock && wakeLockRef.current) {
-        await wakeLockRef.current.release();
-        wakeLockRef.current = null;
-      }
-    } catch {
-      // ignore wakeLock permission restrictions in iframe
-    }
-  }, [deskMode, state.activeTimer?.status]);
+  // Ref-counted Screen Wake Lock sync (re-acquires on visibilitychange, releases cleanly)
+  useWakeLock(state.activeTimer?.status === 'running' || deskMode);
 
-  useEffect(() => {
-    syncWakeLock();
-    const onVisChange = () => {
-      if (!document.hidden) syncWakeLock();
-    };
-    document.addEventListener('visibilitychange', onVisChange);
-    return () => document.removeEventListener('visibilitychange', onVisChange);
-  }, [syncWakeLock]);
+  // Mid-Session Parking Lot scratchpad handlers (strictly localStorage, zero Firestore writes)
+  const handleAddParkedThought = useCallback(
+    (text: string, meta?: { subjectId?: string; chapterId?: string }) => {
+      setParkedThoughts((prev) => {
+        const { next, added } = addParkedThought(prev, text, meta);
+        if (!added) return prev;
+        saveParkedThoughts(next);
+        return next;
+      });
+      showToast('Thought parked for session wrap-up');
+    },
+    [showToast]
+  );
+
+  const handleRemoveParkedThought = useCallback((thoughtId: string) => {
+    setParkedThoughts((prev) => {
+      const next = removeParkedThought(prev, thoughtId);
+      saveParkedThoughts(next);
+      return next;
+    });
+  }, []);
 
   // Soundscape sync
   useEffect(() => {
@@ -1219,91 +1247,151 @@ export default function App() {
     };
   }, [ensureGroupBudget, runCloudSync]);
 
-  // Milestone 2.1: Studying Now live status hydration & 45m keepalive (when sh.l is ON)
+  // v29 Spark-Quota-Safe Zero-Chat Live Co-Study Aura (Zero Heartbeats, 15s Start Debounce)
+  // Writes strictly ONCE after 15s of sustained study (Focus, Full mock, or Exam Hall)
+  // and ONCE (`activeSession: null`) on pause, stop, completion, opt-out, or sign-out.
+  const publishLiveAuraToJoinedGroups = useCallback(
+    async (nextAura: ActiveSessionAura | null) => {
+      publishedAuraRef.current = nextAura;
+      if (!authUserRef.current || !readyRef.current) return;
+      const curState = stateRef.current;
+      const liveGroups = (curState.groupsConfig?.joined || []).filter(
+        (g) => g.sh.l && !g.paused
+      );
+      if (liveGroups.length === 0) return;
+      const [gm, budget] = await Promise.all([getGroupsMod(), ensureGroupBudget()]);
+      const curToday = logicalKey(new Date(), curState.set.dayResetHour ?? 0);
+      const idsToFlush: string[] = [];
+      for (const g of liveGroups) {
+        const entry = gm.buildMyMemberEntry(curState, curToday, {
+          joinedAt: g.joinedAt,
+          sh: g.sh,
+          paused: g.paused,
+          live: null,
+          activeSession: nextAura,
+          groupId: g.groupId,
+        });
+        if (budget.hasEntryChanged(g.groupId, entry)) {
+          budget.markGroupDirty(g.groupId, entry);
+          idsToFlush.push(g.groupId);
+        }
+      }
+      if (idsToFlush.length > 0) {
+        await budget.flushNow(idsToFlush);
+      }
+    },
+    [ensureGroupBudget]
+  );
+
+  const handleToggleLiveAuraEnabled = useCallback(
+    (enabled: boolean) => {
+      setLiveAuraEnabled(enabled);
+      liveAuraEnabledRef.current = enabled;
+      try {
+        localStorage.setItem('dh_live_aura_enabled_v1', enabled ? '1' : '0');
+      } catch {
+        // Ignore storage errors
+      }
+      auraControllerRef.current?.setEnabled(enabled);
+      if (!enabled) {
+        liveStatusRef.current = null;
+        if (publishedAuraRef.current !== null) {
+          void publishLiveAuraToJoinedGroups(null);
+        }
+      }
+      showToast(
+        enabled
+          ? 'Live study aura enabled'
+          : 'Live study aura paused — studying invisibly'
+      );
+    },
+    [publishLiveAuraToJoinedGroups, showToast]
+  );
+
   useEffect(() => {
-    if (!ready || !authUser) return;
+    if (!ready || !authUser) {
+      auraControllerRef.current?.dispose();
+      auraControllerRef.current = null;
+      publishedAuraRef.current = null;
+      liveStatusRef.current = null;
+      return;
+    }
+
     const joinedLiveGroups = (state.groupsConfig?.joined || []).filter(
       (g) => g.sh.l && !g.paused
     );
     if (joinedLiveGroups.length === 0) {
+      auraControllerRef.current?.dispose();
+      auraControllerRef.current = null;
+      publishedAuraRef.current = null;
       liveStatusRef.current = null;
       return;
     }
 
     let cancelled = false;
-    let refreshIv: ReturnType<typeof setInterval> | null = null;
 
-    void Promise.all([getGroupsMod(), ensureGroupBudget()]).then(([gm, budget]) => {
+    void getGroupsMod().then((gm) => {
       if (cancelled) return;
-      const t = stateRef.current.activeTimer;
-      if (t && t.status === 'running' && t.phase !== 'break') {
-        const live = syncLiveStatusForState(stateRef.current, gm.GROUP_LIVE_DURATION_MS);
-        const curToday = logicalKey(new Date(), stateRef.current.set.dayResetHour ?? 0);
-        const idsToFlush: string[] = [];
-        for (const g of stateRef.current.groupsConfig?.joined || []) {
-          if (!g.sh.l || g.paused) continue;
-          const entry = gm.buildMyMemberEntry(stateRef.current, curToday, {
-            joinedAt: g.joinedAt,
-            sh: g.sh,
-            paused: g.paused,
-            live,
-            groupId: g.groupId,
-          });
-          if (budget.hasEntryChanged(g.groupId, entry)) {
-            budget.markGroupDirty(g.groupId, entry);
-            idsToFlush.push(g.groupId);
-          }
-        }
-        if (idsToFlush.length > 0) {
-          void budget.flushNow(idsToFlush);
-        }
-
-        refreshIv = setInterval(() => {
-          const curState = stateRef.current;
-          const curTimer = curState.activeTimer;
-          if (curTimer && curTimer.status === 'running' && curTimer.phase !== 'break') {
-            const nextLive: GroupLiveStatus = {
-              since: curTimer.startTs,
-              until: Date.now() + gm.GROUP_LIVE_DURATION_MS,
-            };
-            liveStatusRef.current = nextLive;
-            lastActiveLiveRef.current = nextLive;
-            const latestToday = logicalKey(
-              new Date(),
-              curState.set.dayResetHour ?? 0
-            );
-            for (const g of curState.groupsConfig?.joined || []) {
-              if (!g.sh.l || g.paused) continue;
-              const entry = gm.buildMyMemberEntry(curState, latestToday, {
-                joinedAt: g.joinedAt,
-                sh: g.sh,
-                paused: g.paused,
-                live: nextLive,
-                groupId: g.groupId,
-              });
-              budget.markGroupDirty(g.groupId, entry);
-            }
-          }
-        }, gm.GROUP_LIVE_REFRESH_MS);
-      } else {
-        syncLiveStatusForState(stateRef.current, gm.GROUP_LIVE_DURATION_MS);
+      if (!auraControllerRef.current) {
+        auraControllerRef.current = new gm.LiveAuraPresenceController({
+          debounceMs: gm.LIVE_AURA_START_DEBOUNCE_MS,
+          enabled: liveAuraEnabledRef.current,
+          onPublish: publishLiveAuraToJoinedGroups,
+        });
       }
+      const ctrl = auraControllerRef.current;
+      ctrl.setEnabled(liveAuraEnabled);
+
+      let desiredAura: ActiveSessionAura | null = null;
+      if (examHallPresence?.running && examHallPresence.startedAt > 0) {
+        desiredAura = gm.buildActiveSessionAuraPayload({
+          startedAt: examHallPresence.startedAt,
+          isExamHall: true,
+        });
+      } else {
+        const t = stateRef.current.activeTimer;
+        if (t && t.status === 'running' && t.phase !== 'break') {
+          const isAll = isAllSubjectsMockId(t.subjectId);
+          const sub = isAll
+            ? null
+            : stateRef.current.subjects.find((s) => s.id === t.subjectId);
+          desiredAura = gm.buildActiveSessionAuraPayload({
+            startedAt: t.startTs,
+            mode: t.mode,
+            subjectId: t.subjectId,
+            subjectName: isAll ? ALL_SUBJECTS_LABEL : sub?.name,
+            subjectColor: isAll ? ALL_SUBJECTS_COLOR : sub?.color,
+          });
+        }
+      }
+
+      ctrl.handleSessionChange(desiredAura);
     });
 
     return () => {
       cancelled = true;
-      if (refreshIv) clearInterval(refreshIv);
     };
   }, [
     ready,
     authUser,
-    ensureGroupBudget,
-    syncLiveStatusForState,
+    liveAuraEnabled,
+    examHallPresence?.running,
+    examHallPresence?.startedAt,
     state.activeTimer?.status,
     state.activeTimer?.phase,
     state.activeTimer?.startTs,
+    state.activeTimer?.mode,
+    state.activeTimer?.subjectId,
     state.groupsConfig?.joined,
+    publishLiveAuraToJoinedGroups,
   ]);
+
+  useEffect(() => {
+    return () => {
+      auraControllerRef.current?.dispose();
+      auraControllerRef.current = null;
+    };
+  }, []);
 
   // Timer actions (A4: side effects outside state updaters)
   const startTimer = useCallback(
@@ -1316,22 +1404,27 @@ export default function App() {
     ) => {
       ensureAudioEngine();
       const prev = stateRef.current;
+      const m: ActiveTimerMode = mode || prev.set.defaultMode || 'pomo';
       const resolvedSubId =
         subjectId ||
         prev.activeTimer?.subjectId ||
-        prev.subjects.find((s) => !s.arch)?.id ||
-        'sub_phy';
-      const sub = prev.subjects.find((s) => s.id === resolvedSubId);
-      const resolvedChapId =
-        chapterId !== undefined ? chapterId || undefined : prev.activeTimer?.chapterId;
+        (m === 'fullMock'
+          ? ALL_SUBJECTS_MOCK_ID
+          : prev.subjects.find((s) => !s.arch)?.id || 'sub_phy');
+      const isAll = isAllSubjectsMockId(resolvedSubId);
+      const sub = isAll ? undefined : prev.subjects.find((s) => s.id === resolvedSubId);
+      const resolvedChapId = isAll
+        ? undefined
+        : chapterId !== undefined
+          ? chapterId || undefined
+          : prev.activeTimer?.chapterId;
       const chap = resolvedChapId
         ? prev.chapters.find((c) => c.id === resolvedChapId)
         : undefined;
-      const m: ActiveTimerMode = mode || prev.set.defaultMode || 'pomo';
       const cleanHeading =
         (heading && heading.trim()) ||
         chap?.name ||
-        (m === 'fullMock'
+        (m === 'fullMock' || isAll
           ? 'Full Mock'
           : sub
             ? `${sub.name} Study`
@@ -1377,6 +1470,46 @@ export default function App() {
       }));
     },
     [updateAndSave]
+  );
+
+  // Credit completed Exam Hall papers (>= 60s) once to daily study hours, timeline, consistency, streak & XP
+  const handleLogExamHallSession = useCallback(
+    (record: ExamPaceRecord) => {
+      if (!record || hasLoggedExamHallRecord(record.id)) return;
+      const prev = stateRef.current;
+      const existingIds = new Set(prev.sessions.map((s) => s.id));
+      const session = buildExamHallStudySession(
+        record,
+        prev.set.dayResetHour ?? 0,
+        existingIds
+      );
+      if (!session) return;
+
+      const now = Date.now();
+      const next: PulseHabitState = {
+        ...prev,
+        log: cloneLog(prev.log),
+        sessions: [...prev.sessions, session],
+        bonus: (prev.bonus || 0) + Math.max(5, Math.round(session.activeMs / 60000)),
+      };
+      const curToday = logicalKey(now, next.set.dayResetHour ?? 0);
+      syncStudyHabitsInPlace(next, session.dayKey, curToday, now);
+      markExamHallRecordLogged(record.id);
+      saveNextState(next);
+      showToast(
+        `Exam Hall logged (${fmtHMShort(session.activeMs)}) to today's hours`
+      );
+    },
+    [saveNextState, showToast]
+  );
+
+  const handleOpenDailyProofCard = useCallback(
+    (dayKey: string) => {
+      const curState = stateRef.current;
+      const curToday = logicalKey(new Date(), curState.set.dayResetHour ?? 0);
+      setProofCardPayload(buildDailyProofPayload(curState, dayKey, curToday));
+    },
+    []
   );
 
   // Milestone 1.14: Record elapsed time per section in Full Mock mode from timestamps
@@ -1514,21 +1647,26 @@ export default function App() {
     const finalSubjectId =
       reflection.subjectId ||
       t.subjectId ||
-      prev.subjects.find((s) => !s.arch)?.id ||
-      'sub_phy';
-    const finalChapterId =
-      reflection.chapterId !== undefined
+      (t.mode === 'fullMock'
+        ? ALL_SUBJECTS_MOCK_ID
+        : prev.subjects.find((s) => !s.arch)?.id || 'sub_phy');
+    const isAllSubjects = isAllSubjectsMockId(finalSubjectId);
+    const finalChapterId = isAllSubjects
+      ? undefined
+      : reflection.chapterId !== undefined
         ? reflection.chapterId || undefined
         : t.chapterId;
     const chap = finalChapterId
       ? prev.chapters.find((c) => c.id === finalChapterId)
       : undefined;
-    const sub = prev.subjects.find((s) => s.id === finalSubjectId);
+    const sub = isAllSubjects
+      ? undefined
+      : prev.subjects.find((s) => s.id === finalSubjectId);
     const finalHeading =
       (reflection.heading && reflection.heading.trim()) ||
       chap?.name ||
       (t.heading && t.heading.trim()) ||
-      (t.mode === 'fullMock'
+      (t.mode === 'fullMock' || isAllSubjects
         ? 'Full Mock'
         : sub
           ? `${sub.name} Study`
@@ -3047,6 +3185,7 @@ export default function App() {
                 };
               });
             }}
+            onShareTodayProof={() => handleOpenDailyProofCard(sel)}
           />
         )}
 
@@ -3113,7 +3252,31 @@ export default function App() {
               sel={sel}
               todayKey={todayKey}
               deskMode={deskMode}
+              parkedThoughts={parkedThoughts}
               onToggleDeskMode={() => setDeskMode((d) => !d)}
+              onSetDeskMode={(enabled) => setDeskMode(enabled)}
+              onAddParkedThought={handleAddParkedThought}
+              onRemoveParkedThought={handleRemoveParkedThought}
+              onLogExamMockScore={(record: ExamPaceRecord) => {
+                setDeskMode(false);
+                setSettingsOpen(false);
+                setSettingsSection(null);
+                setPrepSubTab('mocks');
+                setTab('prep');
+                setModal({
+                  type: 'mock',
+                  prefillDayKey: todayKey,
+                  prefillDurationMins: Math.max(
+                    1,
+                    Math.round(record.totalElapsedMs / 60_000)
+                  ),
+                  prefillNote: formatExamRecordNote(record),
+                });
+                window.scrollTo(0, 0);
+              }}
+              onLogExamHallSession={handleLogExamHallSession}
+              onExamHallPresenceChange={setExamHallPresence}
+              onOpenProofCard={setProofCardPayload}
               onOpenPiP={() => togglePiP()}
               onSwitchTopic={(newSubId, newHeading, newChapId) => {
                 if (state.activeTimer) {
@@ -3259,6 +3422,9 @@ export default function App() {
                   setTab('focus');
                   window.scrollTo(0, 0);
                 }}
+                liveAuraEnabled={liveAuraEnabled}
+                onToggleLiveAuraEnabled={handleToggleLiveAuraEnabled}
+                activeSessionAura={publishedAuraRef.current}
                 showToast={showToast}
               />
             ) : (
@@ -3282,6 +3448,7 @@ export default function App() {
                 setTab('today');
                 window.scrollTo(0, 0);
               }}
+              onShareTodayProof={() => handleOpenDailyProofCard(todayKey)}
               onToast={showToast}
             />
           </Suspense>
@@ -3325,6 +3492,11 @@ export default function App() {
               }
             }}
             onSignOutGoogle={async () => {
+              try {
+                await auraControllerRef.current?.clearImmediately();
+              } catch {
+                // Best-effort presence clear before revoking auth session
+              }
               const cs = await getCloudSyncMod();
               await cs.signOutGoogleAccount();
               showToast('Signed out of Cloud Sync');
@@ -3725,7 +3897,10 @@ export default function App() {
           beep('win', !!updated.set.snd);
           boomConfetti();
           setModal({ type: 'none' });
-          if (shouldOpenSessionWrapUp(savedEntry)) {
+          if (
+            shouldOpenSessionWrapUp(savedEntry) ||
+            (savedEntry && parkedThoughtsRef.current.length > 0)
+          ) {
             setSessionWrapUp(buildSessionWrapUpSummary(savedEntry!));
           } else {
             showToast(`Logged session: ${heading}`);
@@ -3956,6 +4131,7 @@ export default function App() {
             ? state.chapters.find((c) => c.id === sessionWrapUp.chapterId)
             : undefined
         }
+        parkedThoughts={parkedThoughts}
         onClose={() => setSessionWrapUp(null)}
         onSnapToVault={(subjectId, chapterId) => {
           setSessionWrapUp(null);
@@ -3975,6 +4151,58 @@ export default function App() {
           handleUpdateChapter(chapterId, { confidence });
           showToast(`Updated chapter confidence (${confidence}/5)`);
         }}
+        onAddThoughtToTodayTasks={(thought) => {
+          const payload = buildTaskPayloadFromThought(
+            thought,
+            todayKey,
+            sessionWrapUp?.subjectId
+          );
+          handleAddTask(payload.title, payload.dayKey, payload.subjectId);
+          handleRemoveParkedThought(thought.id);
+          showToast(`Added to Today's tasks: ${payload.title}`);
+        }}
+        onDismissThought={(thoughtId) => {
+          handleRemoveParkedThought(thoughtId);
+        }}
+        onShareProofCard={
+          sessionWrapUp
+            ? () => {
+                const s = sessionWrapUp;
+                const isAll = isAllSubjectsMockId(s.subjectId);
+                const sub = isAll
+                  ? undefined
+                  : state.subjects.find((x) => x.id === s.subjectId);
+                const chap = s.chapterId
+                  ? state.chapters.find((c) => c.id === s.chapterId)
+                  : undefined;
+                const streakInfo = computeMinDayStreak(state, todayKey);
+                setSessionWrapUp(null);
+                setProofCardPayload({
+                  kind: 'session',
+                  durationMs: s.activeMs,
+                  subjectLabel: isAll
+                    ? `${ALL_SUBJECTS_LABEL} · Full Mock`
+                    : sub?.name || 'Study Session',
+                  subjectColor: isAll
+                    ? ALL_SUBJECTS_COLOR
+                    : sub?.color || ALL_SUBJECTS_COLOR,
+                  chapterName: chap?.name,
+                  topicHeading: s.heading,
+                  focusPurity: s.purity,
+                  streakDays: streakInfo.streak,
+                  dateLabel: formatProofDateLabel(todayKey),
+                  dayKey: todayKey,
+                  modeLabel: isAll ? 'Full Mock' : 'Focus',
+                });
+              }
+            : undefined
+        }
+      />
+
+      <ProofCardSheet
+        payload={proofCardPayload}
+        onClose={() => setProofCardPayload(null)}
+        onToast={showToast}
       />
 
       {showProfileModal && (
