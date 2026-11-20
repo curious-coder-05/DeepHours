@@ -7,6 +7,7 @@ import {
   Flame,
   Plus,
   Share2,
+  Sparkles,
 } from 'lucide-react';
 import type { PulseHabitState, StatsSubTab } from '../types';
 import {
@@ -31,9 +32,16 @@ import {
 } from '../utils/studyLogic';
 import { computeConsistencyScore } from '../utils/insights';
 import { computeLevelInfo, computeTotalXp } from '../utils/xp';
+import {
+  buildWeeklyProofPayload,
+  computeWeeklyWrapped,
+} from '../utils/weeklyWrapped';
+import type { ProofCardPayload } from '../utils/proofCardCanvas';
+import { triggerHaptic } from '../utils/haptics';
 import { PlannerView } from './PlannerView';
 import { ReviewView } from './ReviewView';
 import { DayHistoryView } from './DayHistoryView';
+import { WeeklyWrappedSheet } from './WeeklyWrappedSheet';
 import {
   AreaLineChart,
   BarChart,
@@ -64,6 +72,8 @@ interface StatsViewProps {
   onEditSession?: (sessionId: string) => void;
   onSelectDateInToday?: (dayKey: string) => void;
   onShareTodayProof?: () => void;
+  onShareWeeklyProof?: (payload: ProofCardPayload) => void;
+  onFocusSubject?: (subjectId: string) => void;
   onToast?: (msg: string) => void;
 }
 
@@ -79,6 +89,8 @@ export const StatsView: React.FC<StatsViewProps> = ({
   onEditSession,
   onSelectDateInToday,
   onShareTodayProof,
+  onShareWeeklyProof,
+  onFocusSubject,
   onToast,
 }) => {
   const summary = useMemo(
@@ -94,7 +106,12 @@ export const StatsView: React.FC<StatsViewProps> = ({
     [state, todayKey]
   );
   const chapterBreakdown = useMemo(() => computeChapterBreakdown(state), [state]);
+  const weeklyWrapped = useMemo(
+    () => computeWeeklyWrapped(state, todayKey),
+    [state, todayKey]
+  );
 
+  const [wrappedOpen, setWrappedOpen] = useState<boolean>(false);
   const [whereTab, setWhereTab] = useState<WhereTimeGoesTab>('subject');
   const [showConsistencyDetails, setShowConsistencyDetails] = useState<boolean>(true);
   const [selectedCalDayKey, setSelectedCalDayKey] = useState<string | null>(todayKey);
@@ -254,6 +271,40 @@ export const StatsView: React.FC<StatsViewProps> = ({
         />
       ) : (
         <div className="space-y-4">
+          {/* Sleek Frosted Sunday Night Study Wrapped Trigger Card */}
+          <button
+            type="button"
+            data-testid="weekly-wrapped-trigger"
+            className={`dh-wrapped-trigger ${weeklyWrapped.highlightCard ? 'is-highlighted' : ''}`}
+            onClick={() => {
+              triggerHaptic('tap');
+              setWrappedOpen(true);
+            }}
+          >
+            <div className="dh-wrapped-trigger-icon" aria-hidden="true">
+              <Sparkles size={18} strokeWidth={1.9} />
+            </div>
+            <div className="dh-wrapped-trigger-copy">
+              <div className="dh-wrapped-trigger-title-row">
+                <span className="dh-wrapped-trigger-title">Weekly Wrapped</span>
+                <span className="dh-wrapped-trigger-badge tnum">
+                  {weeklyWrapped.isSunday ? 'Sunday recap' : '4 slides'}
+                </span>
+              </div>
+              <p className="dh-wrapped-trigger-sub tnum">
+                {weeklyWrapped.hasSessionsThisWeek
+                  ? `${fmtHMShort(weeklyWrapped.totalMs)} · ${weeklyWrapped.deltaLabel} · ${weeklyWrapped.dateRangeLabel}`
+                  : `7-day deep study recap · ${weeklyWrapped.dateRangeLabel}`}
+              </p>
+            </div>
+            <ChevronRight
+              size={18}
+              strokeWidth={1.85}
+              className="dh-wrapped-trigger-chevron"
+              aria-hidden="true"
+            />
+          </button>
+
           {/* Clean Empty State when 0 sessions */}
           {state.sessions.length === 0 && (
             <EmptyState
@@ -960,6 +1011,25 @@ export const StatsView: React.FC<StatsViewProps> = ({
               )}
             </Card>
           </div>
+
+          <WeeklyWrappedSheet
+            open={wrappedOpen}
+            onClose={() => setWrappedOpen(false)}
+            report={weeklyWrapped}
+            onFocusSubject={(subjectId) => {
+              setWrappedOpen(false);
+              onFocusSubject?.(subjectId);
+            }}
+            onShareWeeklyProof={() => {
+              setWrappedOpen(false);
+              const payload = buildWeeklyProofPayload(weeklyWrapped, state);
+              if (onShareWeeklyProof) {
+                onShareWeeklyProof(payload);
+              } else {
+                onShareTodayProof?.();
+              }
+            }}
+          />
         </div>
       )}
     </div>

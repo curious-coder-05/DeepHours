@@ -79,6 +79,21 @@ import {
   replaceAllMockDiagnostics,
   saveMockDiagnostic,
 } from './utils/mockDiagnostics';
+import {
+  deleteMockLeaks,
+  getMockLeaks,
+  hasAnyMockLeaks,
+  saveMockLeaks,
+} from './utils/mockLeaks';
+import {
+  buildCoreMockSubjectsFromReport,
+  clearAllMockReportDetails,
+  deleteMockReportDetails,
+  getMockReportDetails,
+  loadAllMockReportDetails,
+  saveMockReportDetails,
+  type MockReportDetails,
+} from './utils/mockReport';
 import type {
   ActiveSessionAura,
   GroupLiveStatus,
@@ -2371,12 +2386,17 @@ export default function App() {
       const index = prev.mocks.findIndex((m) => m.id === mockId);
       if (index === -1) return;
       const savedDiag = getMockDiagnostic(mockId);
+      const savedLeaks = getMockLeaks(mockId);
+      const hadLeaks = hasAnyMockLeaks(savedLeaks);
+      const savedReportDetails = getMockReportDetails(mockId);
       const record: DeletedEntityRecord = {
         kind: 'mock',
         item: JSON.parse(JSON.stringify(prev.mocks[index])),
         index,
       };
       deleteMockDiagnostic(mockId);
+      deleteMockLeaks(mockId);
+      deleteMockReportDetails(mockId);
       updateAndSave((cur) => ({
         ...addTombstone(cur, mockId),
         mocks: cur.mocks.filter((m) => m.id !== mockId),
@@ -2386,10 +2406,43 @@ export default function App() {
         if (savedDiag) {
           saveMockDiagnostic(mockId, savedDiag);
         }
+        if (hadLeaks) {
+          saveMockLeaks(mockId, savedLeaks);
+        }
+        if (savedReportDetails) {
+          saveMockReportDetails(mockId, savedReportDetails);
+        }
         updateAndSave((cur) => restoreDeletedItem(cur, record));
       });
     },
     [showToast, updateAndSave]
+  );
+
+  const handleSyncMockFromReport = useCallback(
+    (mockId: string, details: MockReportDetails) => {
+      const now = Date.now();
+      updateAndSave((cur) => ({
+        ...cur,
+        mocks: cur.mocks.map((m) => {
+          if (m.id !== mockId) return m;
+          const nextSubjects = buildCoreMockSubjectsFromReport(
+            details,
+            cur.subjects
+          );
+          return {
+            ...m,
+            durationMins:
+              details.timeTakenMin > 0 ? details.timeTakenMin : m.durationMins,
+            marksPerCorrect: 4,
+            marksPerWrong: -1,
+            maxMarks: 720,
+            subjects: nextSubjects,
+            updatedAt: now,
+          };
+        }),
+      }));
+    },
+    [updateAndSave]
   );
 
   // F1: Delete subject with item-only Undo at original index
@@ -3243,6 +3296,7 @@ export default function App() {
               onOpenNewMock={() => setModal({ type: 'mock' })}
               onEditMock={(mockId) => setModal({ type: 'mock', id: mockId })}
               onDeleteMock={handleDeleteMock}
+              onSyncMockFromReport={handleSyncMockFromReport}
               onUpdateTargetScore={(target: number) => {
                 const now = Date.now();
                 updateAndSave((prev) => ({
@@ -3478,6 +3532,12 @@ export default function App() {
                 window.scrollTo(0, 0);
               }}
               onShareTodayProof={() => handleOpenDailyProofCard(todayKey)}
+              onShareWeeklyProof={(payload) => setProofCardPayload(payload)}
+              onFocusSubject={(subjectId) => {
+                switchTabWithTransition('focus');
+                startTimer(subjectId);
+                window.scrollTo(0, 0);
+              }}
               onToast={showToast}
             />
           </Suspense>
@@ -3969,7 +4029,7 @@ export default function App() {
           handleDeleteSession(id);
           setModal({ type: 'none' });
         }}
-        onSaveMock={(id, mockData, queuedMistakes, openVaultAfter, diagnostics) => {
+        onSaveMock={(id, mockData, queuedMistakes, openVaultAfter, diagnostics, reportDetails) => {
           const now = Date.now();
           const payload: MockTest = {
             id: id || uid('mock'),
@@ -3979,6 +4039,9 @@ export default function App() {
           };
           if (diagnostics) {
             saveMockDiagnostic(payload.id, diagnostics);
+          }
+          if (reportDetails) {
+            saveMockReportDetails(payload.id, reportDetails);
           }
           const newMistakes: MistakeEntry[] = (queuedMistakes || []).map((qm) => ({
             id: uid('mis'),
@@ -4126,10 +4189,12 @@ export default function App() {
           // F1 & A6: Keep whole-state snapshot for "Erase all data"
           const snapJson = JSON.stringify(stateRef.current);
           const diagSnap = loadAllMockDiagnostics();
+          const reportSnap = loadAllMockReportDetails();
           const fresh = createBlankState();
           const newToday = logicalKey(new Date(), fresh.set.dayResetHour);
           saveNextState(fresh, { suppressMilestones: true });
           clearAllMockDiagnostics();
+          clearAllMockReportDetails();
           setSel(newToday);
           setModal({ type: 'none' });
           if (eraseVault) {
@@ -4142,6 +4207,9 @@ export default function App() {
             () => {
               const reverted = norm(JSON.parse(snapJson));
               replaceAllMockDiagnostics(diagSnap);
+              for (const [mId, rep] of Object.entries(reportSnap)) {
+                saveMockReportDetails(mId, rep);
+              }
               saveNextState(reverted, { suppressMilestones: true });
             }
           );

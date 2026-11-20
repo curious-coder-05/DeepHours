@@ -108,7 +108,12 @@ export function redactProofPayload<T extends ProofCardPayload>(
 
 export function buildProofCardFilename(payload: ProofCardPayload): string {
   const safeDay = String(payload.dayKey || 'today').replace(/[^0-9-]/g, '') || 'today';
-  const suffix = payload.kind === 'session' ? 'session' : 'daily';
+  const suffix =
+    payload.kind === 'session'
+      ? 'session'
+      : payload.dateLabel.startsWith('Weekly ·')
+        ? 'weekly'
+        : 'daily';
   return `deep-hours-${suffix}-${safeDay}.png`;
 }
 
@@ -345,7 +350,11 @@ export function renderProofCardToCanvas(
 
   // Left pill badge
   const badgeText =
-    payload.kind === 'session' ? 'Session proof' : 'Daily study proof';
+    payload.kind === 'session'
+      ? 'Session proof'
+      : payload.dateLabel.startsWith('Weekly ·')
+        ? 'Weekly study proof'
+        : 'Daily study proof';
   ctx.font = `600 24px ${SANS_STACK}`;
   const badgeTextW = ctx.measureText(badgeText).width;
   const badgeW = badgeTextW + 58;

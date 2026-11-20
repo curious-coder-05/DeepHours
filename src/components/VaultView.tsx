@@ -61,6 +61,11 @@ import { BottomSheet } from './BottomSheet';
 import { VaultCaptureSheet } from './VaultCaptureSheet';
 import { VaultZoomViewer } from './VaultZoomViewer';
 import {
+  VaultAnswerCurtainStage,
+  VaultCurtainToolbar,
+  useVaultCurtain,
+} from './VaultAnswerCurtain';
+import {
   Button,
   Card,
   Chip,
@@ -606,9 +611,12 @@ export const VaultQuickView: React.FC<VaultQuickViewProps> = ({
   const [reveal, dispatchReveal] = useReducer(revealReducer, INITIAL_REVEAL_STATE);
   const [qUrl, setQUrl] = useState<string | null>(null);
   const [sUrl, setSUrl] = useState<string | null>(null);
-  const [zoomSrc, setZoomSrc] = useState<{ src: string; alt: string; caption?: string } | null>(
-    null
-  );
+  const [zoomSrc, setZoomSrc] = useState<{
+    src: string;
+    alt: string;
+    caption?: string;
+    itemId?: string;
+  } | null>(null);
   const urlCacheRef = useRef<Map<string, string>>(new Map());
   const openRef = useRef<boolean>(open);
   openRef.current = open;
@@ -665,6 +673,7 @@ export const VaultQuickView: React.FC<VaultQuickViewProps> = ({
   const currentItem = open && orderedItems[index] ? orderedItems[index] : null;
   const prevItem = open && index > 0 ? orderedItems[index - 1] : null;
   const nextItem = open && index + 1 < orderedItems.length ? orderedItems[index + 1] : null;
+  const curtain = useVaultCurtain(open ? currentItem?.id : null);
 
   const ensureBlobUrl = useCallback(async (itemId: string, slot: 'q' | 's') => {
     const key = `${itemId}:${slot}`;
@@ -811,6 +820,7 @@ export const VaultQuickView: React.FC<VaultQuickViewProps> = ({
                   src: qUrl,
                   alt: chapterName ? `${chapterName} study photo` : 'Vault study photo',
                   caption: chapterName || subject.name,
+                  itemId: currentItem.id,
                 })
               }
             >
@@ -865,6 +875,11 @@ export const VaultQuickView: React.FC<VaultQuickViewProps> = ({
         )}
       </div>
 
+      {/* Answer Curtain Quick Controls */}
+      <div className="dh-vault-quickview-curtain-bar">
+        <VaultCurtainToolbar curtain={curtain} />
+      </div>
+
       {/* Main Photo Stage (supports left/right horizontal touch swipe) */}
       <div
         className="dh-vault-quickview-stage"
@@ -888,18 +903,21 @@ export const VaultQuickView: React.FC<VaultQuickViewProps> = ({
         }}
       >
         {qUrl ? (
-          <img
-            src={qUrl}
-            alt={chapterName ? `${chapterName} question` : 'Vault study photo'}
-            className="dh-vault-quickview-img"
-            onClick={() =>
-              setZoomSrc({
-                src: qUrl,
-                alt: chapterName ? `${chapterName} study photo` : 'Vault study photo',
-                caption: chapterName || subject.name,
-              })
-            }
-          />
+          <VaultAnswerCurtainStage curtain={curtain}>
+            <img
+              src={qUrl}
+              alt={chapterName ? `${chapterName} question` : 'Vault study photo'}
+              className="dh-vault-quickview-img"
+              onClick={() =>
+                setZoomSrc({
+                  src: qUrl,
+                  alt: chapterName ? `${chapterName} study photo` : 'Vault study photo',
+                  caption: chapterName || subject.name,
+                  itemId: currentItem.id,
+                })
+              }
+            />
+          </VaultAnswerCurtainStage>
         ) : (
           <div
             style={{
@@ -1108,6 +1126,7 @@ export const VaultQuickView: React.FC<VaultQuickViewProps> = ({
         src={zoomSrc?.src || null}
         alt={zoomSrc?.alt || 'Vault study photo'}
         caption={zoomSrc?.caption}
+        itemId={zoomSrc?.itemId}
         onClose={() => setZoomSrc(null)}
       />
     </div>
@@ -1170,9 +1189,12 @@ export const VaultView: React.FC<VaultViewProps> = ({
   const [compactDetailItem, setCompactDetailItem] = useState<VaultItem | null>(null);
 
   // Zoom viewer
-  const [zoomState, setZoomState] = useState<{ src: string; alt: string; caption?: string } | null>(
-    null
-  );
+  const [zoomState, setZoomState] = useState<{
+    src: string;
+    alt: string;
+    caption?: string;
+    itemId?: string;
+  } | null>(null);
 
   // Vault Quick-View overlay
   const [quickViewConfig, setQuickViewConfig] = useState<{
@@ -1607,6 +1629,7 @@ export const VaultView: React.FC<VaultViewProps> = ({
                   src,
                   alt: chName ? `${chName} question` : 'Vault question',
                   caption: chName || sub.name,
+                  itemId: it.id,
                 })
               }
               onQuickView={(it) =>
@@ -2712,6 +2735,7 @@ export const VaultView: React.FC<VaultViewProps> = ({
                 caption: it.chapterId
                   ? resolveVaultChapterName(state.chapters, it.chapterId)
                   : undefined,
+                itemId: it.id,
               })
             }
             onQuickView={(it) => {
@@ -2778,6 +2802,7 @@ export const VaultView: React.FC<VaultViewProps> = ({
         src={zoomState?.src || null}
         alt={zoomState?.alt || 'Vault image'}
         caption={zoomState?.caption}
+        itemId={zoomState?.itemId}
         onClose={() => setZoomState(null)}
       />
 

@@ -1,5 +1,5 @@
 import React, { useEffect, useMemo, useRef, useState } from 'react';
-import { AlertTriangle, Minus, Plus, Star } from 'lucide-react';
+import { AlertTriangle, ChevronDown, Minus, Plus, Star } from 'lucide-react';
 import type {
   DDay,
   Habit,
@@ -34,6 +34,15 @@ import {
   type MockBleedingTally,
   type MockDiagnosticsEntry,
 } from '../utils/mockDiagnostics';
+import {
+  NEET_SUBJECT_CAPS,
+  NEET_SUBJECT_MINS,
+  NEET_TOTAL_QUESTIONS,
+  buildCoreMockSubjectsFromReport,
+  getMockReportDetails,
+  normalizeMockReportDetails,
+  type MockReportDetails,
+} from '../utils/mockReport';
 import { Button, Chip, Dialog, Field, Select, type SelectOption, Sheet, Stat, Switch } from './ui';
 
 export type ModalState =
@@ -89,7 +98,8 @@ interface ModalsProps {
     mock: Omit<MockTest, 'id'>,
     queuedMistakes?: QueuedMockMistake[],
     openVaultAfter?: boolean,
-    diagnostics?: MockDiagnosticsEntry
+    diagnostics?: MockDiagnosticsEntry,
+    reportDetails?: MockReportDetails
   ) => void;
   onDeleteMock: (id: string) => void;
   onSaveTimerConfig: (
@@ -259,6 +269,14 @@ export const Modals: React.FC<ModalsProps> = ({
   const [mockNote, setMockNote] = useState('');
   const [mockBleeding, setMockBleeding] = useState<MockBleedingTally>(createEmptyBleedingTally);
   const [mockSubjectMinutes, setMockSubjectMinutes] = useState<Record<string, string>>({});
+  const [showDetailedScorecard, setShowDetailedScorecard] = useState(false);
+  const [detailedScorecardTouched, setDetailedScorecardTouched] = useState(false);
+  const [repBioScore, setRepBioScore] = useState<string>('');
+  const [repPhyScore, setRepPhyScore] = useState<string>('');
+  const [repChemScore, setRepChemScore] = useState<string>('');
+  const [repCorrect, setRepCorrect] = useState<string>('');
+  const [repWrong, setRepWrong] = useState<string>('');
+  const [repTimeMin, setRepTimeMin] = useState<string>('');
   const [queuedMistakes, setQueuedMistakes] = useState<QueuedMockMistake[]>([]);
   const [mkMisSubId, setMkMisSubId] = useState(activeSubjects[0]?.id || 'sub_phy');
   const [mkMisChapId, setMkMisChapId] = useState('');
@@ -382,6 +400,32 @@ export const Modals: React.FC<ModalsProps> = ({
         initSplit[s.id] = mins && mins > 0 ? String(mins) : '';
       });
       setMockSubjectMinutes(initSplit);
+      const existingSidecar = curModal.id ? getMockReportDetails(curModal.id) : null;
+      if (existingSidecar) {
+        setShowDetailedScorecard(true);
+        setDetailedScorecardTouched(true);
+        setRepBioScore(String(existingSidecar.bioScore));
+        setRepPhyScore(String(existingSidecar.phyScore));
+        setRepChemScore(String(existingSidecar.chemScore));
+        setRepCorrect(String(existingSidecar.correct));
+        setRepWrong(String(existingSidecar.wrong));
+        setRepTimeMin(String(existingSidecar.timeTakenMin));
+      } else {
+        setShowDetailedScorecard(false);
+        setDetailedScorecardTouched(false);
+        setRepBioScore('');
+        setRepPhyScore('');
+        setRepChemScore('');
+        setRepCorrect('');
+        setRepWrong('');
+        setRepTimeMin(
+          curModal.prefillDurationMins !== undefined
+            ? String(curModal.prefillDurationMins)
+            : ex?.durationMins !== undefined
+              ? String(ex.durationMins)
+              : '180'
+        );
+      }
       setQueuedMistakes([]);
       setMkMisSubId(curActiveSubjects[0]?.id || 'sub_phy');
       setMkMisChapId('');
@@ -1094,15 +1138,91 @@ export const Modals: React.FC<ModalsProps> = ({
                 bleeding: mockBleeding,
                 subjectMinutes: normalizeSubjectMinutes(mockSubjectMinutes),
               };
+              const hasExplicitSidecarFields =
+                detailedScorecardTouched ||
+                repBioScore.trim() !== '' ||
+                repPhyScore.trim() !== '' ||
+                repChemScore.trim() !== '' ||
+                repCorrect.trim() !== '' ||
+                repWrong.trim() !== '';
+
+              let sidecarPayload: MockReportDetails | undefined;
+              if (hasExplicitSidecarFields) {
+                const bioFallback = previewMockStats.bySubject
+                  .filter((bs) => /bio|bot|zoo/i.test(`${bs.subjectId} ${bs.name}`))
+                  .reduce((acc, bs) => acc + bs.score, 0);
+                const phyFallback = previewMockStats.bySubject
+                  .filter((bs) => /phy/i.test(`${bs.subjectId} ${bs.name}`))
+                  .reduce((acc, bs) => acc + bs.score, 0);
+                const chemFallback = previewMockStats.bySubject
+                  .filter((bs) => /chem/i.test(`${bs.subjectId} ${bs.name}`))
+                  .reduce((acc, bs) => acc + bs.score, 0);
+                sidecarPayload = normalizeMockReportDetails({
+                  bioScore:
+                    repBioScore.trim() !== '' ? Number(repBioScore) : bioFallback,
+                  phyScore:
+                    repPhyScore.trim() !== '' ? Number(repPhyScore) : phyFallback,
+                  chemScore:
+                    repChemScore.trim() !== '' ? Number(repChemScore) : chemFallback,
+                  correct:
+                    repCorrect.trim() !== ''
+                      ? Number(repCorrect)
+                      : previewMockStats.totalCorrect,
+                  wrong:
+                    repWrong.trim() !== ''
+                      ? Number(repWrong)
+                      : previewMockStats.totalWrong,
+                  timeTakenMin:
+                    repTimeMin.trim() !== ''
+                      ? Number(repTimeMin)
+                      : Number.isFinite(durNum) && durNum > 0
+                        ? Math.round(durNum)
+                        : 180,
+                });
+              } else if (modal.prefillDurationMins !== undefined) {
+                const bioFallback = previewMockStats.bySubject
+                  .filter((bs) => /bio|bot|zoo/i.test(`${bs.subjectId} ${bs.name}`))
+                  .reduce((acc, bs) => acc + bs.score, 0);
+                const phyFallback = previewMockStats.bySubject
+                  .filter((bs) => /phy/i.test(`${bs.subjectId} ${bs.name}`))
+                  .reduce((acc, bs) => acc + bs.score, 0);
+                const chemFallback = previewMockStats.bySubject
+                  .filter((bs) => /chem/i.test(`${bs.subjectId} ${bs.name}`))
+                  .reduce((acc, bs) => acc + bs.score, 0);
+                sidecarPayload = normalizeMockReportDetails({
+                  bioScore: bioFallback,
+                  phyScore: phyFallback,
+                  chemScore: chemFallback,
+                  correct: previewMockStats.totalCorrect,
+                  wrong: previewMockStats.totalWrong,
+                  timeTakenMin:
+                    Number.isFinite(durNum) && durNum > 0
+                      ? Math.round(durNum)
+                      : modal.prefillDurationMins,
+                });
+              }
+
+              const shouldSeedCoreFromSidecar =
+                Boolean(sidecarPayload) &&
+                previewMockStats.totalCorrect === 0 &&
+                previewMockStats.totalWrong === 0 &&
+                (sidecarPayload!.correct > 0 || sidecarPayload!.wrong > 0);
+              const finalSubjects = shouldSeedCoreFromSidecar
+                ? buildCoreMockSubjectsFromReport(sidecarPayload!, state.subjects)
+                : clampedSubjects;
+              const finalDurationMins =
+                mockDurationMins.trim() && Number.isFinite(durNum) && durNum > 0
+                  ? Math.round(durNum)
+                  : sidecarPayload && sidecarPayload.timeTakenMin > 0
+                    ? Math.round(sidecarPayload.timeTakenMin)
+                    : undefined;
+
               onSaveMock(
                 modal.id,
                 {
                   name: cleanName,
                   dayKey: mockDayKey || todayKey,
-                  durationMins:
-                    mockDurationMins.trim() && Number.isFinite(durNum) && durNum > 0
-                      ? Math.round(durNum)
-                      : undefined,
+                  durationMins: finalDurationMins,
                   marksPerCorrect: Number.isFinite(Number(mockMarksCorrect))
                     ? Number(mockMarksCorrect)
                     : 4,
@@ -1111,13 +1231,14 @@ export const Modals: React.FC<ModalsProps> = ({
                     Number.isFinite(Number(mockMaxMarks)) && Number(mockMaxMarks) > 0
                       ? Number(mockMaxMarks)
                       : 720,
-                  subjects: clampedSubjects,
+                  subjects: finalSubjects,
                   note: mockNote.trim(),
                   updatedAt: Date.now(),
                 },
                 queuedMistakes,
                 openVaultAfterRef.current,
-                diagnosticsPayload
+                diagnosticsPayload,
+                sidecarPayload
               );
               openVaultAfterRef.current = false;
             }}
@@ -1358,6 +1479,179 @@ export const Modals: React.FC<ModalsProps> = ({
                   </div>
                 );
               })}
+            </div>
+
+            {/* Optional Collapsible Detailed Scorecard Stats (saved strictly to local dh_mock_report_v1) */}
+            <div
+              style={{
+                border: '1px solid var(--line)',
+                borderRadius: '12px',
+                background: 'var(--sf-2)',
+                overflow: 'hidden',
+              }}
+            >
+              <button
+                type="button"
+                data-testid="mock-form-detailed-stats-toggle"
+                aria-expanded={showDetailedScorecard}
+                onClick={() => setShowDetailedScorecard((v) => !v)}
+                style={{
+                  width: '100%',
+                  display: 'flex',
+                  alignItems: 'center',
+                  justifyContent: 'space-between',
+                  gap: '8px',
+                  padding: '11px 12px',
+                  background: 'transparent',
+                  border: 0,
+                  color: 'var(--tx)',
+                  fontSize: '13px',
+                  fontWeight: 600,
+                  textAlign: 'left',
+                  cursor: 'pointer',
+                }}
+              >
+                <span>Detailed scorecard stats (Bio/Phy/Chem, Right/Wrong, Time)</span>
+                <ChevronDown
+                  size={16}
+                  strokeWidth={1.85}
+                  aria-hidden="true"
+                  style={{
+                    flexShrink: 0,
+                    color: 'var(--tx-2)',
+                    transform: showDetailedScorecard ? 'rotate(180deg)' : 'rotate(0deg)',
+                    transition: 'transform 160ms ease',
+                  }}
+                />
+              </button>
+
+              {showDetailedScorecard && (
+                <div
+                  data-testid="mock-form-detailed-stats-body"
+                  style={{
+                    padding: '0 12px 12px',
+                    borderTop: '1px solid var(--line)',
+                    display: 'grid',
+                    gap: '8px',
+                  }}
+                >
+                  <p style={{ margin: '8px 0 0', fontSize: '12px', color: 'var(--tx-2)' }}>
+                    Optional direct NEET UG scorecard overrides stored locally for the Bento Report Card.
+                  </p>
+                  <div
+                    style={{
+                      display: 'grid',
+                      gridTemplateColumns: 'repeat(3, minmax(0, 1fr))',
+                      gap: '8px',
+                    }}
+                  >
+                    <label style={{ fontSize: '12px', color: 'var(--tx-2)', margin: 0 }}>
+                      Bio (/360)
+                      <input
+                        type="number"
+                        data-testid="mock-form-rep-bio"
+                        min={NEET_SUBJECT_MINS.bio}
+                        max={NEET_SUBJECT_CAPS.bio}
+                        placeholder="340"
+                        value={repBioScore}
+                        onChange={(e) => {
+                          setDetailedScorecardTouched(true);
+                          setRepBioScore(e.target.value);
+                        }}
+                        style={{ marginTop: '4px', minHeight: '38px', padding: '6px 8px' }}
+                      />
+                    </label>
+                    <label style={{ fontSize: '12px', color: 'var(--tx-2)', margin: 0 }}>
+                      Phy (/180)
+                      <input
+                        type="number"
+                        data-testid="mock-form-rep-phy"
+                        min={NEET_SUBJECT_MINS.phy}
+                        max={NEET_SUBJECT_CAPS.phy}
+                        placeholder="160"
+                        value={repPhyScore}
+                        onChange={(e) => {
+                          setDetailedScorecardTouched(true);
+                          setRepPhyScore(e.target.value);
+                        }}
+                        style={{ marginTop: '4px', minHeight: '38px', padding: '6px 8px' }}
+                      />
+                    </label>
+                    <label style={{ fontSize: '12px', color: 'var(--tx-2)', margin: 0 }}>
+                      Chem (/180)
+                      <input
+                        type="number"
+                        data-testid="mock-form-rep-chem"
+                        min={NEET_SUBJECT_MINS.chem}
+                        max={NEET_SUBJECT_CAPS.chem}
+                        placeholder="165"
+                        value={repChemScore}
+                        onChange={(e) => {
+                          setDetailedScorecardTouched(true);
+                          setRepChemScore(e.target.value);
+                        }}
+                        style={{ marginTop: '4px', minHeight: '38px', padding: '6px 8px' }}
+                      />
+                    </label>
+                  </div>
+                  <div
+                    style={{
+                      display: 'grid',
+                      gridTemplateColumns: 'repeat(3, minmax(0, 1fr))',
+                      gap: '8px',
+                    }}
+                  >
+                    <label style={{ fontSize: '12px', color: 'var(--tx-2)', margin: 0 }}>
+                      Right Qs
+                      <input
+                        type="number"
+                        data-testid="mock-form-rep-correct"
+                        min={0}
+                        max={NEET_TOTAL_QUESTIONS}
+                        placeholder="168"
+                        value={repCorrect}
+                        onChange={(e) => {
+                          setDetailedScorecardTouched(true);
+                          setRepCorrect(e.target.value);
+                        }}
+                        style={{ marginTop: '4px', minHeight: '38px', padding: '6px 8px' }}
+                      />
+                    </label>
+                    <label style={{ fontSize: '12px', color: 'var(--tx-2)', margin: 0 }}>
+                      Wrong Qs
+                      <input
+                        type="number"
+                        data-testid="mock-form-rep-wrong"
+                        min={0}
+                        max={NEET_TOTAL_QUESTIONS}
+                        placeholder="7"
+                        value={repWrong}
+                        onChange={(e) => {
+                          setDetailedScorecardTouched(true);
+                          setRepWrong(e.target.value);
+                        }}
+                        style={{ marginTop: '4px', minHeight: '38px', padding: '6px 8px' }}
+                      />
+                    </label>
+                    <label style={{ fontSize: '12px', color: 'var(--tx-2)', margin: 0 }}>
+                      Time (min)
+                      <input
+                        type="number"
+                        data-testid="mock-form-rep-time"
+                        min={0}
+                        max={600}
+                        placeholder="180"
+                        value={repTimeMin}
+                        onChange={(e) => {
+                          setDetailedScorecardTouched(true);
+                          setRepTimeMin(e.target.value);
+                        }}
+                        style={{ marginTop: '4px', minHeight: '38px', padding: '6px 8px' }}
+                      />
+                    </label>
+                  </div>
+                </div>
+              )}
             </div>
 
             {/* 1. Error Bleeding Tally */}

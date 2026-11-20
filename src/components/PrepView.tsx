@@ -8,6 +8,9 @@ import {
   Compass,
   Edit3,
   FileSpreadsheet,
+  Flame,
+  Gauge,
+  Minus,
   Play,
   Plus,
   Sparkles,
@@ -38,10 +41,33 @@ import {
   hasBleedingEntries,
   loadAllMockDiagnostics,
 } from '../utils/mockDiagnostics';
+import {
+  MOCK_LEAK_CATEGORIES,
+  NEET_MARKS_PER_WRONG_SWING,
+  aggregateAvoidableBleed,
+  computeNetMarksBleed,
+  createEmptyMockLeaks,
+  getTotalLeakErrors,
+  loadAllMockLeaks,
+  saveMockLeaks,
+  type MockLeakCategoryKey,
+  type MockLeakCounts,
+  type MockLeakMap,
+} from '../utils/mockLeaks';
+import {
+  loadAllMockReportDetails,
+  type ComputedMockReport,
+  type MockReportDetails,
+  type MockReportMap,
+} from '../utils/mockReport';
+import type { ScoreLabSidecarSeed } from '../utils/scoreLab';
+import { triggerHaptic } from '../utils/haptics';
 import { computeUiPaceReport } from '../utils/uiHelpers';
 import { computeVaultCounts } from '../utils/vaultLogic';
 import { listVaultItems } from '../utils/vaultStore';
+import { MockReportSheet } from './MockReportSheet';
 import { PYQView } from './PYQView';
+import { ScoreLabSheet } from './ScoreLabSheet';
 import type { VaultCaptureRequest } from './VaultView';
 import { SyllabusAstrolabeScene } from './three/SyllabusAstrolabeScene';
 import {
@@ -86,6 +112,7 @@ interface PrepViewProps {
   onOpenNewMock: () => void;
   onEditMock: (mockId: string) => void;
   onDeleteMock: (mockId: string) => void;
+  onSyncMockFromReport?: (mockId: string, details: MockReportDetails) => void;
   onUpdateTargetScore: (nextTarget: number) => void;
   onAddMistake?: (
     entry: Omit<MistakeEntry, 'id' | 'createdAt' | 'updatedAt' | 'resolved'>
@@ -136,6 +163,7 @@ export const PrepView: React.FC<PrepViewProps> = ({
   onOpenNewMock,
   onEditMock,
   onDeleteMock,
+  onSyncMockFromReport,
   onUpdateTargetScore,
   onToggleMistakeResolved,
   onDeleteMistake,
@@ -245,6 +273,75 @@ export const PrepView: React.FC<PrepViewProps> = ({
       });
     return { total, completed, inProgress, notStarted, pct, bySubject };
   }, [state]);
+
+  const [mockLeaksMap, setMockLeaksMap] = useState<MockLeakMap>(() =>
+    loadAllMockLeaks()
+  );
+  const [mockReportMap, setMockReportMap] = useState<MockReportMap>(() =>
+    loadAllMockReportDetails()
+  );
+  const [expandedLeakMockId, setExpandedLeakMockId] = useState<string | null>(null);
+  const [activeReportMockId, setActiveReportMockId] = useState<string | null>(null);
+  const [scoreLabOpen, setScoreLabOpen] = useState<boolean>(false);
+  const [scoreLabFocusMockId, setScoreLabFocusMockId] = useState<string | undefined>(
+    undefined
+  );
+  const [scoreLabSidecarSeed, setScoreLabSidecarSeed] =
+    useState<ScoreLabSidecarSeed | null>(null);
+
+  useEffect(() => {
+    setMockLeaksMap(loadAllMockLeaks());
+    setMockReportMap(loadAllMockReportDetails());
+  }, [state.mocks]);
+
+  const activeReportMock = useMemo(
+    () =>
+      activeReportMockId
+        ? state.mocks.find((m) => m.id === activeReportMockId) ?? null
+        : null,
+    [activeReportMockId, state.mocks]
+  );
+
+  const handleOpenScoreLabFromHeader = () => {
+    triggerHaptic('tap');
+    setScoreLabFocusMockId(undefined);
+    setScoreLabSidecarSeed(null);
+    setScoreLabOpen(true);
+  };
+
+  const handleOpenScoreLabFromReport = (computed: ComputedMockReport) => {
+    setActiveReportMockId(null);
+    setScoreLabFocusMockId(computed.mockId);
+    setScoreLabSidecarSeed({
+      overallScore: computed.overallScore,
+      phyScore: computed.phyScore,
+      chemBioScore: computed.chemScore + computed.bioScore,
+      wrongCount: computed.wrong,
+    });
+    setScoreLabOpen(true);
+  };
+
+  const avoidableBleed = useMemo(
+    () => aggregateAvoidableBleed(state.mocks, mockLeaksMap),
+    [state.mocks, mockLeaksMap]
+  );
+
+  const handleAdjustMockLeak = (
+    mockId: string,
+    key: MockLeakCategoryKey,
+    delta: number
+  ) => {
+    triggerHaptic('tap');
+    setMockLeaksMap((prev) => {
+      const current: MockLeakCounts = prev[mockId]?.counts
+        ? { ...prev[mockId].counts }
+        : createEmptyMockLeaks();
+      const nextVal = Math.max(0, Math.min(200, current[key] + delta));
+      const nextCounts: MockLeakCounts = { ...current, [key]: nextVal };
+      saveMockLeaks(mockId, nextCounts);
+      return loadAllMockLeaks();
+    });
+  };
 
   const mocksOverview = useMemo(() => computeMocksOverview(state), [state]);
   const mockDiagnosticsMap = useMemo(
@@ -1157,14 +1254,25 @@ export const PrepView: React.FC<PrepViewProps> = ({
                   NEET 720-mark progression, negative marking analysis &amp; subject breakdown
                 </p>
               </div>
-              <Button
-                variant="primary"
-                size="sm"
-                icon={<Plus size={16} />}
-                onClick={onOpenNewMock}
-              >
-                Log mock test
-              </Button>
+              <div className="flex flex-wrap items-center gap-2">
+                <button
+                  type="button"
+                  data-testid="score-lab-open-btn"
+                  className="dh-leak-scorelab-btn"
+                  onClick={handleOpenScoreLabFromHeader}
+                >
+                  <Gauge size={15} strokeWidth={1.85} aria-hidden="true" />
+                  <span>Score Lab · Simulate target</span>
+                </button>
+                <Button
+                  variant="primary"
+                  size="sm"
+                  icon={<Plus size={16} />}
+                  onClick={onOpenNewMock}
+                >
+                  Log mock test
+                </Button>
+              </div>
             </div>
 
             <div className="grid grid-cols-2 gap-2.5 sm:grid-cols-4">
@@ -1211,6 +1319,75 @@ export const PrepView: React.FC<PrepViewProps> = ({
                 <span>
                   Focus area: <strong>{mocksOverview.lowestAccuracySubject.e} {mocksOverview.lowestAccuracySubject.name}</strong> has the lowest accuracy ({mocksOverview.lowestAccuracySubject.accuracyPct}%) across recent mocks.
                 </span>
+              </div>
+            )}
+          </Card>
+
+          {/* Negative-Marking Leak Detector: Blunt AMOLED Avoidable Marks Bleed Summary */}
+          <Card className="dh-leak-summary-card" data-testid="avoidable-bleed-card">
+            <div className="dh-leak-summary-head">
+              <div className="min-w-0 flex-1">
+                <div className="dh-leak-title-row">
+                  <Flame size={16} strokeWidth={1.9} className="dh-leak-icon" aria-hidden="true" />
+                  <h3 className="text-[15px] font-semibold text-[var(--tx)]">
+                    Avoidable Marks Bleed
+                  </h3>
+                </div>
+                <p className="mt-0.5 text-[13px] text-[var(--tx-2)]">
+                  Each wrong NEET question costs −{NEET_MARKS_PER_WRONG_SWING} net marks (+4 lost + −1 negative).
+                </p>
+              </div>
+              {avoidableBleed.totalErrors > 0 && (
+                <div className="dh-leak-total-pill tnum" data-testid="avoidable-bleed-total">
+                  −{avoidableBleed.totalNetMarksLost} marks
+                </div>
+              )}
+            </div>
+
+            {avoidableBleed.totalErrors > 0 && avoidableBleed.topLeak ? (
+              <div className="dh-leak-body">
+                <div className="dh-leak-callout" data-testid="avoidable-bleed-top-leak">
+                  <span className="dh-leak-callout-label">#1 leak</span>
+                  <strong className="text-[var(--tx)]">{avoidableBleed.topLeak.label}</strong>
+                  <span className="tnum dh-leak-callout-val">
+                    −{avoidableBleed.topLeak.netMarksLost} marks ({avoidableBleed.topLeak.count} Q · {avoidableBleed.topLeak.sharePct}%)
+                  </span>
+                  <span className="tnum dh-leak-callout-meta">
+                    Last {avoidableBleed.includedMocksCount} tagged {avoidableBleed.includedMocksCount === 1 ? 'mock' : 'mocks'} · avg −{avoidableBleed.avgMarksLostPerMock}/mock
+                  </span>
+                </div>
+
+                <div className="dh-leak-bars">
+                  {avoidableBleed.categories.map((cat) => (
+                    <div key={cat.key} className="dh-leak-bar-row">
+                      <div className="dh-leak-bar-head">
+                        <span className={`dh-leak-bar-name ${avoidableBleed.topLeak?.key === cat.key ? 'is-top' : ''}`}>
+                          {cat.label}
+                        </span>
+                        <span className="tnum dh-leak-bar-metrics">
+                          {cat.count} Q · −{cat.netMarksLost}m
+                        </span>
+                      </div>
+                      <div className="dh-leak-track" aria-hidden="true">
+                        <div
+                          className={`dh-leak-fill is-${cat.accent}`}
+                          style={{
+                            width: `${cat.count > 0 ? Math.max(6, cat.sharePct) : 0}%`,
+                            background: cat.barColor,
+                          }}
+                        />
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              </div>
+            ) : (
+              <div className="dh-leak-empty">
+                <p className="text-[13px] text-[var(--tx-2)]">
+                  {state.mocks.length > 0
+                    ? 'Open "Leak Detector" on any mock card below to tag Misread Question, Formula Blank, Time Panic, or Concept Gap errors.'
+                    : 'Log a mock test and tag why wrong questions happened to expose your #1 avoidable marks leak.'}
+                </p>
               </div>
             )}
           </Card>
@@ -1395,7 +1572,14 @@ export const PrepView: React.FC<PrepViewProps> = ({
                   : '';
 
                 return (
-                <Card>
+                <Card
+                  className="dh-mock-card-clickable"
+                  data-testid={`mock-card-${mock.id}`}
+                  onClick={() => {
+                    triggerHaptic('tap');
+                    setActiveReportMockId(mock.id);
+                  }}
+                >
                   <div className="flex flex-wrap items-start justify-between gap-2">
                     <div className="min-w-0 flex-1">
                       <div className="flex flex-wrap items-center gap-2">
@@ -1423,16 +1607,39 @@ export const PrepView: React.FC<PrepViewProps> = ({
                         <p className="mt-1 text-[13px] text-[var(--tx-2)]">{mock.note}</p>
                       )}
                     </div>
-                    <div className="flex items-center gap-1.5">
+                    <div
+                      className="flex items-center gap-1.5"
+                      onClick={(e) => e.stopPropagation()}
+                    >
+                      <button
+                        type="button"
+                        data-testid={`mock-report-open-${mock.id}`}
+                        aria-label={`Open scorecard report for ${mock.name}`}
+                        className="dh-mock-report-chip"
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          triggerHaptic('tap');
+                          setActiveReportMockId(mock.id);
+                        }}
+                      >
+                        <span>Report</span>
+                        <ChevronRight size={14} strokeWidth={2} aria-hidden="true" />
+                      </button>
                       <IconButton
                         label={`Edit ${mock.name}`}
-                        onClick={() => onEditMock(mock.id)}
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          onEditMock(mock.id);
+                        }}
                       >
                         <Edit3 size={16} />
                       </IconButton>
                       <IconButton
                         label={`Delete ${mock.name}`}
-                        onClick={() => onDeleteMock(mock.id)}
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          onDeleteMock(mock.id);
+                        }}
                       >
                         <Trash2 size={16} />
                       </IconButton>
@@ -1461,11 +1668,144 @@ export const PrepView: React.FC<PrepViewProps> = ({
                         </div>
                       ))}
                   </div>
+
+                  {/* Per-Mock Inline Expandable Negative-Marking Leak Detector */}
+                  {(() => {
+                    const leakCounts =
+                      mockLeaksMap[mock.id]?.counts ?? createEmptyMockLeaks();
+                    const taggedTotal = getTotalLeakErrors(leakCounts);
+                    const taggedMarksLost = computeNetMarksBleed(taggedTotal);
+                    const isLeakOpen = expandedLeakMockId === mock.id;
+                    return (
+                      <div
+                        className="dh-leak-mock-wrap"
+                        onClick={(e) => e.stopPropagation()}
+                      >
+                        <button
+                          type="button"
+                          data-testid={`mock-leak-toggle-${mock.id}`}
+                          aria-expanded={isLeakOpen}
+                          className={`dh-leak-mock-trigger ${isLeakOpen ? 'is-open' : ''}`}
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            triggerHaptic('tap');
+                            setExpandedLeakMockId(isLeakOpen ? null : mock.id);
+                          }}
+                        >
+                          <span className="dh-leak-mock-trigger-left">
+                            <Flame size={14} strokeWidth={1.9} aria-hidden="true" />
+                            <span>Leak Detector</span>
+                            {taggedTotal > 0 ? (
+                              <span className="dh-leak-mock-badge tnum">
+                                {taggedTotal} Q · −{taggedMarksLost}m
+                              </span>
+                            ) : (
+                              <span className="dh-leak-mock-hint">Tag error causes</span>
+                            )}
+                          </span>
+                          <ChevronDown
+                            size={15}
+                            strokeWidth={1.85}
+                            className={`dh-leak-chevron ${isLeakOpen ? 'is-open' : ''}`}
+                            aria-hidden="true"
+                          />
+                        </button>
+
+                        {isLeakOpen && (
+                          <div
+                            className="dh-leak-drawer"
+                            data-testid={`mock-leak-drawer-${mock.id}`}
+                          >
+                            <div className="dh-leak-drawer-grid">
+                              {MOCK_LEAK_CATEGORIES.map((cat) => {
+                                const val = leakCounts[cat.key];
+                                const lost = computeNetMarksBleed(val);
+                                return (
+                                  <div key={cat.key} className="dh-leak-stepper-row">
+                                    <div className="min-w-0">
+                                      <div className="dh-leak-stepper-label">{cat.label}</div>
+                                      <div className="dh-leak-stepper-sub tnum">
+                                        {val > 0 ? `−${lost} net marks` : '0 errors'}
+                                      </div>
+                                    </div>
+                                    <div className="dh-leak-stepper-controls">
+                                      <button
+                                        type="button"
+                                        aria-label={`Decrease ${cat.label} for ${mock.name}`}
+                                        data-testid={`leak-dec-${mock.id}-${cat.key}`}
+                                        className="dh-leak-step-btn"
+                                        disabled={val <= 0}
+                                        onClick={() =>
+                                          handleAdjustMockLeak(mock.id, cat.key, -1)
+                                        }
+                                      >
+                                        <Minus size={14} strokeWidth={2} aria-hidden="true" />
+                                      </button>
+                                      <span
+                                        className="dh-leak-step-val tnum"
+                                        data-testid={`leak-val-${mock.id}-${cat.key}`}
+                                      >
+                                        {val}
+                                      </span>
+                                      <button
+                                        type="button"
+                                        aria-label={`Increase ${cat.label} for ${mock.name}`}
+                                        data-testid={`leak-inc-${mock.id}-${cat.key}`}
+                                        className="dh-leak-step-btn"
+                                        onClick={() =>
+                                          handleAdjustMockLeak(mock.id, cat.key, 1)
+                                        }
+                                      >
+                                        <Plus size={14} strokeWidth={2} aria-hidden="true" />
+                                      </button>
+                                    </div>
+                                  </div>
+                                );
+                              })}
+                            </div>
+                          </div>
+                        )}
+                      </div>
+                    );
+                  })()}
                 </Card>
                 );
               }}
             />
           )}
+
+          <MockReportSheet
+            open={Boolean(activeReportMock)}
+            mock={activeReportMock}
+            allMocks={state.mocks}
+            subjects={state.subjects}
+            targetScore={targetScore}
+            reportMap={mockReportMap}
+            leakMap={mockLeaksMap}
+            onClose={() => setActiveReportMockId(null)}
+            onReportDetailsChanged={() =>
+              setMockReportMap(loadAllMockReportDetails())
+            }
+            onAdjustMockLeak={handleAdjustMockLeak}
+            onOpenScoreLab={handleOpenScoreLabFromReport}
+            onSyncCoreMock={onSyncMockFromReport}
+            onNotify={(msg) => onNotify?.(msg)}
+          />
+
+          <ScoreLabSheet
+            open={scoreLabOpen}
+            onClose={() => {
+              setScoreLabOpen(false);
+              setScoreLabFocusMockId(undefined);
+              setScoreLabSidecarSeed(null);
+            }}
+            mocks={state.mocks}
+            subjects={state.subjects}
+            targetMockScore={targetScore}
+            leakMap={mockLeaksMap}
+            focusMockId={scoreLabFocusMockId}
+            sidecarOverride={scoreLabSidecarSeed}
+          />
         </div>
       )}
 

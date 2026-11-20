@@ -23,6 +23,11 @@ import {
 import { getVaultBlob } from '../utils/vaultStore';
 import type { VaultItem } from '../utils/vaultTypes';
 import { VaultZoomViewer } from './VaultZoomViewer';
+import {
+  VaultAnswerCurtainStage,
+  VaultCurtainToolbar,
+  useVaultCurtain,
+} from './VaultAnswerCurtain';
 import { Button, IconButton } from './ui';
 
 export interface VaultRevisionDeckProps {
@@ -155,6 +160,7 @@ export const VaultRevisionDeck: React.FC<VaultRevisionDeckProps> = ({
 
   const currentItem = !finished && deckOrder[index] ? deckOrder[index] : null;
   const nextItem = !finished && deckOrder[index + 1] ? deckOrder[index + 1] : null;
+  const curtain = useVaultCurtain(open ? currentItem?.id : null);
 
   const ensureBlobUrl = useCallback(async (itemId: string, slot: 'q' | 's') => {
     const key = `${itemId}:${slot}`;
@@ -489,22 +495,33 @@ export const VaultRevisionDeck: React.FC<VaultRevisionDeckProps> = ({
             }}
           >
             <div className="dh-vault-deck-img-wrap">
+              {qUrl && (
+                <div style={{ marginBottom: '10px', width: '100%', maxWidth: '920px' }}>
+                  <VaultCurtainToolbar curtain={curtain} />
+                </div>
+              )}
               {qUrl ? (
-                <img
-                  src={qUrl}
-                  alt={`Vault question ${index + 1}`}
-                  onClick={() => setZoomOpen(true)}
-                  style={{
-                    width: '100%',
-                    maxWidth: '920px',
-                    height: 'auto',
-                    objectFit: 'contain',
-                    borderRadius: '12px',
-                    border: '1px solid var(--line)',
-                    background: 'var(--sf-1)',
-                    cursor: 'zoom-in',
-                  }}
-                />
+                <VaultAnswerCurtainStage
+                  curtain={curtain}
+                  style={{ width: '100%', maxWidth: '920px' }}
+                >
+                  <img
+                    src={qUrl}
+                    alt={`Vault question ${index + 1}`}
+                    onClick={() => setZoomOpen(true)}
+                    style={{
+                      width: '100%',
+                      maxWidth: '920px',
+                      height: 'auto',
+                      objectFit: 'contain',
+                      borderRadius: '12px',
+                      border: '1px solid var(--line)',
+                      background: 'var(--sf-1)',
+                      cursor: 'zoom-in',
+                      display: 'block',
+                    }}
+                  />
+                </VaultAnswerCurtainStage>
               ) : (
                 <div
                   style={{
@@ -721,6 +738,7 @@ export const VaultRevisionDeck: React.FC<VaultRevisionDeckProps> = ({
         src={qUrl}
         alt={`Vault question ${index + 1}`}
         caption={chapterLabel || (subjectMeta ? `${subjectMeta.emoji} ${subjectMeta.name}` : undefined)}
+        itemId={currentItem?.id}
         onClose={() => setZoomOpen(false)}
       />
     </div>

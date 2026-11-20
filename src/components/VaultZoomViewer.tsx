@@ -1,12 +1,19 @@
 import React, { useEffect, useRef, useState } from 'react';
+import { createPortal } from 'react-dom';
 import { Minus, Plus, RotateCcw, X } from 'lucide-react';
 import { IconButton } from './ui';
+import {
+  VaultAnswerCurtainStage,
+  VaultCurtainToolbar,
+  useVaultCurtain,
+} from './VaultAnswerCurtain';
 
 export interface VaultZoomViewerProps {
   open: boolean;
   src: string | null;
   alt: string;
   caption?: string;
+  itemId?: string | null;
   onClose: () => void;
 }
 
@@ -15,6 +22,7 @@ export const VaultZoomViewer: React.FC<VaultZoomViewerProps> = ({
   src,
   alt,
   caption,
+  itemId,
   onClose,
 }) => {
   const [scale, setScale] = useState<number>(1);
@@ -23,6 +31,7 @@ export const VaultZoomViewer: React.FC<VaultZoomViewerProps> = ({
   const pinchStartRef = useRef<{ dist: number; scale: number } | null>(null);
   const panStartRef = useRef<{ x: number; y: number; ox: number; oy: number } | null>(null);
   const lastTapTsRef = useRef<number>(0);
+  const curtain = useVaultCurtain(open ? itemId : null);
 
   useEffect(() => {
     if (!open) {
@@ -127,7 +136,7 @@ export const VaultZoomViewer: React.FC<VaultZoomViewerProps> = ({
     }
   };
 
-  return (
+  const overlay = (
     <div
       role="dialog"
       aria-modal="true"
@@ -180,6 +189,15 @@ export const VaultZoomViewer: React.FC<VaultZoomViewerProps> = ({
         </div>
       </div>
 
+      {itemId && (
+        <div
+          className="dh-vault-zoom-curtain-bar"
+          onClick={(e) => e.stopPropagation()}
+        >
+          <VaultCurtainToolbar curtain={curtain} compact />
+        </div>
+      )}
+
       <div
         className="dh-vault-zoom-stage"
         onClick={(e) => e.stopPropagation()}
@@ -188,21 +206,54 @@ export const VaultZoomViewer: React.FC<VaultZoomViewerProps> = ({
         onPointerUp={handlePointerUp}
         onPointerCancel={handlePointerUp}
       >
-        <img
-          src={src}
-          alt={alt}
-          draggable={false}
+        <div
           style={{
             transform: `translate3d(${offset.x}px, ${offset.y}px, 0) scale(${scale})`,
             transformOrigin: 'center center',
             maxWidth: '100%',
             maxHeight: '100%',
-            objectFit: 'contain',
-            userSelect: 'none',
-            borderRadius: '10px',
+            display: 'inline-flex',
+            alignItems: 'center',
+            justifyContent: 'center',
           }}
-        />
+        >
+          {itemId ? (
+            <VaultAnswerCurtainStage curtain={curtain}>
+              <img
+                src={src}
+                alt={alt}
+                draggable={false}
+                style={{
+                  maxWidth: '100%',
+                  maxHeight: 'calc(100dvh - 150px)',
+                  objectFit: 'contain',
+                  userSelect: 'none',
+                  borderRadius: '10px',
+                  display: 'block',
+                }}
+              />
+            </VaultAnswerCurtainStage>
+          ) : (
+            <img
+              src={src}
+              alt={alt}
+              draggable={false}
+              style={{
+                maxWidth: '100%',
+                maxHeight: '100%',
+                objectFit: 'contain',
+                userSelect: 'none',
+                borderRadius: '10px',
+                display: 'block',
+              }}
+            />
+          )}
+        </div>
       </div>
     </div>
   );
+
+  return typeof document !== 'undefined'
+    ? createPortal(overlay, document.body)
+    : overlay;
 };
