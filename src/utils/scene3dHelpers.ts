@@ -303,3 +303,384 @@ export function detectRewardMilestone(
 
   return null;
 }
+
+// ---------------------------------------------------------------------------
+// v30: 3D Gyroscopic Astrolabe Pure Layout & Status Mapping
+// ---------------------------------------------------------------------------
+
+export type AstrolabeNodeVisualState =
+  | 'completed'
+  | 'inProgress'
+  | 'alert'
+  | 'notStarted';
+
+export interface AstrolabeRingSpec {
+  subject: Subject;
+  subjectIdx: number;
+  radius: number;
+  tiltX: number;
+  tiltZ: number;
+  phaseOffset: number;
+  color: string;
+  chapterCount: number;
+  completedCount: number;
+  dueCount: number;
+}
+
+export interface AstrolabeNode {
+  chapter: Chapter;
+  subject: Subject;
+  subjectIdx: number;
+  ringIdx: number;
+  indexInRing: number;
+  angle: number;
+  localPosition: [number, number, number];
+  worldPosition: [number, number, number];
+  baseScale: number;
+  visualState: AstrolabeNodeVisualState;
+  isDue: boolean;
+}
+
+export interface SyllabusAstrolabeLayout {
+  rings: AstrolabeRingSpec[];
+  nodes: AstrolabeNode[];
+  ringBySubjectId: Map<string, AstrolabeRingSpec>;
+  maxRadius: number;
+}
+
+/**
+ * Maps a syllabus chapter + revision-due flag into its canonical Astrolabe visual state:
+ * - 'alert': revision due / overdue, OR actively studied with shaky confidence (<= 2)
+ * - 'completed': luminous Lumen gold
+ * - 'inProgress': warm amber glow
+ * - 'notStarted': sleek smoked obsidian glass with subtle subject-tinted rim
+ */
+export function resolveAstrolabeNodeState(
+  chapter: Pick<Chapter, 'status' | 'confidence'>,
+  isDue: boolean
+): AstrolabeNodeVisualState {
+  if (isDue) return 'alert';
+  const conf = Number(chapter.confidence);
+  const hasShakyConfidence =
+    chapter.status !== 'notStarted' && Number.isFinite(conf) && conf > 0 && conf <= 2;
+  if (hasShakyConfidence) return 'alert';
+  if (chapter.status === 'completed') return 'completed';
+  if (chapter.status === 'inProgress') return 'inProgress';
+  return 'notStarted';
+}
+
+/**
+ * Pure Euler XYZ(tiltX, 0, tiltZ) transform for placing a point on a tilted orbital ring
+ * in exact agreement with Three.js Group.rotation.set(tiltX, 0, tiltZ) (default 'XYZ' order).
+ */
+export function transformRingLocalToWorld(
+  local: [number, number, number],
+  tiltX: number,
+  tiltZ: number
+): [number, number, number] {
+  const [lx, ly, lz] = local;
+  // In Three.js Euler order 'XYZ', M = Rx(tiltX) * Ry(0) * Rz(tiltZ)
+  // Step 1: Rotate around Z by tiltZ
+  const cz = Math.cos(tiltZ);
+  const sz = Math.sin(tiltZ);
+  const x1 = lx * cz - ly * sz;
+  const y1 = lx * sz + ly * cz;
+  const z1 = lz;
+
+  // Step 2: Rotate around X by tiltX
+  const cx = Math.cos(tiltX);
+  const sx = Math.sin(tiltX);
+  const x2 = x1;
+  const y2 = y1 * cx - z1 * sx;
+  const z2 = y1 * sx + z1 * cx;
+
+  return [x2, y2, z2];
+}
+
+// Horological tilt presets (radians) so concentric subject rings interleave gracefully
+const ASTROLABE_TILT_PRESETS: ReadonlyArray<[number, number]> = [
+  [0.28, 0.14],
+  [-0.36, 0.34],
+  [0.48, -0.26],
+  [-0.22, -0.44],
+  [0.62, 0.24],
+  [-0.54, 0.16],
+];
+
+/**
+ * Builds deterministic concentric tilted orbital rings (one per active subject)
+ * and mounts each chapter node cleanly along its subject's orbital track.
+ */
+export function buildSyllabusAstrolabeLayout(
+  activeSubjects: ReadonlyArray<Subject>,
+  chapters: ReadonlyArray<Chapter>,
+  dueChapterIds: ReadonlySet<string>,
+  maxNodes = 600
+): SyllabusAstrolabeLayout {
+  const rings: AstrolabeRingSpec[] = [];
+  const nodes: AstrolabeNode[] = [];
+  const ringBySubjectId = new Map<string, AstrolabeRingSpec>();
+
+  const subCount = activeSubjects.length;
+  // Clear central molten-gold geodesic sun core (radius 1.12, wireframe cage 1.22) + 0.20 faceted crystals
+  const baseRadius = subCount <= 3 ? 2.18 : 1.98;
+  const radiusStep = subCount <= 4 ? 0.56 : Math.max(0.44, 2.35 / Math.max(1, subCount - 1));
+
+  activeSubjects.forEach((sub, sIdx) => {
+    const subChapters = chapters.filter((ch) => ch.subjectId === sub.id);
+    const preset = ASTROLABE_TILT_PRESETS[sIdx % ASTROLABE_TILT_PRESETS.length];
+    const extraRingCycle = Math.floor(sIdx / ASTROLABE_TILT_PRESETS.length);
+    const tiltX = preset[0] + extraRingCycle * 0.11;
+    const tiltZ = preset[1] - extraRingCycle * 0.09;
+    const radius = baseRadius + sIdx * radiusStep;
+    const phaseOffset = sIdx * 0.85;
+
+    let completedCount = 0;
+    let dueCount = 0;
+
+    subChapters.forEach((ch) => {
+      if (ch.status === 'completed') completedCount += 1;
+      if (dueChapterIds.has(ch.id)) dueCount += 1;
+    });
+
+    const ringSpec: AstrolabeRingSpec = {
+      subject: sub,
+      subjectIdx: sIdx,
+      radius,
+      tiltX,
+      tiltZ,
+      phaseOffset,
+      color: sub.color || '#F5C451',
+      chapterCount: subChapters.length,
+      completedCount,
+      dueCount,
+    };
+    rings.push(ringSpec);
+    ringBySubjectId.set(sub.id, ringSpec);
+
+    const countInRing = Math.max(1, subChapters.length);
+    subChapters.forEach((ch, cIdx) => {
+      if (nodes.length >= maxNodes) return;
+      const angle = phaseOffset + (cIdx / countInRing) * Math.PI * 2;
+      const localPosition: [number, number, number] = [
+        Math.cos(angle) * radius,
+        0,
+        Math.sin(angle) * radius,
+      ];
+      const worldPosition = transformRingLocalToWorld(localPosition, tiltX, tiltZ);
+      const isDue = dueChapterIds.has(ch.id);
+      const visualState = resolveAstrolabeNodeState(ch, isDue);
+      const conf = Math.max(1, Math.min(5, Number(ch.confidence) || 3));
+      const baseScale =
+        visualState === 'completed'
+          ? 0.96 + conf * 0.06
+          : visualState === 'alert'
+            ? 1.02
+            : visualState === 'inProgress'
+              ? 0.88 + conf * 0.04
+              : 0.78;
+
+      nodes.push({
+        chapter: ch,
+        subject: sub,
+        subjectIdx: sIdx,
+        ringIdx: sIdx,
+        indexInRing: cIdx,
+        angle,
+        localPosition,
+        worldPosition,
+        baseScale,
+        visualState,
+        isDue,
+      });
+    });
+  });
+
+  const maxRadius =
+    rings.length > 0 ? rings[rings.length - 1].radius : baseRadius + 0.8;
+
+  return { rings, nodes, ringBySubjectId, maxRadius };
+}
+
+// ---------------------------------------------------------------------------
+// v30: Focus Orb Solar Eclipse Palette & Session Heat Helpers
+// ---------------------------------------------------------------------------
+
+export type FocusOrbStyle = 'solar-eclipse' | 'lumen-gold' | 'crimson-ember';
+
+export const FOCUS_ORB_STYLE_STORAGE_KEY = 'dh_focus_orb_style_v1';
+export const FOCUS_ORB_STYLE_EVENT = 'dh-focus-orb-style-change';
+
+export interface FocusOrbPalette {
+  id: FocusOrbStyle;
+  label: string;
+  coreCenterHex: string;
+  whiteHotHex: string;
+  innerRimHex: string;
+  outerCoronaHex: string;
+  wireframeHex: string;
+  ringPrimaryHex: string;
+  ringSecondaryHex: string;
+  emberPrimaryHex: string;
+  emberSecondaryHex: string;
+}
+
+const FOCUS_ORB_PALETTES: Record<FocusOrbStyle, FocusOrbPalette> = {
+  'solar-eclipse': {
+    id: 'solar-eclipse',
+    label: 'Solar Eclipse',
+    coreCenterHex: '#020102',
+    whiteHotHex: '#FFF3B0',
+    innerRimHex: '#F59E0B',
+    outerCoronaHex: '#E11D48',
+    wireframeHex: '#F5C451',
+    ringPrimaryHex: '#FBBF24',
+    ringSecondaryHex: '#E11D48',
+    emberPrimaryHex: '#FDE68A',
+    emberSecondaryHex: '#F43F5E',
+  },
+  'lumen-gold': {
+    id: 'lumen-gold',
+    label: 'Lumen Gold',
+    coreCenterHex: '#030201',
+    whiteHotHex: '#FFF3B0',
+    innerRimHex: '#F59E0B',
+    outerCoronaHex: '#B45309',
+    wireframeHex: '#FCD34D',
+    ringPrimaryHex: '#FDE68A',
+    ringSecondaryHex: '#D97706',
+    emberPrimaryHex: '#FFF3B0',
+    emberSecondaryHex: '#F59E0B',
+  },
+  'crimson-ember': {
+    id: 'crimson-ember',
+    label: 'Crimson Ember',
+    coreCenterHex: '#040102',
+    whiteHotHex: '#FDA4AF',
+    innerRimHex: '#EF4444',
+    outerCoronaHex: '#991B1B',
+    wireframeHex: '#FB7185',
+    ringPrimaryHex: '#FB7185',
+    ringSecondaryHex: '#DC2626',
+    emberPrimaryHex: '#FDA4AF',
+    emberSecondaryHex: '#EF4444',
+  },
+};
+
+export function isFocusOrbStyle(value: unknown): value is FocusOrbStyle {
+  return (
+    value === 'solar-eclipse' ||
+    value === 'lumen-gold' ||
+    value === 'crimson-ember'
+  );
+}
+
+export function getFocusOrbPalette(style?: FocusOrbStyle | null): FocusOrbPalette {
+  if (style && isFocusOrbStyle(style)) {
+    return FOCUS_ORB_PALETTES[style];
+  }
+  return FOCUS_ORB_PALETTES['solar-eclipse'];
+}
+
+export function loadFocusOrbStyle(
+  storage?: Pick<Storage, 'getItem'>
+): FocusOrbStyle {
+  try {
+    const store =
+      storage || (typeof window !== 'undefined' ? window.localStorage : null);
+    if (!store) return 'solar-eclipse';
+    const raw = store.getItem(FOCUS_ORB_STYLE_STORAGE_KEY);
+    return isFocusOrbStyle(raw) ? raw : 'solar-eclipse';
+  } catch {
+    return 'solar-eclipse';
+  }
+}
+
+export function saveFocusOrbStyle(
+  style: FocusOrbStyle,
+  storage?: Pick<Storage, 'setItem'>
+): void {
+  const safeStyle: FocusOrbStyle = isFocusOrbStyle(style)
+    ? style
+    : 'solar-eclipse';
+  try {
+    const store =
+      storage || (typeof window !== 'undefined' ? window.localStorage : null);
+    store?.setItem(FOCUS_ORB_STYLE_STORAGE_KEY, safeStyle);
+    if (typeof window !== 'undefined') {
+      window.dispatchEvent(
+        new CustomEvent<FocusOrbStyle>(FOCUS_ORB_STYLE_EVENT, {
+          detail: safeStyle,
+        })
+      );
+    }
+  } catch {
+    // Ignore storage quota errors
+  }
+}
+
+export interface FocusSessionHeatMetrics {
+  /** Normalized 0..1 session heat progression (0 = idle/start, ~0.92 at 60m, 1.0 in overtime) */
+  heat: number;
+  /** Subtle outer corona scale multiplier (1.0 .. 1.24) */
+  coronaScale: number;
+  /** Ember orbital drift speed multiplier */
+  emberSpeed: number;
+  /** Weight of the blazing outer crimson corona vs Lumen gold inner corona (0..1) */
+  crimsonWeight: number;
+}
+
+/**
+ * Computes calm, monotonic Session Heat progression for the Solar Eclipse Focus Orb.
+ * Idle or early sessions emphasize the molten Lumen gold inner corona; as a live Focus
+ * or Full Mock session deepens from 0m toward 60m+, the crimson outer corona and ember
+ * drift gently intensify without distracting from the high-contrast center digits.
+ */
+export function computeFocusSessionHeat(params: {
+  status: 'idle' | 'running' | 'paused';
+  phase: 'work' | 'break';
+  totalActiveMs: number;
+  overtimeMs: number;
+}): FocusSessionHeatMetrics {
+  const { status, phase, totalActiveMs, overtimeMs } = params;
+  const safeMs = Math.max(0, Number.isFinite(totalActiveMs) ? totalActiveMs : 0);
+  const safeOvertime = Math.max(0, Number.isFinite(overtimeMs) ? overtimeMs : 0);
+
+  if (phase === 'break') {
+    return {
+      heat: 0.08,
+      coronaScale: 1.0,
+      emberSpeed: 0.38,
+      crimsonWeight: 0.14,
+    };
+  }
+
+  if (status === 'idle') {
+    return {
+      heat: 0.12,
+      coronaScale: 1.02,
+      emberSpeed: 0.45,
+      crimsonWeight: 0.22,
+    };
+  }
+
+  // Smooth ease-out curve from 0m -> 60m (3,600,000 ms)
+  const minsRatio = Math.min(1, safeMs / 3_600_000);
+  const curved = 1 - Math.pow(1 - minsRatio, 1.45);
+  let heat = 0.18 + curved * 0.74; // 0.18 at 0m -> 0.92 at 60m
+  if (safeOvertime > 0) {
+    heat = Math.min(1, heat + 0.08 + Math.min(0.08, safeOvertime / 1_800_000));
+  }
+  if (status === 'paused') {
+    heat *= 0.65;
+  }
+
+  const clampedHeat = Math.max(0, Math.min(1, heat));
+  return {
+    heat: clampedHeat,
+    coronaScale: 1.0 + clampedHeat * 0.22,
+    emberSpeed: status === 'paused' ? 0.18 : 0.52 + clampedHeat * 0.78,
+    crimsonWeight: 0.24 + clampedHeat * 0.68,
+  };
+}
+

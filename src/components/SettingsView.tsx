@@ -42,6 +42,11 @@ import {
   SETTINGS_SECTION_META,
   type SettingsSectionId,
 } from '../utils/navHelpers';
+import {
+  type FocusOrbStyle,
+  loadFocusOrbStyle,
+  saveFocusOrbStyle,
+} from '../utils/scene3dHelpers';
 
 export type SettingsSection = SettingsSectionId;
 
@@ -215,6 +220,7 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
   const [confirmDeleteCloud, setConfirmDeleteCloud] = useState(false);
   const revisionIntervalsStr = (state.set.revisionIntervals || [1, 3, 7, 21]).join(', ');
   const [intervalsInput, setIntervalsInput] = useState(revisionIntervalsStr);
+  const [focusOrbStyle, setFocusOrbStyle] = useState<FocusOrbStyle>(() => loadFocusOrbStyle());
   useEffect(() => {
     setIntervalsInput(revisionIntervalsStr);
   }, [revisionIntervalsStr]);
@@ -1392,21 +1398,42 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
           </Field>
 
           {currentUi3d !== 'off' && (
-            <Field
-              label="3D quality"
-              hint="Auto runs High on fast GPUs and switches to Lite automatically if frame pacing dips to save battery."
-            >
-              <Segmented<'auto' | 'high' | 'lite'>
-                aria-label="3D quality"
-                value={set.ui3dQuality || 'auto'}
-                options={[
-                  { value: 'auto', label: 'Auto' },
-                  { value: 'high', label: 'High' },
-                  { value: 'lite', label: 'Lite' },
-                ]}
-                onChange={(val) => onUpdateSetting('ui3dQuality', val)}
-              />
-            </Field>
+            <>
+              <Field
+                label="3D quality"
+                hint="Auto runs High on fast GPUs and switches to Lite automatically if frame pacing dips to save battery."
+              >
+                <Segmented<'auto' | 'high' | 'lite'>
+                  aria-label="3D quality"
+                  value={set.ui3dQuality || 'auto'}
+                  options={[
+                    { value: 'auto', label: 'Auto' },
+                    { value: 'high', label: 'High' },
+                    { value: 'lite', label: 'Lite' },
+                  ]}
+                  onChange={(val) => onUpdateSetting('ui3dQuality', val)}
+                />
+              </Field>
+
+              <Field
+                label="Focus orb style"
+                hint="Stored locally on this device. Solar Eclipse keeps an obsidian center behind timer digits."
+              >
+                <Segmented<FocusOrbStyle>
+                  aria-label="Focus orb style"
+                  value={focusOrbStyle}
+                  options={[
+                    { value: 'solar-eclipse', label: 'Solar Eclipse' },
+                    { value: 'lumen-gold', label: 'Lumen Gold' },
+                    { value: 'crimson-ember', label: 'Crimson Ember' },
+                  ]}
+                  onChange={(val) => {
+                    setFocusOrbStyle(val);
+                    saveFocusOrbStyle(val);
+                  }}
+                />
+              </Field>
+            </>
           )}
         </Card>
       )}

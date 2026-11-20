@@ -669,7 +669,7 @@ export const FocusView: React.FC<FocusViewProps> = ({
         <div
           style={{
             position: 'relative',
-            minHeight: show3dCore ? 320 : undefined,
+            minHeight: show3dCore ? 336 : undefined,
             display: 'flex',
             flexDirection: 'column',
             alignItems: 'center',
@@ -683,7 +683,7 @@ export const FocusView: React.FC<FocusViewProps> = ({
                 position: 'absolute',
                 inset: 0,
                 zIndex: 0,
-                opacity: aesthetic === 'retro' ? 0.42 : 0.94,
+                opacity: aesthetic === 'retro' ? 0.42 : 1,
               }}
             >
               <FocusOrbitScene
@@ -701,6 +701,7 @@ export const FocusView: React.FC<FocusViewProps> = ({
                 totalActiveMs={m ? m.totalActiveMs : 0}
                 overtimeMs={m ? m.overtimeMs : 0}
                 completedPomodorosToday={completedPomodorosToday}
+                height={336}
                 onBreatheStateChange={setBreatheCue}
               />
             </div>
@@ -712,10 +713,10 @@ export const FocusView: React.FC<FocusViewProps> = ({
               position: 'relative',
               zIndex: 2,
               pointerEvents: 'none',
-              padding: show3dCore ? '20px 30px' : '0 8px',
+              padding: show3dCore ? '10px 18px' : '0 8px',
               borderRadius: show3dCore ? '999px' : undefined,
               background: show3dCore
-                ? 'radial-gradient(ellipse at center, color-mix(in srgb, var(--bg) 78%, transparent) 0%, color-mix(in srgb, var(--bg) 44%, transparent) 52%, transparent 76%)'
+                ? 'radial-gradient(ellipse at center, rgba(2, 1, 2, 0.36) 0%, rgba(2, 1, 2, 0.14) 38%, transparent 60%)'
                 : undefined,
             }}
           >

@@ -2,6 +2,13 @@ import React, { useEffect, useRef, useState } from 'react';
 import { Compass, Pause, Play } from 'lucide-react';
 import type { ActiveTimerMode, TimerPhase } from '../../types';
 import {
+  FOCUS_ORB_STYLE_EVENT,
+  computeFocusSessionHeat,
+  getFocusOrbPalette,
+  loadFocusOrbStyle,
+  type FocusOrbStyle,
+} from '../../utils/scene3dHelpers';
+import {
   Scene3D,
   type Scene3DContext,
   type Ui3dQuality,
@@ -30,82 +37,219 @@ export interface FocusOrbitSceneProps {
 const ARC_SEGMENTS = 60;
 const MAX_SATELLITES = 12;
 const STOPWATCH_RING_COUNT = 8;
-const CORONA_RAYS = 16;
 
-const CORE_VERTEX_SHADER = `
+// ---------------------------------------------------------------------------
+// High-Contrast Solar Eclipse Core Shader (SphereGeometry 1.45)
+// Pitch-black obsidian inner face (dot > 0.45) + incandescent Fresnel rim
+// ---------------------------------------------------------------------------
+
+const ECLIPSE_CORE_VERTEX = `
   uniform float uTime;
   uniform float uPulse;
   uniform float uTapProgress;
   uniform vec3 uTapOrigin;
   varying vec3 vNormal;
-  varying vec3 vViewPos;
-  varying float vDisp;
+  varying vec3 vViewDir;
+  varying vec3 vLocalPos;
   varying float vRipple;
 
-  float noise3(vec3 p) {
-    return sin(p.x * 2.7 + uTime * 1.1) * cos(p.y * 2.5 - uTime * 0.9) * sin(p.z * 2.9 + uTime * 0.7);
-  }
-
   void main() {
-    float n = noise3(position * 1.45);
     float ripple = 0.0;
     if (uTapProgress > 0.0 && uTapProgress < 1.0) {
       float d = distance(normalize(position), normalize(uTapOrigin));
       float waveFront = uTapProgress * 2.35;
-      float env = exp(-pow((d - waveFront) * 4.8, 2.0)) * (1.0 - uTapProgress);
+      float env = exp(-pow((d - waveFront) * 5.0, 2.0)) * (1.0 - uTapProgress);
       ripple = env * sin((d - waveFront) * 16.0);
     }
-    float disp = n * (0.045 + uPulse * 0.055) + ripple * 0.11;
-    vDisp = disp;
+    float subtleBreath = sin(position.x * 2.8 + uTime * 0.85) * cos(position.y * 2.8 - uTime * 0.7) * 0.012;
+    vec3 displaced = position + normal * (subtleBreath * (0.35 + uPulse * 0.65) + ripple * 0.07);
+    vLocalPos = normalize(position);
     vRipple = abs(ripple);
-    vec3 displaced = position + normal * disp;
     vec4 mvPos = modelViewMatrix * vec4(displaced, 1.0);
-    vViewPos = -mvPos.xyz;
+    vViewDir = normalize(-mvPos.xyz);
     vNormal = normalize(normalMatrix * normal);
     gl_Position = projectionMatrix * mvPos;
   }
 `;
 
-const CORE_FRAGMENT_SHADER = `
-  uniform vec3 uBaseColor;
-  uniform vec3 uGlowColor;
+const ECLIPSE_CORE_FRAGMENT = `
+  uniform float uTime;
+  uniform float uHeat;
   uniform float uIntensity;
+  uniform float uCrimsonWeight;
+  uniform vec3 uCenterColor;
+  uniform vec3 uWhiteHotColor;
+  uniform vec3 uInnerRimColor;
+  uniform vec3 uOuterCoronaColor;
   varying vec3 vNormal;
-  varying vec3 vViewPos;
-  varying float vDisp;
+  varying vec3 vViewDir;
+  varying vec3 vLocalPos;
   varying float vRipple;
+
+  float coronaNoise(vec3 p, float t) {
+    float a = sin(p.x * 5.4 + t * 0.9) * cos(p.y * 5.0 - t * 0.75);
+    float b = sin(p.z * 6.2 + t * 1.1) * cos(p.x * 3.9 + p.y * 4.3 - t * 0.62);
+    return 0.5 + 0.5 * (a * 0.58 + b * 0.42);
+  }
 
   void main() {
     vec3 n = normalize(vNormal);
-    vec3 v = normalize(vViewPos);
-    float fresnel = pow(1.0 - max(0.0, dot(n, v)), 1.85);
-    float shimmer = clamp(0.5 + vDisp * 6.0, 0.0, 1.0);
-    vec3 col = mix(uBaseColor, uGlowColor, fresnel * 0.92 + shimmer * 0.22);
-    col += uGlowColor * fresnel * (0.95 * uIntensity);
-    col += vec3(1.0, 0.96, 0.85) * clamp(vRipple * 1.5, 0.0, 0.82);
-    float alpha = clamp(0.78 + fresnel * 0.22 + vRipple * 0.12, 0.0, 1.0) * clamp(uIntensity, 0.38, 1.18);
-    gl_FragColor = vec4(col, alpha);
+    vec3 v = normalize(vViewDir);
+    float ndv = max(dot(n, v), 0.0);
+    float invNdv = 1.0 - ndv;
+
+    // Keep inner disk (dot > 0.45) strictly pitch-dark obsidian so white timer digits pop cleanly
+    float rimMask = smoothstep(0.56, 0.14, ndv);
+    float fresnel = pow(invNdv, 2.8);
+    float razorEdge = pow(invNdv, 5.5);
+
+    float flare = coronaNoise(vLocalPos, uTime);
+    float flareBoost = 0.82 + flare * (0.28 + uHeat * 0.36);
+
+    // Three-stop incandescent eclipse rim: outer crimson/amber -> molten gold -> white-hot silhouette
+    vec3 midBand = mix(uInnerRimColor, uOuterCoronaColor, clamp(0.18 + uCrimsonWeight * 0.55, 0.0, 0.85));
+    vec3 col = uCenterColor;
+    col += midBand * fresnel * (1.28 + uHeat * 0.55) * flareBoost * rimMask;
+    col += uOuterCoronaColor * pow(invNdv, 2.15) * (0.34 + uCrimsonWeight * 0.52) * flare * rimMask;
+    col += uWhiteHotColor * razorEdge * (1.75 + uHeat * 0.45);
+
+    // Subtle tap ripple highlight
+    col += uWhiteHotColor * clamp(vRipple * 1.35, 0.0, 0.68);
+
+    col *= clamp(uIntensity, 0.45, 1.35);
+    gl_FragColor = vec4(col, 1.0);
   }
 `;
 
-function createRadialHaloTexture(THREE: typeof import('three')): import('three').CanvasTexture {
-  const size = 128;
+// ---------------------------------------------------------------------------
+// Outer Atmospheric Corona Shell (SphereGeometry 1.66, BackSide, Additive)
+// Inverse Fresnel fade so atmosphere blooms past the 1.45 silhouette smoothly
+// ---------------------------------------------------------------------------
+
+const CORONA_SHELL_VERTEX = `
+  varying vec3 vNormal;
+  varying vec3 vViewDir;
+  varying vec3 vLocalPos;
+
+  void main() {
+    vLocalPos = normalize(position);
+    vec4 mvPos = modelViewMatrix * vec4(position, 1.0);
+    vViewDir = normalize(-mvPos.xyz);
+    vNormal = normalize(normalMatrix * normal);
+    gl_Position = projectionMatrix * mvPos;
+  }
+`;
+
+const CORONA_SHELL_FRAGMENT = `
+  uniform float uTime;
+  uniform float uHeat;
+  uniform float uIntensity;
+  uniform float uCrimsonWeight;
+  uniform vec3 uWhiteHotColor;
+  uniform vec3 uInnerRimColor;
+  uniform vec3 uOuterCoronaColor;
+  varying vec3 vNormal;
+  varying vec3 vViewDir;
+  varying vec3 vLocalPos;
+
+  void main() {
+    vec3 n = normalize(vNormal);
+    vec3 v = normalize(vViewDir);
+    // BackSide normal faces away from camera -> dot(-n, v) is 0 at outer edge, ~0.49 at core rim
+    float backNdv = clamp(dot(-n, v), 0.0, 1.0);
+
+    float ang = atan(vLocalPos.y, vLocalPos.x);
+    float plume =
+      0.72 +
+      0.18 * sin(ang * 5.0 + uTime * 0.55) +
+      0.10 * cos(ang * 9.0 - uTime * 0.78);
+
+    // Smooth atmospheric falloff reaching 0.0 cleanly before the outer shell boundary
+    float softOuter = pow(backNdv, 2.55);
+    float limbRing = pow(backNdv, 4.2);
+
+    vec3 glowCol = mix(uOuterCoronaColor, uInnerRimColor, smoothstep(0.12, 0.56, backNdv));
+    glowCol = mix(glowCol, uWhiteHotColor, limbRing * 0.42);
+
+    float alpha = clamp(
+      (softOuter * (0.48 + uHeat * 0.34) + limbRing * 0.45) * plume * uIntensity,
+      0.0,
+      0.88
+    );
+
+    gl_FragColor = vec4(glowCol * (0.95 + uCrimsonWeight * 0.25) * uIntensity, alpha);
+  }
+`;
+
+function createEclipseCoronaSpriteTexture(
+  THREE: typeof import('three')
+): import('three').CanvasTexture {
+  const size = 256;
   const c = document.createElement('canvas');
   c.width = size;
   c.height = size;
   const ctx = c.getContext('2d');
   if (ctx) {
-    const grad = ctx.createRadialGradient(size / 2, size / 2, 2, size / 2, size / 2, size / 2);
-    grad.addColorStop(0, 'rgba(255, 255, 255, 0.88)');
-    grad.addColorStop(0.32, 'rgba(255, 255, 255, 0.34)');
-    grad.addColorStop(0.7, 'rgba(255, 255, 255, 0.07)');
-    grad.addColorStop(1, 'rgba(255, 255, 255, 0)');
-    ctx.fillStyle = grad;
+    const half = size / 2;
+    const g = ctx.createRadialGradient(half, half, 26, half, half, half);
+    g.addColorStop(0.0, 'rgba(255, 255, 255, 0.14)');
+    g.addColorStop(0.46, 'rgba(255, 248, 224, 0.72)');
+    g.addColorStop(0.62, 'rgba(255, 214, 140, 0.36)');
+    g.addColorStop(0.82, 'rgba(255, 160, 96, 0.10)');
+    g.addColorStop(1.0, 'rgba(0, 0, 0, 0)');
+    ctx.fillStyle = g;
     ctx.fillRect(0, 0, size, size);
   }
   const tex = new THREE.CanvasTexture(c);
   tex.colorSpace = THREE.SRGBColorSpace;
   return tex;
+}
+
+function createEmberDustTexture(THREE: typeof import('three')): import('three').CanvasTexture {
+  const size = 64;
+  const c = document.createElement('canvas');
+  c.width = size;
+  c.height = size;
+  const ctx = c.getContext('2d');
+  if (ctx) {
+    const half = size / 2;
+    const g = ctx.createRadialGradient(half, half, 1, half, half, half);
+    g.addColorStop(0.0, 'rgba(255, 255, 255, 0.98)');
+    g.addColorStop(0.4, 'rgba(255, 255, 255, 0.48)');
+    g.addColorStop(1.0, 'rgba(255, 255, 255, 0)');
+    ctx.fillStyle = g;
+    ctx.fillRect(0, 0, size, size);
+  }
+  const tex = new THREE.CanvasTexture(c);
+  tex.colorSpace = THREE.SRGBColorSpace;
+  return tex;
+}
+
+function buildOuterTickRingGeometry(
+  THREE: typeof import('three'),
+  radius: number,
+  tickCount: number,
+  majorEvery: number
+): import('three').BufferGeometry {
+  const positions = new Float32Array(tickCount * 2 * 3);
+  for (let i = 0; i < tickCount; i++) {
+    const angle = (i / tickCount) * Math.PI * 2;
+    const isMajor = i % majorEvery === 0;
+    const innerR = radius - (isMajor ? 0.085 : 0.042);
+    const outerR = radius + (isMajor ? 0.025 : 0.01);
+    const cos = Math.cos(angle);
+    const sin = Math.sin(angle);
+    const idx = i * 6;
+    positions[idx] = cos * innerR;
+    positions[idx + 1] = sin * innerR;
+    positions[idx + 2] = 0;
+    positions[idx + 3] = cos * outerR;
+    positions[idx + 4] = sin * outerR;
+    positions[idx + 5] = 0;
+  }
+  const geo = new THREE.BufferGeometry();
+  geo.setAttribute('position', new THREE.BufferAttribute(positions, 3));
+  return geo;
 }
 
 export const FocusOrbitScene: React.FC<FocusOrbitSceneProps> = ({
@@ -123,11 +267,36 @@ export const FocusOrbitScene: React.FC<FocusOrbitSceneProps> = ({
   totalActiveMs,
   overtimeMs,
   completedPomodorosToday = 0,
-  height = 320,
+  height = 336,
   onBreatheStateChange,
 }) => {
   const [ambientPaused, setAmbientPaused] = useState(false);
   const [gyroEnabled, setGyroEnabled] = useState(false);
+  const [orbStyle, setOrbStyle] = useState<FocusOrbStyle>(() => loadFocusOrbStyle());
+
+  // Listen for live localStorage palette switches from Settings -> Appearance
+  useEffect(() => {
+    if (typeof window === 'undefined') return;
+    const onStyleEvent = (ev: Event) => {
+      const custom = ev as CustomEvent<FocusOrbStyle>;
+      if (custom.detail) {
+        setOrbStyle(custom.detail);
+      } else {
+        setOrbStyle(loadFocusOrbStyle());
+      }
+    };
+    const onStorage = (ev: StorageEvent) => {
+      if (ev.key === 'dh_focus_orb_style_v1') {
+        setOrbStyle(loadFocusOrbStyle());
+      }
+    };
+    window.addEventListener(FOCUS_ORB_STYLE_EVENT, onStyleEvent);
+    window.addEventListener('storage', onStorage);
+    return () => {
+      window.removeEventListener(FOCUS_ORB_STYLE_EVENT, onStyleEvent);
+      window.removeEventListener('storage', onStorage);
+    };
+  }, []);
 
   const supportsGyro =
     typeof window !== 'undefined' && 'DeviceOrientationEvent' in window;
@@ -140,6 +309,7 @@ export const FocusOrbitScene: React.FC<FocusOrbitSceneProps> = ({
     mode,
     phase,
     subjectColor,
+    orbStyle,
     progressPct,
     totalActiveMs,
     overtimeMs,
@@ -153,6 +323,7 @@ export const FocusOrbitScene: React.FC<FocusOrbitSceneProps> = ({
     mode,
     phase,
     subjectColor,
+    orbStyle,
     progressPct,
     totalActiveMs,
     overtimeMs,
@@ -168,7 +339,7 @@ export const FocusOrbitScene: React.FC<FocusOrbitSceneProps> = ({
     status,
     mode,
     phase,
-    subjectColor,
+    orbStyle,
     progressPct,
     totalActiveMs,
     overtimeMs,
@@ -217,6 +388,7 @@ export const FocusOrbitScene: React.FC<FocusOrbitSceneProps> = ({
     }
   };
 
+  // Strictly unmount WebGL when StandBy Desk Mode is active or 3D is Off
   if (deskMode || ui3dSetting === 'off') {
     return null;
   }
@@ -230,7 +402,7 @@ export const FocusOrbitScene: React.FC<FocusOrbitSceneProps> = ({
       }}
     >
       <span className="sr-only">
-        Focus core visualization:{' '}
+        Solar Eclipse focus core ({getFocusOrbPalette(orbStyle).label}):{' '}
         {status === 'running' ? 'active' : status === 'paused' ? 'paused' : 'ready'},{' '}
         {phase === 'break' ? 'break phase' : 'study phase'}
         {subjectName ? `, ${subjectName}` : ''}, {Math.round(progressPct)}% progress,{' '}
@@ -238,7 +410,7 @@ export const FocusOrbitScene: React.FC<FocusOrbitSceneProps> = ({
         {mode === 'stopwatch'
           ? `, ${Math.floor(totalActiveMs / 900000)} fifteen-minute rings active`
           : ''}
-        {overtimeMs > 0 ? ', overtime coronal rays active' : ''}.
+        {overtimeMs > 0 ? ', high solar corona active' : ''}.
       </span>
 
       {supportsGyro && priority === 'stage' && (
@@ -316,119 +488,149 @@ export const FocusOrbitScene: React.FC<FocusOrbitSceneProps> = ({
         continuous={!ambientPaused}
         height={height}
         fov={42}
-        cameraPosition={[0, 0.25, 6.75]}
+        cameraPosition={[0, 0.06, 5.75]}
         className="w-full select-none"
         setup={(ctx: Scene3DContext) => {
-          const { THREE, scene, canvas, resolution } = ctx;
+          const { THREE, scene, camera, canvas, resolution } = ctx;
           sceneCtxRef.current = ctx;
 
-          // Warm key + cool sky fill
-          const hemiLight = new THREE.HemisphereLight(0x93c5fd, 0x0b0d10, 0.85);
-          scene.add(hemiLight);
+          const fitCameraForAspect = (w: number, h: number) => {
+            const aspect = Math.max(0.66, w / Math.max(1, h));
+            const safeZ = aspect < 0.96 ? 5.75 * (0.96 / aspect) : 5.75;
+            camera.position.set(0, 0.06, safeZ);
+            camera.lookAt(0, 0, 0);
+          };
+          fitCameraForAspect(ctx.width, ctx.height);
 
-          const keyLight = new THREE.DirectionalLight(0xfff3d1, 1.35);
-          keyLight.position.set(3.5, 4.5, 5.0);
-          scene.add(keyLight);
+          const initPalette = getFocusOrbPalette(propsRef.current.orbStyle);
+          const coronaSpriteTex = createEclipseCoronaSpriteTexture(THREE);
+          const emberDustTex = createEmberDustTexture(THREE);
 
           const coreGroup = new THREE.Group();
           scene.add(coreGroup);
 
-          const initialAccent = new THREE.Color(propsRef.current.subjectColor || '#F5C451');
-          const darkCoreBase = new THREE.Color('#14181F');
-          const warmOvertimeColor = new THREE.Color('#F5C451');
-          const breakColor = new THREE.Color('#60A5FA');
+          // 1. 256x256 Offscreen-Canvas Radial Corona Glow Sprite Behind the Orb (Zero Post-Processing)
+          const coronaSpriteMat = new THREE.SpriteMaterial({
+            map: coronaSpriteTex,
+            color: new THREE.Color(initPalette.innerRimHex),
+            transparent: true,
+            opacity: 0.72,
+            blending: THREE.AdditiveBlending,
+            depthWrite: false,
+          });
+          const coronaSprite = new THREE.Sprite(coronaSpriteMat);
+          coronaSprite.position.set(0, 0, -0.35);
+          coronaSprite.scale.set(4.55, 4.55, 1);
+          scene.add(coronaSprite);
 
-          // 1. Custom Shader Glowing Core (Fresnel + procedural noise displacement + radial tap ripple)
-          const coreGeo = new THREE.IcosahedronGeometry(
-            0.84,
-            resolution.resolvedQuality === 'lite' ? 3 : 4
+          // 2. Outer Atmospheric Corona Shell (SphereGeometry 1.66, BackSide, Additive Inverse Fresnel)
+          const coronaShellGeo = new THREE.SphereGeometry(
+            1.66,
+            resolution.resolvedQuality === 'lite' ? 28 : 40,
+            resolution.resolvedQuality === 'lite' ? 28 : 40
+          );
+          const coronaShellUniforms = {
+            uTime: { value: 0 },
+            uHeat: { value: 0.16 },
+            uIntensity: { value: 0.96 },
+            uCrimsonWeight: { value: 0.24 },
+            uWhiteHotColor: { value: new THREE.Color(initPalette.whiteHotHex) },
+            uInnerRimColor: { value: new THREE.Color(initPalette.innerRimHex) },
+            uOuterCoronaColor: { value: new THREE.Color(initPalette.outerCoronaHex) },
+          };
+          const coronaShellMat = new THREE.ShaderMaterial({
+            uniforms: coronaShellUniforms,
+            vertexShader: CORONA_SHELL_VERTEX,
+            fragmentShader: CORONA_SHELL_FRAGMENT,
+            side: THREE.BackSide,
+            transparent: true,
+            blending: THREE.AdditiveBlending,
+            depthWrite: false,
+          });
+          const coronaShellMesh = new THREE.Mesh(coronaShellGeo, coronaShellMat);
+          coreGroup.add(coronaShellMesh);
+
+          // 3. Commanding Pitch-Dark Obsidian Eclipse Core (SphereGeometry 1.45, 48x48)
+          const coreGeo = new THREE.SphereGeometry(
+            1.45,
+            resolution.resolvedQuality === 'lite' ? 32 : 48,
+            resolution.resolvedQuality === 'lite' ? 32 : 48
           );
           const coreUniforms = {
             uTime: { value: 0 },
             uPulse: { value: 0.2 },
+            uHeat: { value: 0.16 },
+            uIntensity: { value: 1.0 },
+            uCrimsonWeight: { value: 0.24 },
             uTapProgress: { value: 0 },
             uTapOrigin: { value: new THREE.Vector3(0, 0, 1) },
-            uBaseColor: { value: darkCoreBase.clone().lerp(initialAccent, 0.25) },
-            uGlowColor: { value: initialAccent.clone() },
-            uIntensity: { value: 0.9 },
+            uCenterColor: { value: new THREE.Color(initPalette.coreCenterHex) },
+            uWhiteHotColor: { value: new THREE.Color(initPalette.whiteHotHex) },
+            uInnerRimColor: { value: new THREE.Color(initPalette.innerRimHex) },
+            uOuterCoronaColor: { value: new THREE.Color(initPalette.outerCoronaHex) },
           };
           const coreMat = new THREE.ShaderMaterial({
             uniforms: coreUniforms,
-            vertexShader: CORE_VERTEX_SHADER,
-            fragmentShader: CORE_FRAGMENT_SHADER,
-            transparent: true,
+            vertexShader: ECLIPSE_CORE_VERTEX,
+            fragmentShader: ECLIPSE_CORE_FRAGMENT,
           });
           const coreMesh = new THREE.Mesh(coreGeo, coreMat);
           coreGroup.add(coreMesh);
 
-          // 2. Additive Halo Sprite Glow
-          const haloTexture = createRadialHaloTexture(THREE);
-          const haloMat = new THREE.SpriteMaterial({
-            map: haloTexture,
-            color: initialAccent.clone(),
+          // 4. Signature Slowly Rotating Geodesic Wireframe Cage (IcosahedronGeometry 1.68, 1)
+          const cageSrcGeo = new THREE.IcosahedronGeometry(1.68, 1);
+          const cageEdgesGeo = new THREE.EdgesGeometry(cageSrcGeo);
+          cageSrcGeo.dispose();
+          const cageMat = new THREE.LineBasicMaterial({
+            color: new THREE.Color(initPalette.wireframeHex),
+            transparent: true,
+            opacity: 0.3,
+            blending: THREE.AdditiveBlending,
+            depthWrite: false,
+          });
+          const geodesicCage = new THREE.LineSegments(cageEdgesGeo, cageMat);
+          coreGroup.add(geodesicCage);
+
+          // 5. Two Razor-Thin Counter-Rotating Tilted Orbital Rings
+          const ringPrimaryGeo = new THREE.TorusGeometry(1.78, 0.0085, 8, 96);
+          const ringPrimaryMat = new THREE.MeshBasicMaterial({
+            color: new THREE.Color(initPalette.ringPrimaryHex),
             transparent: true,
             opacity: 0.56,
             blending: THREE.AdditiveBlending,
             depthWrite: false,
           });
-          const haloSprite = new THREE.Sprite(haloMat);
-          haloSprite.scale.set(4.5, 4.5, 1);
-          coreGroup.add(haloSprite);
+          const ringPrimary = new THREE.Mesh(ringPrimaryGeo, ringPrimaryMat);
+          ringPrimary.rotation.x = Math.PI * 0.36;
+          ringPrimary.rotation.y = Math.PI * 0.14;
+          coreGroup.add(ringPrimary);
 
-          // 3. Outer Wire Lattice & Equatorial Gimbal Ring
-          const shellGeo = new THREE.IcosahedronGeometry(1.14, 1);
-          const shellMat = new THREE.MeshStandardMaterial({
-            color: initialAccent.clone(),
-            roughness: 0.5,
-            metalness: 0.25,
-            wireframe: true,
+          const ringSecondaryGeo = new THREE.TorusGeometry(1.9, 0.0068, 8, 96);
+          const ringSecondaryMat = new THREE.MeshBasicMaterial({
+            color: new THREE.Color(initPalette.ringSecondaryHex),
             transparent: true,
-            opacity: 0.28,
-          });
-          const shellMesh = new THREE.Mesh(shellGeo, shellMat);
-          coreGroup.add(shellMesh);
-
-          const gimbalGeo = new THREE.TorusGeometry(1.48, 0.018, 8, 72);
-          const gimbalMat = new THREE.MeshStandardMaterial({
-            color: initialAccent.clone(),
-            roughness: 0.2,
-            metalness: 0.7,
-            transparent: true,
-            opacity: 0.55,
-          });
-          const gimbalMesh = new THREE.Mesh(gimbalGeo, gimbalMat);
-          gimbalMesh.rotation.x = Math.PI * 0.36;
-          coreGroup.add(gimbalMesh);
-
-          // 4. Coronal Flare Ring & Flow Overtime Coronal Rays (InstancedMesh)
-          const coronaGeo = new THREE.TorusGeometry(1.76, 0.022, 8, 72);
-          const coronaMat = new THREE.MeshBasicMaterial({
-            color: warmOvertimeColor,
-            transparent: true,
-            opacity: 0,
+            opacity: 0.42,
             blending: THREE.AdditiveBlending,
             depthWrite: false,
           });
-          const coronaMesh = new THREE.Mesh(coronaGeo, coronaMat);
-          coronaMesh.rotation.x = -Math.PI * 0.26;
-          coronaMesh.rotation.y = Math.PI * 0.16;
-          coreGroup.add(coronaMesh);
+          const ringSecondary = new THREE.Mesh(ringSecondaryGeo, ringSecondaryMat);
+          ringSecondary.rotation.x = -Math.PI * 0.32;
+          ringSecondary.rotation.y = -Math.PI * 0.2;
+          coreGroup.add(ringSecondary);
 
-          const rayGeo = new THREE.CylinderGeometry(0.008, 0.034, 0.44, 5);
-          rayGeo.translate(0, 0.22, 0);
-          const rayMat = new THREE.MeshBasicMaterial({
-            color: warmOvertimeColor,
+          // 6. Faint Outer Radial Degree Tick Ring
+          const outerTickGeo = buildOuterTickRingGeometry(THREE, 1.98, 72, 6);
+          const outerTickMat = new THREE.LineBasicMaterial({
+            color: new THREE.Color(initPalette.wireframeHex),
             transparent: true,
-            opacity: 0,
+            opacity: 0.22,
             blending: THREE.AdditiveBlending,
             depthWrite: false,
           });
-          const coronaRays = new THREE.InstancedMesh(rayGeo, rayMat, CORONA_RAYS);
-          coronaRays.visible = false;
-          coronaRays.frustumCulled = false;
-          coreGroup.add(coronaRays);
+          const outerTicks = new THREE.LineSegments(outerTickGeo, outerTickMat);
+          scene.add(outerTicks);
 
-          // 5. Stopwatch Concentric Milestone Rings (1 ring revealed per 15m active)
+          // 7. Stopwatch 15-Minute Milestone Concentric Rings
           const stopwatchRingsGroup = new THREE.Group();
           coreGroup.add(stopwatchRingsGroup);
           const stopwatchRingMeshes: Array<{
@@ -436,29 +638,29 @@ export const FocusOrbitScene: React.FC<FocusOrbitSceneProps> = ({
             mat: import('three').MeshBasicMaterial;
           }> = [];
           for (let rIdx = 0; rIdx < STOPWATCH_RING_COUNT; rIdx++) {
-            const rRadius = 1.62 + rIdx * 0.095;
-            const ringGeo = new THREE.TorusGeometry(rRadius, 0.014, 8, 64);
-            const ringMat = new THREE.MeshBasicMaterial({
-              color: warmOvertimeColor,
+            const rRadius = 1.73 + rIdx * 0.042;
+            const rGeo = new THREE.TorusGeometry(rRadius, 0.0085, 6, 72);
+            const rMat = new THREE.MeshBasicMaterial({
+              color: new THREE.Color(initPalette.innerRimHex),
               transparent: true,
               opacity: 0,
               blending: THREE.AdditiveBlending,
               depthWrite: false,
             });
-            const ringMesh = new THREE.Mesh(ringGeo, ringMat);
-            ringMesh.rotation.x = Math.PI * (0.28 + (rIdx % 3) * 0.14);
-            ringMesh.rotation.y = (rIdx % 2 === 0 ? 1 : -1) * Math.PI * (0.12 + rIdx * 0.04);
-            ringMesh.visible = false;
-            stopwatchRingsGroup.add(ringMesh);
-            stopwatchRingMeshes.push({ mesh: ringMesh, mat: ringMat });
+            const rMesh = new THREE.Mesh(rGeo, rMat);
+            rMesh.rotation.x = Math.PI * (0.28 + (rIdx % 3) * 0.14);
+            rMesh.rotation.y = (rIdx % 2 === 0 ? 1 : -1) * Math.PI * (0.12 + rIdx * 0.04);
+            rMesh.visible = false;
+            stopwatchRingsGroup.add(rMesh);
+            stopwatchRingMeshes.push({ mesh: rMesh, mat: rMat });
           }
 
-          // 6. Luminous 60-segment Progress Arc (InstancedMesh)
-          const segGeo = new THREE.BoxGeometry(0.115, 0.044, 0.044);
+          // 8. Sleek 60-Segment 3D Progress Arc (InstancedMesh)
+          const segGeo = new THREE.BoxGeometry(0.075, 0.024, 0.024);
           const segMat = new THREE.MeshBasicMaterial({
             color: 0xffffff,
             transparent: true,
-            opacity: 0.9,
+            opacity: 0.85,
           });
           const progressArcInstanced = new THREE.InstancedMesh(segGeo, segMat, ARC_SEGMENTS);
           const dummyMat4 = new THREE.Matrix4();
@@ -466,9 +668,9 @@ export const FocusOrbitScene: React.FC<FocusOrbitSceneProps> = ({
           const dummyQuat = new THREE.Quaternion();
           const dummyScale = new THREE.Vector3(1, 1, 1);
           const dummyEuler = new THREE.Euler();
-          const dimTrackColor = new THREE.Color('#232A35');
+          const dimTrackColor = new THREE.Color('#14171D');
 
-          const arcRadius = 2.22;
+          const arcRadius = 2.04;
           for (let i = 0; i < ARC_SEGMENTS; i++) {
             const angle = Math.PI / 2 - (i / ARC_SEGMENTS) * Math.PI * 2;
             dummyPos.set(Math.cos(angle) * arcRadius, Math.sin(angle) * arcRadius, 0);
@@ -485,51 +687,79 @@ export const FocusOrbitScene: React.FC<FocusOrbitSceneProps> = ({
           progressArcInstanced.frustumCulled = false;
           scene.add(progressArcInstanced);
 
-          // 7. Completed Pomodoro Satellite Orbs (InstancedMesh up to 12)
-          const satGeo = new THREE.SphereGeometry(0.085, 14, 14);
+          // 9. Completed Pomodoro Satellite Orbs (InstancedMesh up to 12)
+          const satGeo = new THREE.SphereGeometry(0.062, 12, 12);
           const satMat = new THREE.MeshBasicMaterial({
-            color: 0xf5c451,
+            color: new THREE.Color(initPalette.whiteHotHex),
             transparent: true,
-            opacity: 0.95,
+            opacity: 0.94,
           });
           const satInstanced = new THREE.InstancedMesh(satGeo, satMat, MAX_SATELLITES);
           satInstanced.count = 0;
           satInstanced.frustumCulled = false;
           scene.add(satInstanced);
 
-          // 8. Curl-drifting dust cloud (~1500 High / ~400 Lite)
-          const particleCount =
-            resolution.resolvedQuality === 'lite'
-              ? 400
-              : Math.max(600, resolution.particleBudget || 1500);
+          // 10. 90-140 Soft Drifting Ember Stardust Particles (Circular Additive Sprite)
+          const particleCount = resolution.resolvedQuality === 'lite' ? 90 : 132;
           const pPositions = new Float32Array(particleCount * 3);
-          const pSeeds = new Float32Array(particleCount * 2);
+          const pColors = new Float32Array(particleCount * 3);
+          const pSeeds = new Float32Array(particleCount * 3);
+          const cEmberA = new THREE.Color(initPalette.emberPrimaryHex);
+          const cEmberB = new THREE.Color(initPalette.emberSecondaryHex);
+          const cMix = new THREE.Color();
+
           for (let i = 0; i < particleCount; i++) {
-            const theta = (i / particleCount) * Math.PI * 2 + (i % 7) * 0.13;
-            const rSpread = 1.9 + ((i * 73) % 100) * 0.015;
-            const ySpread = ((((i * 37) % 100) / 100) - 0.5) * 1.4;
+            const theta = (i / particleCount) * Math.PI * 2 + (i % 9) * 0.19;
+            const rSpread = 1.64 + ((i * 67) % 100) * 0.0085;
+            const ySpread = (((i * 37) % 100) / 100 - 0.5) * 1.45;
+            const mixFactor = ((i * 29) % 100) / 100;
             pPositions[i * 3] = Math.cos(theta) * rSpread;
             pPositions[i * 3 + 1] = ySpread;
-            pPositions[i * 3 + 2] = Math.sin(theta) * rSpread * 0.65;
-            pSeeds[i * 2] = theta;
-            pSeeds[i * 2 + 1] = rSpread;
+            pPositions[i * 3 + 2] = Math.sin(theta) * rSpread * 0.55;
+            pSeeds[i * 3] = theta;
+            pSeeds[i * 3 + 1] = rSpread;
+            pSeeds[i * 3 + 2] = mixFactor;
+
+            cMix.copy(cEmberA).lerp(cEmberB, mixFactor);
+            pColors[i * 3] = cMix.r;
+            pColors[i * 3 + 1] = cMix.g;
+            pColors[i * 3 + 2] = cMix.b;
           }
+
           const particleGeo = new THREE.BufferGeometry();
           const posAttr = new THREE.BufferAttribute(pPositions, 3);
+          const colAttr = new THREE.BufferAttribute(pColors, 3);
           particleGeo.setAttribute('position', posAttr);
+          particleGeo.setAttribute('color', colAttr);
           const particleMat = new THREE.PointsMaterial({
-            color: initialAccent.clone(),
-            size: resolution.resolvedQuality === 'lite' ? 0.05 : 0.038,
+            map: emberDustTex,
+            vertexColors: true,
+            size: resolution.resolvedQuality === 'lite' ? 0.095 : 0.088,
             transparent: true,
-            opacity: 0.72,
+            opacity: 0.78,
             blending: THREE.AdditiveBlending,
             depthWrite: false,
+            sizeAttenuation: true,
           });
           const particleSystem = new THREE.Points(particleGeo, particleMat);
-          particleSystem.rotation.x = 0.22;
+          particleSystem.rotation.x = 0.16;
           scene.add(particleSystem);
 
-          // Interactive gesture state (zero GC in loop)
+          let lastAppliedPaletteId: FocusOrbStyle = initPalette.id;
+
+          const applyEmberColors = (pal: ReturnType<typeof getFocusOrbPalette>) => {
+            cEmberA.set(pal.emberPrimaryHex);
+            cEmberB.set(pal.emberSecondaryHex);
+            for (let i = 0; i < particleCount; i++) {
+              cMix.copy(cEmberA).lerp(cEmberB, pSeeds[i * 3 + 2]);
+              pColors[i * 3] = cMix.r;
+              pColors[i * 3 + 1] = cMix.g;
+              pColors[i * 3 + 2] = cMix.b;
+            }
+            colAttr.needsUpdate = true;
+          };
+
+          // Interactive gesture state (zero GC in render loop)
           let dragActive = false;
           let pointerDownTime = 0;
           let pointerDownX = 0;
@@ -598,8 +828,8 @@ export const FocusOrbitScene: React.FC<FocusOrbitSceneProps> = ({
             if (!dragActive && e.target !== canvas) return;
             const rect = canvas.getBoundingClientRect();
             if (rect.width > 0 && rect.height > 0) {
-              parallaxX = ((e.clientX - rect.left) / rect.width - 0.5) * 0.24;
-              parallaxY = ((e.clientY - rect.top) / rect.height - 0.5) * 0.18;
+              parallaxX = ((e.clientX - rect.left) / rect.width - 0.5) * 0.22;
+              parallaxY = ((e.clientY - rect.top) / rect.height - 0.5) * 0.16;
             }
             if (!dragActive) return;
             const dx = e.clientX - lastPointerX;
@@ -649,64 +879,141 @@ export const FocusOrbitScene: React.FC<FocusOrbitSceneProps> = ({
           window.addEventListener('pointerup', onPointerUp);
           window.addEventListener('pointercancel', onPointerUp);
 
-          // Animation damping state
-          let currentSpeed = 0.4;
-          let currentDim = 0.85;
-          let currentCoronaOpacity = 0;
+          let currentHeat = 0.16;
+          let currentCrimsonWeight = 0.24;
+          let currentDim = 0.92;
+          let currentEmberSpeed = 0.45;
           let shaderClock = 0;
           let lastMilestoneQuarter = Math.floor(propsRef.current.totalActiveMs / 900000);
-          const targetTint = new THREE.Color();
-          const blendedBase = new THREE.Color();
+
+          const tCenter = new THREE.Color();
+          const tWhiteHot = new THREE.Color();
+          const tInnerRim = new THREE.Color();
+          const tOuterCorona = new THREE.Color();
+          const tWireframe = new THREE.Color();
+          const tRingA = new THREE.Color();
+          const tRingB = new THREE.Color();
+          const tSpriteTint = new THREE.Color();
+          const tArcColor = new THREE.Color();
+          const breakSoftRim = new THREE.Color('#D8E2F0');
+          const breakSoftOuter = new THREE.Color('#64748B');
 
           return {
+            onResize: (w, h) => {
+              fitCameraForAspect(w, h);
+            },
             onTick: (dt, elapsed) => {
               const p = propsRef.current;
               const isRunning = p.status === 'running';
               const isPaused = p.status === 'paused';
-              const isOvertime = p.overtimeMs > 0;
 
-              if (p.phase === 'break') {
-                targetTint.copy(breakColor);
-              } else if (isOvertime) {
-                targetTint.set(p.subjectColor || '#F5C451').lerp(warmOvertimeColor, 0.6);
-              } else {
-                targetTint.set(p.subjectColor || '#F5C451');
+              const pal = getFocusOrbPalette(p.orbStyle);
+              if (pal.id !== lastAppliedPaletteId) {
+                lastAppliedPaletteId = pal.id;
+                applyEmberColors(pal);
               }
 
-              const damp = 1 - Math.exp(-4.5 * dt);
-              coreUniforms.uGlowColor.value.lerp(targetTint, damp);
-              blendedBase.copy(darkCoreBase).lerp(targetTint, 0.28);
-              coreUniforms.uBaseColor.value.lerp(blendedBase, damp);
-              haloMat.color.lerp(targetTint, damp);
-              shellMat.color.lerp(targetTint, damp);
-              gimbalMat.color.lerp(targetTint, damp);
-              particleMat.color.lerp(targetTint, damp);
+              const heatMetrics = computeFocusSessionHeat({
+                status: p.status,
+                phase: p.phase,
+                totalActiveMs: p.totalActiveMs,
+                overtimeMs: p.overtimeMs,
+              });
 
-              const desiredSpeed = isRunning
-                ? p.phase === 'break'
-                  ? 0.35
-                  : isOvertime
-                    ? 0.95
-                    : 0.62
-                : isPaused
-                  ? 0.08
-                  : 0.25;
-              const desiredDim = isRunning ? 1.0 : isPaused ? 0.38 : 0.78;
-              currentSpeed += (desiredSpeed - currentSpeed) * damp;
+              const damp = 1 - Math.exp(-4.2 * dt);
+              currentHeat += (heatMetrics.heat - currentHeat) * damp;
+              currentCrimsonWeight += (heatMetrics.crimsonWeight - currentCrimsonWeight) * damp;
+              currentEmberSpeed += (heatMetrics.emberSpeed - currentEmberSpeed) * damp;
+              const desiredDim = isRunning ? 1.05 : isPaused ? 0.56 : 0.92;
               currentDim += (desiredDim - currentDim) * damp;
 
-              shaderClock += dt * (isPaused ? 0.25 : isRunning ? 1.15 : 0.55);
-              coreUniforms.uTime.value = shaderClock;
+              tCenter.set(pal.coreCenterHex);
+              if (p.phase === 'break') {
+                tWhiteHot.set(pal.whiteHotHex).lerp(breakSoftRim, 0.5);
+                tInnerRim.set(pal.innerRimHex).lerp(breakSoftRim, 0.55);
+                tOuterCorona.set(pal.outerCoronaHex).lerp(breakSoftOuter, 0.72);
+                tWireframe.copy(tInnerRim);
+                tRingA.copy(tInnerRim);
+                tRingB.copy(tOuterCorona);
+              } else {
+                tWhiteHot.set(pal.whiteHotHex);
+                tInnerRim.set(pal.innerRimHex);
+                tOuterCorona.set(pal.outerCoronaHex);
+                tWireframe.set(pal.wireframeHex);
+                tRingA.set(pal.ringPrimaryHex);
+                tRingB.set(pal.ringSecondaryHex);
+              }
 
-              // Tap pulse + radial ripple wave decay
+              coreUniforms.uCenterColor.value.lerp(tCenter, damp);
+              coreUniforms.uWhiteHotColor.value.lerp(tWhiteHot, damp);
+              coreUniforms.uInnerRimColor.value.lerp(tInnerRim, damp);
+              coreUniforms.uOuterCoronaColor.value.lerp(tOuterCorona, damp);
+
+              coronaShellUniforms.uWhiteHotColor.value.lerp(tWhiteHot, damp);
+              coronaShellUniforms.uInnerRimColor.value.lerp(tInnerRim, damp);
+              coronaShellUniforms.uOuterCoronaColor.value.lerp(tOuterCorona, damp);
+
+              tSpriteTint.copy(tInnerRim).lerp(tOuterCorona, currentCrimsonWeight * 0.45);
+              coronaSpriteMat.color.lerp(tSpriteTint, damp);
+              cageMat.color.lerp(tWireframe, damp);
+              outerTickMat.color.lerp(tWireframe, damp);
+              ringPrimaryMat.color.lerp(tRingA, damp);
+              ringSecondaryMat.color.lerp(tRingB, damp);
+              satMat.color.lerp(tWhiteHot, damp);
+
+              shaderClock += dt * (isPaused ? 0.22 : isRunning ? 0.85 + currentHeat * 0.55 : 0.45);
+              coreUniforms.uTime.value = shaderClock;
+              coronaShellUniforms.uTime.value = shaderClock;
+
+              // Tap pulse + radial ripple decay
               pulseBoost = Math.max(0, pulseBoost - dt * 2.1);
               if (tapRipple > 0) {
                 tapRipple += dt * 1.35;
                 if (tapRipple >= 1.0) tapRipple = 0;
               }
               coreUniforms.uTapProgress.value = tapRipple;
-              coreUniforms.uPulse.value = 0.2 + pulseBoost * 0.95;
-              coreUniforms.uIntensity.value = currentDim + pulseBoost * 0.35;
+              coreUniforms.uPulse.value = 0.2 + pulseBoost * 0.9;
+              coreUniforms.uHeat.value = currentHeat;
+              coreUniforms.uCrimsonWeight.value = currentCrimsonWeight;
+
+              // Press-and-hold 4-4-4 Breathe Scale (smoothly expands core, wireframe cage & corona glow)
+              let breatheScale = 1.0;
+              let breatheGlowBoost = 0;
+              if (breatheMode) {
+                breatheElapsed += dt;
+                const cycle = breatheElapsed % 12;
+                let stageLabel = 'Inhale (4s)';
+                if (cycle < 4) {
+                  stageLabel = 'Inhale (4s)';
+                  const t = cycle / 4;
+                  const ease = 0.5 - 0.5 * Math.cos(Math.PI * t);
+                  breatheScale = 1.0 + 0.14 * ease;
+                  breatheGlowBoost = 0.26 * ease;
+                } else if (cycle < 8) {
+                  stageLabel = 'Hold (4s)';
+                  breatheScale = 1.14;
+                  breatheGlowBoost = 0.26;
+                } else {
+                  stageLabel = 'Exhale (4s)';
+                  const t = (cycle - 8) / 4;
+                  const ease = 0.5 - 0.5 * Math.cos(Math.PI * t);
+                  breatheScale = 1.14 - 0.14 * ease;
+                  breatheGlowBoost = 0.26 * (1 - ease);
+                }
+                if (stageLabel !== lastBreatheStage) {
+                  lastBreatheStage = stageLabel;
+                  p.onBreatheStateChange?.(stageLabel);
+                }
+              }
+
+              coreUniforms.uIntensity.value = currentDim + pulseBoost * 0.28 + breatheGlowBoost;
+              coronaShellUniforms.uHeat.value = currentHeat;
+              coronaShellUniforms.uCrimsonWeight.value = currentCrimsonWeight;
+              coronaShellUniforms.uIntensity.value =
+                (0.92 + pulseBoost * 0.26 + breatheGlowBoost) * currentDim;
+              coronaSpriteMat.opacity =
+                (0.64 + currentHeat * 0.22 + pulseBoost * 0.16 + breatheGlowBoost * 0.65) *
+                currentDim;
 
               // Stopwatch 15-minute milestone concentric rings
               const curQuarter = Math.floor(p.totalActiveMs / 900000);
@@ -714,7 +1021,6 @@ export const FocusOrbitScene: React.FC<FocusOrbitSceneProps> = ({
                 lastMilestoneQuarter = curQuarter;
                 pulseBoost = 1.0;
                 tapRipple = 0.001;
-                currentCoronaOpacity = 0.88;
               } else if (curQuarter < lastMilestoneQuarter) {
                 lastMilestoneQuarter = curQuarter;
               }
@@ -724,78 +1030,31 @@ export const FocusOrbitScene: React.FC<FocusOrbitSceneProps> = ({
               for (let rIdx = 0; rIdx < STOPWATCH_RING_COUNT; rIdx++) {
                 const entry = stopwatchRingMeshes[rIdx];
                 const isLit = rIdx < activeStopwatchRings;
-                const targetOp = isLit ? (0.34 + 0.14 * Math.sin(elapsed * 1.8 + rIdx)) * currentDim : 0;
+                const targetOp = isLit
+                  ? (0.28 + 0.12 * Math.sin(elapsed * 1.7 + rIdx)) * currentDim
+                  : 0;
                 entry.mat.opacity += (targetOp - entry.mat.opacity) * (1 - Math.exp(-3.5 * dt));
-                entry.mat.color.copy(targetTint).lerp(warmOvertimeColor, 0.35);
+                entry.mat.color.copy(tInnerRim).lerp(tOuterCorona, Math.min(1, rIdx * 0.14));
                 entry.mesh.visible = entry.mat.opacity > 0.015;
                 if (entry.mesh.visible) {
-                  entry.mesh.rotation.z += dt * (rIdx % 2 === 0 ? 0.28 : -0.22);
+                  entry.mesh.rotation.z += dt * (rIdx % 2 === 0 ? 0.24 : -0.18);
                 }
               }
 
-              // Coronal ring + Flow overtime radial coronal rays
-              const desiredCorona = isOvertime
-                ? 0.58 + Math.sin(elapsed * 2.4) * 0.16
-                : p.mode === 'stopwatch' && curQuarter > 0
-                  ? 0.2
-                  : 0;
-              currentCoronaOpacity += (desiredCorona - currentCoronaOpacity) * (1 - Math.exp(-2.8 * dt));
-              coronaMat.opacity = Math.max(0, Math.min(1, currentCoronaOpacity * currentDim));
+              cageMat.opacity = (0.3 + currentHeat * 0.08 + breatheGlowBoost * 0.35) * currentDim;
+              ringPrimaryMat.opacity = (0.5 + currentHeat * 0.2 + pulseBoost * 0.18) * currentDim;
+              ringSecondaryMat.opacity = (0.34 + currentCrimsonWeight * 0.3) * currentDim;
+              outerTickMat.opacity = 0.2 * currentDim;
+              particleMat.opacity = (0.64 + currentHeat * 0.24) * currentDim;
+              segMat.opacity = 0.86 * currentDim;
 
-              if (isOvertime) {
-                coronaRays.visible = true;
-                rayMat.opacity = (0.42 + Math.sin(elapsed * 2.8) * 0.16) * currentDim;
-                for (let i = 0; i < CORONA_RAYS; i++) {
-                  const angle = (i / CORONA_RAYS) * Math.PI * 2 + elapsed * 0.22;
-                  const rayLen = 0.65 + 0.55 * (0.5 + 0.5 * Math.sin(elapsed * 3.2 + i * 0.9));
-                  const baseR = 1.15;
-                  dummyPos.set(Math.cos(angle) * baseR, Math.sin(angle) * baseR, 0);
-                  dummyEuler.set(0, 0, angle - Math.PI / 2);
-                  dummyQuat.setFromEuler(dummyEuler);
-                  dummyScale.set(1, rayLen, 1);
-                  dummyMat4.compose(dummyPos, dummyQuat, dummyScale);
-                  coronaRays.setMatrixAt(i, dummyMat4);
-                }
-                coronaRays.instanceMatrix.needsUpdate = true;
-              } else {
-                rayMat.opacity = Math.max(0, rayMat.opacity - dt * 2.4);
-                if (rayMat.opacity <= 0.01) {
-                  coronaRays.visible = false;
-                }
-              }
-
-              haloMat.opacity = (0.52 + pulseBoost * 0.32) * currentDim;
-              shellMat.opacity = 0.32 * currentDim;
-              gimbalMat.opacity = 0.62 * currentDim;
-              particleMat.opacity = 0.72 * currentDim;
-              segMat.opacity = 0.92 * currentDim;
-
-              // Press-and-hold 4-4-4 Breathe Scale
-              let breatheScale = 1.0;
-              if (breatheMode) {
-                breatheElapsed += dt;
-                const cycle = breatheElapsed % 12;
-                let stageLabel = 'Inhale (4s)';
-                if (cycle < 4) {
-                  stageLabel = 'Inhale (4s)';
-                  const t = cycle / 4;
-                  breatheScale = 1.0 + 0.24 * (0.5 - 0.5 * Math.cos(Math.PI * t));
-                } else if (cycle < 8) {
-                  stageLabel = 'Hold (4s)';
-                  breatheScale = 1.24;
-                } else {
-                  stageLabel = 'Exhale (4s)';
-                  const t = (cycle - 8) / 4;
-                  breatheScale = 1.24 - 0.24 * (0.5 - 0.5 * Math.cos(Math.PI * t));
-                }
-                if (stageLabel !== lastBreatheStage) {
-                  lastBreatheStage = stageLabel;
-                  p.onBreatheStateChange?.(stageLabel);
-                }
-              }
-
-              const targetScale = 1.3 * (breatheScale + pulseBoost * 0.14);
+              // Commanding scale behind 00:00:00 (~240-265px on 360px mobile)
+              const baseOrbScale = 1.04;
+              const targetScale = baseOrbScale * (breatheScale + pulseBoost * 0.08);
               coreGroup.scale.setScalar(targetScale);
+              const spriteScale =
+                4.55 * heatMetrics.coronaScale * (breatheScale + pulseBoost * 0.1);
+              coronaSprite.scale.set(spriteScale, spriteScale, 1);
 
               // Drag inertia + pointer/gyroscope parallax
               userRotY += velY;
@@ -806,37 +1065,46 @@ export const FocusOrbitScene: React.FC<FocusOrbitSceneProps> = ({
               const px = parallaxX + gyroOffsetRef.current.x;
               const py = parallaxY + gyroOffsetRef.current.y;
 
-              coreGroup.rotation.y += dt * currentSpeed * 0.85;
-              coreGroup.rotation.x = Math.sin(elapsed * 0.45) * 0.1 + userRotX + py;
+              coreGroup.rotation.y += dt * currentEmberSpeed * 0.16;
+              coreGroup.rotation.x = Math.sin(elapsed * 0.35) * 0.05 + userRotX + py;
               coreMesh.rotation.y = userRotY + px;
-              gimbalMesh.rotation.z += dt * currentSpeed * 0.75;
-              coronaMesh.rotation.z -= dt * currentSpeed * 0.95;
 
-              // Curl-style particle drift without allocations
-              const stepCount = particleCount;
-              for (let i = 0; i < stepCount; i++) {
+              // Signature slow geodesic wireframe cage counter-rotation
+              geodesicCage.rotation.y -= dt * (0.14 + currentHeat * 0.08);
+              geodesicCage.rotation.x += dt * 0.075;
+
+              // Razor-thin counter-rotating tilted orbital rings
+              ringPrimary.rotation.z += dt * (0.26 + currentHeat * 0.22);
+              ringSecondary.rotation.z -= dt * (0.2 + currentHeat * 0.28);
+              outerTicks.rotation.z = -elapsed * 0.03;
+
+              // Soft drifting golden & crimson ember stardust orbiting the eclipse
+              for (let i = 0; i < particleCount; i++) {
                 const idx3 = i * 3;
-                const baseAngle = pSeeds[i * 2] + elapsed * currentSpeed * 0.18;
-                const baseR = pSeeds[i * 2 + 1];
-                const curlY = Math.sin(baseAngle * 2.0 + elapsed * 0.6) * 0.34;
-                const radialWobble = baseR + Math.cos(elapsed * 0.8 + i * 0.17) * 0.08;
+                const baseAngle = pSeeds[idx3] + elapsed * currentEmberSpeed * 0.14;
+                const baseR = pSeeds[idx3 + 1] + currentHeat * 0.06;
+                const driftY = Math.sin(baseAngle * 2.0 + elapsed * 0.45) * 0.36;
+                const radialWobble = baseR + Math.cos(elapsed * 0.6 + i * 0.21) * 0.06;
                 pPositions[idx3] = Math.cos(baseAngle) * radialWobble;
-                pPositions[idx3 + 1] = curlY;
-                pPositions[idx3 + 2] = Math.sin(baseAngle) * radialWobble * 0.68;
+                pPositions[idx3 + 1] = driftY;
+                pPositions[idx3 + 2] = Math.sin(baseAngle) * radialWobble * 0.56;
               }
               posAttr.needsUpdate = true;
-              particleSystem.rotation.y = userRotY * 0.45 + px * 0.6;
+              particleSystem.rotation.y = userRotY * 0.38 + px * 0.5;
 
-              // Update Completed Pomodoro Satellite Orbs
-              const satCount = Math.min(MAX_SATELLITES, Math.max(0, Math.floor(p.completedPomodorosToday)));
+              // Completed Pomodoro Satellite Orbs
+              const satCount = Math.min(
+                MAX_SATELLITES,
+                Math.max(0, Math.floor(p.completedPomodorosToday))
+              );
               satInstanced.count = satCount;
               for (let i = 0; i < satCount; i++) {
-                const orbitAngle = elapsed * 0.42 + (i / Math.max(1, satCount)) * Math.PI * 2;
-                const satR = 2.52;
+                const orbitAngle = elapsed * 0.36 + (i / Math.max(1, satCount)) * Math.PI * 2;
+                const satR = 2.12;
                 dummyPos.set(
                   Math.cos(orbitAngle) * satR,
-                  Math.sin(orbitAngle * 2) * 0.24,
-                  Math.sin(orbitAngle) * satR * 0.55
+                  Math.sin(orbitAngle * 2) * 0.2,
+                  Math.sin(orbitAngle) * satR * 0.52
                 );
                 dummyEuler.set(0, 0, 0);
                 dummyQuat.setFromEuler(dummyEuler);
@@ -848,20 +1116,27 @@ export const FocusOrbitScene: React.FC<FocusOrbitSceneProps> = ({
                 satInstanced.instanceMatrix.needsUpdate = true;
               }
 
-              // Update 60-segment 3D progress arc
+              // 60-segment 3D progress arc tinted with Eclipse gold -> crimson heat progression
               const litCount =
                 p.mode === 'stopwatch'
                   ? Math.round(((p.totalActiveMs % 60000) / 60000) * ARC_SEGMENTS)
                   : Math.round((Math.max(0, Math.min(100, p.progressPct)) / 100) * ARC_SEGMENTS);
 
               for (let i = 0; i < ARC_SEGMENTS; i++) {
-                progressArcInstanced.setColorAt(i, i < litCount ? targetTint : dimTrackColor);
+                if (i < litCount) {
+                  const segFrac = i / Math.max(1, ARC_SEGMENTS - 1);
+                  tArcColor
+                    .copy(tInnerRim)
+                    .lerp(tOuterCorona, segFrac * currentCrimsonWeight * 0.72);
+                  progressArcInstanced.setColorAt(i, tArcColor);
+                } else {
+                  progressArcInstanced.setColorAt(i, dimTrackColor);
+                }
               }
               if (progressArcInstanced.instanceColor) {
                 progressArcInstanced.instanceColor.needsUpdate = true;
               }
 
-              // Keep transient pulse/ripple/inertia/breathe animating cleanly in Lite / reduced-motion
               if (
                 pulseBoost > 0.01 ||
                 tapRipple > 0 ||
@@ -879,7 +1154,8 @@ export const FocusOrbitScene: React.FC<FocusOrbitSceneProps> = ({
               window.removeEventListener('pointermove', onPointerMove);
               window.removeEventListener('pointerup', onPointerUp);
               window.removeEventListener('pointercancel', onPointerUp);
-              haloTexture.dispose();
+              coronaSpriteTex.dispose();
+              emberDustTex.dispose();
             },
           };
         }}

@@ -43,7 +43,7 @@ import { computeVaultCounts } from '../utils/vaultLogic';
 import { listVaultItems } from '../utils/vaultStore';
 import { PYQView } from './PYQView';
 import type { VaultCaptureRequest } from './VaultView';
-import { SyllabusGalaxyScene } from './three/SyllabusGalaxyScene';
+import { SyllabusAstrolabeScene } from './three/SyllabusAstrolabeScene';
 import {
   AreaLineChart,
   Button,
@@ -353,8 +353,8 @@ export const PrepView: React.FC<PrepViewProps> = ({
           ========================================== */}
       {activeUiTab === 'syllabus' && (
         <div className="space-y-4">
-          {/* Optional 3D Syllabus Galaxy Scene */}
-          <SyllabusGalaxyScene
+          {/* Optional 3D Syllabus Astrolabe Scene */}
+          <SyllabusAstrolabeScene
             subjects={state.subjects}
             chapters={state.chapters}
             dueChapterIds={dueChapterIds}
