@@ -1,10 +1,9 @@
 import { describe, it } from 'node:test';
 import assert from 'node:assert/strict';
-import type { Chapter, StudySession } from '../types.ts';
+import type { Chapter } from '../types.ts';
 import { createBlankState, DEFAULT_SUBJECTS } from './studyLogic.ts';
 import {
   FOCUS_ORB_STYLE_STORAGE_KEY,
-  buildStudyCityDays,
   buildSyllabusAstrolabeLayout,
   buildSyllabusGalaxyLayout,
   computeFocusSessionHeat,
@@ -18,7 +17,7 @@ import {
   transformRingLocalToWorld,
 } from './scene3dHelpers.ts';
 
-describe('scene3dHelpers — FPS Governor, Study City, Astrolabe, Solar Eclipse & Milestones', () => {
+describe('scene3dHelpers — FPS Governor, Astrolabe, Solar Eclipse & Milestones', () => {
   it('FPS Governor waits for 2s active window then flags downgrade above 28ms average', () => {
     const tooEarly = evaluateFpsGovernor([35, 35, 35], 1200);
     assert.equal(tooEarly.ready, false);
@@ -34,66 +33,6 @@ describe('scene3dHelpers — FPS Governor, Study City, Astrolabe, Solar Eclipse 
     assert.ok(slow.avgFrameMs > 28);
   });
 
-  it('buildStudyCityDays aggregates stacked subject segments, best day beacon, and 30d slice', () => {
-    const todayKey = '2026-11-10';
-    const cells = Array.from({ length: 84 }, (_, idx) => {
-      const dayNum = idx + 1;
-      const key = `2026-09-${String(((dayNum - 1) % 30) + 1).padStart(2, '0')}`;
-      return {
-        key: idx === 83 ? todayKey : key,
-        future: false,
-        hrs: idx === 80 ? 9.0 : idx === 83 ? 3.5 : 1.0,
-        lvlClass: idx === 80 ? 'hm-l5' : 'hm-l2',
-      };
-    });
-
-    const sessions: StudySession[] = [
-      {
-        id: 's1',
-        subjectId: 'sub_phy',
-        dayKey: todayKey,
-        startTs: 1000,
-        endTs: 1000 + 7200000,
-        activeMs: 7200000,
-        pausedMs: 0,
-        overtimeMs: 0,
-        purity: 100,
-        mode: 'pomo',
-        pauseCount: 0,
-        rating: 4,
-        note: '',
-        updatedAt: 1000,
-      },
-      {
-        id: 's2',
-        subjectId: 'sub_chem',
-        dayKey: todayKey,
-        startTs: 2000,
-        endTs: 2000 + 3600000,
-        activeMs: 3600000,
-        pausedMs: 0,
-        overtimeMs: 0,
-        purity: 100,
-        mode: 'pomo',
-        pauseCount: 0,
-        rating: 4,
-        note: '',
-        updatedAt: 2000,
-      },
-    ];
-
-    const city12w = buildStudyCityDays(cells, sessions, DEFAULT_SUBJECTS, '12w', todayKey);
-    assert.equal(city12w.length, 84);
-    assert.equal(city12w[80].isBestDay, true);
-    assert.equal(city12w[83].isToday, true);
-    assert.equal(city12w[83].sessionsCount, 2);
-    assert.equal(city12w[83].topSubject?.subjectId, 'sub_phy');
-    assert.equal(city12w[83].segments.length, 2);
-
-    const city30d = buildStudyCityDays(cells, sessions, DEFAULT_SUBJECTS, '30d', todayKey);
-    assert.equal(city30d.length, 30);
-    assert.equal(city30d[29].isToday, true);
-  });
 
   it('buildSyllabusGalaxyLayout distributes subjects onto spiral arms and builds constellation links', () => {
     const subjects = DEFAULT_SUBJECTS.slice(0, 2);

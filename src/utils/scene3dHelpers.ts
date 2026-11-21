@@ -1,6 +1,5 @@
-import type { Chapter, PulseHabitState, StudySession, Subject } from '../types.ts';
+import type { Chapter, PulseHabitState, Subject } from '../types.ts';
 import { computeMinDayStreak } from './insights.ts';
-import { parseKey } from './studyLogic.ts';
 import { computeLevelInfo, computeTotalXp } from './xp.ts';
 
 export interface FpsGovernorEvaluation {
@@ -34,121 +33,6 @@ export function evaluateFpsGovernor(
   };
 }
 
-export interface CitySubjectSegment {
-  subjectId: string;
-  name: string;
-  emoji: string;
-  color: string;
-  hrs: number;
-}
-
-export interface StudyCityDayData {
-  key: string;
-  future: boolean;
-  hrs: number;
-  lvlClass: string;
-  sessionsCount: number;
-  isWeekend: boolean;
-  isToday: boolean;
-  isBestDay: boolean;
-  topSubject: CitySubjectSegment | null;
-  segments: CitySubjectSegment[];
-  col: number;
-  row: number;
-}
-
-export function buildStudyCityDays(
-  cells: ReadonlyArray<{ key: string; future: boolean; hrs: number; lvlClass: string }>,
-  sessions: ReadonlyArray<StudySession>,
-  subjects: ReadonlyArray<Subject>,
-  range: '12w' | '30d',
-  todayKey: string
-): StudyCityDayData[] {
-  const subjectMap = new Map<string, Subject>();
-  for (const s of subjects) {
-    subjectMap.set(s.id, s);
-  }
-
-  // Group sessions by dayKey -> subjectId -> ms
-  const byDay = new Map<
-    string,
-    { count: number; subMs: Map<string, number> }
-  >();
-  for (const ses of sessions) {
-    if (!ses || !ses.dayKey) continue;
-    let bucket = byDay.get(ses.dayKey);
-    if (!bucket) {
-      bucket = { count: 0, subMs: new Map() };
-      byDay.set(ses.dayKey, bucket);
-    }
-    bucket.count += 1;
-    const prevMs = bucket.subMs.get(ses.subjectId) || 0;
-    bucket.subMs.set(ses.subjectId, prevMs + Math.max(0, ses.activeMs || 0));
-  }
-
-  const nonFuture = cells.filter((c) => !c.future);
-  const sliced =
-    range === '30d'
-      ? nonFuture.slice(-30)
-      : cells.slice(0, 84);
-
-  let bestIdx = -1;
-  let bestHrs = 0;
-  for (let i = 0; i < sliced.length; i++) {
-    const c = sliced[i];
-    if (!c.future && c.hrs > bestHrs) {
-      bestHrs = c.hrs;
-      bestIdx = i;
-    }
-  }
-
-  return sliced.map((c, idx) => {
-    const dayBucket = byDay.get(c.key);
-    const segments: CitySubjectSegment[] = [];
-    if (dayBucket && !c.future) {
-      for (const [subId, ms] of dayBucket.subMs.entries()) {
-        if (ms <= 0) continue;
-        const sub = subjectMap.get(subId);
-        segments.push({
-          subjectId: subId,
-          name: sub?.name || 'Study',
-          emoji: sub?.e || '📘',
-          color: sub?.color || '#F5C451',
-          hrs: ms / 3600000,
-        });
-      }
-      segments.sort((a, b) => b.hrs - a.hrs);
-    } else if (!c.future && c.hrs > 0) {
-      segments.push({
-        subjectId: 'general',
-        name: 'Deep Study',
-        emoji: '⏱️',
-        color: '#4ADE80',
-        hrs: c.hrs,
-      });
-    }
-
-    const dow = parseKey(c.key).getDay();
-    const isWeekend = dow === 0 || dow === 6;
-    const col = range === '30d' ? idx % 6 : Math.floor(idx / 7);
-    const row = range === '30d' ? Math.floor(idx / 6) : idx % 7;
-
-    return {
-      key: c.key,
-      future: c.future,
-      hrs: c.hrs,
-      lvlClass: c.lvlClass,
-      sessionsCount: dayBucket?.count || (c.hrs > 0 ? 1 : 0),
-      isWeekend,
-      isToday: c.key === todayKey,
-      isBestDay: idx === bestIdx && bestHrs > 0,
-      topSubject: segments[0] || null,
-      segments,
-      col,
-      row,
-    };
-  });
-}
 
 export interface GalaxyStarNode {
   chapter: Chapter;

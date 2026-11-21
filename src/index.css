@@ -199,7 +199,7 @@ body {
 .dh-topbar {
   position: sticky;
   top: 0;
-  z-index: 25;
+  z-index: 35;
   background: var(--glass-bg);
   backdrop-filter: blur(20px);
   -webkit-backdrop-filter: blur(20px);
@@ -276,11 +276,13 @@ body {
 }
 
 .dh-stage {
+  position: relative;
+  z-index: 1;
   flex: 1;
   width: 100%;
   max-width: 1120px;
   margin: 0 auto;
-  padding: 16px 20px calc(var(--tabbar-h, 64px) + var(--sb) + 32px);
+  padding: 18px 20px calc(var(--tabbar-h, 64px) + var(--sb) + 32px);
   min-width: 0;
   overflow-x: clip;
 }
@@ -8869,6 +8871,236 @@ button.dh-bento-gold-cta:hover:not(:disabled) {
   border-radius: 0 !important;
   padding: 12px 0 !important;
   box-shadow: none !important;
+}
+
+/* ============================================================================
+   v40 Insights High-DPI 2D Canvas Instruments (3D Monolith & Chronograph Dial)
+   ============================================================================ */
+
+.dh-insights-root {
+  position: relative;
+  z-index: 1;
+  padding-top: 2px;
+}
+
+/* Tier-1 Hero refinement for Study Monolith */
+.dh-monolith-hero {
+  padding: 18px 18px 14px !important;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.dh-monolith-head {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+@media (min-width: 640px) {
+  .dh-monolith-head {
+    flex-direction: row;
+    align-items: flex-start;
+    justify-content: space-between;
+    gap: 14px;
+  }
+}
+
+.dh-monolith-value {
+  font-size: clamp(1.65rem, 4.5vw, 2rem);
+  font-weight: 700;
+  line-height: 1.05;
+  letter-spacing: -0.035em;
+  color: #FAFAFA;
+}
+
+[data-t='light'] .dh-monolith-value {
+  color: var(--tx);
+}
+
+.dh-monolith-controls {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px;
+}
+
+.dh-canvas-pill-group {
+  display: inline-flex;
+  align-items: center;
+  gap: 2px;
+  padding: 2px;
+  border-radius: 999px;
+  background: rgba(255, 255, 255, 0.04);
+  border: 1px solid rgba(255, 255, 255, 0.08);
+}
+
+.dh-canvas-pill {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 5px;
+  min-height: 30px;
+  padding: 0 11px;
+  border-radius: 999px;
+  background: rgba(255, 255, 255, 0.05) !important;
+  border: 1px solid rgba(255, 255, 255, 0.09) !important;
+  color: #D4D4D8 !important;
+  font-size: 12px;
+  font-weight: 600;
+  line-height: 1;
+  white-space: nowrap;
+  flex-shrink: 0;
+  transition: background-color 140ms ease, border-color 140ms ease, color 140ms ease, transform 120ms ease;
+}
+
+.dh-canvas-pill-group .dh-canvas-pill {
+  min-height: 26px;
+  padding: 0 10px;
+  background: transparent !important;
+  border-color: transparent !important;
+  color: #A1A1AA !important;
+}
+
+.dh-canvas-pill:hover:not(:disabled) {
+  background: rgba(255, 255, 255, 0.10) !important;
+  color: #FAFAFA !important;
+}
+
+.dh-canvas-pill:active:not(:disabled) {
+  transform: scale(0.975);
+}
+
+.dh-canvas-pill.is-active {
+  background: rgba(255, 255, 255, 0.12) !important;
+  border-color: rgba(255, 255, 255, 0.16) !important;
+  color: #FAFAFA !important;
+}
+
+.dh-canvas-pill.is-stack-active {
+  background: rgba(253, 230, 138, 0.12) !important;
+  border-color: rgba(253, 230, 138, 0.34) !important;
+  color: #FDE68A !important;
+}
+
+[data-t='light'] .dh-canvas-pill-group {
+  background: rgba(20, 22, 26, 0.04);
+  border-color: rgba(20, 22, 26, 0.10);
+}
+
+[data-t='light'] .dh-canvas-pill {
+  background: rgba(20, 22, 26, 0.05) !important;
+  border-color: rgba(20, 22, 26, 0.12) !important;
+  color: #18181B !important;
+}
+
+[data-t='light'] .dh-canvas-pill-group .dh-canvas-pill {
+  background: transparent !important;
+  border-color: transparent !important;
+  color: #52525B !important;
+}
+
+[data-t='light'] .dh-canvas-pill.is-active {
+  background: #18181B !important;
+  border-color: #18181B !important;
+  color: #FAFAFA !important;
+}
+
+[data-t='light'] .dh-canvas-pill.is-stack-active {
+  background: rgba(180, 83, 9, 0.12) !important;
+  border-color: rgba(180, 83, 9, 0.35) !important;
+  color: #92400E !important;
+}
+
+.dh-monolith-stage {
+  width: 100%;
+  min-width: 0;
+  position: relative;
+}
+
+.dh-monolith-canvas {
+  display: block;
+  width: 100%;
+  touch-action: pan-y;
+  cursor: crosshair;
+  user-select: none;
+  -webkit-user-select: none;
+  border-radius: 10px;
+}
+
+.dh-monolith-footer {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  flex-wrap: wrap;
+  padding-top: 11px;
+  border-top: 1px solid rgba(255, 255, 255, 0.07);
+}
+
+[data-t='light'] .dh-monolith-footer {
+  border-top-color: var(--hairline);
+}
+
+.dh-monolith-open-btn {
+  min-height: 28px;
+  padding: 0 10px;
+  font-size: 12px;
+}
+
+/* Tier-0 Borderless Chronograph Tempo Dial directly on pure #000000 */
+.dh-chronograph-section {
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+  min-width: 0;
+  background: transparent;
+  border: 0;
+  border-top: 1px solid rgba(255, 255, 255, 0.07);
+  padding: 24px 0 0;
+  margin: 0;
+}
+
+[data-t='light'] .dh-chronograph-section {
+  border-top-color: var(--hairline);
+}
+
+.dh-chronograph-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  flex-wrap: wrap;
+}
+
+.dh-chronograph-body {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 18px;
+}
+
+@media (min-width: 768px) {
+  .dh-chronograph-body {
+    flex-direction: row;
+    align-items: center;
+    gap: 28px;
+  }
+}
+
+.dh-chronograph-dial-wrap {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
+}
+
+.dh-chronograph-canvas {
+  display: block;
+  touch-action: pan-y;
+  cursor: crosshair;
+  user-select: none;
+  -webkit-user-select: none;
 }
 }
 

@@ -6,12 +6,10 @@ import {
   ChevronRight,
   Flame,
   Plus,
-  Share2,
   Sparkles,
 } from 'lucide-react';
 import type { PulseHabitState, StatsSubTab } from '../types';
 import {
-  addD,
   badges,
   computeChapterBreakdown,
   computeConsistencyCalendar,
@@ -22,13 +20,10 @@ import {
   fmtHMShort,
   getSessionHeading,
   getSubject,
-  getTodaySubjectMs,
   live,
-  pad,
   rate,
   streak,
   total,
-  wkS,
 } from '../utils/studyLogic';
 import { computeConsistencyScore } from '../utils/insights';
 import { computeLevelInfo, computeTotalXp } from '../utils/xp';
@@ -42,21 +37,16 @@ import { PlannerView } from './PlannerView';
 import { ReviewView } from './ReviewView';
 import { DayHistoryView } from './DayHistoryView';
 import { WeeklyWrappedSheet } from './WeeklyWrappedSheet';
+import { StudyMonolithCanvas } from './StudyMonolithCanvas';
+import { StudyChronographCanvas } from './StudyChronographCanvas';
 import {
   AreaLineChart,
-  BarChart,
   Button,
-  Card,
-  HeatmapGrid,
   Meter,
-  RadialClock24h,
   Segmented,
   SemiCircleGauge,
-  Sparkline,
   WindowedList,
 } from './ui';
-import { resolveRuntimeUi3d } from './three/Scene3D';
-import { StudySkylineScene } from './three/StudySkylineScene';
 
 interface StatsViewProps {
   state: PulseHabitState;
@@ -114,103 +104,12 @@ export const StatsView: React.FC<StatsViewProps> = ({
   const [historyDateKey, setHistoryDateKey] = useState<string>(todayKey);
   const [showAllSessionsLog, setShowAllSessionsLog] = useState<boolean>(false);
 
-  // Default to 3D Skyline whenever WebGL is eligible, falling back gracefully when 'off' or reduced-motion
-  const runtime3d = useMemo(
-    () =>
-      resolveRuntimeUi3d(
-        state.set.ui3d || 'auto',
-        false,
-        state.set.ui3dQuality || 'auto'
-      ),
-    [state.set.ui3d, state.set.ui3dQuality]
-  );
-  const [heatmapViewMode, setHeatmapViewMode] = useState<'flat' | 'skyline'>(() =>
-    runtime3d.enabled ? 'skyline' : 'flat'
-  );
-
   const selectedCalDay: ConsistencyDay | null =
     (selectedCalDayKey
       ? consistencyCal.days.find((d) => d.key === selectedCalDayKey)
       : null) ||
     consistencyCal.days[consistencyCal.days.length - 1] ||
     null;
-
-  // Delta vs prior 7 days (days -13..-7 vs -6..0)
-  const prior7TotalMs = useMemo(() => {
-    let ms = 0;
-    for (let i = 7; i < 14; i++) {
-      const dk = addD(todayKey, -i);
-      ms += getTodaySubjectMs(state, 'any', dk, todayKey);
-    }
-    return ms;
-  }, [state, todayKey]);
-
-  const weekDeltaPct = useMemo(() => {
-    if (prior7TotalMs <= 0) return null;
-    return Math.round(((summary.weekTotalMs - prior7TotalMs) / prior7TotalMs) * 100);
-  }, [summary.weekTotalMs, prior7TotalMs]);
-
-  // 12-Week Study Depth Heatmap (84 days)
-  const hmCells = useMemo(() => {
-    const s0 = wkS(state, addD(todayKey, -77));
-    const out: Array<{ key: string; future: boolean; hrs: number; lvlClass: string }> = [];
-    for (let i = 0; i < 84; i++) {
-      const k = addD(s0, i);
-      if (k > todayKey) {
-        out.push({ key: k, future: true, hrs: 0, lvlClass: 'hm-l0' });
-        continue;
-      }
-      const hrs = getTodaySubjectMs(state, 'any', k, todayKey) / 3600000;
-      const lvlClass =
-        hrs <= 0
-          ? 'hm-l0'
-          : hrs < 2
-            ? 'hm-l1'
-            : hrs < 4
-              ? 'hm-l2'
-              : hrs < 6
-                ? 'hm-l3'
-                : hrs < 8
-                  ? 'hm-l4'
-                  : 'hm-l5';
-      out.push({ key: k, future: false, hrs, lvlClass });
-    }
-    return out;
-  }, [state, todayKey]);
-
-  // Row-major (7 days x 12 weeks) transposition for HeatmapGrid flat fallback
-  const flatHeatmapCells = useMemo(() => {
-    const out: Array<{
-      key: string;
-      label: string;
-      level: 0 | 1 | 2 | 3 | 4;
-      valueLabel: string;
-    }> = [];
-    for (let dayRow = 0; dayRow < 7; dayRow++) {
-      for (let weekCol = 0; weekCol < 12; weekCol++) {
-        const idx = weekCol * 7 + dayRow;
-        const c = hmCells[idx];
-        if (!c) continue;
-        const lvl: 0 | 1 | 2 | 3 | 4 =
-          c.future || c.lvlClass === 'hm-l0'
-            ? 0
-            : c.lvlClass === 'hm-l1'
-              ? 1
-              : c.lvlClass === 'hm-l2'
-                ? 2
-                : c.lvlClass === 'hm-l3'
-                  ? 3
-                  : 4;
-        out.push({
-          key: c.key,
-          label: c.key,
-          level: lvl,
-          valueLabel: c.future ? 'Upcoming date' : `${c.hrs.toFixed(1)}h studied`,
-        });
-      }
-    }
-    return out;
-  }, [hmCells]);
 
   const peak30dMs = Math.max(0, ...summary.last30Days.map((d) => d.ms));
   const consistencyPct = Math.round((summary.monthActiveDays / 30) * 100);
@@ -226,8 +125,13 @@ export const StatsView: React.FC<StatsViewProps> = ({
   const pv = levelInfo.currentLevelFloorXp;
   const liveHabits = live(state);
 
+  const handleInspectDay = (dayKey: string) => {
+    setHistoryDateKey(dayKey);
+    onChangeSubTab('history');
+  };
+
   return (
-    <div className="space-y-4">
+    <div className="dh-insights-root space-y-5">
       {/* Top 4-Option Segmented Navigation: Overview | Weekly review | History | Timeline */}
       <Segmented<StatsSubTab>
         value={subTab}
@@ -318,132 +222,24 @@ export const StatsView: React.FC<StatsViewProps> = ({
             </div>
           )}
 
-          {/* Hero Metric: 7-Day Average + Delta + Sparkline + Rounded 7-Day BarChart */}
-          <Card className="dh-hero-tier1 space-y-4">
-            <div className="flex flex-col gap-3 md:flex-row md:items-center md:justify-between">
-              <div className="space-y-1">
-                <span className="dh-eyebrow block">7-day daily average</span>
-                <div className="flex flex-wrap items-baseline gap-2.5">
-                  <strong className="dh-display-metric text-[32px] font-bold leading-none">
-                    {fmtHMShort(summary.weekAvgMsPerDay)}
-                  </strong>
-                  <span className="text-[13px] text-[var(--tx-3)]">/ day</span>
-                  {weekDeltaPct !== null && (
-                    <span
-                      className="tnum text-[13px] font-semibold"
-                      style={{
-                        color:
-                          weekDeltaPct >= 0 ? 'var(--ok-ink)' : 'var(--warn-ink)',
-                      }}
-                    >
-                      {weekDeltaPct >= 0 ? `+${weekDeltaPct}%` : `${weekDeltaPct}%`} vs
-                      prior 7d
-                    </span>
-                  )}
-                </div>
-                <p className="tnum text-[12.5px] text-[var(--tx-2)]">
-                  Week <strong className="text-[var(--tx)]">{fmtHMShort(summary.weekTotalMs)}</strong> ·{' '}
-                  {summary.weekActiveDays}/7 active · 30d avg{' '}
-                  <strong className="text-[var(--tx)]">{fmtHMShort(summary.monthAvgMsPerDay)}/d</strong> · All-time{' '}
-                  <strong className="text-[var(--tx)]">{fmtHMShort(summary.allTimeTotalMs)}</strong>
-                </p>
-              </div>
+          {/* Instrument 1 (Top Tier-1 Rose Copper Hero): 3D Isometric Monolith Bars */}
+          <StudyMonolithCanvas
+            sessions={state.sessions}
+            subjects={state.subjects}
+            todayKey={todayKey}
+            dailyGoalMin={minDailyTargetMins}
+            onInspectDay={handleInspectDay}
+            onShareTodayProof={onShareTodayProof}
+          />
 
-              <div className="flex flex-wrap items-center gap-3">
-                <div className="flex flex-col items-start gap-1">
-                  <span className="dh-eyebrow">7d trend</span>
-                  <Sparkline
-                    values={summary.last7Days.map((d) =>
-                      Math.round(d.ms / 60000)
-                    )}
-                    width={126}
-                    height={32}
-                    label="7-day study minutes sparkline"
-                  />
-                </div>
-                {onShareTodayProof && (
-                  <button
-                    type="button"
-                    className="dh-ghost-pill"
-                    onClick={onShareTodayProof}
-                  >
-                    <Share2 size={13} strokeWidth={1.9} aria-hidden="true" />
-                    <span>Share proof</span>
-                  </button>
-                )}
-              </div>
-            </div>
-
-            <div className="border-t border-[var(--hairline)] pt-4">
-              <BarChart
-                orientation="vertical"
-                height={176}
-                axisUnit="minutes"
-                data={summary.last7Days.map((d) => ({
-                  label: d.dayName,
-                  value: Math.round(d.ms / 60000),
-                  hint: d.shortDate,
-                  color: d.key === todayKey ? 'var(--ac)' : 'var(--ok)',
-                }))}
-                goalValue={minDailyTargetMins}
-                goalLabel={`Goal ${fmtHMShort(minDailyTargetMins * 60000)}`}
-                valueFormatter={(mins) => fmtHMShort(Math.round(mins * 60000))}
-                ariaLabel="7-day daily study breakdown"
-              />
-            </div>
-          </Card>
-
-          {/* Study City / 12-Week Heatmap — Borderless AMOLED Section */}
-          <section id="studySkylineHeroCard" className="dh-amoled-section">
-            <div className="dh-eyebrow-row flex-wrap">
-              <div>
-                <h3 className="dh-eyebrow">Study city</h3>
-                <p className="mt-0.5 text-[12.5px] text-[var(--tx-3)]">
-                  Stacked subject towers across 12 weeks or 30 days
-                </p>
-              </div>
-              {runtime3d.enabled && (
-                <div className="w-40">
-                  <Segmented<'skyline' | 'flat'>
-                    value={heatmapViewMode}
-                    onChange={setHeatmapViewMode}
-                    ariaLabel="Study city view mode"
-                    options={[
-                      { value: 'skyline', label: '3D City' },
-                      { value: 'flat', label: 'Flat view' },
-                    ]}
-                  />
-                </div>
-              )}
-            </div>
-
-            {heatmapViewMode === 'skyline' && runtime3d.enabled ? (
-              <StudySkylineScene
-                cells={hmCells}
-                sessions={state.sessions}
-                subjects={state.subjects}
-                todayKey={todayKey}
-                ui3dSetting={state.set.ui3d || 'auto'}
-                ui3dQuality={state.set.ui3dQuality || 'auto'}
-                onInspectDay={(dayKey) => {
-                  setHistoryDateKey(dayKey);
-                  onChangeSubTab('history');
-                }}
-              />
-            ) : (
-              <HeatmapGrid
-                columns={12}
-                cells={flatHeatmapCells}
-                ariaLabel="12-week study depth heatmap"
-                onSelectCell={(cell) => {
-                  if (cell.valueLabel !== 'Upcoming date') {
-                    setHistoryDateKey(cell.key);
-                    onChangeSubTab('history');
-                  }
-                }}
-              />
-            )}
-          </section>
+          {/* Instrument 2 (Pure #000000 Canvas): Chronograph Tempo Dial */}
+          <StudyChronographCanvas
+            sessions={state.sessions}
+            subjects={state.subjects}
+            todayKey={todayKey}
+            dailyGoalMin={minDailyTargetMins}
+            onInspectDay={handleInspectDay}
+          />
 
           {/* "Where your time goes" — Borderless AMOLED Section (Single Horizontal Stacked Bar + Hairline Rows) */}
           <section id="subjectBreakdownCard" className="dh-amoled-section">
@@ -597,48 +393,7 @@ export const StatsView: React.FC<StatsViewProps> = ({
             )}
           </section>
 
-          {/* "When you study" — Borderless AMOLED Section + Hairline 2x2 Ledger */}
-          <section className="dh-amoled-section">
-            <div>
-              <h3 className="dh-eyebrow">When you study</h3>
-              <p className="mt-0.5 text-[12.5px] text-[var(--tx-3)]">
-                24-hour concentration rhythm — tap or hover any spoke
-              </p>
-            </div>
 
-            <div className="flex flex-col items-center gap-5 sm:flex-row sm:items-center sm:justify-between">
-              <RadialClock24h
-                hourlyMinutes={summary.hourlyMs.map((ms) => Math.round(ms / 60000))}
-                size={196}
-                ariaLabel="24-hour study distribution radial clock"
-              />
-
-              <div className="dh-ledger-2x2 w-full flex-1">
-                <div className="dh-ledger-cell">
-                  <span className="dh-ledger-label">Peak 2h window</span>
-                  <span className="dh-ledger-val tnum" style={{ fontSize: 18 }}>
-                    {summary.peakHourWindowLabel}
-                  </span>
-                  <span className="dh-ledger-sub">{summary.peakPeriodLabel}</span>
-                </div>
-                <div className="dh-ledger-cell">
-                  <span className="dh-ledger-label">Focus purity</span>
-                  <span className="dh-ledger-val tnum">{summary.avgPurity}%</span>
-                  <span className="dh-ledger-sub">Active vs paused</span>
-                </div>
-                <div className="dh-ledger-cell">
-                  <span className="dh-ledger-label">Avg start</span>
-                  <span className="dh-ledger-val tnum">{summary.avgStartHourLabel}</span>
-                  <span className="dh-ledger-sub">First session</span>
-                </div>
-                <div className="dh-ledger-cell">
-                  <span className="dh-ledger-label">Avg wrap-up</span>
-                  <span className="dh-ledger-val tnum">{summary.avgEndHourLabel}</span>
-                  <span className="dh-ledger-sub">Last session</span>
-                </div>
-              </div>
-            </div>
-          </section>
 
           {/* Collapsible "Consistency" — Borderless Hairline Section */}
           <section id="consistencyCalendarCard" className="dh-amoled-section">

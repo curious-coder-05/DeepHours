@@ -43,6 +43,12 @@ describe('v36 architecture guardrails', () => {
         `${relPath} must keep Three.js strictly lazy-loaded`
       );
     }
+    const statsSource = readRepoFile('src/components/StatsView.tsx');
+    assert.doesNotMatch(
+      statsSource,
+      /\b(three|Scene3D|StudySkylineScene)\b/,
+      'src/components/StatsView.tsx must stay 100% 2D Canvas (zero Three.js / WebGL imports)'
+    );
   });
 
   it('preserves Firestore security rules and synced document field contracts', () => {
