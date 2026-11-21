@@ -298,134 +298,143 @@ export const SettingsDrawer: React.FC<SettingsDrawerProps> = ({
 
         <nav className="dh-drawer-body" aria-label="Settings sections">
           {/* Group 1: Profile & Account */}
-          <ListGroup className="dh-drawer-group" aria-label="Profile and sync settings">
-            <ListRow
-              className={`dh-drawer-row ${activeSection === 'profile' ? 'is-active' : ''}`}
-              leading={<User size={19} strokeWidth={1.75} aria-hidden="true" />}
-              title="Profile and level"
-              subtitle={
-                state.profile?.nick
-                  ? `${state.profile.nick} · Level ${levelInfo.level} · ${totalXp.toLocaleString()} XP`
-                  : `Level ${levelInfo.level} · ${totalXp.toLocaleString()} XP`
-              }
-              trailing={<span style={{ fontSize: '18px', lineHeight: 1 }}>{currentAvatar}</span>}
-              chevron
-              onClick={() => handlePick('profile')}
-            />
-            <ListRow
-              className={`dh-drawer-row ${activeSection === 'sync' ? 'is-active' : ''}`}
-              leading={<Cloud size={19} strokeWidth={1.75} aria-hidden="true" />}
-              title="Account and cloud sync"
-              subtitle={
-                cloudUser
-                  ? `${cloudUser.email || cloudUser.displayName || 'Google Account'} · ${dailyWritesUsed}/${dailyWriteCap} writes`
-                  : 'Local-only mode · Sign in to sync across devices'
-              }
-              trailing={
-                <span
-                  style={{
-                    fontSize: '13px',
-                    fontWeight: 600,
-                    color: syncBadgeColor,
-                    whiteSpace: 'nowrap',
-                  }}
-                >
-                  {syncStatusLabel}
-                </span>
-              }
-              chevron
-              onClick={() => handlePick('sync')}
-            />
-          </ListGroup>
+          <div className="dh-drawer-section">
+            <span className="dh-eyebrow px-1.5">Account</span>
+            <ListGroup className="dh-drawer-group" aria-label="Profile and sync settings">
+              <ListRow
+                className={`dh-drawer-row ${activeSection === 'profile' ? 'is-active' : ''}`}
+                leading={<User size={18} strokeWidth={1.75} aria-hidden="true" />}
+                title="Profile and level"
+                subtitle={
+                  state.profile?.nick
+                    ? `${state.profile.nick} · Level ${levelInfo.level} · ${totalXp.toLocaleString()} XP`
+                    : `Level ${levelInfo.level} · ${totalXp.toLocaleString()} XP`
+                }
+                trailing={<span style={{ fontSize: '17px', lineHeight: 1 }}>{currentAvatar}</span>}
+                chevron
+                onClick={() => handlePick('profile')}
+              />
+              <ListRow
+                className={`dh-drawer-row ${activeSection === 'sync' ? 'is-active' : ''}`}
+                leading={<Cloud size={18} strokeWidth={1.75} aria-hidden="true" />}
+                title="Account & cloud sync"
+                subtitle={
+                  cloudUser
+                    ? `${cloudUser.email || cloudUser.displayName || 'Google Account'} · ${dailyWritesUsed}/${dailyWriteCap} writes`
+                    : 'Local-only mode · Sign in to sync across devices'
+                }
+                trailing={
+                  <span
+                    style={{
+                      fontSize: '12.5px',
+                      fontWeight: 600,
+                      color: syncBadgeColor,
+                      whiteSpace: 'nowrap',
+                    }}
+                  >
+                    {syncStatusLabel}
+                  </span>
+                }
+                chevron
+                onClick={() => handlePick('sync')}
+              />
+            </ListGroup>
+          </div>
 
           {/* Group 2: Study configuration */}
-          <ListGroup className="dh-drawer-group" aria-label="Study configuration">
-            <ListRow
-              className={`dh-drawer-row ${activeSection === 'study' ? 'is-active' : ''}`}
-              leading={<Sliders size={19} strokeWidth={1.75} aria-hidden="true" />}
-              title="Study"
-              subtitle={`Reset ${pad(set.dayResetHour ?? 0)}:00 · ${currentTimerStyleLabel} timer · ${set.pipPref === 'doc' ? 'Document PiP' : 'Video PiP'}`}
-              chevron
-              onClick={() => handlePick('study')}
-            />
-            <ListRow
-              className={`dh-drawer-row ${activeSection === 'targets' ? 'is-active' : ''}`}
-              leading={<Target size={19} strokeWidth={1.75} aria-hidden="true" />}
-              title="Goals and targets"
-              subtitle={`Goal ${minDayFormatted}/day (${minDayMins}m) · Full mock ${set.fullMockMins ?? 180}m · Target ${set.targetMockScore ?? 650}`}
-              chevron
-              onClick={() => handlePick('targets')}
-            />
-            <ListRow
-              className={`dh-drawer-row ${activeSection === 'exams' ? 'is-active' : ''}`}
-              leading={<Calendar size={19} strokeWidth={1.75} aria-hidden="true" />}
-              title="Exams"
-              subtitle={
-                resolvedExam
-                  ? `${resolvedExam.title} (${resolvedExam.date})`
-                  : `${state.ddays.length} exam countdowns`
-              }
-              trailing={<span className="tabular-nums">{String(state.ddays.length)}</span>}
-              chevron
-              onClick={() => handlePick('exams')}
-            />
-            <ListRow
-              className={`dh-drawer-row ${activeSection === 'subjects' ? 'is-active' : ''}`}
-              leading={<BookOpen size={19} strokeWidth={1.75} aria-hidden="true" />}
-              title="Subjects"
-              subtitle={`${activeSubjects.length} active subjects`}
-              chevron
-              onClick={() => handlePick('subjects')}
-            />
-            <ListRow
-              className={`dh-drawer-row ${activeSection === 'habits' ? 'is-active' : ''}`}
-              leading={<Repeat size={19} strokeWidth={1.75} aria-hidden="true" />}
-              title="Habits"
-              subtitle={`${state.habits.filter((h) => !h.arch).length} active habits`}
-              chevron
-              onClick={() => handlePick('habits')}
-            />
-          </ListGroup>
+          <div className="dh-drawer-section">
+            <span className="dh-eyebrow px-1.5">Study</span>
+            <ListGroup className="dh-drawer-group" aria-label="Study configuration">
+              <ListRow
+                className={`dh-drawer-row ${activeSection === 'study' ? 'is-active' : ''}`}
+                leading={<Sliders size={18} strokeWidth={1.75} aria-hidden="true" />}
+                title="Study"
+                subtitle={`Reset ${pad(set.dayResetHour ?? 0)}:00 · ${currentTimerStyleLabel} timer · ${set.pipPref === 'doc' ? 'Document PiP' : 'Video PiP'}`}
+                chevron
+                onClick={() => handlePick('study')}
+              />
+              <ListRow
+                className={`dh-drawer-row ${activeSection === 'targets' ? 'is-active' : ''}`}
+                leading={<Target size={18} strokeWidth={1.75} aria-hidden="true" />}
+                title="Goals and targets"
+                subtitle={`Goal ${minDayFormatted}/day (${minDayMins}m) · Full mock ${set.fullMockMins ?? 180}m · Target ${set.targetMockScore ?? 650}`}
+                chevron
+                onClick={() => handlePick('targets')}
+              />
+              <ListRow
+                className={`dh-drawer-row ${activeSection === 'exams' ? 'is-active' : ''}`}
+                leading={<Calendar size={18} strokeWidth={1.75} aria-hidden="true" />}
+                title="Exams"
+                subtitle={
+                  resolvedExam
+                    ? `${resolvedExam.title} (${resolvedExam.date})`
+                    : `${state.ddays.length} exam countdowns`
+                }
+                trailing={<span className="tabular-nums">{String(state.ddays.length)}</span>}
+                chevron
+                onClick={() => handlePick('exams')}
+              />
+              <ListRow
+                className={`dh-drawer-row ${activeSection === 'subjects' ? 'is-active' : ''}`}
+                leading={<BookOpen size={18} strokeWidth={1.75} aria-hidden="true" />}
+                title="Subjects"
+                subtitle={`${activeSubjects.length} active subjects`}
+                chevron
+                onClick={() => handlePick('subjects')}
+              />
+              <ListRow
+                className={`dh-drawer-row ${activeSection === 'habits' ? 'is-active' : ''}`}
+                leading={<Repeat size={18} strokeWidth={1.75} aria-hidden="true" />}
+                title="Habits"
+                subtitle={`${state.habits.filter((h) => !h.arch).length} active habits`}
+                chevron
+                onClick={() => handlePick('habits')}
+              />
+            </ListGroup>
+          </div>
 
           {/* Group 3: Appearance, alerts, and data */}
-          <ListGroup className="dh-drawer-group" aria-label="Appearance, alerts, and data">
-            <ListRow
-              className={`dh-drawer-row ${activeSection === 'appearance' ? 'is-active' : ''}`}
-              leading={<Palette size={19} strokeWidth={1.75} aria-hidden="true" />}
-              title="Appearance"
-              subtitle={`${set.theme[0].toUpperCase() + set.theme.slice(1)}${amoled ? ' · AMOLED' : ''} · ${currentAccentSwatch?.label || 'Custom'} · 3D ${currentUi3d}`}
-              chevron
-              onClick={() => handlePick('appearance')}
-            />
-            <ListRow
-              className={`dh-drawer-row ${activeSection === 'notifications' ? 'is-active' : ''}`}
-              leading={<Bell size={19} strokeWidth={1.75} aria-hidden="true" />}
-              title="Notifications and sound"
-              subtitle={`${set.snd ? 'Sounds on' : 'Muted'} · ${set.notif ? 'Reminders on' : 'Reminders off'}`}
-              chevron
-              onClick={() => handlePick('notifications')}
-            />
-            <ListRow
-              className={`dh-drawer-row ${activeSection === 'data' ? 'is-active' : ''}`}
-              leading={<Database size={19} strokeWidth={1.75} aria-hidden="true" />}
-              title="Data"
-              subtitle={
-                state.exp
-                  ? `Last backup ${new Date(state.exp).toLocaleDateString()}`
-                  : 'JSON and CSV export, restore, reset'
-              }
-              chevron
-              onClick={() => handlePick('data')}
-            />
-            <ListRow
-              className={`dh-drawer-row ${activeSection === 'about' ? 'is-active' : ''}`}
-              leading={<Info size={19} strokeWidth={1.75} aria-hidden="true" />}
-              title="About"
-              subtitle="Offline storage architecture and quick actions guide"
-              chevron
-              onClick={() => handlePick('about')}
-            />
-          </ListGroup>
+          <div className="dh-drawer-section">
+            <span className="dh-eyebrow px-1.5">Preferences &amp; data</span>
+            <ListGroup className="dh-drawer-group" aria-label="Appearance, alerts, and data">
+              <ListRow
+                className={`dh-drawer-row ${activeSection === 'appearance' ? 'is-active' : ''}`}
+                leading={<Palette size={18} strokeWidth={1.75} aria-hidden="true" />}
+                title="Appearance"
+                subtitle={`${set.theme[0].toUpperCase() + set.theme.slice(1)}${amoled ? ' · AMOLED' : ''} · ${currentAccentSwatch?.label || 'Custom'} · 3D ${currentUi3d}`}
+                chevron
+                onClick={() => handlePick('appearance')}
+              />
+              <ListRow
+                className={`dh-drawer-row ${activeSection === 'notifications' ? 'is-active' : ''}`}
+                leading={<Bell size={18} strokeWidth={1.75} aria-hidden="true" />}
+                title="Notifications and sound"
+                subtitle={`${set.snd ? 'Sounds on' : 'Muted'} · ${set.notif ? 'Reminders on' : 'Reminders off'}`}
+                chevron
+                onClick={() => handlePick('notifications')}
+              />
+              <ListRow
+                className={`dh-drawer-row ${activeSection === 'data' ? 'is-active' : ''}`}
+                leading={<Database size={18} strokeWidth={1.75} aria-hidden="true" />}
+                title="Data"
+                subtitle={
+                  state.exp
+                    ? `Last backup ${new Date(state.exp).toLocaleDateString()}`
+                    : 'JSON and CSV export, restore, reset'
+                }
+                chevron
+                onClick={() => handlePick('data')}
+              />
+              <ListRow
+                className={`dh-drawer-row ${activeSection === 'about' ? 'is-active' : ''}`}
+                leading={<Info size={18} strokeWidth={1.75} aria-hidden="true" />}
+                title="About"
+                subtitle="Offline storage architecture and quick actions guide"
+                chevron
+                onClick={() => handlePick('about')}
+              />
+            </ListGroup>
+          </div>
         </nav>
       </div>
     </div>

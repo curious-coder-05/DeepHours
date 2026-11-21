@@ -1855,293 +1855,323 @@ export const GroupsView: React.FC<GroupsViewProps> = ({
         </div>
       )}
 
-      {/* Personal Live XP v2 & Timer Standing Card */}
-      <Card className="space-y-3">
-        <div className="split flex-wrap gap-3">
-          <div className="flex items-center gap-3">
-            <button
-              type="button"
-              onClick={() => onOpenProfileModal()}
-              aria-label="Edit anonymous group profile"
-              title="Tap to edit your anonymous nickname & avatar"
-              className="flex h-12 w-12 items-center justify-center rounded-2xl border border-[var(--ac-line)] bg-[var(--ac-soft)] text-[24px]"
-            >
-              {state.profile?.emoji || '🩺'}
-            </button>
-            <div>
-              <div className="flex flex-wrap items-center gap-2">
-                <strong className="text-[15px] font-semibold text-[var(--tx)]">
-                  {state.profile?.nick || 'Anonymous Aspirant'}
-                </strong>
-                {state.profile?.examYear ? (
-                  <span className="tnum text-[13px] text-[var(--tx-2)]">
-                    · NEET {state.profile.examYear}
-                  </span>
-                ) : null}
+      {/* Personal Profile Row (Compact when signed out, expandable standing when signed in) */}
+      {!myUid ? (
+        <div
+          className="dh-hairline-row"
+          style={{ borderTop: '1px solid var(--hairline)' }}
+          data-testid="community-compact-profile-row"
+        >
+          <div className="flex min-w-0 items-center gap-2.5">
+            <span className="truncate text-[14.5px] font-semibold text-[var(--tx)]">
+              {state.profile?.nick || 'Anonymous Aspirant'}
+            </span>
+            <span className="tnum shrink-0 text-[13px] text-[var(--tx-3)]">
+              · Lv {myPersonalStats.levelInfo.level}
+            </span>
+          </div>
+          <button
+            type="button"
+            className="dh-eyebrow-link"
+            onClick={() => onOpenProfileModal()}
+          >
+            Edit
+          </button>
+        </div>
+      ) : (
+        <section className="dh-amoled-section">
+          <div className="split flex-wrap gap-3">
+            <div className="flex items-center gap-3 min-w-0">
+              <button
+                type="button"
+                onClick={() => onOpenProfileModal()}
+                aria-label="Edit anonymous group profile"
+                title="Tap to edit your anonymous nickname & avatar"
+                className="flex h-11 w-11 shrink-0 items-center justify-center rounded-2xl border border-[var(--hairline)] bg-[var(--sf-1)] text-[22px]"
+              >
+                {state.profile?.emoji || '🩺'}
+              </button>
+              <div className="min-w-0">
+                <div className="flex flex-wrap items-center gap-2">
+                  <strong className="truncate text-[15px] font-semibold text-[var(--tx)]">
+                    {state.profile?.nick || 'Anonymous Aspirant'}
+                  </strong>
+                  {state.profile?.examYear ? (
+                    <span className="tnum text-[12.5px] text-[var(--tx-3)]">
+                      · NEET {state.profile.examYear}
+                    </span>
+                  ) : null}
+                  <button
+                    type="button"
+                    className="dh-eyebrow-link"
+                    onClick={() => onOpenProfileModal()}
+                  >
+                    Edit
+                  </button>
+                </div>
+                <p className="tnum mt-0.5 text-[12.5px] text-[var(--tx-2)]">
+                  Lv <strong>{myPersonalStats.levelInfo.level}</strong> ·{' '}
+                  <strong>{myPersonalStats.totalXp.toLocaleString()} XP</strong>
+                  {myRankOnCurrentBoard ? (
+                    <span>
+                      {' '}
+                      · Rank <strong>#{myRankOnCurrentBoard}</strong>
+                    </span>
+                  ) : null}
+                </p>
+              </div>
+            </div>
+
+            <div className="flex flex-wrap items-center gap-2">
+              <button
+                type="button"
+                className="dh-ghost-pill"
+                onClick={() => setShowMyXpDrawer((v) => !v)}
+                aria-expanded={showMyXpDrawer}
+              >
+                +{myPersonalStats.todayXp} XP {showMyXpDrawer ? '▴' : '▾'}
+              </button>
+              {activeGroupId && activeGroupPref && (
                 <Button
-                  variant="secondary"
+                  variant="primary"
                   size="sm"
-                  onClick={() => onOpenProfileModal()}
+                  disabled={isPublishingMine || !isOnline}
+                  onClick={handlePushMyStatsNow}
                 >
-                  Edit profile
+                  {isPublishingMine ? 'Syncing…' : 'Sync stats'}
                 </Button>
-              </div>
-              <p className="tnum mt-0.5 text-[13px] text-[var(--tx-2)]">
-                Level <strong>{myPersonalStats.levelInfo.level}</strong> ·{' '}
-                <strong>{myPersonalStats.totalXp.toLocaleString()} XP</strong>
-                {myRankOnCurrentBoard ? (
-                  <span>
-                    {' '}
-                    · Group rank <strong>#{myRankOnCurrentBoard}</strong>
-                  </span>
-                ) : null}
-              </p>
+              )}
+              {onGoToFocus && (
+                <button
+                  type="button"
+                  className="dh-ghost-pill"
+                  onClick={onGoToFocus}
+                >
+                  <Timer size={13} aria-hidden="true" />
+                  <span>Focus</span>
+                </button>
+              )}
             </div>
           </div>
 
-          <div className="flex flex-wrap items-center gap-2">
-            <Button
-              variant="secondary"
-              size="sm"
-              onClick={() => setShowMyXpDrawer((v) => !v)}
-              aria-expanded={showMyXpDrawer}
-            >
-              Today: +{myPersonalStats.todayXp} XP {showMyXpDrawer ? '▴' : '▾'}
-            </Button>
-            {myUid && activeGroupId && activeGroupPref && (
-              <Button
-                variant="primary"
-                size="sm"
-                disabled={isPublishingMine || !isOnline}
-                onClick={handlePushMyStatsNow}
-              >
-                {isPublishingMine ? 'Syncing…' : 'Sync my stats'}
-              </Button>
-            )}
-            {onGoToFocus && (
-              <Button
-                variant="secondary"
-                size="sm"
-                icon={<Timer size={15} />}
-                onClick={onGoToFocus}
-              >
-                Focus timer
-              </Button>
-            )}
-          </div>
-        </div>
-
-        {/* Level Progress Meter */}
-        <div>
-          <div className="split mb-1 text-[13px] text-[var(--tx-2)]">
-            <span>
-              Lv. {myPersonalStats.levelInfo.level} → Lv.{' '}
-              {myPersonalStats.levelInfo.level + 1} (
-              {myPersonalStats.levelInfo.progressPct}%)
-            </span>
-            <span className="tnum">
-              {myPersonalStats.levelInfo.xpIntoLevel} /{' '}
-              {myPersonalStats.levelInfo.xpNeededForNext} XP
-            </span>
-          </div>
-          <Meter value={myPersonalStats.levelInfo.progressPct} max={100} />
-        </div>
-
-        <div className="grid grid-cols-3 gap-2.5">
-          <Stat
-            label="Today timer"
-            value={formatMinutesAsHoursMins(myPersonalStats.todayTimerMins)}
-          />
-          <Stat
-            label="Week timer"
-            value={formatMinutesAsHoursMins(myPersonalStats.weekTimerMins)}
-          />
-          <Stat
-            label="Week XP v2"
-            value={`+${myPersonalStats.weekXp} XP`}
-          />
-        </div>
-
-        {/* Local Live Co-Study Aura Privacy Toggle (zero-heartbeat, 15s start debounce) */}
-        {onToggleLiveAuraEnabled && (
-          <div className="split gap-3 rounded-xl border border-[var(--line)] bg-[var(--sf-2)] px-3.5 py-2.5">
-            <div className="min-w-0">
-              <div className="flex items-center gap-2 text-[13.5px] font-semibold text-[var(--tx)]">
-                <Radio
-                  size={15}
-                  strokeWidth={1.9}
-                  style={{
-                    color: liveAuraEnabled ? 'var(--ac-ink)' : 'var(--tx-3)',
-                    flexShrink: 0,
-                  }}
-                  aria-hidden="true"
-                />
-                <span>Share live study aura</span>
-              </div>
-              <p className="mt-0.5 text-[13px] text-[var(--tx-2)]">
-                {liveAuraEnabled
-                  ? 'Shows a quiet subject aura while studying (zero chat, zero heartbeats).'
-                  : 'Invisible mode active — zero live presence updates are sent.'}
-              </p>
-            </div>
-            <Switch
-              checked={liveAuraEnabled}
-              onChange={(checked) => onToggleLiveAuraEnabled(checked)}
-              aria-label="Share live study aura"
-            />
-          </div>
-        )}
-
-        {showMyXpDrawer && (
-          <div className="space-y-3 border-t border-[var(--line)] pt-3 text-[13px]">
-            <div className="split">
-              <strong className="text-[var(--tx)]">
-                Today&apos;s XP v2 breakdown ({todayKey})
-              </strong>
-              <span className="tnum font-semibold text-[var(--ok-ink)]">
-                Total: +{myPersonalStats.todayBreakdown.total} XP
+          <div className="dh-ledger-3col">
+            <div className="dh-ledger-cell">
+              <span className="dh-ledger-label">Today timer</span>
+              <span className="dh-ledger-val tnum" style={{ fontSize: 17 }}>
+                {formatMinutesAsHoursMins(myPersonalStats.todayTimerMins)}
               </span>
             </div>
-            <div className="grid grid-cols-2 gap-2 sm:grid-cols-4">
-              {[
-                {
-                  label: 'Timer study',
-                  val: myPersonalStats.todayBreakdown.study,
-                  cap: 'max 960/d',
-                },
-                {
-                  label: 'Focus purity ≥90%',
-                  val: myPersonalStats.todayBreakdown.focusBonus,
-                  cap: 'max 20/d',
-                },
-                {
-                  label: 'Min-day goal met',
-                  val: myPersonalStats.todayBreakdown.minDayBonus,
-                  cap: '+30/d',
-                },
-                {
-                  label: 'Streak bonus',
-                  val: myPersonalStats.todayBreakdown.streakBonus,
-                  cap: 'max 20/d',
-                },
-                {
-                  label: 'Revisions done',
-                  val: myPersonalStats.todayBreakdown.revisions,
-                  cap: '+10 on-time',
-                },
-                {
-                  label: 'Chapters completed',
-                  val: myPersonalStats.todayBreakdown.chapters,
-                  cap: '+25 each',
-                },
-                {
-                  label: 'Mock logged',
-                  val: myPersonalStats.todayBreakdown.mocks,
-                  cap: 'max 25/d',
-                },
-                {
-                  label: 'Tasks & habits',
-                  val:
-                    myPersonalStats.todayBreakdown.tasks +
-                    myPersonalStats.todayBreakdown.habits,
-                  cap: 'max 65/d',
-                },
-              ].map((item) => (
-                <div
-                  key={item.label}
-                  className="split rounded-xl border border-[var(--line)] bg-[var(--sf-2)] px-3 py-2"
-                >
-                  <div>
-                    <div className="font-medium text-[var(--tx)]">{item.label}</div>
-                    <span className="text-[13px] text-[var(--tx-3)]">{item.cap}</span>
-                  </div>
-                  <strong
-                    className="tnum"
+            <div className="dh-ledger-cell">
+              <span className="dh-ledger-label">Week timer</span>
+              <span className="dh-ledger-val tnum" style={{ fontSize: 17 }}>
+                {formatMinutesAsHoursMins(myPersonalStats.weekTimerMins)}
+              </span>
+            </div>
+            <div className="dh-ledger-cell">
+              <span className="dh-ledger-label">Week XP</span>
+              <span className="dh-ledger-val tnum" style={{ fontSize: 17 }}>
+                +{myPersonalStats.weekXp}
+              </span>
+            </div>
+          </div>
+
+          {/* Local Live Co-Study Aura Privacy Toggle */}
+          {onToggleLiveAuraEnabled && (
+            <div className="dh-hairline-row">
+              <div className="min-w-0">
+                <div className="flex items-center gap-2 text-[13.5px] font-medium text-[var(--tx)]">
+                  <Radio
+                    size={14}
+                    strokeWidth={1.9}
                     style={{
-                      color: item.val > 0 ? 'var(--ok-ink)' : 'var(--tx-2)',
+                      color: liveAuraEnabled ? 'var(--ac-ink)' : 'var(--tx-3)',
+                      flexShrink: 0,
                     }}
-                  >
-                    +{item.val}
-                  </strong>
+                    aria-hidden="true"
+                  />
+                  <span>Share live study aura</span>
                 </div>
-              ))}
+                <p className="mt-0.5 text-[12.5px] text-[var(--tx-3)]">
+                  {liveAuraEnabled
+                    ? 'Quiet subject aura while studying (zero chat, zero heartbeats).'
+                    : 'Invisible mode active — zero live presence updates sent.'}
+                </p>
+              </div>
+              <Switch
+                checked={liveAuraEnabled}
+                onChange={(checked) => onToggleLiveAuraEnabled(checked)}
+                aria-label="Share live study aura"
+              />
             </div>
-            <details className="text-[13px] text-[var(--tx-2)]">
-              <summary className="cursor-pointer font-medium text-[var(--tx)]">
-                How XP v2 &amp; fair group scoring work
-              </summary>
-              <ul className="mt-2 list-disc space-y-1 pl-5">
-                {XP_V2_PLAIN_RULES.map((r) => (
-                  <li key={r.label}>
-                    <strong>{r.label}:</strong> {r.rule}
-                  </li>
+          )}
+
+          {showMyXpDrawer && (
+            <div className="space-y-3 border-t border-[var(--hairline)] pt-3 text-[13px]">
+              <div className="split">
+                <strong className="text-[var(--tx)]">
+                  Today&apos;s XP v2 breakdown ({todayKey})
+                </strong>
+                <span className="tnum font-semibold text-[var(--ok-ink)]">
+                  Total: +{myPersonalStats.todayBreakdown.total} XP
+                </span>
+              </div>
+              <div className="grid grid-cols-2 gap-2 sm:grid-cols-4">
+                {[
+                  {
+                    label: 'Timer study',
+                    val: myPersonalStats.todayBreakdown.study,
+                    cap: 'max 960/d',
+                  },
+                  {
+                    label: 'Focus purity ≥90%',
+                    val: myPersonalStats.todayBreakdown.focusBonus,
+                    cap: 'max 20/d',
+                  },
+                  {
+                    label: 'Min-day goal met',
+                    val: myPersonalStats.todayBreakdown.minDayBonus,
+                    cap: '+30/d',
+                  },
+                  {
+                    label: 'Streak bonus',
+                    val: myPersonalStats.todayBreakdown.streakBonus,
+                    cap: 'max 20/d',
+                  },
+                  {
+                    label: 'Revisions done',
+                    val: myPersonalStats.todayBreakdown.revisions,
+                    cap: '+10 on-time',
+                  },
+                  {
+                    label: 'Chapters completed',
+                    val: myPersonalStats.todayBreakdown.chapters,
+                    cap: '+25 each',
+                  },
+                  {
+                    label: 'Mock logged',
+                    val: myPersonalStats.todayBreakdown.mocks,
+                    cap: 'max 25/d',
+                  },
+                  {
+                    label: 'Tasks & habits',
+                    val:
+                      myPersonalStats.todayBreakdown.tasks +
+                      myPersonalStats.todayBreakdown.habits,
+                    cap: 'max 65/d',
+                  },
+                ].map((item) => (
+                  <div
+                    key={item.label}
+                    className="split rounded-xl border border-[var(--hairline)] bg-[var(--sf-1)] px-3 py-2"
+                  >
+                    <div>
+                      <div className="font-medium text-[var(--tx)]">{item.label}</div>
+                      <span className="text-[12px] text-[var(--tx-3)]">{item.cap}</span>
+                    </div>
+                    <strong
+                      className="tnum"
+                      style={{
+                        color: item.val > 0 ? 'var(--ok-ink)' : 'var(--tx-2)',
+                      }}
+                    >
+                      +{item.val}
+                    </strong>
+                  </div>
                 ))}
-              </ul>
-            </details>
-          </div>
-        )}
-      </Card>
+              </div>
+              <details className="text-[12.5px] text-[var(--tx-2)]">
+                <summary className="cursor-pointer font-medium text-[var(--tx)]">
+                  How XP v2 &amp; fair group scoring work
+                </summary>
+                <ul className="mt-2 list-disc space-y-1 pl-5">
+                  {XP_V2_PLAIN_RULES.map((r) => (
+                    <li key={r.label}>
+                      <strong>{r.label}:</strong> {r.rule}
+                    </li>
+                  ))}
+                </ul>
+              </details>
+            </div>
+          )}
+        </section>
+      )}
 
-      {/* 1. Signed-Out Landing Card */}
+      {/* 1. Signed-Out Landing — Single #0A0C10 Grouped Trust Card + Single Solid Gold CTA */}
       {!myUid ? (
-        <Card className="dh-hero-lumen space-y-5 p-6">
-          <div className="flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
-            <div className="min-w-0 flex-1 space-y-2">
-              <div className="inline-flex items-center gap-2 text-[13px] font-semibold text-[var(--ac-ink)]">
-                <Users size={16} aria-hidden="true" />
-                Private NEET study squads
+        <section className="dh-amoled-section space-y-5" data-testid="community-signed-out">
+          <div className="space-y-2 pt-2">
+            <span className="dh-eyebrow block text-[var(--ac-ink)]">
+              Private NEET study squads
+            </span>
+            <h3 className="text-[22px] font-bold leading-tight tracking-tight text-[var(--tx)]">
+              Study alongside up to 3 private squads
+            </h3>
+            <p className="text-[14px] leading-relaxed text-[var(--tx-2)]">
+              Join batchmates using 10-character invite codes to compare timer-verified hours,
+              weekly XP, and consistency streaks while keeping your Google account private.
+            </p>
+          </div>
+
+          <div
+            className="dh-list-group"
+            data-testid="community-trust-card"
+          >
+            <div className="dh-list-row">
+              <ShieldCheck
+                size={18}
+                strokeWidth={1.8}
+                className="shrink-0 text-[var(--ok-ink)]"
+                aria-hidden="true"
+              />
+              <div className="min-w-0 flex-1">
+                <div className="text-[14px] font-semibold text-[var(--tx)]">
+                  Anonymous identity
+                </div>
+                <p className="mt-0.5 text-[13px] leading-snug text-[var(--tx-2)]">
+                  Your email and Google profile are never exposed. You choose a nickname and avatar.
+                </p>
               </div>
-              <h3 className="text-[20px] font-bold leading-snug text-[var(--tx)]">
-                Sign in to join private study groups
-              </h3>
-              <p className="text-[14px] leading-relaxed text-[var(--tx-2)]">
-                Study alongside up to 3 private NEET squads using 10-character invite
-                codes. Compare timer-verified hours, XP v2, consistency streaks, and 7-day
-                pace while keeping your Google account private.
-              </p>
             </div>
-            <div className="shrink-0 self-center sm:self-auto">
-              <Illustration name="signedOutCommunity" width={132} height={94} />
+            <div className="dh-list-row">
+              <Timer
+                size={18}
+                strokeWidth={1.8}
+                className="shrink-0 text-[var(--ac-ink)]"
+                aria-hidden="true"
+              />
+              <div className="min-w-0 flex-1">
+                <div className="text-[14px] font-semibold text-[var(--tx)]">
+                  Timer-verified hours
+                </div>
+                <p className="mt-0.5 text-[13px] leading-snug text-[var(--tx-2)]">
+                  Only real focus timer sessions count toward squad leaderboards.
+                </p>
+              </div>
+            </div>
+            <div className="dh-list-row">
+              <Lock
+                size={18}
+                strokeWidth={1.8}
+                className="shrink-0 text-[var(--info-ink)]"
+                aria-hidden="true"
+              />
+              <div className="min-w-0 flex-1">
+                <div className="text-[14px] font-semibold text-[var(--tx)]">
+                  Granular sharing
+                </div>
+                <p className="mt-0.5 text-[13px] leading-snug text-[var(--tx-2)]">
+                  Toggle hours, XP, streak, mocks, or live status per group anytime.
+                </p>
+              </div>
             </div>
           </div>
 
-          <div className="grid grid-cols-1 gap-2.5 sm:grid-cols-3">
-            <div className="rounded-xl border border-[var(--line)] bg-[var(--sf-2)] p-3.5">
-              <div className="flex items-center gap-2 text-[13.5px] font-semibold text-[var(--tx)]">
-                <ShieldCheck size={16} className="shrink-0 text-[var(--ok-ink)]" aria-hidden="true" />
-                Anonymous identity
-              </div>
-              <p className="mt-1 text-[13px] leading-snug text-[var(--tx-2)]">
-                Your email and Google profile are never exposed. You choose a nickname and
-                avatar.
-              </p>
-            </div>
-            <div className="rounded-xl border border-[var(--line)] bg-[var(--sf-2)] p-3.5">
-              <div className="flex items-center gap-2 text-[13.5px] font-semibold text-[var(--tx)]">
-                <Timer size={16} className="shrink-0 text-[var(--ac-ink)]" aria-hidden="true" />
-                Timer-verified hours
-              </div>
-              <p className="mt-1 text-[13px] leading-snug text-[var(--tx-2)]">
-                Only real focus timer sessions count toward squad leaderboards.
-              </p>
-            </div>
-            <div className="rounded-xl border border-[var(--line)] bg-[var(--sf-2)] p-3.5">
-              <div className="flex items-center gap-2 text-[13.5px] font-semibold text-[var(--tx)]">
-                <Lock size={16} className="shrink-0 text-[var(--info-ink)]" aria-hidden="true" />
-                Granular sharing
-              </div>
-              <p className="mt-1 text-[13px] leading-snug text-[var(--tx-2)]">
-                Toggle hours, XP, streak, mocks, or live status per group anytime.
-              </p>
-            </div>
-          </div>
-
-          <div className="flex flex-wrap items-center gap-3">
-            <Button variant="primary" size="lg" onClick={onSignIn}>
+          <div>
+            <Button variant="primary" size="lg" fullWidth onClick={onSignIn}>
               Sign in with Google
             </Button>
           </div>
-        </Card>
+        </section>
       ) : !groupsConfig.consentAccepted ? (
         /* 2. First-time Privacy Consent Screen */
         <Card className="space-y-4 p-5">
@@ -2810,15 +2840,15 @@ export const GroupsView: React.FC<GroupsViewProps> = ({
                   </Card>
                 )}
 
-              {/* Leaderboard Member List + Expandable 7-Day Consistency Chart */}
+              {/* Leaderboard Member List — Clean #0A0C10 Inset Hairline List */}
               {boardTab !== 'history' && (
-                <Card>
+                <div className="dh-list-group">
                   {filteredRows.length === 0 ? (
-                    <div className="py-6 text-center text-[13px] text-[var(--tx-2)]">
+                    <div className="px-4 py-6 text-center text-[13px] text-[var(--tx-2)]">
                       No members match the current filter on this leaderboard.
                     </div>
                   ) : (
-                    <div className="divide-y divide-[var(--line)]">
+                    <div className="divide-y divide-[var(--hairline)]">
                       {filteredRows.map((row) => {
                         const isMe = row.uid === myUid;
                         const isExpanded = expandedMemberUid === row.uid;
@@ -2862,8 +2892,8 @@ export const GroupsView: React.FC<GroupsViewProps> = ({
                         return (
                           <div
                             key={row.uid}
-                            className={`py-3 px-2 ${
-                              isMe ? 'rounded-xl bg-[var(--ac-soft)]' : ''
+                            className={`px-3.5 py-3 ${
+                              isMe ? 'bg-[var(--ac-soft)]' : ''
                             }`}
                             style={{ opacity: row.hidden ? 0.65 : 1 }}
                           >
@@ -2945,10 +2975,10 @@ export const GroupsView: React.FC<GroupsViewProps> = ({
                                     {isLiveNow && liveMemberInfo && (
                                       <span
                                         title={liveTooltipText}
-                                        className="tnum inline-flex items-center gap-1.5 rounded-md border border-[var(--ac-line)] bg-[var(--ac-soft)] px-2 py-0.5 text-[13px] font-semibold text-[var(--ac-ink)]"
+                                        className="tnum inline-flex items-center gap-1.5 text-[12.5px] font-medium text-[var(--ac-ink)]"
                                       >
                                         <span
-                                          className="h-2 w-2 rounded-full"
+                                          className="dh-sub-dot"
                                           style={{ background: liveMemberInfo.subjectColor }}
                                         />
                                         <span>
@@ -3111,6 +3141,7 @@ export const GroupsView: React.FC<GroupsViewProps> = ({
                                       <BarChart
                                         orientation="vertical"
                                         height={140}
+                                        axisUnit="minutes"
                                         data={memberConsistency.days.map((d) => ({
                                           label: d.label,
                                           value: d.minutes,
@@ -3174,7 +3205,7 @@ export const GroupsView: React.FC<GroupsViewProps> = ({
                       })}
                     </div>
                   )}
-                </Card>
+                </div>
               )}
 
               {/* History & Trophies Tab */}

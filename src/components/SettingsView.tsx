@@ -12,6 +12,7 @@ import {
   Sliders,
   Target,
   User,
+  Volume2,
 } from 'lucide-react';
 import type { AppSettings, PulseHabitState, SubjectTargets, SyncStatus } from '../types';
 import { usePWAInstall } from '../hooks/usePWAInstall';
@@ -47,6 +48,11 @@ import {
   loadFocusOrbStyle,
   saveFocusOrbStyle,
 } from '../utils/scene3dHelpers';
+import {
+  SOUND_LAB_CUES,
+  playSoundCue,
+  type StudioSoundCue,
+} from '../utils/audioEngine';
 
 export type SettingsSection = SettingsSectionId;
 
@@ -935,25 +941,18 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
                   alignItems: 'center',
                   justifyContent: 'space-between',
                   gap: '10px',
-                  padding: '10px 12px',
-                  borderRadius: '12px',
-                  background: 'var(--sf-2)',
-                  border: '1px solid var(--line)',
+                  padding: '11px 0',
+                  borderBottom: '1px solid var(--hairline)',
                 }}
               >
                 <div style={{ display: 'flex', alignItems: 'center', gap: '8px', minWidth: '140px' }}>
                   <span
                     aria-hidden="true"
-                    style={{
-                      width: '10px',
-                      height: '10px',
-                      borderRadius: '99px',
-                      background: sub.color,
-                      flexShrink: 0,
-                    }}
+                    className="dh-sub-dot"
+                    style={{ background: sub.color }}
                   />
                   <span style={{ fontSize: '14px', fontWeight: 600 }}>
-                    {sub.e} {sub.name}
+                    {sub.name}
                   </span>
                 </div>
                 <div style={{ display: 'flex', gap: '8px', flex: '0 1 auto' }}>
@@ -1028,15 +1027,11 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
                     leading={
                       <span
                         aria-hidden="true"
-                        style={{
-                          width: '12px',
-                          height: '12px',
-                          borderRadius: '99px',
-                          background: d.color || 'var(--ac)',
-                        }}
+                        className="dh-sub-dot"
+                        style={{ background: d.color || 'var(--ac)' }}
                       />
                     }
-                    title={`${d.e || '🎯'} ${d.title}`}
+                    title={d.title}
                     subtitle={
                       `${d.date}` +
                       (d.primary
@@ -1126,25 +1121,18 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
                   alignItems: 'center',
                   justifyContent: 'space-between',
                   gap: '10px',
-                  padding: '10px 12px',
-                  borderRadius: '12px',
-                  background: 'var(--sf-2)',
-                  border: '1px solid var(--line)',
+                  padding: '11px 0',
+                  borderBottom: '1px solid var(--hairline)',
                 }}
               >
                 <div style={{ display: 'flex', alignItems: 'center', gap: '10px', minWidth: 0 }}>
                   <span
                     aria-hidden="true"
-                    style={{
-                      width: '12px',
-                      height: '12px',
-                      borderRadius: '99px',
-                      background: sub.color,
-                      flexShrink: 0,
-                    }}
+                    className="dh-sub-dot"
+                    style={{ background: sub.color }}
                   />
-                  <span style={{ fontSize: '15px', fontWeight: 600, minWidth: 0 }}>
-                    {sub.e} {sub.name}
+                  <span style={{ fontSize: '14.5px', fontWeight: 600, minWidth: 0 }}>
+                    {sub.name}
                   </span>
                 </div>
                 <div style={{ display: 'flex', gap: '6px', flexShrink: 0 }}>
@@ -1440,56 +1428,88 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
 
       {/* 9. Notifications and sound */}
       {activeSection === 'notifications' && (
-        <Card style={{ margin: 0, display: 'grid', gap: '12px' }}>
-          <div
-            style={{
-              display: 'flex',
-              alignItems: 'center',
-              justifyContent: 'space-between',
-              gap: '12px',
-              padding: '10px 12px',
-              borderRadius: '12px',
-              background: 'var(--sf-2)',
-              border: '1px solid var(--line)',
-            }}
-          >
-            <div>
-              <div style={{ fontSize: '14px', fontWeight: 600 }}>Sounds, chimes &amp; haptics</div>
-              <div style={{ fontSize: '13px', color: 'var(--tx-2)' }}>
-                Audio cues when completing tasks, sprints, and timer targets
+        <div className="dh-amoled-flow" data-testid="settings-notifications-view">
+          <section className="dh-amoled-section">
+            <span className="dh-eyebrow">Audio &amp; reminders</span>
+            <div className="dh-list-group">
+              <div className="dh-list-row justify-between">
+                <div className="min-w-0 flex-1 pr-2">
+                  <div className="text-[14px] font-semibold text-[var(--tx)]">
+                    Sounds, chimes &amp; haptics
+                  </div>
+                  <div className="mt-0.5 text-[12.5px] text-[var(--tx-2)]">
+                    Studio acoustic cues for tasks, timer states, and exam alerts
+                  </div>
+                </div>
+                <Switch
+                  aria-label="Sounds, chimes, and haptics"
+                  checked={Boolean(set.snd)}
+                  onChange={(checked) => {
+                    onUpdateSetting('snd', checked ? 1 : 0);
+                    if (checked) {
+                      playSoundCue('toggleOn', true);
+                    }
+                  }}
+                />
               </div>
-            </div>
-            <Switch
-              aria-label="Sounds, chimes, and haptics"
-              checked={Boolean(set.snd)}
-              onChange={(checked) => onUpdateSetting('snd', checked ? 1 : 0)}
-            />
-          </div>
 
-          <div
-            style={{
-              display: 'flex',
-              alignItems: 'center',
-              justifyContent: 'space-between',
-              gap: '12px',
-              padding: '10px 12px',
-              borderRadius: '12px',
-              background: 'var(--sf-2)',
-              border: '1px solid var(--line)',
-            }}
-          >
-            <div>
-              <div style={{ fontSize: '14px', fontWeight: 600 }}>Study &amp; habit reminders</div>
-              <div style={{ fontSize: '12px', color: 'var(--tx-2)' }}>
-                Browser notifications for 5-minute sprint warnings and scheduled habits
+              <div className="dh-list-row justify-between">
+                <div className="min-w-0 flex-1 pr-2">
+                  <div className="text-[14px] font-semibold text-[var(--tx)]">
+                    Study &amp; habit reminders
+                  </div>
+                  <div className="mt-0.5 text-[12.5px] text-[var(--tx-2)]">
+                    Browser notifications for 5-minute sprint warnings and scheduled habits
+                  </div>
+                </div>
+                <Switch
+                  aria-label="Study and habit reminders"
+                  checked={Boolean(set.notif)}
+                  onChange={(checked) => {
+                    onUpdateSetting('notif', checked ? 1 : 0);
+                    playSoundCue(checked ? 'toggleOn' : 'toggleOff', Boolean(set.snd));
+                  }}
+                />
               </div>
             </div>
-            <Switch
-              aria-label="Study and habit reminders"
-              checked={Boolean(set.notif)}
-              onChange={(checked) => onUpdateSetting('notif', checked ? 1 : 0)}
-            />
-          </div>
+          </section>
+
+          {/* v37 Compact AMOLED Hairline Sound Lab Audition Panel */}
+          <section className="dh-amoled-section" data-testid="settings-sound-lab">
+            <div className="dh-eyebrow-row">
+              <span className="dh-eyebrow">Sound Lab</span>
+              <span className="text-[12px] text-[var(--tx-3)]">
+                {set.snd ? 'Offline Web Audio' : 'Muted · enable sounds above'}
+              </span>
+            </div>
+            <div className="rounded-2xl border border-[var(--hairline)] bg-[var(--inset-group-bg,#0A0C10)] p-3.5">
+              <p className="m-0 mb-3 text-[12.5px] leading-relaxed text-[var(--tx-2)]">
+                Audition harmonic cues and check speaker or earphone volume balance.
+              </p>
+              <div
+                className="flex flex-wrap gap-2"
+                role="group"
+                aria-label="Audition studio sound cues"
+              >
+                {SOUND_LAB_CUES.map((item) => (
+                  <button
+                    key={item.cue}
+                    type="button"
+                    className="dh-ghost-pill"
+                    data-testid={`sound-lab-cue-${item.cue}`}
+                    onClick={() =>
+                      playSoundCue(item.cue as StudioSoundCue, Boolean(set.snd), {
+                        forceAudition: true,
+                      })
+                    }
+                  >
+                    <Volume2 size={13} strokeWidth={1.75} aria-hidden="true" />
+                    <span>{item.label}</span>
+                  </button>
+                ))}
+              </div>
+            </div>
+          </section>
 
           {!isInstalled && isInstallable && (
             <Button variant="primary" size="lg" fullWidth onClick={install}>
@@ -1507,17 +1527,8 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
                 Install on iPhone or iPad
               </Button>
               {showIOSGuide && (
-                <div
-                  style={{
-                    padding: '12px',
-                    borderRadius: '12px',
-                    background: 'var(--sf-2)',
-                    border: '1px solid var(--line)',
-                    fontSize: '13px',
-                    color: 'var(--tx-2)',
-                  }}
-                >
-                  <strong style={{ color: 'var(--tx)', display: 'block', marginBottom: '4px' }}>
+                <div className="rounded-2xl border border-[var(--hairline)] bg-[var(--inset-group-bg,#0A0C10)] p-3.5 text-[13px] text-[var(--tx-2)]">
+                  <strong className="mb-1 block text-[var(--tx)]">
                     Install on iOS Safari
                   </strong>
                   1. Tap the Share button in Safari toolbar. 2. Tap &ldquo;Add to Home Screen&rdquo;.
@@ -1525,7 +1536,7 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
               )}
             </>
           )}
-        </Card>
+        </div>
       )}
 
       {/* 10. Data */}

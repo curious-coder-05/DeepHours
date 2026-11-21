@@ -81,12 +81,9 @@ const LiveMiniTimerBar: React.FC<{
       >
         <span
           aria-hidden="true"
+          className="dh-sub-dot"
           style={{
-            width: '10px',
-            height: '10px',
-            borderRadius: '99px',
             background: liveMetrics.subject.color,
-            flexShrink: 0,
           }}
         />
         <span style={{ minWidth: 0, flex: 1 }}>
@@ -220,7 +217,11 @@ export const AppShell: React.FC<AppShellProps> = ({
                 aria-current={isActive ? 'page' : undefined}
                 onClick={() => handleNavClick(id)}
               >
-                <Icon size={20} strokeWidth={1.75} aria-hidden="true" />
+                <Icon
+                  size={19}
+                  strokeWidth={isActive ? 1.85 : 1.5}
+                  aria-hidden="true"
+                />
                 <span>{label}</span>
               </button>
             );
@@ -281,7 +282,11 @@ export const AppShell: React.FC<AppShellProps> = ({
               aria-current={isActive ? 'page' : undefined}
               onClick={() => handleNavClick(id)}
             >
-              <Icon size={20} strokeWidth={1.75} aria-hidden="true" />
+              <Icon
+                size={20}
+                strokeWidth={isActive ? 1.85 : 1.5}
+                aria-hidden="true"
+              />
               <span>{label}</span>
             </button>
           );

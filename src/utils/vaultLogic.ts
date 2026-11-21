@@ -452,7 +452,7 @@ export function resolveVaultChapterName(
 ): string {
   if (!chapterId) return 'Unassigned';
   const found = chapters.find((c) => c.id === chapterId);
-  return found ? found.name : 'Deleted chapter';
+  return found ? found.name : 'No chapter';
 }
 
 export function groupVaultItemsByChapter(

@@ -4,8 +4,7 @@ import { ensureAudioEngine } from '../utils/audioEngine';
 import {
   PIP_BASE_BG,
   computePiPViewModel,
-  hexToRgba,
-  type PiPViewModel,
+  paintPiPCanvasFrame,
 } from '../utils/pipHelpers';
 
 interface FloatingPiPActions {
@@ -17,132 +16,6 @@ interface FloatingPiPActions {
   onExtendTarget?: (extraMins: number) => void;
   onNextMockSection?: () => void;
   onToast: (msg: string) => void;
-}
-
-const LOGICAL_W = 480;
-const LOGICAL_H = 270;
-const CANVAS_DPR = 2;
-
-function drawRoundedRectPath(
-  ctx: CanvasRenderingContext2D,
-  x: number,
-  y: number,
-  w: number,
-  h: number,
-  r: number
-) {
-  const radius = Math.min(r, w / 2, h / 2);
-  ctx.beginPath();
-  if (typeof ctx.roundRect === 'function') {
-    ctx.roundRect(x, y, w, h, radius);
-  } else {
-    ctx.moveTo(x + radius, y);
-    ctx.arcTo(x + w, y, x + w, y + h, radius);
-    ctx.arcTo(x + w, y + h, x, y + h, radius);
-    ctx.arcTo(x, y + h, x, y, radius);
-    ctx.arcTo(x, y, x + w, y, radius);
-    ctx.closePath();
-  }
-}
-
-function truncateTextToWidth(
-  ctx: CanvasRenderingContext2D,
-  text: string,
-  maxWidth: number
-): string {
-  if (ctx.measureText(text).width <= maxWidth) return text;
-  let trimmed = text;
-  while (trimmed.length > 1 && ctx.measureText(`${trimmed}…`).width > maxWidth) {
-    trimmed = trimmed.slice(0, -1);
-  }
-  return `${trimmed}…`;
-}
-
-function drawAnalogDialOnCanvas(
-  ctx: CanvasRenderingContext2D,
-  cx: number,
-  cy: number,
-  radius: number,
-  vm: PiPViewModel
-) {
-  ctx.save();
-
-  // Outer dial disc
-  ctx.beginPath();
-  ctx.arc(cx, cy, radius, 0, Math.PI * 2);
-  ctx.fillStyle = 'rgba(27, 32, 41, 0.84)';
-  ctx.fill();
-  ctx.lineWidth = 1.5;
-  ctx.strokeStyle = 'rgba(255, 255, 255, 0.16)';
-  ctx.stroke();
-
-  // Inner subtle ring
-  ctx.beginPath();
-  ctx.arc(cx, cy, radius - 5, 0, Math.PI * 2);
-  ctx.lineWidth = 0.75;
-  ctx.strokeStyle = 'rgba(255, 255, 255, 0.08)';
-  ctx.stroke();
-
-  // 60 dial ticks
-  for (let i = 0; i < 60; i++) {
-    const isMajor = i % 5 === 0;
-    const ang = (i * 6 - 90) * (Math.PI / 180);
-    const rOuter = radius - 6;
-    const rInner = isMajor ? radius - 12 : radius - 9;
-    ctx.beginPath();
-    ctx.moveTo(cx + Math.cos(ang) * rInner, cy + Math.sin(ang) * rInner);
-    ctx.lineTo(cx + Math.cos(ang) * rOuter, cy + Math.sin(ang) * rOuter);
-    ctx.strokeStyle = isMajor ? 'rgba(236, 239, 244, 0.75)' : 'rgba(176, 184, 197, 0.28)';
-    ctx.lineWidth = isMajor ? 1.5 : 0.8;
-    ctx.lineCap = 'round';
-    ctx.stroke();
-  }
-
-  // Target minute dashed hand
-  if (vm.analogAngles.targetMinAngle !== null) {
-    const tAng = (vm.analogAngles.targetMinAngle - 90) * (Math.PI / 180);
-    ctx.save();
-    ctx.setLineDash([3, 3]);
-    ctx.beginPath();
-    ctx.moveTo(cx, cy);
-    ctx.lineTo(cx + Math.cos(tAng) * (radius - 10), cy + Math.sin(tAng) * (radius - 10));
-    ctx.strokeStyle = hexToRgba(vm.accentColor, 0.65);
-    ctx.lineWidth = 1.4;
-    ctx.stroke();
-    ctx.restore();
-  }
-
-  // Minute hand
-  const mAng = (vm.analogAngles.minAngle - 90) * (Math.PI / 180);
-  ctx.beginPath();
-  ctx.moveTo(cx - Math.cos(mAng) * 5, cy - Math.sin(mAng) * 5);
-  ctx.lineTo(cx + Math.cos(mAng) * (radius - 14), cy + Math.sin(mAng) * (radius - 14));
-  ctx.strokeStyle = '#ECEFF4';
-  ctx.lineWidth = 2.6;
-  ctx.lineCap = 'round';
-  ctx.stroke();
-
-  // Second hand
-  const sAng = (vm.analogAngles.secAngle - 90) * (Math.PI / 180);
-  ctx.beginPath();
-  ctx.moveTo(cx - Math.cos(sAng) * 7, cy - Math.sin(sAng) * 7);
-  ctx.lineTo(cx + Math.cos(sAng) * (radius - 8), cy + Math.sin(sAng) * (radius - 8));
-  ctx.strokeStyle = vm.accentColor;
-  ctx.lineWidth = 1.5;
-  ctx.lineCap = 'round';
-  ctx.stroke();
-
-  // Center pin
-  ctx.beginPath();
-  ctx.arc(cx, cy, 3.5, 0, Math.PI * 2);
-  ctx.fillStyle = vm.accentColor;
-  ctx.fill();
-  ctx.beginPath();
-  ctx.arc(cx, cy, 1.4, 0, Math.PI * 2);
-  ctx.fillStyle = PIP_BASE_BG;
-  ctx.fill();
-
-  ctx.restore();
 }
 
 function buildAnalogClockSvg(doc: Document): SVGSVGElement {
@@ -403,286 +276,12 @@ export function useFloatingTimerPiP(
     }
   }, []);
 
-  // High-DPI 2x Frosted Graphite + Lumen V2 Canvas Picture-in-Picture (960x540 -> logical 480x270)
+  // v39 Flagship Rose Copper AMOLED Hardware Canvas PiP (High-DPI 2x 1280x720 -> logical 640x360)
   const drawCanvasFrame = useCallback(() => {
     const canvas = canvasRef.current;
     if (!canvas) return;
-    const W = LOGICAL_W;
-    const H = LOGICAL_H;
-    const targetW = W * CANVAS_DPR;
-    const targetH = H * CANVAS_DPR;
-    if (canvas.width !== targetW) canvas.width = targetW;
-    if (canvas.height !== targetH) canvas.height = targetH;
-
-    const ctx = canvas.getContext('2d');
-    if (!ctx) return;
-
-    const curState = stateRef.current;
-    const now = Date.now();
-    const vm = computePiPViewModel(curState, now);
-
-    const reducedMotion =
-      typeof window !== 'undefined' &&
-      typeof window.matchMedia === 'function' &&
-      window.matchMedia('(prefers-reduced-motion: reduce)').matches;
-    const breathPulse =
-      vm.isRunning && !reducedMotion
-        ? 0.84 + 0.16 * (0.5 + 0.5 * Math.sin(now / 850))
-        : 0.78;
-
-    ctx.save();
-    ctx.setTransform(CANVAS_DPR, 0, 0, CANVAS_DPR, 0, 0);
-
-    // 1. Deep Graphite Base (#0B0D10)
-    ctx.fillStyle = PIP_BASE_BG;
-    ctx.fillRect(0, 0, W, H);
-
-    // 2. Subtle Radial Ambient Backlight behind clock
-    const glowCenterX = vm.aesthetic === 'retro' ? W * 0.54 : W / 2;
-    const glowCenterY = H * 0.46;
-    const ambientGrad = ctx.createRadialGradient(
-      glowCenterX,
-      glowCenterY,
-      10,
-      glowCenterX,
-      glowCenterY,
-      205
-    );
-    ambientGrad.addColorStop(
-      0,
-      hexToRgba(vm.accentColor, (vm.isActive ? 0.24 : 0.11) * breathPulse)
-    );
-    ambientGrad.addColorStop(
-      0.55,
-      hexToRgba(vm.accentColor, (vm.isActive ? 0.08 : 0.03) * breathPulse)
-    );
-    ambientGrad.addColorStop(1, 'rgba(11, 13, 16, 0)');
-    ctx.fillStyle = ambientGrad;
-    ctx.fillRect(0, 0, W, H);
-
-    // 3. Translucent Frosted Glass Card (rgba(20, 24, 31, 0.76)) + 1px Specular Edge
-    const padX = 12;
-    const padY = 12;
-    const cardW = W - padX * 2;
-    const cardH = H - padY * 2;
-    const cardR = 18;
-
-    ctx.save();
-    drawRoundedRectPath(ctx, padX, padY, cardW, cardH, cardR);
-    ctx.fillStyle = 'rgba(20, 24, 31, 0.76)';
-    ctx.fill();
-    ctx.lineWidth = 1;
-    ctx.strokeStyle = 'rgba(255, 255, 255, 0.10)';
-    ctx.stroke();
-
-    // 1px Specular top edge highlight inside card
-    ctx.beginPath();
-    ctx.moveTo(padX + cardR, padY + 0.75);
-    ctx.lineTo(padX + cardW - cardR, padY + 0.75);
-    ctx.strokeStyle = 'rgba(255, 255, 255, 0.14)';
-    ctx.lineWidth = 1;
-    ctx.stroke();
-    ctx.restore();
-
-    // 4. Header Row: Subject dot + Title (Left), Compact Status Pill (Right)
-    const pillPadX = 12;
-    ctx.font = '700 12px "Geist Variable", system-ui, -apple-system, sans-serif';
-    const statusTextW = ctx.measureText(vm.statusLabel).width;
-    const pillW = Math.max(76, statusTextW + pillPadX * 2 + 14);
-    const pillH = 26;
-    const pillX = padX + cardW - 14 - pillW;
-    const pillY = padY + 12;
-
-    // Status pill background
-    drawRoundedRectPath(ctx, pillX, pillY, pillW, pillH, 13);
-    ctx.fillStyle =
-      vm.statusTone === 'lumen'
-        ? 'rgba(245, 196, 81, 0.15)'
-        : vm.statusTone === 'break'
-          ? 'rgba(96, 165, 250, 0.16)'
-          : 'rgba(27, 32, 41, 0.85)';
-    ctx.fill();
-    ctx.lineWidth = 1;
-    ctx.strokeStyle =
-      vm.statusTone === 'lumen'
-        ? 'rgba(245, 196, 81, 0.36)'
-        : vm.statusTone === 'break'
-          ? 'rgba(96, 165, 250, 0.36)'
-          : 'rgba(255, 255, 255, 0.12)';
-    ctx.stroke();
-
-    // Status dot inside pill
-    ctx.beginPath();
-    ctx.arc(pillX + 12, pillY + pillH / 2, 3.5, 0, Math.PI * 2);
-    ctx.fillStyle = vm.accentColor;
-    ctx.fill();
-
-    // Status pill text
-    ctx.fillStyle =
-      vm.statusTone === 'lumen'
-        ? '#F5C451'
-        : vm.statusTone === 'break'
-          ? '#93C5FD'
-          : '#ECEFF4';
-    ctx.textAlign = 'left';
-    ctx.textBaseline = 'middle';
-    ctx.fillText(vm.statusLabel, pillX + 20, pillY + pillH / 2 + 0.5);
-
-    // Subject color dot + Heading
-    ctx.beginPath();
-    ctx.arc(padX + 22, pillY + pillH / 2, 4.5, 0, Math.PI * 2);
-    ctx.fillStyle = vm.subjectColor;
-    ctx.fill();
-
-    ctx.font = '600 15px "Geist Variable", system-ui, -apple-system, sans-serif';
-    ctx.fillStyle = '#ECEFF4';
-    ctx.textAlign = 'left';
-    ctx.textBaseline = 'middle';
-    const maxTitleWidth = Math.max(80, pillX - (padX + 34) - 10);
-    const titleStr = truncateTextToWidth(ctx, vm.displayTitle, maxTitleWidth);
-    ctx.fillText(titleStr, padX + 34, pillY + pillH / 2 + 0.5);
-
-    // 5. Center Clock Stage (Digital, Mono, or Analog Dial)
-    const monoFontFamily =
-      '"Geist Mono Variable", ui-monospace, "SF Mono", Menlo, Consolas, monospace';
-    const clockFill =
-      vm.statusTone === 'lumen'
-        ? '#F5C451'
-        : vm.statusTone === 'break'
-          ? '#93C5FD'
-          : '#ECEFF4';
-
-    if (vm.aesthetic === 'retro') {
-      drawAnalogDialOnCanvas(ctx, 118, 128, 48, vm);
-
-      ctx.save();
-      ctx.fillStyle = clockFill;
-      ctx.font = `700 48px ${monoFontFamily}`;
-      ctx.textAlign = 'left';
-      ctx.textBaseline = 'middle';
-      if (vm.isRunning) {
-        ctx.shadowColor = hexToRgba(vm.accentColor, 0.32 * breathPulse);
-        ctx.shadowBlur = 16;
-      }
-      ctx.fillText(vm.clockStr, 188, 118);
-      ctx.restore();
-
-      // Context subtitle right below Analog clock
-      ctx.font = `600 13px ${monoFontFamily}`;
-      ctx.fillStyle = vm.isOvertime ? '#F5C451' : '#B0B8C5';
-      ctx.textAlign = 'left';
-      ctx.textBaseline = 'middle';
-      const subCaption = vm.isStopwatch
-        ? vm.stopwatchMilestone.label
-        : vm.overtimeStr
-          ? `Flow Overtime ${vm.overtimeStr}`
-          : `${Math.round(vm.progressPct)}% · ${vm.mode === 'fullMock' ? 'Full Mock' : vm.mode === 'countdown' ? 'Countdown' : 'Pomodoro'}`;
-      ctx.fillText(subCaption, 190, 154);
-
-      if (!vm.isStopwatch) {
-        const barX = 190;
-        const barY = 171;
-        const barW = 248;
-        const barH = 4;
-        drawRoundedRectPath(ctx, barX, barY, barW, barH, 2);
-        ctx.fillStyle = 'rgba(255, 255, 255, 0.09)';
-        ctx.fill();
-
-        const fillW = Math.max(0, (barW * vm.progressPct) / 100);
-        if (fillW > 0) {
-          drawRoundedRectPath(ctx, barX, barY, fillW, barH, 2);
-          ctx.fillStyle = vm.accentColor;
-          ctx.fill();
-        }
-      }
-    } else {
-      ctx.save();
-      ctx.fillStyle = clockFill;
-      ctx.font =
-        vm.aesthetic === 'minimal'
-          ? `400 62px ${monoFontFamily}`
-          : `800 64px ${monoFontFamily}`;
-      ctx.textAlign = 'center';
-      ctx.textBaseline = 'middle';
-      if (vm.aesthetic === 'neon' && vm.isActive) {
-        ctx.shadowColor = hexToRgba(vm.accentColor, 0.36 * breathPulse);
-        ctx.shadowBlur = 20;
-      }
-      ctx.fillText(vm.clockStr, W / 2, 116);
-      ctx.restore();
-
-      // Progress Bar (Pomodoro / Countdown / Full Mock) OR 15m Milestone Pill (Stopwatch)
-      if (vm.isStopwatch) {
-        const badgeText = vm.isActive
-          ? `15m Milestone · ${vm.stopwatchMilestone.remainingStr} left`
-          : 'Stopwatch · 15m milestone markers';
-        ctx.font = `600 13px ${monoFontFamily}`;
-        const bw = Math.min(340, ctx.measureText(badgeText).width + 26);
-        const bx = (W - bw) / 2;
-        const by = 160;
-        drawRoundedRectPath(ctx, bx, by, bw, 24, 12);
-        ctx.fillStyle = 'rgba(245, 196, 81, 0.11)';
-        ctx.fill();
-        ctx.lineWidth = 1;
-        ctx.strokeStyle = 'rgba(245, 196, 81, 0.28)';
-        ctx.stroke();
-
-        ctx.fillStyle = '#F5C451';
-        ctx.textAlign = 'center';
-        ctx.textBaseline = 'middle';
-        ctx.fillText(badgeText, W / 2, by + 12.5);
-      } else {
-        const barW = 296;
-        const barH = 4;
-        const barX = (W - barW) / 2;
-        const barY = 164;
-        drawRoundedRectPath(ctx, barX, barY, barW, barH, 2);
-        ctx.fillStyle = 'rgba(255, 255, 255, 0.09)';
-        ctx.fill();
-
-        const fillW = Math.max(0, (barW * vm.progressPct) / 100);
-        if (fillW > 0) {
-          ctx.save();
-          drawRoundedRectPath(ctx, barX, barY, fillW, barH, 2);
-          ctx.fillStyle = vm.accentColor;
-          ctx.shadowColor = hexToRgba(vm.accentColor, 0.45);
-          ctx.shadowBlur = 8;
-          ctx.fill();
-          ctx.restore();
-        }
-
-        ctx.font = `600 12px ${monoFontFamily}`;
-        ctx.fillStyle = vm.isOvertime ? '#F5C451' : '#B0B8C5';
-        ctx.textAlign = 'center';
-        ctx.textBaseline = 'middle';
-        const subText = vm.overtimeStr
-          ? `Flow Overtime ${vm.overtimeStr}`
-          : vm.isActive
-            ? `${Math.round(vm.progressPct)}% complete${vm.mode === 'fullMock' && vm.sectionCount > 0 ? ` · ${vm.sectionCount} splits` : ''}`
-            : `${vm.mode === 'fullMock' ? 'Full Mock' : vm.mode === 'countdown' ? 'Countdown' : 'Pomodoro'} · Press Play`;
-        ctx.fillText(subText, W / 2, 183);
-      }
-    }
-
-    // 6. Clean Single-Line Frosted Footer (Purity X% · Today Yh Zm)
-    const footX = padX + 12;
-    const footY = H - padY - 38;
-    const footW = cardW - 24;
-    const footH = 28;
-    drawRoundedRectPath(ctx, footX, footY, footW, footH, 10);
-    ctx.fillStyle = 'rgba(27, 32, 41, 0.72)';
-    ctx.fill();
-    ctx.lineWidth = 1;
-    ctx.strokeStyle = 'rgba(255, 255, 255, 0.07)';
-    ctx.stroke();
-
-    ctx.font = '600 13px "Geist Variable", system-ui, -apple-system, sans-serif';
-    ctx.fillStyle = '#B0B8C5';
-    ctx.textAlign = 'center';
-    ctx.textBaseline = 'middle';
-    ctx.fillText(vm.footerText, W / 2, footY + footH / 2 + 0.5);
-
-    ctx.restore();
+    const vm = computePiPViewModel(stateRef.current, Date.now());
+    paintPiPCanvasFrame(canvas, vm);
     pushCanvasFrame();
   }, [pushCanvasFrame]);
 
@@ -696,17 +295,24 @@ export function useFloatingTimerPiP(
 
     doc.body.className = `pip-body aesthetic-${vm.aesthetic}`;
     doc.body.dataset.tone = vm.statusTone;
-    doc.body.style.setProperty('--pip-accent', vm.accentColor);
+    doc.body.style.setProperty('--pip-accent', vm.isExamOvertime ? '#FB7185' : '#F5C542');
     doc.body.style.setProperty('--pip-subject', vm.subjectColor);
-    doc.body.style.setProperty('--pip-glow', hexToRgba(vm.accentColor, 0.24));
+    doc.body.style.setProperty(
+      '--pip-glow',
+      vm.isExamOvertime ? 'rgba(244, 63, 94, 0.22)' : 'rgba(251, 146, 60, 0.15)'
+    );
+    doc.body.style.setProperty(
+      '--pip-glow-mid',
+      vm.isExamOvertime ? 'rgba(225, 29, 72, 0.08)' : 'rgba(244, 114, 182, 0.08)'
+    );
 
     const titleEl = doc.querySelector('[data-pip-el="title"]');
-    if (titleEl) titleEl.textContent = vm.displayTitle;
+    if (titleEl) titleEl.textContent = vm.cleanTitle;
 
     const statusPill = doc.querySelector('[data-pip-el="status-pill"]') as HTMLElement | null;
     if (statusPill) statusPill.dataset.tone = vm.statusTone;
     const statusText = doc.querySelector('[data-pip-el="status-text"]');
-    if (statusText) statusText.textContent = vm.statusLabel;
+    if (statusText) statusText.textContent = vm.canvasStatus.label;
 
     const clockEl = doc.querySelector('[data-pip-el="clock"]');
     if (clockEl) clockEl.textContent = vm.clockStr;
@@ -1251,6 +857,41 @@ export function useFloatingTimerPiP(
     document.addEventListener('visibilitychange', onVis);
     return () => document.removeEventListener('visibilitychange', onVis);
   }, [syncState]);
+
+  // Clean unmount teardown for canvas video track & Document PiP window
+  // (never stops the shared 60 Hz keepalive audio track from audioEngine.ts)
+  useEffect(() => {
+    return () => {
+      if (docPipWinRef.current && !docPipWinRef.current.closed) {
+        try {
+          docPipWinRef.current.close();
+        } catch {
+          // ignore
+        }
+        docPipWinRef.current = null;
+      }
+      if (videoRef.current && document.pictureInPictureElement === videoRef.current) {
+        document.exitPictureInPicture().catch(() => {});
+      }
+      if (canvasTrackRef.current) {
+        try {
+          canvasTrackRef.current.stop();
+        } catch {
+          // ignore
+        }
+        canvasTrackRef.current = null;
+      }
+      combinedStreamRef.current = null;
+      if (videoRef.current) {
+        try {
+          videoRef.current.pause();
+          videoRef.current.srcObject = null;
+        } catch {
+          // ignore
+        }
+      }
+    };
+  }, []);
 
   return {
     canvasRef,

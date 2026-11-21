@@ -1,69 +1,135 @@
-import React from 'react';
+import React, { useId } from 'react';
 
 export interface ProgressRingProps {
-  pct: number;
+  /** 0..100 */
+  value: number;
   size?: number;
   strokeWidth?: number;
   color?: string;
+  trackColor?: string;
+  label?: string;
   children?: React.ReactNode;
+  className?: string;
 }
 
 export const ProgressRing: React.FC<ProgressRingProps> = ({
-  pct,
-  size = 112,
+  value,
+  size = 120,
   strokeWidth = 10,
-  color = 'var(--ac)',
+  color,
+  trackColor = 'var(--ring-track, #12151C)',
+  label,
   children,
+  className = '',
 }) => {
-  const clamped = Math.max(0, Math.min(100, pct));
+  const uid = useId().replace(/:/g, '');
+  const gradId = `dh-ring-gold-${uid}`;
+  const clamped = Math.max(0, Math.min(100, Number.isFinite(value) ? value : 0));
   const r = (size - strokeWidth) / 2;
-  const c = 2 * Math.PI * r;
-  const offset = c * (1 - clamped / 100);
+  const cx = size / 2;
+  const cy = size / 2;
+  const circumference = 2 * Math.PI * r;
+  const offset = circumference * (1 - clamped / 100);
+  const useMoltenGradient = !color;
+  const strokePaint = useMoltenGradient ? `url(#${gradId})` : color;
 
   return (
     <div
-      style={{
-        position: 'relative',
-        width: size,
-        height: size,
-        display: 'grid',
-        placeItems: 'center',
-        flexShrink: 0,
-      }}
+      className={`relative inline-flex items-center justify-center ${className}`.trim()}
+      style={{ width: size, height: size }}
+      role="progressbar"
+      aria-valuenow={Math.round(clamped)}
+      aria-valuemin={0}
+      aria-valuemax={100}
+      aria-label={label}
     >
       <svg
         width={size}
         height={size}
         viewBox={`0 0 ${size} ${size}`}
-        style={{ position: 'absolute', inset: 0, transform: 'rotate(-90deg)' }}
         aria-hidden="true"
+        style={{ overflow: 'visible' }}
       >
+        <defs>
+          <linearGradient id={gradId} x1="0%" y1="0%" x2="100%" y2="100%">
+            <stop offset="0%" stopColor="#EA580C" />
+            <stop offset="52%" stopColor="#F59E0B" />
+            <stop offset="100%" stopColor="#FCD34D" />
+          </linearGradient>
+        </defs>
+        {/* Machined obsidian channel track */}
         <circle
-          cx={size / 2}
-          cy={size / 2}
+          cx={cx}
+          cy={cy}
           r={r}
           fill="none"
-          stroke="var(--sf-2)"
+          stroke={trackColor}
           strokeWidth={strokeWidth}
         />
+        {/* Crisp recessed inner rim stroke */}
         <circle
-          cx={size / 2}
-          cy={size / 2}
-          r={r}
+          cx={cx}
+          cy={cy}
+          r={Math.max(1, r - strokeWidth / 2 + 0.5)}
           fill="none"
-          stroke={color}
-          strokeWidth={strokeWidth}
-          strokeLinecap="round"
-          strokeDasharray={c}
-          strokeDashoffset={offset}
-          style={{
-            transition: 'stroke-dashoffset var(--dur-slow) var(--ease-out)',
-          }}
+          stroke="var(--ring-track-rim, rgba(255, 255, 255, 0.06))"
+          strokeWidth={1}
         />
+        {/* Active progress arc */}
+        {clamped > 0 && (
+          <circle
+            cx={cx}
+            cy={cy}
+            r={r}
+            fill="none"
+            stroke={strokePaint}
+            strokeWidth={strokeWidth}
+            strokeLinecap="round"
+            strokeDasharray={circumference}
+            strokeDashoffset={offset}
+            transform={`rotate(-90 ${cx} ${cy})`}
+            style={{
+              transition: 'stroke-dashoffset 0.55s cubic-bezier(0.22, 1, 0.36, 1)',
+              filter: useMoltenGradient
+                ? 'drop-shadow(0 0 7px rgba(245, 158, 11, 0.35))'
+                : undefined,
+            }}
+          />
+        )}
+        {/* 12 o'clock calibration pip at 0% */}
+        {clamped <= 0 && (
+          <g>
+            <circle
+              cx={cx}
+              cy={cy - r}
+              r={Math.max(3.5, strokeWidth * 0.42)}
+              fill="rgba(245, 158, 11, 0.24)"
+            />
+            <circle
+              cx={cx}
+              cy={cy - r}
+              r={Math.max(2.2, strokeWidth * 0.24)}
+              fill="#F59E0B"
+            />
+          </g>
+        )}
       </svg>
-      <div style={{ position: 'relative', zIndex: 1, textAlign: 'center' }}>
-        {children}
-      </div>
+      {children && (
+        <div
+          style={{
+            position: 'absolute',
+            inset: 0,
+            display: 'flex',
+            flexDirection: 'column',
+            alignItems: 'center',
+            justifyContent: 'center',
+            textAlign: 'center',
+            pointerEvents: 'none',
+          }}
+        >
+          {children}
+        </div>
+      )}
     </div>
   );
 };
@@ -75,50 +141,64 @@ export interface ConcentricRingSegment {
 }
 
 export interface ConcentricProgressRingProps {
-  size?: number;
+  /** Outer ring 0..100 (e.g. study goal %) */
   outerPct: number;
+  /** Optional subject breakdown segments for the outer ring */
   outerSegments?: ConcentricRingSegment[];
+  /** Total reference value for outerSegments (defaults to sum of segments) */
   outerTotal?: number;
-  outerStrokeWidth?: number;
+  /** Inner ring 0..100 (e.g. habits/tasks completion %) */
   innerPct: number;
-  innerStrokeWidth?: number;
+  size?: number;
+  outerStroke?: number;
+  innerStroke?: number;
+  gap?: number;
+  outerColor?: string;
   innerColor?: string;
   children?: React.ReactNode;
 }
 
 export const ConcentricProgressRing: React.FC<ConcentricProgressRingProps> = ({
-  size = 168,
   outerPct,
   outerSegments,
-  outerTotal = 0,
-  outerStrokeWidth = 12,
+  outerTotal,
   innerPct,
-  innerStrokeWidth = 9,
-  innerColor = 'var(--ok)',
+  size = 164,
+  outerStroke = 10,
+  innerStroke = 7,
+  gap = 7,
+  outerColor,
+  innerColor,
   children,
 }) => {
+  const uid = useId().replace(/:/g, '');
+  const outerGradId = `dh-concentric-gold-${uid}`;
+  const innerGradId = `dh-concentric-emerald-${uid}`;
+
+  const clampedOuter = Math.max(
+    0,
+    Math.min(100, Number.isFinite(outerPct) ? outerPct : 0)
+  );
+  const clampedInner = Math.max(
+    0,
+    Math.min(100, Number.isFinite(innerPct) ? innerPct : 0)
+  );
+
   const cx = size / 2;
   const cy = size / 2;
-  const rOuter = (size - outerStrokeWidth) / 2;
-  const cOuter = 2 * Math.PI * rOuter;
-
-  const ringGap = 7;
-  const rInner = Math.max(
-    18,
-    rOuter - outerStrokeWidth / 2 - ringGap - innerStrokeWidth / 2
-  );
-  const cInner = 2 * Math.PI * rInner;
-
-  const clampedOuterPct = Math.max(0, Math.min(100, outerPct));
-  const clampedInnerPct = Math.max(0, Math.min(100, innerPct));
-  const innerOffset = cInner * (1 - clampedInnerPct / 100);
+  const outerR = (size - outerStroke) / 2;
+  const innerR = outerR - outerStroke / 2 - gap - innerStroke / 2;
+  const outerC = 2 * Math.PI * outerR;
+  const innerC = 2 * Math.PI * innerR;
 
   const validSegments = (outerSegments || []).filter((s) => s.value > 0);
-  const hasMultiSegments = validSegments.length > 0 && outerTotal > 0;
+  const segSum = validSegments.reduce((acc, s) => acc + s.value, 0);
+  const denom = Math.max(outerTotal || segSum, segSum, 1);
 
-  let cumulativeFrac = 0;
-  const segmentTotalVal = validSegments.reduce((acc, s) => acc + s.value, 0);
-  const effectiveDenom = Math.max(outerTotal, segmentTotalVal, 1);
+  const useOuterGoldGradient = !outerColor;
+  const useInnerEmeraldGradient = !innerColor || innerColor === 'var(--ok)';
+
+  let runningLen = 0;
 
   return (
     <div
@@ -126,105 +206,174 @@ export const ConcentricProgressRing: React.FC<ConcentricProgressRingProps> = ({
         position: 'relative',
         width: size,
         height: size,
-        display: 'grid',
-        placeItems: 'center',
+        display: 'inline-flex',
+        alignItems: 'center',
+        justifyContent: 'center',
         flexShrink: 0,
       }}
+      role="img"
+      aria-label={`Study progress ${Math.round(clampedOuter)}%, daily habits ${Math.round(clampedInner)}%`}
     >
       <svg
         width={size}
         height={size}
         viewBox={`0 0 ${size} ${size}`}
-        style={{ position: 'absolute', inset: 0, transform: 'rotate(-90deg)' }}
         aria-hidden="true"
+        style={{ overflow: 'visible' }}
       >
-        {/* Outer Ring Track (Daily Study Goal) */}
+        <defs>
+          <linearGradient id={outerGradId} x1="0%" y1="0%" x2="100%" y2="100%">
+            <stop offset="0%" stopColor="#EA580C" />
+            <stop offset="52%" stopColor="#F59E0B" />
+            <stop offset="100%" stopColor="#FCD34D" />
+          </linearGradient>
+          <linearGradient id={innerGradId} x1="0%" y1="0%" x2="100%" y2="100%">
+            <stop offset="0%" stopColor="#059669" />
+            <stop offset="52%" stopColor="#10B981" />
+            <stop offset="100%" stopColor="#34D399" />
+          </linearGradient>
+        </defs>
+
+        {/* Outer track: machined obsidian channel + crisp inner rim */}
         <circle
           cx={cx}
           cy={cy}
-          r={rOuter}
+          r={outerR}
           fill="none"
-          stroke="var(--sf-2)"
-          strokeWidth={outerStrokeWidth}
+          stroke="var(--ring-track, #12151C)"
+          strokeWidth={outerStroke}
+        />
+        <circle
+          cx={cx}
+          cy={cy}
+          r={Math.max(1, outerR - outerStroke / 2 + 0.5)}
+          fill="none"
+          stroke="var(--ring-track-rim, rgba(255, 255, 255, 0.06))"
+          strokeWidth={1}
         />
 
-        {hasMultiSegments ? (
+        {/* Outer active arc(s) */}
+        {validSegments.length > 0 ? (
           validSegments.map((seg) => {
-            const frac = Math.min(1 - cumulativeFrac, seg.value / effectiveDenom);
-            if (frac <= 0.002) return null;
-            const segLen = frac * cOuter;
-            const offset = -cumulativeFrac * cOuter;
-            cumulativeFrac += frac;
+            const frac = Math.min(1, seg.value / denom);
+            const segLen = Math.max(2, frac * outerC);
+            const dashOffset = -runningLen;
+            runningLen += segLen;
             return (
               <circle
                 key={seg.id}
                 cx={cx}
                 cy={cy}
-                r={rOuter}
+                r={outerR}
                 fill="none"
-                stroke={seg.color || 'var(--ac)'}
-                strokeWidth={outerStrokeWidth}
-                strokeLinecap={validSegments.length === 1 ? 'round' : 'butt'}
-                strokeDasharray={`${Math.max(2, segLen - (validSegments.length > 1 ? 2.5 : 0))} ${cOuter}`}
-                strokeDashoffset={offset}
+                stroke={seg.color}
+                strokeWidth={outerStroke}
+                strokeLinecap="round"
+                strokeDasharray={`${Math.max(0, segLen - 1.5)} ${outerC}`}
+                strokeDashoffset={dashOffset}
+                transform={`rotate(-90 ${cx} ${cy})`}
                 style={{
-                  transition: 'stroke-dashoffset var(--dur-slow) var(--ease-out)',
+                  transition: 'stroke-dasharray 0.5s cubic-bezier(0.22, 1, 0.36, 1)',
                 }}
               />
             );
           })
-        ) : (
+        ) : clampedOuter > 0 ? (
           <circle
             cx={cx}
             cy={cy}
-            r={rOuter}
+            r={outerR}
             fill="none"
-            stroke={clampedOuterPct >= 100 ? 'var(--ok)' : 'var(--ac)'}
-            strokeWidth={outerStrokeWidth}
+            stroke={useOuterGoldGradient ? `url(#${outerGradId})` : outerColor}
+            strokeWidth={outerStroke}
             strokeLinecap="round"
-            strokeDasharray={cOuter}
-            strokeDashoffset={cOuter * (1 - clampedOuterPct / 100)}
+            strokeDasharray={outerC}
+            strokeDashoffset={outerC * (1 - clampedOuter / 100)}
+            transform={`rotate(-90 ${cx} ${cy})`}
             style={{
-              transition: 'stroke-dashoffset var(--dur-slow) var(--ease-out)',
+              transition: 'stroke-dashoffset 0.55s cubic-bezier(0.22, 1, 0.36, 1)',
+              filter: useOuterGoldGradient
+                ? 'drop-shadow(0 0 8px rgba(245, 158, 11, 0.35))'
+                : undefined,
+            }}
+          />
+        ) : null}
+
+        {/* Crisp 12 o'clock amber calibration pip when outer progress is 0% */}
+        {validSegments.length === 0 && clampedOuter <= 0 && (
+          <g data-testid="ring-origin-pip">
+            <circle
+              cx={cx}
+              cy={cy - outerR}
+              r={Math.max(4, outerStroke * 0.44)}
+              fill="rgba(245, 158, 11, 0.24)"
+            />
+            <circle
+              cx={cx}
+              cy={cy - outerR}
+              r={Math.max(2.4, outerStroke * 0.25)}
+              fill="#F59E0B"
+            />
+          </g>
+        )}
+
+        {/* Inner track (Habits): machined obsidian channel + crisp inner rim */}
+        <circle
+          cx={cx}
+          cy={cy}
+          r={innerR}
+          fill="none"
+          stroke="var(--ring-track, #12151C)"
+          strokeWidth={innerStroke}
+        />
+        <circle
+          cx={cx}
+          cy={cy}
+          r={Math.max(1, innerR - innerStroke / 2 + 0.5)}
+          fill="none"
+          stroke="var(--ring-track-rim, rgba(255, 255, 255, 0.06))"
+          strokeWidth={1}
+        />
+
+        {/* Inner active arc (vivid emerald gradient) */}
+        {clampedInner > 0 && (
+          <circle
+            cx={cx}
+            cy={cy}
+            r={innerR}
+            fill="none"
+            stroke={useInnerEmeraldGradient ? `url(#${innerGradId})` : innerColor}
+            strokeWidth={innerStroke}
+            strokeLinecap="round"
+            strokeDasharray={innerC}
+            strokeDashoffset={innerC * (1 - clampedInner / 100)}
+            transform={`rotate(-90 ${cx} ${cy})`}
+            style={{
+              transition: 'stroke-dashoffset 0.55s cubic-bezier(0.22, 1, 0.36, 1)',
+              filter: useInnerEmeraldGradient
+                ? 'drop-shadow(0 0 6px rgba(16, 185, 129, 0.3))'
+                : undefined,
             }}
           />
         )}
-
-        {/* Inner Ring Track (Habits + Tasks Completion) */}
-        <circle
-          cx={cx}
-          cy={cy}
-          r={rInner}
-          fill="none"
-          stroke="var(--sf-2)"
-          strokeWidth={innerStrokeWidth}
-        />
-        <circle
-          cx={cx}
-          cy={cy}
-          r={rInner}
-          fill="none"
-          stroke={innerColor}
-          strokeWidth={innerStrokeWidth}
-          strokeLinecap="round"
-          strokeDasharray={cInner}
-          strokeDashoffset={innerOffset}
-          style={{
-            transition: 'stroke-dashoffset var(--dur-slow) var(--ease-out)',
-          }}
-        />
       </svg>
-
-      <div
-        style={{
-          position: 'relative',
-          zIndex: 1,
-          textAlign: 'center',
-          maxWidth: rInner * 1.65,
-        }}
-      >
-        {children}
-      </div>
+      {children && (
+        <div
+          style={{
+            position: 'absolute',
+            inset: 0,
+            display: 'flex',
+            flexDirection: 'column',
+            alignItems: 'center',
+            justifyContent: 'center',
+            textAlign: 'center',
+            pointerEvents: 'none',
+            padding: 18,
+          }}
+        >
+          {children}
+        </div>
+      )}
     </div>
   );
 };

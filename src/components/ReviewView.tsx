@@ -6,13 +6,14 @@ import {
   formatWeeklyReviewClipboard,
   getWeekStartKey,
 } from '../utils/insights';
+import {
+  formatChapterConfidence,
+  formatRankedChapterLabel,
+} from '../utils/chartHelpers';
 import { addD, fmtDuration } from '../utils/studyLogic';
 import { Button } from './ui/Button';
-import { Card } from './ui/Card';
 import { IconButton } from './ui/IconButton';
 import { Meter } from './ui/Meter';
-import { SectionHeader } from './ui/SectionHeader';
-import { Stat } from './ui/Stat';
 
 interface ReviewViewProps {
   state: PulseHabitState;
@@ -34,6 +35,11 @@ export const ReviewView: React.FC<ReviewViewProps> = ({
     [state, selectedWeekStart, todayKey]
   );
 
+  const hasAnySleepLogged =
+    review.sleepInsight.highSleepDays + review.sleepInsight.lowSleepDays > 0;
+
+  const goalMs = Math.max(15, Number(state.set.targets?.minDayMinutes) || 360) * 60000;
+
   const handleCopySummary = async () => {
     const text = formatWeeklyReviewClipboard(review);
     try {
@@ -45,10 +51,13 @@ export const ReviewView: React.FC<ReviewViewProps> = ({
   };
 
   return (
-    <div className="space-y-4">
+    <div className="dh-amoled-flow">
       {/* Week Picker & Copy Summary */}
-      <Card>
-        <div className="split flex-wrap gap-3">
+      <section className="dh-amoled-section">
+        <div
+          className="split flex-wrap gap-3 pb-3"
+          style={{ borderBottom: '1px solid var(--hairline)' }}
+        >
           <div className="flex items-center gap-2">
             <IconButton
               label="Previous week"
@@ -60,7 +69,7 @@ export const ReviewView: React.FC<ReviewViewProps> = ({
               <div className="tnum text-[15px] font-semibold text-[var(--tx)]">
                 {review.weekStartKey} → {review.weekEndKey}
               </div>
-              <div className="text-[13px] text-[var(--tx-2)]">
+              <div className="text-[12.5px] text-[var(--tx-3)]">
                 {selectedWeekStart === currentWeekStart
                   ? 'Current week review'
                   : 'Past week review'}
@@ -84,65 +93,53 @@ export const ReviewView: React.FC<ReviewViewProps> = ({
             )}
           </div>
 
-          <Button
-            variant="primary"
-            size="sm"
-            icon={<Copy size={15} />}
+          <button
+            type="button"
+            className="dh-ghost-pill"
             onClick={handleCopySummary}
           >
-            Copy summary
-          </Button>
+            <Copy size={14} strokeWidth={1.75} aria-hidden="true" />
+            <span>Copy summary</span>
+          </button>
         </div>
-      </Card>
 
-      {/* Key Weekly KPIs */}
-      <div className="grid grid-cols-2 gap-3 sm:grid-cols-4">
-        <Card>
-          <Stat
-            label="Total focus"
-            value={fmtDuration(review.totalStudyMs)}
-            sub="Logged this week"
-          />
-        </Card>
-        <Card>
-          <Stat
-            label="Min days met"
-            value={`${review.daysMeetingMin}/7`}
-            sub={(() => {
-              const goalMs = Math.max(15, Number(state.set.targets?.minDayMinutes) || 360) * 60000;
-              return review.restDaysUsedInWeek > 0
+        {/* Key Weekly KPIs — Hairline 2x2 Ledger */}
+        <div className="dh-ledger-2x2">
+          <div className="dh-ledger-cell">
+            <span className="dh-ledger-label">Total focus</span>
+            <span className="dh-ledger-val tnum">{fmtDuration(review.totalStudyMs)}</span>
+            <span className="dh-ledger-sub">Logged this week</span>
+          </div>
+          <div className="dh-ledger-cell">
+            <span className="dh-ledger-label">Min days met</span>
+            <span className="dh-ledger-val tnum">{review.daysMeetingMin}/7</span>
+            <span className="dh-ledger-sub">
+              {review.restDaysUsedInWeek > 0
                 ? `${fmtDuration(goalMs)}/d · ${review.restDaysUsedInWeek} rest pass`
-                : `Goal ${fmtDuration(goalMs)}/day`;
-            })()}
-          />
-        </Card>
-        <Card>
-          <Stat
-            label="Consistency"
-            value={
-              review.consistencyScore !== null
-                ? `${review.consistencyScore}/100`
-                : '—'
-            }
-            sub="14-day composite"
-          />
-        </Card>
-        <Card>
-          <Stat
-            label="Revisions"
-            value={String(review.revisionsDone)}
-            sub={`${review.revisionsOnTime} completed on time`}
-          />
-        </Card>
-      </div>
+                : `Goal ${fmtDuration(goalMs)}/day`}
+            </span>
+          </div>
+          <div className="dh-ledger-cell">
+            <span className="dh-ledger-label">Consistency</span>
+            <span className="dh-ledger-val tnum">
+              {review.consistencyScore !== null ? `${review.consistencyScore}/100` : '—'}
+            </span>
+            <span className="dh-ledger-sub">14-day composite</span>
+          </div>
+          <div className="dh-ledger-cell">
+            <span className="dh-ledger-label">Revisions</span>
+            <span className="dh-ledger-val tnum">{review.revisionsDone}</span>
+            <span className="dh-ledger-sub">{review.revisionsOnTime} on time</span>
+          </div>
+        </div>
+      </section>
 
       {/* Subject Hours vs Weekly Targets */}
-      <Card>
-        <SectionHeader
-          title="Hours per subject vs weekly targets"
-          subtitle="Progress toward your subject-wise weekly study allocation"
-        />
-        <div className="mt-3 space-y-3">
+      <section className="dh-amoled-section">
+        <div className="dh-eyebrow-row">
+          <h3 className="dh-eyebrow">Hours per subject vs weekly targets</h3>
+        </div>
+        <div className="dh-hairline-list">
           {review.subjectRows.map((row) => {
             const actualHrs = (row.weeklyActualMins / 60).toFixed(1);
             const targetHrs =
@@ -154,121 +151,147 @@ export const ReviewView: React.FC<ReviewViewProps> = ({
                 ? row.weeklyPct
                 : Math.min(100, Math.round((row.weeklyActualMins / 600) * 100));
             return (
-              <div key={row.subjectId}>
-                <div className="split mb-1 text-[13px]">
+              <div
+                key={row.subjectId}
+                style={{
+                  padding: '11px 0',
+                  borderBottom: '1px solid var(--hairline)',
+                }}
+              >
+                <div className="split mb-1.5 text-[13.5px]">
                   <span className="flex items-center gap-2 font-medium text-[var(--tx)]">
                     <span
-                      className="h-2.5 w-2.5 rounded-full"
+                      className="dh-sub-dot"
                       style={{ background: row.color }}
+                      aria-hidden="true"
                     />
-                    {row.subjectEmoji} {row.subjectName}
+                    {row.subjectName}
                   </span>
-                  <span className="tnum text-[var(--tx-2)]">
+                  <span className="tnum text-[13px] text-[var(--tx-2)]">
                     {actualHrs}h{targetHrs ? ` / ${targetHrs}h (${row.weeklyPct}%)` : ''}
                   </span>
                 </div>
-                <Meter value={pct} max={100} color={row.color} />
+                <Meter value={pct} max={100} color={row.color} height={5} />
               </div>
             );
           })}
         </div>
-      </Card>
+      </section>
 
-      {/* Secondary Weekly Metrics */}
-      <Card>
-        <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-4">
-          <div className="rounded-xl border border-[var(--line)] bg-[var(--sf-2)] p-3">
-            <span className="block text-[13px] text-[var(--tx-2)]">Tasks completed</span>
-            <strong className="tnum mt-1 block text-[15px] text-[var(--tx)]">
-              {review.tasksDone} / {review.tasksTotal} tasks done
-            </strong>
+      {/* Secondary Weekly Metrics — Hairline 2x2 Ledger */}
+      <section className="dh-amoled-section">
+        <div className="dh-eyebrow-row">
+          <h3 className="dh-eyebrow">Weekly ledger</h3>
+        </div>
+        <div className="dh-ledger-2x2">
+          <div className="dh-ledger-cell">
+            <span className="dh-ledger-label">Tasks completed</span>
+            <span className="dh-ledger-val tnum">
+              {review.tasksDone}/{review.tasksTotal}
+            </span>
+            <span className="dh-ledger-sub">Tasks done</span>
           </div>
-          <div className="rounded-xl border border-[var(--line)] bg-[var(--sf-2)] p-3">
-            <span className="block text-[13px] text-[var(--tx-2)]">Mock score trend</span>
-            <strong className="tnum mt-1 block text-[15px] text-[var(--tx)]">
+          <div className="dh-ledger-cell">
+            <span className="dh-ledger-label">Mock score trend</span>
+            <span className="dh-ledger-val tnum" style={{ fontSize: 16 }}>
               {review.mockScoreTrendLabel}
-            </strong>
+            </span>
+            <span className="dh-ledger-sub">
+              {review.mocksCount > 0 ? `${review.mocksCount} logged` : 'No mocks yet'}
+            </span>
           </div>
-          <div className="rounded-xl border border-[var(--line)] bg-[var(--sf-2)] p-3">
-            <span className="block text-[13px] text-[var(--tx-2)]">Mistakes logged</span>
-            <strong className="tnum mt-1 block text-[15px] text-[var(--tx)]">
-              {review.mistakesAdded} added · {review.mistakesResolved} resolved
-            </strong>
+          <div className="dh-ledger-cell">
+            <span className="dh-ledger-label">Mistakes</span>
+            <span className="dh-ledger-val tnum">
+              {review.mistakesAdded} / {review.mistakesResolved}
+            </span>
+            <span className="dh-ledger-sub">Added · resolved</span>
           </div>
-          <div className="rounded-xl border border-[var(--line)] bg-[var(--sf-2)] p-3">
-            <span className="block text-[13px] text-[var(--tx-2)]">Best &amp; lightest day</span>
-            <div className="tnum mt-1 text-[13px] text-[var(--tx)]">
-              <div>
-                Best:{' '}
-                {review.bestDay
-                  ? `${review.bestDay.dayKey} (${fmtDuration(review.bestDay.ms)})`
-                  : '—'}
-              </div>
-              <div className="text-[var(--tx-2)]">
-                Lightest:{' '}
-                {review.worstDay
-                  ? `${review.worstDay.dayKey} (${fmtDuration(review.worstDay.ms)})`
-                  : '—'}
-              </div>
-            </div>
+          <div className="dh-ledger-cell">
+            <span className="dh-ledger-label">Best &amp; lightest day</span>
+            <span className="dh-ledger-val tnum" style={{ fontSize: 15 }}>
+              {review.bestDay
+                ? `${review.bestDay.dayKey.slice(5)} · ${fmtDuration(review.bestDay.ms)}`
+                : '—'}
+            </span>
+            <span className="dh-ledger-sub tnum">
+              Lightest:{' '}
+              {review.worstDay
+                ? `${review.worstDay.dayKey.slice(5)} (${fmtDuration(review.worstDay.ms)})`
+                : '—'}
+            </span>
           </div>
         </div>
-      </Card>
+      </section>
 
       {/* Next Week Priority Chapters */}
-      <Card>
-        <SectionHeader
-          title="Next week priority focus"
-          subtitle="Top 3 chapters recommended from your syllabus queue"
-        />
+      <section className="dh-amoled-section">
+        <div className="dh-eyebrow-row">
+          <h3 className="dh-eyebrow">Next week priority focus</h3>
+        </div>
         {review.nextWeekFocus.length === 0 ? (
-          <p className="mt-2 text-[13px] text-[var(--tx-2)]">
-            Add chapters in Prep &gt; Syllabus to generate your priority focus queue.
-          </p>
+          <div className="dh-empty-inline">
+            <span>Add chapters in Prep › Syllabus to generate your priority focus queue.</span>
+          </div>
         ) : (
-          <div className="mt-2 space-y-2">
-            {review.nextWeekFocus.map((item, idx) => (
-              <div
-                key={item.chapter.id}
-                className="flex items-center justify-between gap-3 rounded-xl border border-[var(--line)] bg-[var(--sf-2)] px-3.5 py-2.5"
-              >
-                <div className="min-w-0 flex-1">
-                  <div className="flex items-center gap-2">
-                    <span
-                      className="h-2.5 w-2.5 shrink-0 rounded-full"
-                      style={{ background: item.subjectColor }}
-                    />
-                    <span className="truncate text-[14px] font-semibold text-[var(--tx)]">
-                      {idx + 1}. {item.subjectEmoji} {item.chapter.name}
-                    </span>
+          <div className="dh-hairline-list">
+            {review.nextWeekFocus.map((item, idx) => {
+              const confLabel = formatChapterConfidence(item.chapter.confidence);
+              return (
+                <div key={item.chapter.id} className="dh-hairline-row">
+                  <div className="min-w-0 flex-1">
+                    <div className="flex items-center gap-2">
+                      <span
+                        className="dh-sub-dot"
+                        style={{ background: item.subjectColor }}
+                        aria-hidden="true"
+                      />
+                      <span className="truncate text-[14.5px] font-semibold text-[var(--tx)]">
+                        {formatRankedChapterLabel(idx + 1, item.chapter.name)}
+                      </span>
+                    </div>
+                    <p className="mt-0.5 pl-3.5 text-[12.5px] text-[var(--tx-3)]">
+                      {item.subjectName} · {item.reasons.join(' · ')}
+                    </p>
                   </div>
-                  <p className="mt-0.5 text-[13px] text-[var(--tx-2)]">
-                    {item.reasons.join(' · ')}
-                  </p>
+                  {confLabel && (
+                    <span className="tnum shrink-0 text-[12.5px] font-medium text-[var(--tx-2)]">
+                      {confLabel}
+                    </span>
+                  )}
                 </div>
-                <span className="tnum rounded-md bg-[var(--sf-1)] px-2.5 py-1 text-[13px] font-medium text-[var(--tx-2)]">
-                  Conf {item.confidence}/5
-                </span>
-              </div>
-            ))}
+              );
+            })}
           </div>
         )}
-      </Card>
+      </section>
 
-      {/* Sleep vs Focus Insight */}
-      <Card>
-        <div className="flex items-center gap-2.5">
-          <Moon size={18} className="shrink-0 text-[var(--ac-ink)]" aria-hidden="true" />
-          <div>
-            <h4 className="text-[14px] font-semibold text-[var(--tx)]">
-              Sleep &amp; focus correlation
-            </h4>
-            <p className="text-[13px] text-[var(--tx-2)]">
-              {review.sleepInsight.summaryText}
-            </p>
+      {/* Sleep vs Focus Insight — Hidden until at least 1 sleep entry is logged */}
+      {hasAnySleepLogged && (
+        <section
+          className="dh-amoled-section"
+          style={{
+            paddingTop: 14,
+            borderTop: '1px solid var(--hairline)',
+          }}
+        >
+          <div className="flex items-start gap-2.5">
+            <Moon
+              size={16}
+              className="mt-0.5 shrink-0 text-[var(--ac-ink)]"
+              aria-hidden="true"
+            />
+            <div>
+              <h4 className="dh-eyebrow" style={{ color: 'var(--tx-2)' }}>
+                Sleep &amp; focus correlation
+              </h4>
+              <p className="mt-1 text-[13px] text-[var(--tx-2)]">
+                {review.sleepInsight.summaryText}
+              </p>
+            </div>
           </div>
-        </div>
-      </Card>
+        </section>
+      )}
     </div>
   );
 };

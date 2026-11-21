@@ -1,4 +1,8 @@
-import React, { useId, useState } from 'react';
+import React, { useId, useMemo, useState } from 'react';
+import {
+  computeCleanAxisScale,
+  type AxisUnitMode,
+} from '../../utils/chartHelpers';
 
 export interface SparklineProps {
   values: number[];
@@ -118,6 +122,7 @@ export interface AreaLineChartProps {
   goalValue?: number;
   goalLabel?: string;
   valueFormatter?: (v: number) => string;
+  axisUnit?: AxisUnitMode;
   ariaLabel?: string;
 }
 
@@ -128,12 +133,13 @@ export const AreaLineChart: React.FC<AreaLineChartProps> = ({
   goalValue,
   goalLabel,
   valueFormatter = (v) => String(Math.round(v)),
+  axisUnit = 'number',
   ariaLabel = 'Trend chart',
 }) => {
   const gradId = useId();
   const [activeIdx, setActiveIdx] = useState<number | null>(null);
   const w = 360;
-  const padL = 42;
+  const padL = 44;
   const padR = 14;
   const padT = 16;
   const padB = 28;
@@ -141,11 +147,14 @@ export const AreaLineChart: React.FC<AreaLineChartProps> = ({
   const innerH = height - padT - padB;
 
   const rawMax = Math.max(
-    1,
+    0,
     goalValue ?? 0,
-    ...data.map((d) => d.value)
+    ...data.map((d) => (Number.isFinite(d.value) ? d.value : 0))
   );
-  const maxVal = rawMax * 1.1;
+  const { max: maxVal, ticks: yTicks } = useMemo(
+    () => computeCleanAxisScale(rawMax, axisUnit),
+    [rawMax, axisUnit]
+  );
 
   const coords = data.map((d, i) => ({
     x: data.length <= 1 ? padL + innerW / 2 : padL + (i / (data.length - 1)) * innerW,
@@ -214,10 +223,10 @@ export const AreaLineChart: React.FC<AreaLineChartProps> = ({
           </linearGradient>
         </defs>
 
-        {/* Horizontal grid lines */}
-        {[0, 0.5, 1].map((frac, idx) => {
+        {/* Horizontal grid lines & clean rounded Y ticks */}
+        {yTicks.map((tickVal, idx) => {
+          const frac = maxVal > 0 ? tickVal / maxVal : 0;
           const y = padT + innerH * (1 - frac);
-          const tickVal = maxVal * frac;
           return (
             <g key={idx}>
               <line
@@ -233,7 +242,8 @@ export const AreaLineChart: React.FC<AreaLineChartProps> = ({
                 y={y + 4}
                 textAnchor="end"
                 fill="var(--tx-3)"
-                fontSize="13"
+                fontSize="12"
+                className="tabular-nums"
               >
                 {valueFormatter(tickVal)}
               </text>
@@ -329,6 +339,7 @@ export interface BarChartProps {
   goalValue?: number;
   goalLabel?: string;
   valueFormatter?: (v: number) => string;
+  axisUnit?: AxisUnitMode;
   ariaLabel?: string;
 }
 
@@ -340,6 +351,7 @@ export const BarChart: React.FC<BarChartProps> = ({
   goalValue,
   goalLabel,
   valueFormatter = (v) => String(Math.round(v)),
+  axisUnit = 'number',
   ariaLabel = 'Bar chart',
 }) => {
   const [activeIdx, setActiveIdx] = useState<number | null>(null);
@@ -432,13 +444,21 @@ export const BarChart: React.FC<BarChartProps> = ({
   }
 
   const w = 360;
-  const padL = 38;
+  const padL = 44;
   const padR = 10;
   const padT = 16;
   const padB = 26;
   const innerW = w - padL - padR;
   const innerH = height - padT - padB;
-  const maxVal = Math.max(1, goalValue ?? 0, ...data.map((d) => d.value)) * 1.1;
+  const rawMaxVal = Math.max(
+    0,
+    goalValue ?? 0,
+    ...data.map((d) => (Number.isFinite(d.value) ? d.value : 0))
+  );
+  const { max: maxVal, ticks: yTicks } = computeCleanAxisScale(
+    rawMaxVal,
+    axisUnit
+  );
   const slotW = innerW / Math.max(1, data.length);
   const barW = Math.max(6, Math.min(28, slotW * 0.62));
   const goalY =
@@ -479,13 +499,21 @@ export const BarChart: React.FC<BarChartProps> = ({
         aria-label={ariaLabel}
         style={{ display: 'block', overflow: 'visible' }}
       >
-        {[0, 0.5, 1].map((frac, idx) => {
+        {yTicks.map((tickVal, idx) => {
+          const frac = maxVal > 0 ? tickVal / maxVal : 0;
           const y = padT + innerH * (1 - frac);
           return (
             <g key={idx}>
               <line x1={padL} y1={y} x2={w - padR} y2={y} stroke="var(--line)" />
-              <text x={padL - 6} y={y + 4} textAnchor="end" fill="var(--tx-3)" fontSize="13">
-                {valueFormatter(maxVal * frac)}
+              <text
+                x={padL - 6}
+                y={y + 4}
+                textAnchor="end"
+                fill="var(--tx-3)"
+                fontSize="12"
+                className="tabular-nums"
+              >
+                {valueFormatter(tickVal)}
               </text>
             </g>
           );

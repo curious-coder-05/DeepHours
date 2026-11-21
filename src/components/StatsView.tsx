@@ -47,16 +47,12 @@ import {
   BarChart,
   Button,
   Card,
-  DonutChart,
-  EmptyState,
   HeatmapGrid,
   Meter,
   RadialClock24h,
-  SectionHeader,
   Segmented,
   SemiCircleGauge,
   Sparkline,
-  Stat,
   WindowedList,
 } from './ui';
 import { resolveRuntimeUi3d } from './three/Scene3D';
@@ -270,8 +266,8 @@ export const StatsView: React.FC<StatsViewProps> = ({
           onToast={(msg) => onToast?.(msg)}
         />
       ) : (
-        <div className="space-y-4">
-          {/* Sleek Frosted Sunday Night Study Wrapped Trigger Card */}
+        <div className="dh-amoled-flow">
+          {/* Sleek Hairline Sunday Night Study Wrapped Trigger Row */}
           <button
             type="button"
             data-testid="weekly-wrapped-trigger"
@@ -305,38 +301,109 @@ export const StatsView: React.FC<StatsViewProps> = ({
             />
           </button>
 
-          {/* Clean Empty State when 0 sessions */}
+          {/* Compact Inline Empty Notice when 0 sessions */}
           {state.sessions.length === 0 && (
-            <EmptyState
-              illustration="noSessions"
-              title="No study sessions logged yet"
-              description="Start a focus timer or log your first session to unlock subject breakdowns, peak hour detection, and 30-day trends."
-              action={
-                <Button
-                  variant="primary"
-                  size="sm"
-                  icon={<Plus size={16} />}
-                  onClick={() => onOpenManualSession()}
-                >
-                  Log your first session
-                </Button>
-              }
-            />
+            <div className="dh-empty-inline">
+              <span>
+                No study sessions logged yet — start a Focus session or log hours to populate trends.
+              </span>
+              <button
+                type="button"
+                className="dh-eyebrow-link"
+                onClick={() => onOpenManualSession()}
+              >
+                <Plus size={14} strokeWidth={1.8} aria-hidden="true" />
+                <span>Log session</span>
+              </button>
+            </div>
           )}
 
-          {/* Hero Slot: 3D Study City / Heatmap */}
-          <Card id="studySkylineHeroCard" className="space-y-3">
-            <div className="split flex-wrap gap-2">
+          {/* Hero Metric: 7-Day Average + Delta + Sparkline + Rounded 7-Day BarChart */}
+          <Card className="dh-hero-tier1 space-y-4">
+            <div className="flex flex-col gap-3 md:flex-row md:items-center md:justify-between">
+              <div className="space-y-1">
+                <span className="dh-eyebrow block">7-day daily average</span>
+                <div className="flex flex-wrap items-baseline gap-2.5">
+                  <strong className="dh-display-metric text-[32px] font-bold leading-none">
+                    {fmtHMShort(summary.weekAvgMsPerDay)}
+                  </strong>
+                  <span className="text-[13px] text-[var(--tx-3)]">/ day</span>
+                  {weekDeltaPct !== null && (
+                    <span
+                      className="tnum text-[13px] font-semibold"
+                      style={{
+                        color:
+                          weekDeltaPct >= 0 ? 'var(--ok-ink)' : 'var(--warn-ink)',
+                      }}
+                    >
+                      {weekDeltaPct >= 0 ? `+${weekDeltaPct}%` : `${weekDeltaPct}%`} vs
+                      prior 7d
+                    </span>
+                  )}
+                </div>
+                <p className="tnum text-[12.5px] text-[var(--tx-2)]">
+                  Week <strong className="text-[var(--tx)]">{fmtHMShort(summary.weekTotalMs)}</strong> ·{' '}
+                  {summary.weekActiveDays}/7 active · 30d avg{' '}
+                  <strong className="text-[var(--tx)]">{fmtHMShort(summary.monthAvgMsPerDay)}/d</strong> · All-time{' '}
+                  <strong className="text-[var(--tx)]">{fmtHMShort(summary.allTimeTotalMs)}</strong>
+                </p>
+              </div>
+
+              <div className="flex flex-wrap items-center gap-3">
+                <div className="flex flex-col items-start gap-1">
+                  <span className="dh-eyebrow">7d trend</span>
+                  <Sparkline
+                    values={summary.last7Days.map((d) =>
+                      Math.round(d.ms / 60000)
+                    )}
+                    width={126}
+                    height={32}
+                    label="7-day study minutes sparkline"
+                  />
+                </div>
+                {onShareTodayProof && (
+                  <button
+                    type="button"
+                    className="dh-ghost-pill"
+                    onClick={onShareTodayProof}
+                  >
+                    <Share2 size={13} strokeWidth={1.9} aria-hidden="true" />
+                    <span>Share proof</span>
+                  </button>
+                )}
+              </div>
+            </div>
+
+            <div className="border-t border-[var(--hairline)] pt-4">
+              <BarChart
+                orientation="vertical"
+                height={176}
+                axisUnit="minutes"
+                data={summary.last7Days.map((d) => ({
+                  label: d.dayName,
+                  value: Math.round(d.ms / 60000),
+                  hint: d.shortDate,
+                  color: d.key === todayKey ? 'var(--ac)' : 'var(--ok)',
+                }))}
+                goalValue={minDailyTargetMins}
+                goalLabel={`Goal ${fmtHMShort(minDailyTargetMins * 60000)}`}
+                valueFormatter={(mins) => fmtHMShort(Math.round(mins * 60000))}
+                ariaLabel="7-day daily study breakdown"
+              />
+            </div>
+          </Card>
+
+          {/* Study City / 12-Week Heatmap — Borderless AMOLED Section */}
+          <section id="studySkylineHeroCard" className="dh-amoled-section">
+            <div className="dh-eyebrow-row flex-wrap">
               <div>
-                <h3 className="text-[16px] font-semibold text-[var(--tx)]">
-                  Study city
-                </h3>
-                <p className="text-[13px] text-[var(--tx-2)]">
-                  Stacked subject towers across 12 weeks or 30 days · Lit floors &amp; peak ring
+                <h3 className="dh-eyebrow">Study city</h3>
+                <p className="mt-0.5 text-[12.5px] text-[var(--tx-3)]">
+                  Stacked subject towers across 12 weeks or 30 days
                 </p>
               </div>
               {runtime3d.enabled && (
-                <div className="w-44">
+                <div className="w-40">
                   <Segmented<'skyline' | 'flat'>
                     value={heatmapViewMode}
                     onChange={setHeatmapViewMode}
@@ -376,100 +443,13 @@ export const StatsView: React.FC<StatsViewProps> = ({
                 }}
               />
             )}
-          </Card>
+          </section>
 
-          {/* Hero Metric Card: 7-Day Average + Delta vs Prior 7d + Sparkline + BarChart */}
-          <Card className="dh-hero-lumen space-y-4">
-            <div className="flex flex-col gap-4 md:flex-row md:items-center md:justify-between">
-              <div className="space-y-1">
-                <span className="text-[13px] font-medium text-[var(--tx-2)]">
-                  7-day daily average
-                </span>
-                <div className="flex flex-wrap items-baseline gap-2.5">
-                  <strong className="tnum text-[32px] font-bold leading-none text-[var(--tx)]">
-                    {fmtHMShort(summary.weekAvgMsPerDay)}
-                  </strong>
-                  <span className="text-[13px] text-[var(--tx-2)]">/ day</span>
-                  {weekDeltaPct !== null && (
-                    <span
-                      className="tnum rounded-md px-2 py-0.5 text-[13px] font-semibold"
-                      style={{
-                        background: 'var(--sf-2)',
-                        color:
-                          weekDeltaPct >= 0 ? 'var(--ok-ink)' : 'var(--warn-ink)',
-                      }}
-                    >
-                      {weekDeltaPct >= 0 ? `+${weekDeltaPct}%` : `${weekDeltaPct}%`} vs
-                      prior 7d
-                    </span>
-                  )}
-                </div>
-                <p className="tnum text-[13px] text-[var(--tx-2)]">
-                  Week total: <strong>{fmtHMShort(summary.weekTotalMs)}</strong> ·{' '}
-                  {summary.weekActiveDays}/7 active days · 30d avg:{' '}
-                  <strong>{fmtHMShort(summary.monthAvgMsPerDay)}/d</strong> · All-time:{' '}
-                  <strong>{fmtHMShort(summary.allTimeTotalMs)}</strong>
-                </p>
-              </div>
-
-              <div className="flex flex-wrap items-center gap-3">
-                <div className="rounded-xl border border-[var(--line)] bg-[var(--sf-2)] px-3.5 py-2.5">
-                  <span className="mb-1 block text-[13px] text-[var(--tx-2)]">
-                    Last 7 days trend
-                  </span>
-                  <Sparkline
-                    values={summary.last7Days.map((d) =>
-                      Math.round(d.ms / 60000)
-                    )}
-                    width={140}
-                    height={36}
-                    label="7-day study minutes sparkline"
-                  />
-                </div>
-                {onShareTodayProof && (
-                  <Button
-                    variant="secondary"
-                    size="sm"
-                    className="dh-glass-btn"
-                    icon={<Share2 size={14} strokeWidth={1.9} />}
-                    onClick={onShareTodayProof}
-                  >
-                    Share today&apos;s proof
-                  </Button>
-                )}
-              </div>
-            </div>
-
-            <div className="border-t border-[var(--line)] pt-4">
-              <BarChart
-                orientation="vertical"
-                height={176}
-                data={summary.last7Days.map((d) => ({
-                  label: d.dayName,
-                  value: Math.round(d.ms / 60000),
-                  hint: d.shortDate,
-                  color: d.key === todayKey ? 'var(--ac)' : 'var(--ok)',
-                }))}
-                goalValue={minDailyTargetMins}
-                goalLabel={`Goal ${fmtHMShort(minDailyTargetMins * 60000)}`}
-                valueFormatter={(mins) => fmtHMShort(Math.round(mins * 60000))}
-                ariaLabel="7-day daily study breakdown"
-              />
-            </div>
-          </Card>
-
-          {/* Tabbed "Where your time goes" Card (Subject | Mode | Chapter) */}
-          <Card id="subjectBreakdownCard" className="space-y-3">
-            <div className="split flex-wrap gap-2">
-              <div>
-                <h3 className="text-[15px] font-semibold text-[var(--tx)]">
-                  Where your time goes
-                </h3>
-                <p className="text-[13px] text-[var(--tx-2)]">
-                  Breakdown by subject, timer mode, or syllabus chapter
-                </p>
-              </div>
-              <div className="w-full sm:w-64">
+          {/* "Where your time goes" — Borderless AMOLED Section (Single Horizontal Stacked Bar + Hairline Rows) */}
+          <section id="subjectBreakdownCard" className="dh-amoled-section">
+            <div className="dh-eyebrow-row flex-wrap">
+              <h3 className="dh-eyebrow">Where your time goes</h3>
+              <div className="w-full sm:w-56">
                 <Segmented<WhereTimeGoesTab>
                   value={whereTab}
                   onChange={setWhereTab}
@@ -484,39 +464,63 @@ export const StatsView: React.FC<StatsViewProps> = ({
             </div>
 
             {whereTab === 'subject' && (
-              <div className="space-y-4 pt-1">
-                <DonutChart
-                  segments={summary.subjectBreakdown.map((item) => ({
-                    label: `${item.e} ${item.name}`,
-                    value: Math.round(item.ms / 60000),
-                    color: item.color,
-                  }))}
-                  centerLabel={fmtHMShort(summary.allTimeTotalMs)}
-                  centerSublabel="Total"
-                  valueFormatter={(mins) => fmtHMShort(Math.round(mins * 60000))}
-                  ariaLabel="Subject distribution donut chart"
-                />
-                <div className="space-y-2.5 border-t border-[var(--line)] pt-3">
-                  {summary.subjectBreakdown.map((item) => (
-                    <div key={item.subjectId}>
-                      <div className="split mb-1 text-[13px]">
-                        <span className="flex min-w-0 items-center gap-2 font-medium text-[var(--tx)]">
-                          <span
-                            className="h-2.5 w-2.5 shrink-0 rounded-full"
-                            style={{ background: item.color }}
-                          />
-                          <span className="truncate">
-                            {item.e} {item.name}
-                          </span>
-                          <span className="shrink-0 text-[13px] text-[var(--tx-3)]">
-                            ({item.count} {item.count === 1 ? 'session' : 'sessions'})
-                          </span>
-                        </span>
-                        <span className="tnum shrink-0 font-medium text-[var(--tx-2)]">
-                          {fmtHMShort(item.ms)} ({item.pct}%)
-                        </span>
+              <div className="space-y-3">
+                {/* Single Clean Horizontal Stacked Breakdown Bar */}
+                {(() => {
+                  const activeSegs = summary.subjectBreakdown.filter((s) => s.ms > 0);
+                  return (
+                    <div className="space-y-1.5">
+                      <div className="split text-[12.5px] text-[var(--tx-3)]">
+                        <span>All-time subject split</span>
+                        <strong className="tnum text-[var(--tx)]">
+                          {fmtHMShort(summary.allTimeTotalMs)}
+                        </strong>
                       </div>
-                      <Meter value={item.pct} max={100} color={item.color} />
+                      <div
+                        className="flex h-2.5 w-full overflow-hidden rounded-full"
+                        style={{ background: 'var(--ring-track, #12151C)', gap: 2 }}
+                        role="img"
+                        aria-label="Horizontal stacked subject breakdown bar"
+                        data-testid="subject-stacked-bar"
+                      >
+                        {activeSegs.length > 0 ? (
+                          activeSegs.map((item) => (
+                            <div
+                              key={item.subjectId}
+                              title={`${item.name}: ${fmtHMShort(item.ms)} (${item.pct}%)`}
+                              style={{
+                                width: `${Math.max(2, item.pct)}%`,
+                                background: item.color,
+                                height: '100%',
+                              }}
+                            />
+                          ))
+                        ) : (
+                          <div style={{ width: '100%', height: '100%' }} />
+                        )}
+                      </div>
+                    </div>
+                  );
+                })()}
+
+                <div className="dh-hairline-list">
+                  {summary.subjectBreakdown.map((item) => (
+                    <div key={item.subjectId} className="dh-hairline-row">
+                      <span className="flex min-w-0 items-center gap-2.5 text-[14px] font-medium text-[var(--tx)]">
+                        <span
+                          className="dh-sub-dot"
+                          style={{ background: item.color }}
+                          aria-hidden="true"
+                        />
+                        <span className="truncate">{item.name}</span>
+                        <span className="shrink-0 text-[12.5px] text-[var(--tx-3)]">
+                          {item.count} {item.count === 1 ? 'session' : 'sessions'}
+                        </span>
+                      </span>
+                      <span className="tnum shrink-0 text-[13.5px] font-medium text-[var(--tx-2)]">
+                        <strong className="text-[var(--tx)]">{fmtHMShort(item.ms)}</strong>{' '}
+                        <span className="text-[var(--tx-3)]">{item.pct}%</span>
+                      </span>
                     </div>
                   ))}
                 </div>
@@ -524,132 +528,151 @@ export const StatsView: React.FC<StatsViewProps> = ({
             )}
 
             {whereTab === 'mode' && (
-              <div className="space-y-3 pt-1">
+              <div className="dh-hairline-list">
                 {summary.modeBreakdown.map((item) => (
-                  <div key={item.mode}>
-                    <div className="split mb-1 text-[13px]">
+                  <div
+                    key={item.mode}
+                    style={{
+                      padding: '11px 0',
+                      borderBottom: '1px solid var(--hairline)',
+                    }}
+                  >
+                    <div className="split mb-1.5 text-[13.5px]">
                       <span className="font-medium text-[var(--tx)]">
                         {item.label}{' '}
-                        <span className="text-[13px] text-[var(--tx-3)]">
-                          ({item.count} {item.count === 1 ? 'session' : 'sessions'})
+                        <span className="text-[12.5px] text-[var(--tx-3)]">
+                          · {item.count} {item.count === 1 ? 'session' : 'sessions'}
                         </span>
                       </span>
-                      <span className="tnum font-medium text-[var(--tx-2)]">
+                      <span className="tnum text-[13px] font-medium text-[var(--tx-2)]">
                         {fmtHMShort(item.ms)} ({item.pct}%)
                       </span>
                     </div>
-                    <Meter value={item.pct} max={100} color="var(--ac)" />
+                    <Meter value={item.pct} max={100} color="var(--ac)" height={5} />
                   </div>
                 ))}
               </div>
             )}
 
             {whereTab === 'chapter' && (
-              <div className="space-y-3 pt-1">
+              <div>
                 {chapterBreakdown.length === 0 ? (
-                  <p className="text-[13px] text-[var(--tx-2)]">
-                    Link a syllabus chapter when starting a Focus timer or logging a
-                    manual session to track hours per chapter.
-                  </p>
+                  <div className="dh-empty-inline">
+                    <span>
+                      Link a syllabus chapter when starting a Focus timer or logging hours to track chapter time.
+                    </span>
+                  </div>
                 ) : (
-                  chapterBreakdown.slice(0, 15).map((row) => (
-                    <div key={row.chapterId}>
-                      <div className="split mb-1 text-[13px]">
-                        <span className="truncate font-medium text-[var(--tx)]">
-                          {row.subjectEmoji} {row.chapterName}{' '}
-                          <span className="text-[13px] text-[var(--tx-3)]">
-                            ({row.subjectName} · {row.count}s)
+                  <div className="dh-hairline-list">
+                    {chapterBreakdown.slice(0, 15).map((row) => (
+                      <div
+                        key={row.chapterId}
+                        style={{
+                          padding: '11px 0',
+                          borderBottom: '1px solid var(--hairline)',
+                        }}
+                      >
+                        <div className="split mb-1.5 text-[13.5px]">
+                          <span className="flex min-w-0 items-center gap-2 font-medium text-[var(--tx)]">
+                            <span
+                              className="dh-sub-dot"
+                              style={{ background: row.color }}
+                              aria-hidden="true"
+                            />
+                            <span className="truncate">{row.chapterName}</span>
+                            <span className="shrink-0 text-[12.5px] text-[var(--tx-3)]">
+                              {row.subjectName} · {row.count}s
+                            </span>
                           </span>
-                        </span>
-                        <span className="tnum shrink-0 font-medium text-[var(--tx-2)]">
-                          {fmtHMShort(row.ms)} ({row.pct}%)
-                        </span>
+                          <span className="tnum shrink-0 text-[13px] font-medium text-[var(--tx-2)]">
+                            {fmtHMShort(row.ms)} ({row.pct}%)
+                          </span>
+                        </div>
+                        <Meter value={row.pct} max={100} color={row.color} height={5} />
                       </div>
-                      <Meter value={row.pct} max={100} color={row.color} />
-                    </div>
-                  ))
+                    ))}
+                  </div>
                 )}
               </div>
             )}
-          </Card>
+          </section>
 
-          {/* "When you study" Card (24h Radial Clock & Peak window) */}
-          <Card className="space-y-3">
+          {/* "When you study" — Borderless AMOLED Section + Hairline 2x2 Ledger */}
+          <section className="dh-amoled-section">
             <div>
-              <h3 className="text-[15px] font-semibold text-[var(--tx)]">
-                When you study
-              </h3>
-              <p className="text-[13px] text-[var(--tx-2)]">
-                24-hour concentration rhythm — tap or hover any spoke to inspect hourly focus
+              <h3 className="dh-eyebrow">When you study</h3>
+              <p className="mt-0.5 text-[12.5px] text-[var(--tx-3)]">
+                24-hour concentration rhythm — tap or hover any spoke
               </p>
             </div>
 
-            <div className="flex flex-col items-center gap-5 sm:flex-row sm:justify-between">
+            <div className="flex flex-col items-center gap-5 sm:flex-row sm:items-center sm:justify-between">
               <RadialClock24h
                 hourlyMinutes={summary.hourlyMs.map((ms) => Math.round(ms / 60000))}
-                size={200}
+                size={196}
                 ariaLabel="24-hour study distribution radial clock"
               />
 
-              <div className="grid w-full flex-1 grid-cols-2 gap-2.5">
-                <Stat
-                  label="Peak 2h window"
-                  value={summary.peakHourWindowLabel}
-                  sub={summary.peakPeriodLabel}
-                />
-                <Stat
-                  label="Focus purity"
-                  value={`${summary.avgPurity}%`}
-                  sub="Active vs paused"
-                />
-                <Stat
-                  label="Avg start"
-                  value={summary.avgStartHourLabel}
-                  sub="First session"
-                />
-                <Stat
-                  label="Avg wrap-up"
-                  value={summary.avgEndHourLabel}
-                  sub="Last session"
-                />
+              <div className="dh-ledger-2x2 w-full flex-1">
+                <div className="dh-ledger-cell">
+                  <span className="dh-ledger-label">Peak 2h window</span>
+                  <span className="dh-ledger-val tnum" style={{ fontSize: 18 }}>
+                    {summary.peakHourWindowLabel}
+                  </span>
+                  <span className="dh-ledger-sub">{summary.peakPeriodLabel}</span>
+                </div>
+                <div className="dh-ledger-cell">
+                  <span className="dh-ledger-label">Focus purity</span>
+                  <span className="dh-ledger-val tnum">{summary.avgPurity}%</span>
+                  <span className="dh-ledger-sub">Active vs paused</span>
+                </div>
+                <div className="dh-ledger-cell">
+                  <span className="dh-ledger-label">Avg start</span>
+                  <span className="dh-ledger-val tnum">{summary.avgStartHourLabel}</span>
+                  <span className="dh-ledger-sub">First session</span>
+                </div>
+                <div className="dh-ledger-cell">
+                  <span className="dh-ledger-label">Avg wrap-up</span>
+                  <span className="dh-ledger-val tnum">{summary.avgEndHourLabel}</span>
+                  <span className="dh-ledger-sub">Last session</span>
+                </div>
               </div>
             </div>
-          </Card>
+          </section>
 
-          {/* Collapsible "Consistency" Card (Score + 90-day calendar + 12-week heatmap) */}
-          <Card id="consistencyCalendarCard" className="p-0 overflow-hidden">
+          {/* Collapsible "Consistency" — Borderless Hairline Section */}
+          <section id="consistencyCalendarCard" className="dh-amoled-section">
             <button
               type="button"
               onClick={() => setShowConsistencyDetails((v) => !v)}
               aria-expanded={showConsistencyDetails}
-              className="flex w-full items-center justify-between gap-3 px-4 py-3.5 text-left transition-colors hover:bg-[var(--sf-2)]"
+              className="dh-sub-group-toggle"
+              style={{ borderTop: '1px solid var(--hairline)' }}
             >
-              <div className="flex items-center gap-2.5">
+              <div className="flex items-center gap-2.5 min-w-0">
                 {showConsistencyDetails ? (
-                  <ChevronDown size={18} className="text-[var(--tx-2)]" />
+                  <ChevronDown size={16} className="shrink-0 text-[var(--tx-3)]" />
                 ) : (
-                  <ChevronRight size={18} className="text-[var(--tx-2)]" />
+                  <ChevronRight size={16} className="shrink-0 text-[var(--tx-3)]" />
                 )}
-                <div>
-                  <h3 className="text-[15px] font-semibold text-[var(--tx)]">
+                <div className="min-w-0">
+                  <div className="dh-eyebrow" style={{ color: 'var(--tx)' }}>
                     Consistency &amp; 90-day habit calendar
-                  </h3>
-                  <p className="text-[13px] text-[var(--tx-2)]">
+                  </div>
+                  <div className="mt-0.5 text-[12.5px] text-[var(--tx-3)]">
                     Composite score and 90-day daily habit completion grid
-                  </p>
+                  </div>
                 </div>
               </div>
 
-              <div className="flex items-center gap-2">
-                <span className="tnum rounded-lg border border-[var(--ac-line)] bg-[var(--ac-soft)] px-2.5 py-1 text-[13px] font-semibold text-[var(--ac-ink)]">
-                  Score {consistencyScore.displayLabel}
-                  {consistencyScore.total !== null ? '/100' : ''}
-                </span>
-              </div>
+              <span className="tnum shrink-0 text-[13.5px] font-semibold text-[var(--ac-ink)]">
+                {consistencyScore.displayLabel}
+                {consistencyScore.total !== null ? '/100' : ''}
+              </span>
             </button>
 
             {showConsistencyDetails && (
-              <div className="space-y-4 border-t border-[var(--line)] p-4">
+              <div className="space-y-5 pt-2">
                 {/* SemiCircle Gauge + 4 Pillars of Consistency */}
                 <div className="flex flex-col items-center gap-4 md:flex-row">
                   <div className="shrink-0">
@@ -658,60 +681,67 @@ export const StatsView: React.FC<StatsViewProps> = ({
                       max={100}
                       label={consistencyScore.displayLabel}
                       sublabel="Consistency / 100"
-                      width={210}
+                      width={204}
                     />
                   </div>
                   {consistencyScore.total !== null && (
-                    <div className="grid w-full flex-1 grid-cols-2 gap-2.5">
-                      <Stat
-                        label="Min days (40%)"
-                        value={`${consistencyScore.minDayScore100}/100`}
-                        sub={`${consistencyScore.minDaysMetCount}/14 days met`}
-                      />
-                      <Stat
-                        label="Start regularity (20%)"
-                        value={
-                          consistencyScore.startRegularityScore100 !== null
+                    <div className="dh-ledger-2x2 w-full flex-1">
+                      <div className="dh-ledger-cell">
+                        <span className="dh-ledger-label">Min days (40%)</span>
+                        <span className="dh-ledger-val tnum">
+                          {consistencyScore.minDayScore100}/100
+                        </span>
+                        <span className="dh-ledger-sub">
+                          {consistencyScore.minDaysMetCount}/14 days met
+                        </span>
+                      </div>
+                      <div className="dh-ledger-cell">
+                        <span className="dh-ledger-label">Start regularity (20%)</span>
+                        <span className="dh-ledger-val tnum">
+                          {consistencyScore.startRegularityScore100 !== null
                             ? `${consistencyScore.startRegularityScore100}/100`
-                            : '—'
-                        }
-                        sub={
-                          consistencyScore.startStdDevMins !== null
+                            : '—'}
+                        </span>
+                        <span className="dh-ledger-sub">
+                          {consistencyScore.startStdDevMins !== null
                             ? `±${consistencyScore.startStdDevMins}m std dev`
-                            : 'Need 2+ days'
-                        }
-                      />
-                      <Stat
-                        label="On-time revs (20%)"
-                        value={
-                          consistencyScore.revisionOnTimeScore100 !== null
+                            : 'Need 2+ days'}
+                        </span>
+                      </div>
+                      <div className="dh-ledger-cell">
+                        <span className="dh-ledger-label">On-time revs (20%)</span>
+                        <span className="dh-ledger-val tnum">
+                          {consistencyScore.revisionOnTimeScore100 !== null
                             ? `${consistencyScore.revisionOnTimeScore100}/100`
-                            : '—'
-                        }
-                        sub={`${consistencyScore.revisionsOnTimeCount}/${consistencyScore.revisionsTotalCount} on time`}
-                      />
-                      <Stat
-                        label="Focus purity (20%)"
-                        value={
-                          consistencyScore.purityScore100 !== null
+                            : '—'}
+                        </span>
+                        <span className="dh-ledger-sub">
+                          {consistencyScore.revisionsOnTimeCount}/
+                          {consistencyScore.revisionsTotalCount} on time
+                        </span>
+                      </div>
+                      <div className="dh-ledger-cell">
+                        <span className="dh-ledger-label">Focus purity (20%)</span>
+                        <span className="dh-ledger-val tnum">
+                          {consistencyScore.purityScore100 !== null
                             ? `${consistencyScore.purityScore100}/100`
-                            : '—'
-                        }
-                        sub="Active vs paused"
-                      />
+                            : '—'}
+                        </span>
+                        <span className="dh-ledger-sub">Active vs paused</span>
+                      </div>
                     </div>
                   )}
                 </div>
 
                 {/* 90-Day Calendar Grid */}
                 <div>
-                  <div className="split mb-2 text-[13px] text-[var(--tx-2)]">
+                  <div className="split mb-2 text-[12.5px] text-[var(--tx-2)]">
                     <span>
-                      90-day habit completion · Perfect days:{' '}
+                      90-day habits · Perfect{' '}
                       <strong className="tnum text-[var(--tx)]">
                         {consistencyCal.perfectDays}
                       </strong>{' '}
-                      · Active: <strong className="tnum">{consistencyCal.activeDays}/90</strong>
+                      · Active <strong className="tnum text-[var(--tx)]">{consistencyCal.activeDays}/90</strong>
                     </span>
                     <span className="tnum font-semibold text-[var(--ok-ink)]">
                       {consistencyCal.avgPct}% avg
@@ -778,91 +808,102 @@ export const StatsView: React.FC<StatsViewProps> = ({
                   </div>
 
                   {selectedCalDay && (
-                    <div className="mt-2.5 flex flex-wrap items-center justify-between gap-2 rounded-xl border border-[var(--line)] bg-[var(--sf-2)] px-3 py-2 text-[13px]">
+                    <div className="dh-hairline-row mt-2 text-[13px]" style={{ borderTop: '1px solid var(--hairline)' }}>
                       <span>
-                        <strong>
+                        <strong className="text-[var(--tx)]">
                           {selectedCalDay.dayName}, {selectedCalDay.shortDate}
                         </strong>{' '}
                         <span className="tnum text-[var(--tx-2)]">
-                          ({selectedCalDay.key}) · Habits {selectedCalDay.doneCount}/
-                          {selectedCalDay.dueCount} ({selectedCalDay.pct}%) · Study{' '}
+                          · Habits {selectedCalDay.doneCount}/{selectedCalDay.dueCount} ({selectedCalDay.pct}%) · Study{' '}
                           {fmtHMShort(selectedCalDay.studyMs)}
                         </span>
                       </span>
-                      <Button
-                        variant="secondary"
-                        size="sm"
-                        icon={<Calendar size={14} />}
+                      <button
+                        type="button"
+                        className="dh-ghost-pill"
                         onClick={() => {
                           setHistoryDateKey(selectedCalDay.key);
                           onChangeSubTab('history');
                         }}
                       >
-                        Open day record
-                      </Button>
+                        <Calendar size={13} aria-hidden="true" />
+                        <span>Open day</span>
+                      </button>
                     </div>
                   )}
                 </div>
               </div>
             )}
-          </Card>
+          </section>
 
-          {/* Deep Work Frequency (Last 30 Days) */}
-          <Card id="deepWorkFrequencyCard">
-            <SectionHeader
-              title="Deep work frequency (last 30 days)"
-              subtitle={`30d total ${fmtHMShort(summary.monthTotalMs)} · Peak day ${fmtHMShort(peak30dMs)} · ${summary.monthActiveDays}/30 active (${consistencyPct}%)`}
-            />
-            <div className="mt-3">
-              <AreaLineChart
-                height={190}
-                data={summary.last30Days.map((p) => ({
-                  label: p.shortDate,
-                  value: Number((p.ms / 3600000).toFixed(2)),
-                  hint: p.formatted,
-                }))}
-                goalValue={Number((minDailyTargetMins / 60).toFixed(2))}
-                goalLabel={`Goal ${fmtHMShort(minDailyTargetMins * 60000)}`}
-                valueFormatter={(h) => `${h.toFixed(1)}h`}
-                ariaLabel="Deep Work Frequency 30-Day Area Chart"
-              />
+          {/* Deep Work Frequency (Last 30 Days) — Borderless AMOLED Section */}
+          <section id="deepWorkFrequencyCard" className="dh-amoled-section">
+            <div>
+              <h3 className="dh-eyebrow">Deep work frequency (last 30 days)</h3>
+              <p className="tnum mt-0.5 text-[12.5px] text-[var(--tx-3)]">
+                30d total {fmtHMShort(summary.monthTotalMs)} · Peak {fmtHMShort(peak30dMs)} · {summary.monthActiveDays}/30 active ({consistencyPct}%)
+              </p>
             </div>
-          </Card>
-
-          {/* Session Headings & Study Log */}
-          <Card className="space-y-3">
-            <SectionHeader
-              title="Session headings &amp; study log"
-              subtitle={`${summary.headingBreakdown.length} distinct study topics`}
+            <AreaLineChart
+              height={190}
+              axisUnit="hours"
+              data={summary.last30Days.map((p) => ({
+                label: p.shortDate,
+                value: Number((p.ms / 3600000).toFixed(2)),
+                hint: p.formatted,
+              }))}
+              goalValue={Number((minDailyTargetMins / 60).toFixed(2))}
+              goalLabel={`Goal ${fmtHMShort(minDailyTargetMins * 60000)}`}
+              valueFormatter={(h) =>
+                Number.isInteger(h) ? `${h}h` : `${h.toFixed(1)}h`
+              }
+              ariaLabel="Deep Work Frequency 30-Day Area Chart"
             />
+          </section>
+
+          {/* Session Headings & Study Log — Borderless AMOLED Section */}
+          <section className="dh-amoled-section">
+            <div className="dh-eyebrow-row">
+              <h3 className="dh-eyebrow">Session headings &amp; study log</h3>
+              <span className="tnum text-[12.5px] text-[var(--tx-3)]">
+                {summary.headingBreakdown.length} topics
+              </span>
+            </div>
 
             {summary.headingBreakdown.length > 0 ? (
-              <div className="space-y-2.5">
+              <div className="dh-hairline-list">
                 {summary.headingBreakdown.slice(0, 10).map((item) => (
-                  <div key={item.heading}>
-                    <div className="split mb-1 text-[13px]">
-                      <span className="flex items-center gap-2 font-medium text-[var(--tx)]">
+                  <div
+                    key={item.heading}
+                    style={{
+                      padding: '10px 0',
+                      borderBottom: '1px solid var(--hairline)',
+                    }}
+                  >
+                    <div className="split mb-1.5 text-[13.5px]">
+                      <span className="flex min-w-0 items-center gap-2 font-medium text-[var(--tx)]">
                         <span
-                          className="h-2.5 w-2.5 rounded-full"
+                          className="dh-sub-dot"
                           style={{ background: item.color }}
+                          aria-hidden="true"
                         />
-                        {item.heading}{' '}
-                        <span className="text-[13px] text-[var(--tx-3)]">
+                        <span className="truncate">{item.heading}</span>
+                        <span className="shrink-0 text-[12.5px] text-[var(--tx-3)]">
                           ({item.count}s)
                         </span>
                       </span>
-                      <span className="tnum font-medium text-[var(--ok-ink)]">
+                      <span className="tnum shrink-0 font-medium text-[var(--ok-ink)]">
                         {fmtHMShort(item.ms)}
                       </span>
                     </div>
-                    <Meter value={item.pct} max={100} color={item.color} />
+                    <Meter value={item.pct} max={100} color={item.color} height={4} />
                   </div>
                 ))}
               </div>
             ) : (
-              <p className="text-[13px] text-[var(--tx-2)]">
-                No study sessions logged yet.
-              </p>
+              <div className="dh-empty-inline">
+                <span>No study sessions logged yet.</span>
+              </div>
             )}
 
             {state.sessions.length > 0 && (() => {
@@ -873,21 +914,21 @@ export const StatsView: React.FC<StatsViewProps> = ({
                 ? sortedSessions
                 : sortedSessions.slice(0, 6);
               return (
-                <div className="border-t border-[var(--line)] pt-3">
-                  <div className="split mb-2 flex-wrap gap-2">
-                    <h4 className="text-[13px] font-semibold text-[var(--tx-2)]">
+                <div className="pt-2">
+                  <div className="dh-eyebrow-row mb-1">
+                    <h4 className="dh-eyebrow">
                       Recent sessions ({sortedSessions.length})
                     </h4>
                     {sortedSessions.length > 6 && (
-                      <Button
-                        variant="ghost"
-                        size="sm"
+                      <button
+                        type="button"
+                        className="dh-eyebrow-link"
                         onClick={() => setShowAllSessionsLog((v) => !v)}
                       >
                         {showAllSessionsLog
                           ? 'Show recent 6'
                           : `View all ${sortedSessions.length}`}
-                      </Button>
+                      </button>
                     )}
                   </div>
                   <WindowedList
@@ -895,29 +936,30 @@ export const StatsView: React.FC<StatsViewProps> = ({
                     threshold={100}
                     estimatedRowHeight={72}
                     itemLabel="sessions"
-                    className="divide-y divide-[var(--line)]"
+                    className="dh-hairline-list"
                     getKey={(s) => s.id}
                     renderItem={(s) => {
                       const sub = getSubject(state, s.subjectId);
                       const heading = getSessionHeading(state, s);
                       return (
-                        <div className="flex items-center justify-between gap-3 py-2.5">
+                        <div className="dh-hairline-row">
                           <div className="min-w-0 flex-1">
-                            <div className="flex items-center gap-2 text-[13.5px] font-medium text-[var(--tx)]">
+                            <div className="flex items-center gap-2 text-[14px] font-medium text-[var(--tx)]">
                               <span
-                                className="h-2 w-2 rounded-full"
+                                className="dh-sub-dot"
                                 style={{ background: sub.color }}
+                                aria-hidden="true"
                               />
                               <span className="truncate">
-                                {sub.e} {sub.name} · {heading}
+                                {sub.name} · {heading}
                               </span>
                             </div>
-                            <p className="tnum text-[13px] text-[var(--tx-2)]">
+                            <p className="tnum mt-0.5 pl-3.5 text-[12.5px] text-[var(--tx-3)]">
                               {s.dayKey} · {fmtClockTime(s.startTs)} –{' '}
                               {fmtClockTime(s.endTs)} · {s.mode}
                             </p>
                             {s.note && (
-                              <p className="mt-0.5 text-[13px] text-[var(--tx-2)]">
+                              <p className="mt-0.5 pl-3.5 text-[12.5px] text-[var(--tx-2)]">
                                 “{s.note}”
                               </p>
                             )}
@@ -943,73 +985,72 @@ export const StatsView: React.FC<StatsViewProps> = ({
                 </div>
               );
             })()}
-          </Card>
+          </section>
 
-          {/* Level, Badges & Habit Streaks */}
-          <div className="grid grid-cols-1 gap-4 lg:grid-cols-2">
-            <Card className="space-y-3">
-              <div className="split">
+          {/* Level, Badges & Habit Streaks — Borderless AMOLED Sections */}
+          <div className="grid grid-cols-1 gap-7 lg:grid-cols-2">
+            <section className="dh-amoled-section">
+              <div className="dh-eyebrow-row">
                 <div className="flex items-center gap-2">
-                  <Award size={18} className="text-[var(--ac-ink)]" aria-hidden="true" />
-                  <h3 className="text-[15px] font-semibold text-[var(--tx)]">
+                  <Award size={15} className="text-[var(--ac-ink)]" aria-hidden="true" />
+                  <h3 className="dh-eyebrow">
                     Level {level} · {totalXp.toLocaleString()} XP
                   </h3>
                 </div>
-                <span className="tnum text-[13px] text-[var(--tx-2)]">
-                  {nx - totalXp} XP to Level {level + 1}
+                <span className="tnum text-[12.5px] text-[var(--tx-3)]">
+                  {nx - totalXp} XP to Lv {level + 1}
                 </span>
               </div>
               <Meter
                 value={Math.round(((totalXp - pv) / Math.max(1, nx - pv)) * 100)}
                 max={100}
+                height={5}
               />
               <div className="flex flex-wrap gap-1.5 pt-1">
                 {badges(state, todayKey).map(([n, unlocked]) => (
                   <span
                     key={n}
-                    className={`rounded-lg border border-[var(--line)] bg-[var(--sf-2)] px-2.5 py-1 text-[13px] ${
+                    className={`rounded-md border px-2 py-0.5 text-[12.5px] ${
                       unlocked
-                        ? 'font-medium text-[var(--tx)]'
-                        : 'opacity-40 text-[var(--tx-3)]'
+                        ? 'border-[var(--line)] bg-[var(--sf-1)] font-medium text-[var(--tx)]'
+                        : 'border-transparent text-[var(--tx-3)] opacity-45'
                     }`}
                   >
                     {n}
                   </span>
                 ))}
               </div>
-            </Card>
+            </section>
 
-            <Card className="space-y-2.5">
-              <div className="flex items-center gap-2">
-                <Flame size={18} className="text-[var(--ac-ink)]" aria-hidden="true" />
-                <h3 className="text-[15px] font-semibold text-[var(--tx)]">
-                  Habit streaks
-                </h3>
+            <section className="dh-amoled-section">
+              <div className="dh-eyebrow-row">
+                <div className="flex items-center gap-2">
+                  <Flame size={15} className="text-[var(--ac-ink)]" aria-hidden="true" />
+                  <h3 className="dh-eyebrow">Habit streaks</h3>
+                </div>
               </div>
               {liveHabits.length === 0 ? (
-                <p className="text-[13px] text-[var(--tx-2)]">No habits active yet.</p>
+                <div className="dh-empty-inline">
+                  <span>No habits active yet.</span>
+                </div>
               ) : (
-                <div className="divide-y divide-[var(--line)]">
+                <div className="dh-hairline-list">
                   {liveHabits.map((h) => {
                     const s = streak(state, h, todayKey);
                     return (
-                      <div
-                        key={h.id}
-                        className="flex items-center justify-between gap-2 py-2 text-[13px]"
-                      >
-                        <span className="font-medium text-[var(--tx)]">
-                          {h.e} {h.name}
+                      <div key={h.id} className="dh-hairline-row text-[13.5px]">
+                        <span className="truncate font-medium text-[var(--tx)]">
+                          {h.name}
                         </span>
-                        <span className="tnum text-[13px] text-[var(--tx-2)]">
-                          {s.cur}d now · Best {s.best}d · 7d{' '}
-                          {rate(state, h, 7, todayKey)}% · {total(state, h)} logs
+                        <span className="tnum shrink-0 text-[12.5px] text-[var(--tx-2)]">
+                          {s.cur}d · Best {s.best}d · 7d {rate(state, h, 7, todayKey)}%
                         </span>
                       </div>
                     );
                   })}
                 </div>
               )}
-            </Card>
+            </section>
           </div>
 
           <WeeklyWrappedSheet

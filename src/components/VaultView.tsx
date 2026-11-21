@@ -2,7 +2,6 @@ import React, { Suspense, useCallback, useEffect, useMemo, useReducer, useRef, u
 import { createPortal } from 'react-dom';
 import {
   Archive,
-  Camera,
   Check,
   ChevronDown,
   ChevronLeft,
@@ -67,10 +66,8 @@ import {
 } from './VaultAnswerCurtain';
 import {
   Button,
-  Card,
   Chip,
   Dialog,
-  EmptyState,
   IconButton,
   Skeleton,
 } from './ui';
@@ -270,16 +267,11 @@ const VaultQuestionCard: React.FC<VaultCardProps> = ({
           <div style={{ display: 'flex', alignItems: 'center', gap: '6px', flexWrap: 'wrap', minWidth: 0 }}>
             <span
               aria-hidden="true"
-              style={{
-                width: '8px',
-                height: '8px',
-                borderRadius: '99px',
-                background: subject.color,
-                flexShrink: 0,
-              }}
+              className="dh-sub-dot"
+              style={{ background: subject.color }}
             />
             <span style={{ fontSize: '13px', fontWeight: 600, color: 'var(--tx)' }}>
-              {subject.emoji} {subject.name}
+              {subject.name}
             </span>
             {chapterName && (
               <span
@@ -510,7 +502,7 @@ const VaultQuestionCard: React.FC<VaultCardProps> = ({
       <BottomSheet
         open={menuOpen}
         onClose={() => setCardMenuOpen(false)}
-        title={chapterName || `${subject.emoji} ${subject.name}`}
+        title={chapterName || subject.name}
         subtitle={item.kind === 'hard' ? 'Hard / Trap question' : 'Unsolved question'}
       >
         <div style={{ display: 'grid', gap: '8px' }}>
@@ -837,16 +829,11 @@ export const VaultQuickView: React.FC<VaultQuickViewProps> = ({
       <div className="dh-vault-quickview-meta">
         <span
           aria-hidden="true"
-          style={{
-            width: '8px',
-            height: '8px',
-            borderRadius: '99px',
-            background: subject.color,
-            flexShrink: 0,
-          }}
+          className="dh-sub-dot"
+          style={{ background: subject.color }}
         />
         <span style={{ fontSize: '13px', fontWeight: 600, color: 'var(--tx)' }}>
-          {subject.emoji} {subject.name}
+          {subject.name}
         </span>
         {chapterName && (
           <span style={{ fontSize: '13px', color: 'var(--tx-2)' }}>· {chapterName}</span>
@@ -1723,7 +1710,7 @@ export const VaultView: React.FC<VaultViewProps> = ({
                       marginTop: '2px',
                     }}
                   >
-                    {item.note || `${sub.emoji} ${sub.name}`} ·{' '}
+                    {item.note || sub.name} ·{' '}
                     {formatRelativeVaultDate(item.createdAt)}
                   </div>
                 </div>
@@ -1916,82 +1903,67 @@ export const VaultView: React.FC<VaultViewProps> = ({
       {/* LEVEL 1 & 2 VIEW: Subject Tabs -> Chapter Folders (or Search Override) */}
       {!selectedFolder ? (
         <>
-          {/* Compact Vault Header */}
-          <Card className="dh-today-card" style={{ margin: 0, display: 'grid', gap: '12px' }}>
-            <div
-              style={{
-                display: 'flex',
-                alignItems: 'center',
-                justifyContent: 'space-between',
-                gap: '12px',
-                flexWrap: 'wrap',
-              }}
-            >
-              <div style={{ minWidth: 0 }}>
-                <h2 style={{ margin: 0, fontSize: '20px', fontWeight: 600, color: 'var(--tx)' }}>
-                  Vault
-                </h2>
-                <p className="tabular-nums" style={{ margin: '4px 0 0', fontSize: '13px', color: 'var(--tx-2)' }}>
-                  {subjectScopedItems.length === 0
-                    ? `${activeSubjectLabel} · Organize unsolved & hard questions by chapter`
-                    : `${subjectActiveItems.length} active · ${subjectMasteredCount} mastered`}
-                </p>
-              </div>
+          {/* Borderless AMOLED Vault Header */}
+          <div className="flex flex-wrap items-center justify-between gap-3">
+            <div className="min-w-0">
+              <h2 className="dh-eyebrow">Question vault</h2>
+              <p className="tnum mt-1 text-[13px] text-[var(--tx-2)]">
+                {subjectScopedItems.length === 0
+                  ? `${activeSubjectLabel} · 0 saved`
+                  : `${subjectActiveItems.length} active · ${subjectMasteredCount} mastered`}
+              </p>
+            </div>
 
-              <div style={{ display: 'flex', alignItems: 'center', gap: '8px', flexWrap: 'wrap' }}>
-                {subjectScopedItems.length > 0 && (
-                  <Button
-                    variant="secondary"
-                    size="md"
-                    className="dh-glass-btn"
-                    onClick={() => {
-                      triggerHaptic('tap');
-                      setQuickViewConfig({
-                        open: true,
-                        scope: isGlobalSearchActive ? 'search' : 'subject',
-                        initialItemId:
-                          (isGlobalSearchActive ? searchMatchingItems : subjectScopedItems)[0]
-                            ?.id ?? null,
-                      });
-                    }}
-                  >
-                    <Images size={15} strokeWidth={1.75} aria-hidden="true" />
-                    Quick-View
-                  </Button>
-                )}
-                {subjectActiveItems.length > 0 && (
-                  <Button
-                    variant="secondary"
-                    size="md"
-                    className="dh-glass-accent-btn"
-                    onClick={() => {
-                      triggerHaptic('tap');
-                      launchRevisionForItems(
-                        subjectActiveItems,
-                        subjectFilter === 'all' ? 'Vault' : activeSubjectLabel
-                      );
-                    }}
-                  >
-                    <Play size={15} strokeWidth={1.75} aria-hidden="true" />
-                    Start revision ({subjectActiveItems.length})
-                  </Button>
-                )}
-                <IconButton
-                  size={44}
-                  className="dh-glass-btn"
-                  label="Export or import Vault backup"
-                  title="Export or import Vault backup"
+            <div className="flex flex-wrap items-center gap-2">
+              {subjectScopedItems.length > 0 && (
+                <button
+                  type="button"
+                  className="dh-ghost-pill"
                   onClick={() => {
                     triggerHaptic('tap');
-                    setArchiveError(null);
-                    setBackupSheetOpen(true);
+                    setQuickViewConfig({
+                      open: true,
+                      scope: isGlobalSearchActive ? 'search' : 'subject',
+                      initialItemId:
+                        (isGlobalSearchActive ? searchMatchingItems : subjectScopedItems)[0]
+                          ?.id ?? null,
+                    });
                   }}
                 >
-                  <Archive size={18} strokeWidth={1.75} aria-hidden="true" />
-                </IconButton>
-              </div>
+                  <Images size={14} strokeWidth={1.75} aria-hidden="true" />
+                  Quick-View
+                </button>
+              )}
+              {subjectActiveItems.length > 0 && (
+                <button
+                  type="button"
+                  className="dh-ghost-pill"
+                  onClick={() => {
+                    triggerHaptic('tap');
+                    launchRevisionForItems(
+                      subjectActiveItems,
+                      subjectFilter === 'all' ? 'Vault' : activeSubjectLabel
+                    );
+                  }}
+                >
+                  <Play size={13} strokeWidth={1.75} aria-hidden="true" />
+                  Revise ({subjectActiveItems.length})
+                </button>
+              )}
+              <IconButton
+                size={38}
+                label="Export or import Vault backup"
+                title="Export or import Vault backup"
+                onClick={() => {
+                  triggerHaptic('tap');
+                  setArchiveError(null);
+                  setBackupSheetOpen(true);
+                }}
+              >
+                <Archive size={16} strokeWidth={1.75} aria-hidden="true" />
+              </IconButton>
             </div>
-          </Card>
+          </div>
 
           {/* Sticky Subject Tabs + Global Search Bar */}
           <div className="dh-vault-filterbar">
@@ -2011,16 +1983,7 @@ export const VaultView: React.FC<VaultViewProps> = ({
                 }}
               >
                 <span>All</span>
-                <span
-                  className="tabular-nums"
-                  style={{
-                    padding: '1px 6px',
-                    borderRadius: '99px',
-                    fontSize: '13px',
-                    background: 'var(--sf-3)',
-                    color: subjectFilter === 'all' ? 'var(--ac-ink)' : 'var(--tx-2)',
-                  }}
-                >
+                <span className="tnum text-[12px] opacity-75">
                   {counts.active}
                 </span>
               </Chip>
@@ -2040,19 +2003,8 @@ export const VaultView: React.FC<VaultViewProps> = ({
                       setVisibleLimit(PAGE_SIZE);
                     }}
                   >
-                    <span>
-                      {sub.e} {sub.name}
-                    </span>
-                    <span
-                      className="tabular-nums"
-                      style={{
-                        padding: '1px 6px',
-                        borderRadius: '99px',
-                        fontSize: '13px',
-                        background: 'var(--sf-3)',
-                        color: isSelected ? 'var(--ac-ink)' : 'var(--tx-2)',
-                      }}
-                    >
+                    <span>{sub.name}</span>
+                    <span className="tnum text-[12px] opacity-75">
                       {activeCount}
                     </span>
                   </Chip>
@@ -2118,19 +2070,16 @@ export const VaultView: React.FC<VaultViewProps> = ({
           ) : isGlobalSearchActive ? (
             /* Global Search Override: Show matching question cards directly across selected subject */
             searchMatchingItems.length === 0 ? (
-              <Card style={{ margin: 0 }}>
-                <EmptyState
-                  compact
-                  illustration="noVault"
-                  title="No matching questions found"
-                  description={`Nothing in ${activeSubjectLabel} matched "${searchQuery.trim()}".`}
-                  action={
-                    <Button variant="secondary" onClick={() => setSearchQuery('')}>
-                      Back to chapter folders
-                    </Button>
-                  }
-                />
-              </Card>
+              <div className="dh-empty-inline">
+                <span>No matches in {activeSubjectLabel} for &ldquo;{searchQuery.trim()}&rdquo;.</span>
+                <button
+                  type="button"
+                  className="dh-eyebrow-link"
+                  onClick={() => setSearchQuery('')}
+                >
+                  Clear ›
+                </button>
+              </div>
             ) : (
               <div style={{ display: 'grid', gap: '12px' }}>
                 <div
@@ -2168,44 +2117,23 @@ export const VaultView: React.FC<VaultViewProps> = ({
             )
           ) : (
             /* Chapter Folder List (Default View per Subject) */
-            <div style={{ display: 'grid', gap: '14px' }}>
+            <div style={{ display: 'grid', gap: '16px' }}>
               {counts.total === 0 && (
-                <Card className="dh-today-card" style={{ margin: 0 }}>
-                  <EmptyState
-                    illustration="noVault"
-                    title="Snap it, crop it, revise it"
-                    description="Keep photographed physics derivations, tricky organic traps, and unsolved NCERT questions organized inside Prep chapter folders."
-                    action={
-                      <div style={{ display: 'grid', gap: '10px', justifyItems: 'center' }}>
-                        <Button
-                          variant="secondary"
-                          size="lg"
-                          className="dh-glass-accent-btn"
-                          onClick={openThumbZoneCapture}
-                        >
-                          <Camera size={17} strokeWidth={1.75} aria-hidden="true" />
-                          Add your first question
-                        </Button>
-                        <Button
-                          variant="secondary"
-                          size="lg"
-                          className="dh-glass-btn"
-                          disabled={archiveBusy !== null}
-                          onClick={() => {
-                            triggerHaptic('tap');
-                            setArchiveError(null);
-                            importInputRef.current?.click();
-                          }}
-                        >
-                          <Upload size={16} strokeWidth={1.75} aria-hidden="true" />
-                          {archiveBusy === 'import'
-                            ? 'Importing Vault…'
-                            : 'Import Vault backup'}
-                        </Button>
-                      </div>
-                    }
-                  />
-                </Card>
+                <div className="dh-empty-inline">
+                  <span>No saved questions yet.</span>
+                  <button
+                    type="button"
+                    className="dh-eyebrow-link shrink-0"
+                    disabled={archiveBusy !== null}
+                    onClick={() => {
+                      triggerHaptic('tap');
+                      setArchiveError(null);
+                      importInputRef.current?.click();
+                    }}
+                  >
+                    {archiveBusy === 'import' ? 'Importing…' : 'Import backup ›'}
+                  </button>
+                </div>
               )}
 
               {subjectFolders.populatedFolders.length > 0 ? (
@@ -2216,25 +2144,16 @@ export const VaultView: React.FC<VaultViewProps> = ({
                 </div>
               ) : (
                 counts.total > 0 && (
-                  <Card className="dh-today-card" style={{ margin: 0 }}>
-                    <EmptyState
-                      compact
-                      illustration="noVault"
-                      title={`No saved questions in ${activeSubjectLabel} yet`}
-                      description="Select an empty syllabus chapter below or tap + Add to snap a question."
-                      action={
-                        <Button
-                          variant="secondary"
-                          size="md"
-                          className="dh-glass-accent-btn"
-                          onClick={openThumbZoneCapture}
-                        >
-                          <Plus size={16} strokeWidth={1.75} aria-hidden="true" />
-                          Add question to {activeSubjectLabel}
-                        </Button>
-                      }
-                    />
-                  </Card>
+                  <div className="dh-empty-inline">
+                    <span>No saved questions in {activeSubjectLabel} yet.</span>
+                    <button
+                      type="button"
+                      className="dh-eyebrow-link"
+                      onClick={openThumbZoneCapture}
+                    >
+                      Add question ›
+                    </button>
+                  </div>
                 )
               )}
 
@@ -2271,49 +2190,27 @@ export const VaultView: React.FC<VaultViewProps> = ({
 
           {/* V12 Collapsed Older Notes (Legacy Mistakes & Doubts) */}
           {hasLegacyNotes && !isGlobalSearchActive && (
-            <Card style={{ margin: 0, padding: '12px 16px' }}>
+            <section className="dh-amoled-section border-t border-[var(--hairline)] pt-4">
               <button
                 type="button"
                 aria-expanded={legacyExpanded}
                 onClick={() => setLegacyExpanded((v) => !v)}
-                style={{
-                  width: '100%',
-                  display: 'flex',
-                  alignItems: 'center',
-                  justifyContent: 'space-between',
-                  gap: '8px',
-                  background: 'transparent',
-                  border: 'none',
-                  padding: '6px 0',
-                  color: 'var(--tx-2)',
-                  fontSize: '14px',
-                  fontWeight: 600,
-                  cursor: 'pointer',
-                  textAlign: 'left',
-                }}
+                className="flex w-full items-center justify-between gap-2 text-left text-[13px] font-semibold text-[var(--tx-2)]"
               >
-                <span className="tabular-nums">
+                <span className="tnum">
                   Older notes · {legacyMistakes.length} mistake
                   {legacyMistakes.length === 1 ? '' : 's'}, {legacyDoubts.length} doubt
                   {legacyDoubts.length === 1 ? '' : 's'}
                 </span>
                 {legacyExpanded ? (
-                  <ChevronDown size={18} strokeWidth={1.75} aria-hidden="true" />
+                  <ChevronDown size={16} strokeWidth={1.75} aria-hidden="true" />
                 ) : (
-                  <ChevronRight size={18} strokeWidth={1.75} aria-hidden="true" />
+                  <ChevronRight size={16} strokeWidth={1.75} aria-hidden="true" />
                 )}
               </button>
 
               {legacyExpanded && (
-                <div
-                  style={{
-                    display: 'grid',
-                    gap: '12px',
-                    marginTop: '10px',
-                    paddingTop: '10px',
-                    borderTop: '1px solid var(--line)',
-                  }}
-                >
+                <div className="dh-hairline-list mt-2">
                   {legacyMistakes.map((m) => {
                     const sub = getSubject(state, m.subjectId);
                     const ch = m.chapterId
@@ -2322,45 +2219,40 @@ export const VaultView: React.FC<VaultViewProps> = ({
                     return (
                       <div
                         key={m.id}
-                        style={{
-                          display: 'flex',
-                          alignItems: 'center',
-                          justifyContent: 'space-between',
-                          gap: '10px',
-                          padding: '10px 12px',
-                          borderRadius: '12px',
-                          background: 'var(--sf-2)',
-                          border: '1px solid var(--line)',
-                          opacity: m.resolved ? 0.65 : 1,
-                        }}
+                        className="dh-hairline-row flex items-center justify-between gap-3"
+                        style={{ opacity: m.resolved ? 0.65 : 1 }}
                       >
-                        <div style={{ minWidth: 0, flex: 1 }}>
-                          <div style={{ fontSize: '13px', fontWeight: 600, color: 'var(--tx)' }}>
-                            {sub.e} {sub.name}
-                            {ch ? ` · ${ch.name}` : ''} · {m.reason} ({m.dayKey})
+                        <div className="min-w-0 flex-1">
+                          <div className="flex items-center gap-1.5 text-[13px] font-semibold text-[var(--tx)]">
+                            <span
+                              className="dh-sub-dot"
+                              style={{ background: sub.color }}
+                              aria-hidden="true"
+                            />
+                            <span>
+                              {sub.name}
+                              {ch ? ` · ${ch.name}` : ''} · {m.reason} ({m.dayKey})
+                            </span>
                           </div>
                           {m.note && (
                             <div
-                              style={{
-                                fontSize: '13px',
-                                color: 'var(--tx-2)',
-                                marginTop: '2px',
-                                textDecoration: m.resolved ? 'line-through' : undefined,
-                              }}
+                              className="mt-0.5 text-[13px] text-[var(--tx-2)]"
+                              style={{ textDecoration: m.resolved ? 'line-through' : undefined }}
                             >
                               {m.note}
                             </div>
                           )}
                         </div>
-                        <div style={{ display: 'flex', gap: '6px', flexShrink: 0 }}>
-                          <Button
-                            variant="secondary"
-                            size="sm"
+                        <div className="flex shrink-0 items-center gap-1.5">
+                          <button
+                            type="button"
+                            className="dh-ghost-pill"
                             onClick={() => onToggleMistakeResolved(m.id)}
                           >
                             {m.resolved ? 'Reopen' : 'Resolve'}
-                          </Button>
+                          </button>
                           <IconButton
+                            size={36}
                             label="Delete older mistake"
                             onClick={() => onDeleteMistake(m.id)}
                           >
@@ -2379,43 +2271,38 @@ export const VaultView: React.FC<VaultViewProps> = ({
                     return (
                       <div
                         key={d.id}
-                        style={{
-                          display: 'flex',
-                          alignItems: 'center',
-                          justifyContent: 'space-between',
-                          gap: '10px',
-                          padding: '10px 12px',
-                          borderRadius: '12px',
-                          background: 'var(--sf-2)',
-                          border: '1px solid var(--line)',
-                          opacity: d.resolved ? 0.65 : 1,
-                        }}
+                        className="dh-hairline-row flex items-center justify-between gap-3"
+                        style={{ opacity: d.resolved ? 0.65 : 1 }}
                       >
-                        <div style={{ minWidth: 0, flex: 1 }}>
-                          <div style={{ fontSize: '13px', fontWeight: 600, color: 'var(--tx)' }}>
-                            {sub.e} {sub.name}
-                            {ch ? ` · ${ch.name}` : ''}
+                        <div className="min-w-0 flex-1">
+                          <div className="flex items-center gap-1.5 text-[13px] font-semibold text-[var(--tx)]">
+                            <span
+                              className="dh-sub-dot"
+                              style={{ background: sub.color }}
+                              aria-hidden="true"
+                            />
+                            <span>
+                              {sub.name}
+                              {ch ? ` · ${ch.name}` : ''}
+                            </span>
                           </div>
                           <div
-                            style={{
-                              fontSize: '13px',
-                              color: 'var(--tx-2)',
-                              marginTop: '2px',
-                              textDecoration: d.resolved ? 'line-through' : undefined,
-                            }}
+                            className="mt-0.5 text-[13px] text-[var(--tx-2)]"
+                            style={{ textDecoration: d.resolved ? 'line-through' : undefined }}
                           >
                             {d.text}
                           </div>
                         </div>
-                        <div style={{ display: 'flex', gap: '6px', flexShrink: 0 }}>
-                          <Button
-                            variant="secondary"
-                            size="sm"
+                        <div className="flex shrink-0 items-center gap-1.5">
+                          <button
+                            type="button"
+                            className="dh-ghost-pill"
                             onClick={() => onToggleDoubtResolved(d.id)}
                           >
                             {d.resolved ? 'Reopen' : 'Resolve'}
-                          </Button>
+                          </button>
                           <IconButton
+                            size={36}
                             label="Delete older doubt"
                             onClick={() => onDeleteDoubt(d.id)}
                           >
@@ -2427,7 +2314,7 @@ export const VaultView: React.FC<VaultViewProps> = ({
                   })}
                 </div>
               )}
-            </Card>
+            </section>
           )}
         </>
       ) : (
@@ -2643,38 +2530,27 @@ export const VaultView: React.FC<VaultViewProps> = ({
 
           {/* Chapter Question List */}
           {folderAllItems.length === 0 ? (
-            <Card className="dh-today-card" style={{ margin: 0 }}>
-              <EmptyState
-                illustration="noVault"
-                title={`No questions in ${selectedFolderTitle} yet`}
-                description="Capture an unsolved problem or tricky trap question for this chapter to start building its revision deck."
-                action={
-                  <Button
-                    variant="secondary"
-                    size="lg"
-                    className="dh-glass-accent-btn"
-                    onClick={openThumbZoneCapture}
-                  >
-                    <Camera size={17} strokeWidth={1.75} aria-hidden="true" />
-                    Add question to this chapter
-                  </Button>
-                }
-              />
-            </Card>
+            <div className="dh-empty-inline">
+              <span>No questions in {selectedFolderTitle} yet.</span>
+              <button
+                type="button"
+                className="dh-eyebrow-link"
+                onClick={openThumbZoneCapture}
+              >
+                Add question ›
+              </button>
+            </div>
           ) : chapterDeckItems.length === 0 ? (
-            <Card style={{ margin: 0 }}>
-              <EmptyState
-                compact
-                illustration="noVault"
-                title="No questions match these filters"
-                description="Try switching status to All or clearing the Hard / Trap / Unsolved tag filter."
-                action={
-                  <Button variant="secondary" onClick={clearChapterFilters}>
-                    Show all in chapter
-                  </Button>
-                }
-              />
-            </Card>
+            <div className="dh-empty-inline">
+              <span>No questions match these filters.</span>
+              <button
+                type="button"
+                className="dh-eyebrow-link"
+                onClick={clearChapterFilters}
+              >
+                Show all ›
+              </button>
+            </div>
           ) : (
             <div style={{ display: 'grid', gap: '14px' }}>
               {renderQuestionList(visibleListItems)}

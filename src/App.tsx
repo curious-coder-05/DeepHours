@@ -126,6 +126,7 @@ import {
 import {
   beep,
   ensureAudioEngine,
+  playSoundCue,
   setSoundscapeVolume,
   stopAmbientMixer,
   syncAmbientMixer,
@@ -1483,7 +1484,7 @@ export default function App() {
               : 0;
       const now = Date.now();
 
-      beep('ok', !!prev.set.snd);
+      playSoundCue('timerStart', !!prev.set.snd);
       updateAndSave((cur) => ({
         ...cur,
         set: {
@@ -1590,7 +1591,7 @@ export default function App() {
     const prev = stateRef.current;
     const t = prev.activeTimer;
     if (!t || t.status === 'paused') return;
-    beep('no', !!prev.set.snd);
+    playSoundCue('timerPause', !!prev.set.snd);
     updateAndSave((cur) => {
       const ct = cur.activeTimer;
       if (!ct || ct.status === 'paused') return cur;
@@ -1612,7 +1613,7 @@ export default function App() {
     const prev = stateRef.current;
     const t = prev.activeTimer;
     if (!t || t.status !== 'paused') return;
-    beep('ok', !!prev.set.snd);
+    playSoundCue('timerResume', !!prev.set.snd);
     updateAndSave((cur) => {
       const ct = cur.activeTimer;
       if (!ct || ct.status !== 'paused') return cur;
@@ -1849,6 +1850,7 @@ export default function App() {
         ...next,
         activeTimer: null,
       });
+      playSoundCue('examFinish', !!cur.set.snd);
       setModal({
         type: 'mock',
         prefillDayKey: logicalKey(now, cur.set.dayResetHour ?? 0),
@@ -1860,8 +1862,22 @@ export default function App() {
     }
 
     if (t.status === 'running') {
-      pauseTimer();
+      updateAndSave((prev) => {
+        const ct = prev.activeTimer;
+        if (!ct || ct.status === 'paused') return prev;
+        return {
+          ...prev,
+          activeTimer: {
+            ...ct,
+            status: 'paused',
+            pauseStartTs: Date.now(),
+            pauseCount: (ct.pauseCount || 0) + 1,
+            slicePauseCount: (ct.slicePauseCount || 0) + 1,
+          },
+        };
+      });
     }
+    playSoundCue('stopAndLog', !!cur.set.snd);
     setModal({ type: 'reflect', metrics: m });
   }, [pauseTimer, saveNextState, showToast, updateAndSave]);
 

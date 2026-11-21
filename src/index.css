@@ -4,26 +4,26 @@
   --font-ui: 'Geist Variable', system-ui, -apple-system, 'Segoe UI', sans-serif;
   --font-mono: 'Geist Mono Variable', ui-monospace, 'SF Mono', Menlo, Consolas, monospace;
 
-  /* Core Dark Palette — Graphite Depth (default) */
-  --bg: #0B0D10;
-  --sf-1: #14181F;
-  --sf-2: #1B2029;
-  --sf-3: #232A35;
-  --line: rgba(255, 255, 255, 0.10);
-  --line-strong: rgba(255, 255, 255, 0.18);
-  --tx: #ECEFF4;
-  --tx-2: #A3ABB8;
-  --tx-3: #8E97A6;
-  --sf-highlight: inset 0 1px 0 rgba(255, 255, 255, 0.06);
-  --shadow-card: 0 8px 24px rgba(0, 0, 0, 0.24);
-  --r-card: 16px;
+  /* Core Dark Palette — Pure #000000 AMOLED Hardware Canvas with Neutral Dark Obsidian */
+  --bg: #000000;
+  --sf-1: #0B0909;
+  --sf-2: #120F0F;
+  --sf-3: #1B1717;
+  --line: rgba(255, 255, 255, 0.08);
+  --line-strong: rgba(255, 255, 255, 0.16);
+  --tx: #FAFAFA;
+  --tx-2: #A1A1AA;
+  --tx-3: #71717A;
+  --sf-highlight: inset 0 1px 0 rgba(254, 215, 170, 0.07);
+  --shadow-card: none;
+  --r-card: 18px;
 
   /* Accent (Lumen default; dynamically updated by App.tsx) */
-  --ac: #F5C451;
-  --ac-on: #1A1400;
-  --ac-ink: #F5C451;
+  --ac: #F5C542;
+  --ac-on: #09090B;
+  --ac-ink: #F5C542;
   --ac-soft: color-mix(in srgb, var(--ac) 12%, transparent);
-  --ac-bd: color-mix(in srgb, var(--ac) 48%, transparent);
+  --ac-bd: color-mix(in srgb, var(--ac) 44%, transparent);
   --ac-line: var(--ac-bd);
 
   /* Semantic */
@@ -41,13 +41,16 @@
   --info-ink: #60A5FA;
 
   /* Glass & frosted surfaces */
-  --glass-bg: rgba(11, 13, 16, 0.84);
-  --glass-surface: rgba(18, 20, 26, 0.84);
+  --glass-bg: rgba(0, 0, 0, 0.86);
+  --glass-surface: rgba(12, 9, 9, 0.92);
   --glass-pill: rgba(255, 255, 255, 0.045);
-  --glass-pill-hover: rgba(255, 255, 255, 0.08);
-  --glass-bd: rgba(255, 255, 255, 0.10);
-  --glass-specular: inset 0 1px 0 rgba(255, 255, 255, 0.09);
+  --glass-pill-hover: rgba(255, 255, 255, 0.085);
+  --glass-bd: rgba(255, 255, 255, 0.08);
+  --glass-specular: inset 0 1px 0 rgba(254, 215, 170, 0.08);
   --hairline: rgba(255, 255, 255, 0.07);
+  --ring-track: #12151C;
+  --ring-track-rim: rgba(255, 255, 255, 0.06);
+  --inset-group-bg: #0B0909;
 
   /* Legacy aliases so untouched views inherit the calm theme cleanly */
   --card: var(--sf-1);
@@ -70,22 +73,26 @@
   --dur-fast: 120ms;
   --dur-mid: 200ms;
   --dur-slow: 320ms;
+  --ease-press: cubic-bezier(0.2, 0, 0, 1);
   --ease-out: cubic-bezier(0.16, 1, 0.3, 1);
   --ease-spring: cubic-bezier(0.34, 1.56, 0.64, 1);
 }
 
 [data-t='dark'][data-amoled='1'] {
   --bg: #000000;
-  --sf-1: #0A0C0F;
-  --sf-2: #12151A;
-  --sf-3: #1A1E25;
-  --line: rgba(255, 255, 255, 0.11);
-  --line-strong: rgba(255, 255, 255, 0.2);
-  --sf-highlight: inset 0 1px 0 rgba(255, 255, 255, 0.05);
+  --sf-1: #0B0909;
+  --sf-2: #120F0F;
+  --sf-3: #1B1717;
+  --line: rgba(255, 255, 255, 0.08);
+  --line-strong: rgba(255, 255, 255, 0.16);
+  --sf-highlight: inset 0 1px 0 rgba(254, 215, 170, 0.08);
   --shadow-card: none;
-  --glass-bg: rgba(0, 0, 0, 0.86);
-  --glass-surface: rgba(14, 16, 21, 0.86);
+  --glass-bg: rgba(0, 0, 0, 0.88);
+  --glass-surface: rgba(12, 9, 9, 0.92);
   --hairline: rgba(255, 255, 255, 0.07);
+  --ring-track: #12151C;
+  --ring-track-rim: rgba(255, 255, 255, 0.06);
+  --inset-group-bg: #0B0909;
 }
 
 [data-t='light'] {
@@ -119,6 +126,9 @@
   --glass-bd: rgba(20, 22, 26, 0.11);
   --glass-specular: inset 0 1px 0 rgba(255, 255, 255, 0.85);
   --hairline: rgba(20, 22, 26, 0.08);
+  --ring-track: rgba(20, 22, 26, 0.08);
+  --ring-track-rim: rgba(20, 22, 26, 0.06);
+  --inset-group-bg: #FFFFFF;
 }
 
 @layer base {
@@ -139,7 +149,13 @@ html {
 
 body {
   margin: 0;
-  background: var(--bg);
+  background-color: var(--bg);
+  background-image: radial-gradient(
+    78% 220px at 50% 0%,
+    rgba(244, 114, 182, 0.065) 0%,
+    rgba(0, 0, 0, 0) 100%
+  );
+  background-repeat: no-repeat;
   color: var(--tx);
   font-family: var(--font-ui);
   font-size: 16px;
@@ -149,6 +165,10 @@ body {
   min-height: 100vh;
   overflow-x: clip;
   -webkit-font-smoothing: antialiased;
+}
+
+[data-t='light'] body {
+  background-image: none;
 }
 }
 
@@ -181,9 +201,9 @@ body {
   top: 0;
   z-index: 25;
   background: var(--glass-bg);
-  backdrop-filter: blur(14px);
-  -webkit-backdrop-filter: blur(14px);
-  border-bottom: 1px solid var(--line);
+  backdrop-filter: blur(20px);
+  -webkit-backdrop-filter: blur(20px);
+  border-bottom: 1px solid rgba(255, 255, 255, 0.06);
   padding: calc(var(--sa) + 8px) 20px 10px;
   transition: padding var(--dur-mid) var(--ease-out);
 }
@@ -292,43 +312,55 @@ body {
   }
 }
 
-/* Mobile 5-Tab Bottom Bar */
+/* Mobile 5-Tab Bottom Bar — Native AMOLED Translucent Dock (v35) */
 .dh-tabbar {
   position: fixed;
   left: 0;
   right: 0;
   bottom: 0;
   z-index: 30;
-  background: var(--glass-bg);
-  backdrop-filter: blur(16px);
-  -webkit-backdrop-filter: blur(16px);
-  border-top: 1px solid var(--line);
+  background: rgba(5, 5, 5, 0.88);
+  backdrop-filter: blur(22px);
+  -webkit-backdrop-filter: blur(22px);
+  border-top: 1px solid rgba(255, 255, 255, 0.07);
   padding: 6px 8px calc(6px + var(--sb));
   display: grid;
   grid-template-columns: repeat(5, minmax(0, 1fr));
-  gap: 4px;
+  gap: 2px;
+}
+
+[data-t='light'] .dh-tabbar {
+  background: rgba(246, 244, 239, 0.88);
+  border-top-color: rgba(20, 22, 26, 0.08);
 }
 
 .dh-tab-btn {
+  position: relative;
   display: flex;
   flex-direction: column;
   align-items: center;
   justify-content: center;
   gap: 3px;
   min-height: 48px;
-  padding: 4px 2px;
-  border-radius: 12px;
+  padding: 4px 2px 7px;
+  border-radius: 10px;
   background: transparent;
-  border: 1px solid transparent;
-  color: var(--tx-2);
-  font-size: 13px;
+  border: 0;
+  color: var(--tx-3);
+  font-size: 11.5px;
   font-weight: 500;
   line-height: 1.15;
   min-width: 0;
   max-width: 100%;
-  overflow: hidden;
-  text-overflow: ellipsis;
+  overflow: visible;
   white-space: nowrap;
+  transition: color var(--dur-fast) var(--ease-press), transform var(--dur-fast) var(--ease-press);
+}
+
+.dh-tab-btn:hover:not(:disabled) {
+  background: transparent;
+  border-color: transparent;
+  color: var(--tx-2);
 }
 
 @media (max-width: 390px) {
@@ -338,16 +370,28 @@ body {
     gap: 1px;
   }
   .dh-tab-btn {
-    padding: 4px 1px;
-    letter-spacing: -0.03em;
+    padding: 4px 1px 7px;
+    letter-spacing: -0.02em;
   }
 }
 
 .dh-tab-btn.active {
-  background: var(--ac-soft);
-  border-color: var(--ac-bd);
+  background: transparent;
+  border: 0;
   color: var(--ac-ink);
   font-weight: 600;
+}
+
+.dh-tab-btn.active::after {
+  content: '';
+  position: absolute;
+  bottom: 1px;
+  left: 50%;
+  transform: translateX(-50%);
+  width: 4px;
+  height: 4px;
+  border-radius: 999px;
+  background: var(--ac);
 }
 
 /* Tablet & Desktop Navigation Rail (>=768px) */
@@ -366,8 +410,8 @@ body {
     bottom: 0;
     left: 0;
     width: var(--rail-w);
-    background: var(--sf-1);
-    border-right: 1px solid var(--line);
+    background: var(--bg);
+    border-right: 1px solid var(--hairline);
     padding: 20px 14px;
     display: flex;
     flex-direction: column;
@@ -379,27 +423,28 @@ body {
     display: flex;
     align-items: center;
     gap: 10px;
-    padding: 4px 8px 12px;
-    border-bottom: 1px solid var(--line);
+    padding: 4px 8px 14px;
+    border-bottom: 1px solid var(--hairline);
   }
 
   .dh-rail-nav {
     display: flex;
     flex-direction: column;
-    gap: 4px;
+    gap: 3px;
     flex: 1;
   }
 
   .dh-rail-item {
+    position: relative;
     display: flex;
     align-items: center;
     gap: 12px;
-    min-height: 48px;
+    min-height: 44px;
     padding: 0 12px;
-    border-radius: 12px;
+    border-radius: 10px;
     background: transparent;
-    border: 1px solid transparent;
-    color: var(--tx-2);
+    border: 0;
+    color: var(--tx-3);
     font-size: 14px;
     font-weight: 500;
     text-align: left;
@@ -407,15 +452,28 @@ body {
   }
 
   .dh-rail-item:hover:not(:disabled) {
-    background: var(--sf-2);
+    background: rgba(255, 255, 255, 0.04);
+    border-color: transparent;
     color: var(--tx);
   }
 
   .dh-rail-item.active {
-    background: var(--ac-soft);
-    border-color: var(--ac-bd);
+    background: rgba(255, 255, 255, 0.05);
+    border: 0;
     color: var(--ac-ink);
     font-weight: 600;
+  }
+
+  .dh-rail-item.active::before {
+    content: '';
+    position: absolute;
+    left: 0;
+    top: 50%;
+    transform: translateY(-50%);
+    width: 3px;
+    height: 18px;
+    border-radius: 99px;
+    background: var(--ac);
   }
 
   .dh-main-wrap {
@@ -715,35 +773,45 @@ small,
 }
 
 .dh-list-group {
-  background: var(--sf-1);
-  border: 1px solid var(--line);
+  background: var(--inset-group-bg, #0B0909);
+  border: 1px solid var(--hairline);
   border-radius: 16px;
   overflow: hidden;
-  box-shadow: var(--sf-highlight), var(--shadow-card);
+  box-shadow: none;
 }
 
 .dh-list-row {
+  position: relative;
   display: flex;
   align-items: center;
   gap: 12px;
-  min-height: 56px;
+  min-height: 54px;
   padding: 12px 16px;
   width: 100%;
   background: transparent;
   border: 0;
-  border-bottom: 1px solid var(--line);
   border-radius: 0;
   text-align: left;
   color: var(--tx);
 }
 
-.dh-list-row:last-child {
-  border-bottom: 0;
+.dh-list-row:not(:last-child)::after {
+  content: '';
+  position: absolute;
+  left: 16px;
+  right: 0;
+  bottom: 0;
+  height: 1px;
+  background: var(--hairline);
+  pointer-events: none;
 }
 
 .dh-list-row:hover:not(:disabled) {
-  background: var(--sf-2);
-  border-color: var(--line);
+  background: rgba(255, 255, 255, 0.03);
+}
+
+[data-t='light'] .dh-list-row:hover:not(:disabled) {
+  background: rgba(20, 22, 26, 0.03);
 }
 
 .dh-segmented {
@@ -753,10 +821,11 @@ small,
   overflow-x: auto;
   scrollbar-width: none;
   scroll-snap-type: x proximity;
-  background: var(--sf-2);
-  border: 1px solid var(--line);
-  border-radius: 12px;
-  padding: 3px;
+  background: transparent;
+  border: 0;
+  border-bottom: 1px solid var(--hairline);
+  border-radius: 0;
+  padding: 0;
   gap: 2px;
 }
 
@@ -766,12 +835,13 @@ small,
 
 .dh-seg-thumb {
   position: absolute;
-  top: 3px;
-  bottom: 3px;
+  top: auto;
+  bottom: -1px;
   left: 0;
-  background: var(--ac-soft);
-  border: 1px solid var(--ac-bd);
-  border-radius: 9px;
+  height: 2px;
+  background: var(--ac);
+  border: 0;
+  border-radius: 999px;
   transition:
     transform var(--dur-mid) var(--ease-out),
     width var(--dur-mid) var(--ease-out);
@@ -781,36 +851,41 @@ small,
 .dh-seg-btn {
   position: relative;
   z-index: 1;
-  min-height: 40px;
-  padding: 6px 5px;
+  min-height: 44px;
+  padding: 8px 4px 10px;
   border: 0;
-  border-radius: 9px;
+  border-radius: 0;
   background: transparent !important;
-  color: var(--tx-2);
-  font-size: 13px;
+  color: var(--tx-3);
+  font-size: 12.5px;
   font-weight: 500;
   letter-spacing: -0.015em;
   line-height: 1.2;
-  flex: 1 0 auto;
+  flex: 1 1 auto;
   white-space: nowrap;
   overflow-wrap: normal;
   scroll-snap-align: center;
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  gap: 5px;
+  gap: 4px;
   text-align: center;
 }
 
-@media (min-width: 480px) {
+@media (min-width: 420px) {
   .dh-seg-btn {
-    padding: 6px 12px;
-    letter-spacing: 0;
+    padding: 8px 12px 10px;
+    font-size: 13.5px;
+    letter-spacing: -0.005em;
   }
 }
 
+.dh-seg-btn:hover:not(:disabled) {
+  color: var(--tx-2);
+}
+
 .dh-seg-btn.active {
-  color: var(--ac-ink);
+  color: var(--tx);
   font-weight: 600;
 }
 
@@ -1568,26 +1643,34 @@ small,
   transition: width var(--dur-slow) var(--ease-out);
 }
 
-/* Focus Timer & Desk Mode */
+/* Focus Timer & Desk Mode — Full-Bleed Pure #000000 Stage (v35) */
 .timer-shell {
   text-align: center;
-  padding: 20px 16px;
+  padding: 8px 0 12px;
+  margin: 0 !important;
   position: relative;
-  overflow: hidden;
-  border: 1px solid var(--line);
+  overflow: visible;
+  background: transparent !important;
+  border: 0 !important;
+  border-radius: 0 !important;
+  box-shadow: none !important;
+}
+
+[data-t='light'] .card.timer-shell {
+  background: var(--sf-1) !important;
+  border: 1px solid var(--hairline) !important;
+  border-radius: 20px !important;
+  padding: 20px 16px;
 }
 
 [data-t='dark'][data-amoled='1'] .card.timer-shell {
-  background: #000000;
-  border-color: rgba(255, 255, 255, 0.05);
+  background: transparent !important;
+  border-color: transparent !important;
 }
 
-.timer-shell.running {
-  border-color: color-mix(in srgb, var(--ok) 55%, var(--line));
-}
-
+.timer-shell.running,
 .timer-shell.paused {
-  border-color: color-mix(in srgb, var(--warn) 55%, var(--line));
+  border-color: transparent !important;
 }
 
 .status-pill {
@@ -1943,18 +2026,19 @@ body.desk-mode .retro-dial-svg {
   font-variant-numeric: tabular-nums;
 }
 
-/* Document PiP Window styles (Graphite + Lumen V2 frosted glass card) */
+/* Document PiP Window styles (v39 Flagship AMOLED Obsidian + Rose Copper Skylight) */
 .pip-body {
-  --pip-accent: #F5C451;
-  --pip-glow: rgba(245, 196, 81, 0.22);
-  --pip-subject: #F5C451;
+  --pip-accent: #F5C542;
+  --pip-glow: rgba(251, 146, 60, 0.15);
+  --pip-glow-mid: rgba(244, 114, 182, 0.08);
+  --pip-subject: #F5C542;
   --sheen-x: 50%;
   --sheen-y: 20%;
   --sheen-on: 0;
   margin: 0;
-  padding: 6px;
-  background: #0B0D10;
-  color: #ECEFF4;
+  padding: 0;
+  background: #000000;
+  color: #F4F4F5;
   font-family: var(--font-ui);
   height: 100vh;
   width: 100vw;
@@ -1975,27 +2059,25 @@ body.desk-mode .retro-dial-svg {
   flex-direction: column;
   justify-content: space-between;
   gap: 6px;
-  padding: 10px 12px 9px;
-  border-radius: 14px;
-  background: rgba(20, 24, 31, 0.76);
-  backdrop-filter: blur(22px) saturate(160%);
-  -webkit-backdrop-filter: blur(22px) saturate(160%);
-  border: 1px solid rgba(255, 255, 255, 0.10);
-  box-shadow:
-    inset 0 1px 0 rgba(255, 255, 255, 0.14),
-    0 12px 32px rgba(0, 0, 0, 0.45);
+  padding: 11px 14px 10px;
+  border-radius: 0;
+  background: linear-gradient(180deg, #0C0909 0%, #000000 100%);
+  border: 0;
+  border-top: 1px solid rgba(254, 215, 170, 0.22);
+  box-shadow: inset 0 1px 0 rgba(254, 215, 170, 0.15);
   overflow: hidden;
 }
 
 .pip-ambient {
   position: absolute;
-  inset: -25%;
+  inset: 0;
   pointer-events: none;
   z-index: 0;
   background: radial-gradient(
-    circle at 50% 44%,
+    112% 55% at 50% 0%,
     var(--pip-glow) 0%,
-    rgba(20, 24, 31, 0) 64%
+    var(--pip-glow-mid) 45%,
+    rgba(0, 0, 0, 0) 100%
   );
   transition: background 240ms ease, opacity 240ms ease;
 }
@@ -3582,11 +3664,11 @@ body.desk-mode .retro-dial-svg {
   animation: viewEnter var(--dur-mid) var(--ease-out) both;
 }
 
-/* Quiet elevated Today cards (subtle 0.07 hairline, calm 16px rhythm) */
+/* Quiet AMOLED vertical rhythm (28px between borderless Tier-0 sections) */
 .dh-today-flow {
   display: flex;
   flex-direction: column;
-  gap: 16px;
+  gap: 28px;
 }
 
 .dh-today-card {
@@ -3667,11 +3749,9 @@ body.desk-mode .retro-dial-svg {
   min-height: 46px;
   padding: 8px 12px;
   border-radius: 13px;
-  background: var(--glass-pill);
-  border: 1px solid var(--glass-bd);
-  box-shadow: var(--glass-specular);
-  backdrop-filter: blur(14px);
-  -webkit-backdrop-filter: blur(14px);
+  background: #0F0D0D;
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  box-shadow: inset 0 1px 0 rgba(254, 215, 170, 0.07);
   display: flex;
   align-items: center;
   justify-content: space-between;
@@ -3681,6 +3761,17 @@ body.desk-mode .retro-dial-svg {
 }
 
 .dh-focus-config-pill:hover:not(:disabled) {
+  background: #171313;
+  border-color: rgba(253, 186, 116, 0.24);
+}
+
+[data-t='light'] .dh-focus-config-pill {
+  background: var(--glass-pill);
+  border-color: var(--glass-bd);
+  box-shadow: var(--glass-specular);
+}
+
+[data-t='light'] .dh-focus-config-pill:hover:not(:disabled) {
   background: var(--glass-pill-hover);
   border-color: color-mix(in srgb, var(--tx) 18%, transparent);
 }
@@ -3697,6 +3788,27 @@ body.desk-mode .retro-dial-svg {
   font-size: 13px;
   font-weight: 600;
   white-space: nowrap;
+}
+
+.dh-hero-tier1 .dh-glass-btn {
+  background: #0F0D0D !important;
+  border-color: rgba(255, 255, 255, 0.08) !important;
+  box-shadow: inset 0 1px 0 rgba(254, 215, 170, 0.07);
+}
+
+.dh-hero-tier1 .dh-glass-btn:hover:not(:disabled) {
+  background: #171313 !important;
+  border-color: rgba(253, 186, 116, 0.24) !important;
+}
+
+[data-t='light'] .dh-hero-tier1 .dh-glass-btn {
+  background: var(--glass-pill) !important;
+  border-color: var(--glass-bd) !important;
+  box-shadow: var(--glass-specular);
+}
+
+[data-t='light'] .dh-hero-tier1 .dh-glass-btn:hover:not(:disabled) {
+  background: var(--glass-pill-hover) !important;
 }
 
 .dh-focus-cta {
@@ -3857,8 +3969,12 @@ body.desk-mode .retro-dial-svg {
 .dh-task-composer-trigger:active:not(:disabled),
 .ck:active:not(:disabled),
 .dh-task-check:active:not(:disabled),
-.dh-confidence-pill:active:not(:disabled) {
-  transform: scale(0.98);
+.dh-confidence-pill:active:not(:disabled),
+.dh-ghost-pill:active:not(:disabled),
+.dh-tab-btn:active:not(:disabled),
+.dh-ch-row-head:active:not(:disabled) {
+  transform: scale(0.975);
+  transition: transform 120ms cubic-bezier(0.2, 0, 0, 1);
 }
 
 /* End-of-Session Quick Chapter Confidence 1-5 Pills */
@@ -4179,57 +4295,60 @@ body.desk-mode .retro-dial-svg {
   background: var(--glass-pill-hover);
 }
 
-/* Uniform 36px Frosted Right Pill Cluster (Streak + Level + Quick Logger +) */
+/* Uniform 36px Sleek Hairline Capsule Cluster (Streak + Level + Quick Logger +) */
 .dh-topbar-pill {
   position: relative;
-  height: 36px;
-  min-height: 36px;
+  height: 34px;
+  min-height: 34px;
   padding: 0 10px;
   flex-shrink: 0;
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  gap: 4px;
-  border-radius: 11px;
-  background: var(--glass-pill);
-  border: 1px solid var(--glass-bd);
-  box-shadow: var(--glass-specular);
+  gap: 5px;
+  border-radius: 999px;
+  background: rgba(255, 255, 255, 0.04);
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  box-shadow: none;
   color: var(--tx);
   font-size: 13px;
   font-weight: 600;
   line-height: 1;
   white-space: nowrap;
-  backdrop-filter: blur(12px);
-  -webkit-backdrop-filter: blur(12px);
 }
 
-/* Expand vertical touch hit area comfortably without bloating 36px visual height */
+[data-t='light'] .dh-topbar-pill {
+  background: rgba(20, 22, 26, 0.045);
+  border-color: rgba(20, 22, 26, 0.10);
+}
+
+/* Expand vertical touch hit area comfortably without bloating 34px visual height */
 .dh-topbar-pill::after {
   content: '';
   position: absolute;
-  inset: -4px 0;
+  inset: -6px 0;
 }
 
 .dh-topbar-pill:hover:not(:disabled) {
-  background: var(--glass-pill-hover);
-  border-color: color-mix(in srgb, var(--tx) 18%, transparent);
+  background: rgba(255, 255, 255, 0.08);
+  border-color: rgba(255, 255, 255, 0.14);
 }
 
 .dh-topbar-pill:active:not(:disabled) {
-  transform: scale(0.97);
+  transform: scale(0.975);
 }
 
 .dh-topbar-streak-pill {
-  padding: 0 9px;
+  padding: 0 10px;
 }
 
 .dh-topbar-streak-pill.is-met {
-  border-color: color-mix(in srgb, var(--ok) 44%, var(--glass-bd));
+  border-color: color-mix(in srgb, var(--ok) 36%, rgba(255, 255, 255, 0.08));
   color: var(--ok-ink);
 }
 
 .dh-topbar-level-pill {
-  padding: 0 10px;
+  padding: 0 11px;
   overflow: hidden;
 }
 
@@ -4239,7 +4358,7 @@ body.desk-mode .retro-dial-svg {
   right: 0;
   bottom: 0;
   height: 2px;
-  background: color-mix(in srgb, var(--tx) 12%, transparent);
+  background: rgba(255, 255, 255, 0.08);
   pointer-events: none;
 }
 
@@ -4251,15 +4370,16 @@ body.desk-mode .retro-dial-svg {
 }
 
 .dh-topbar-plus-pill {
-  width: 36px;
-  min-width: 36px;
+  width: 34px;
+  min-width: 34px;
   padding: 0;
-  color: var(--ac-ink);
-  border-color: color-mix(in srgb, var(--ac) 30%, var(--glass-bd));
+  color: var(--tx);
+  border-color: rgba(255, 255, 255, 0.10);
 }
 
 .dh-topbar-plus-pill:hover:not(:disabled) {
-  border-color: color-mix(in srgb, var(--ac) 52%, var(--glass-bd));
+  color: var(--ac-ink);
+  border-color: rgba(255, 255, 255, 0.18);
 }
 
 /* Frosted Left Slide-Over Settings Drawer */
@@ -4282,11 +4402,9 @@ body.desk-mode .retro-dial-svg {
   max-width: 100%;
   height: 100dvh;
   max-height: 100vh;
-  background: var(--glass-surface);
-  backdrop-filter: blur(22px);
-  -webkit-backdrop-filter: blur(22px);
-  border-right: 1px solid var(--glass-bd);
-  box-shadow: var(--glass-specular), 16px 0 48px rgba(0, 0, 0, 0.52);
+  background: var(--bg);
+  border-right: 1px solid var(--hairline);
+  box-shadow: 16px 0 48px rgba(0, 0, 0, 0.65);
   display: flex;
   flex-direction: column;
   overflow: hidden;
@@ -4349,24 +4467,31 @@ body.desk-mode .retro-dial-svg {
   overflow-y: auto;
   overflow-x: hidden;
   overscroll-behavior-y: contain;
-  padding: 12px 10px calc(20px + var(--sb));
+  padding: 14px 12px calc(24px + var(--sb));
   display: flex;
   flex-direction: column;
-  gap: 12px;
+  gap: 16px;
+}
+
+.dh-drawer-section {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  flex-shrink: 0;
 }
 
 .dh-drawer-group {
-  background: color-mix(in srgb, var(--sf-1) 76%, transparent) !important;
-  border-color: var(--hairline) !important;
+  background: var(--inset-group-bg, #0B0909) !important;
+  border: 1px solid var(--hairline) !important;
+  border-radius: 16px !important;
   box-shadow: none !important;
   flex-shrink: 0;
 }
 
 .dh-drawer-row {
-  min-height: 52px !important;
-  padding: 10px 10px !important;
-  gap: 8px !important;
-  border-bottom-color: var(--hairline) !important;
+  min-height: 50px !important;
+  padding: 10px 14px !important;
+  gap: 10px !important;
 }
 
 .dh-drawer-row.is-active {
@@ -7027,12 +7152,10 @@ input[type='range'].dh-mixer-range {
   display: flex;
   align-items: center;
   gap: 12px;
-  padding: 13px 14px;
+  padding: 13px 16px;
   border-radius: 16px;
-  border: 1px solid var(--glass-bd, var(--line));
-  background: var(--glass-surface, var(--sf-1));
-  backdrop-filter: blur(18px);
-  -webkit-backdrop-filter: blur(18px);
+  border: 1px solid var(--hairline);
+  background: var(--inset-group-bg, #0B0909);
   text-align: left;
   cursor: pointer;
   transition:
@@ -7041,7 +7164,7 @@ input[type='range'].dh-mixer-range {
 }
 
 .dh-wrapped-trigger.is-highlighted {
-  border-color: color-mix(in srgb, var(--ac) 38%, var(--glass-bd, var(--line)));
+  border-color: color-mix(in srgb, var(--ac) 38%, var(--hairline));
 }
 
 .dh-wrapped-trigger:hover {
@@ -8336,6 +8459,417 @@ button.dh-bento-gold-cta:hover:not(:disabled) {
   opacity: 0.65;
   cursor: wait;
 }
+/* ============================================================================
+   v35 Flagship AMOLED 3-Tier Surface System (Pure #000000 Canvas + Hairlines)
+   ============================================================================ */
+
+/* Tier 1 — Single Primary Hero Surface per screen (Calibrated Rose Copper on Dark Obsidian) */
+.dh-hero-tier1 {
+  position: relative;
+  overflow: hidden;
+  background:
+    radial-gradient(
+      112% 74% at 50% 0%,
+      rgba(251, 146, 60, 0.175) 0%,
+      rgba(244, 114, 182, 0.095) 42%,
+      rgba(0, 0, 0, 0) 74%
+    ),
+    linear-gradient(180deg, #0C0909 0%, #050404 100%) !important;
+  border: 1px solid rgba(255, 255, 255, 0.075) !important;
+  border-top-color: rgba(253, 186, 116, 0.26) !important;
+  box-shadow: inset 0 1px 0 rgba(254, 215, 170, 0.19) !important;
+  border-radius: 20px !important;
+  padding: 18px !important;
+  margin: 0 !important;
+}
+
+@media (min-width: 640px) {
+  .dh-hero-tier1 {
+    padding: 20px !important;
+  }
+}
+
+[data-t='light'] .dh-hero-tier1 {
+  background: linear-gradient(180deg, #FFFFFF 0%, #F9F7F3 100%) !important;
+  border-color: rgba(20, 22, 26, 0.09) !important;
+  border-top-color: rgba(20, 22, 26, 0.09) !important;
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.9), 0 6px 20px rgba(20, 22, 26, 0.05) !important;
+}
+
+/* Tier 0 — Borderless #000000 sections with 28px rhythm & hairline dividers */
+.dh-amoled-flow {
+  display: flex;
+  flex-direction: column;
+  gap: 28px;
+}
+
+.dh-amoled-section {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  min-width: 0;
+  background: transparent;
+  border: 0;
+  padding: 0;
+  margin: 0;
+}
+
+.dh-eyebrow-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  min-height: 24px;
+}
+
+.dh-eyebrow {
+  margin: 0;
+  font-size: 11px;
+  font-weight: 600;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--tx-3);
+  line-height: 1.25;
+}
+
+.dh-eyebrow-link {
+  display: inline-flex;
+  align-items: center;
+  gap: 3px;
+  background: transparent !important;
+  border: 0 !important;
+  padding: 4px 0 !important;
+  min-height: 32px;
+  border-radius: 0;
+  font-size: 13px;
+  font-weight: 500;
+  color: var(--tx-2);
+  white-space: nowrap;
+}
+
+.dh-eyebrow-link:hover:not(:disabled) {
+  color: var(--tx);
+  background: transparent !important;
+}
+
+/* Standardized 6px semantic subject indicator dot (zero Unicode emojis) */
+.dh-sub-dot {
+  width: 6px;
+  height: 6px;
+  border-radius: 999px;
+  display: inline-block;
+  flex-shrink: 0;
+}
+
+/* Hairline list container & rows directly on #000000 */
+.dh-hairline-list {
+  display: flex;
+  flex-direction: column;
+  border-top: 1px solid var(--hairline);
+}
+
+.dh-hairline-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 12px 0;
+  border-bottom: 1px solid var(--hairline);
+  min-width: 0;
+  background: transparent;
+}
+
+/* Tier 2 — Monochrome ghost pill CTA (demotes repeated secondary gold buttons) */
+.dh-ghost-pill {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 5px;
+  min-height: 34px;
+  padding: 0 12px;
+  border-radius: 999px;
+  background: rgba(255, 255, 255, 0.05) !important;
+  border: 1px solid rgba(255, 255, 255, 0.09) !important;
+  color: #E4E4E7 !important;
+  font-size: 13px;
+  font-weight: 600;
+  line-height: 1;
+  white-space: nowrap;
+  flex-shrink: 0;
+}
+
+.dh-ghost-pill:hover:not(:disabled) {
+  background: rgba(255, 255, 255, 0.10) !important;
+  border-color: rgba(255, 255, 255, 0.16) !important;
+  color: #FAFAFA !important;
+}
+
+[data-t='light'] .dh-ghost-pill {
+  background: rgba(20, 22, 26, 0.05) !important;
+  border-color: rgba(20, 22, 26, 0.12) !important;
+  color: #14161A !important;
+}
+
+[data-t='light'] .dh-ghost-pill:hover:not(:disabled) {
+  background: rgba(20, 22, 26, 0.09) !important;
+}
+
+/* Compact 1-line inline empty state on #000000 (kills giant empty-state boxes) */
+.dh-empty-inline {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  flex-wrap: wrap;
+  padding: 12px 0;
+  border-top: 1px solid var(--hairline);
+  border-bottom: 1px solid var(--hairline);
+  font-size: 13px;
+  color: var(--tx-3);
+  line-height: 1.4;
+}
+
+/* Hairline 2x2 metric ledger (eliminates 4 boxed tiles inside a box) */
+.dh-ledger-2x2 {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  border-top: 1px solid var(--hairline);
+  border-bottom: 1px solid var(--hairline);
+}
+
+.dh-ledger-3col {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  border-top: 1px solid var(--hairline);
+  border-bottom: 1px solid var(--hairline);
+}
+
+.dh-ledger-cell {
+  padding: 12px 10px 12px 0;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+}
+
+.dh-ledger-2x2 .dh-ledger-cell:nth-child(2n) {
+  padding-left: 14px;
+  padding-right: 0;
+  border-left: 1px solid var(--hairline);
+}
+
+.dh-ledger-2x2 .dh-ledger-cell:nth-child(n + 3) {
+  border-top: 1px solid var(--hairline);
+}
+
+.dh-ledger-3col .dh-ledger-cell + .dh-ledger-cell {
+  padding-left: 12px;
+  border-left: 1px solid var(--hairline);
+}
+
+.dh-ledger-label {
+  font-size: 11px;
+  font-weight: 600;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: var(--tx-3);
+  line-height: 1.2;
+}
+
+.dh-ledger-val {
+  font-size: 20px;
+  font-weight: 700;
+  letter-spacing: -0.035em;
+  line-height: 1.15;
+  color: var(--tx);
+  font-variant-numeric: tabular-nums;
+}
+
+.dh-ledger-sub {
+  font-size: 12.5px;
+  color: var(--tx-2);
+  line-height: 1.3;
+  font-variant-numeric: tabular-nums;
+}
+
+/* Display Hero Metric typography */
+.dh-display-metric {
+  font-variant-numeric: tabular-nums;
+  letter-spacing: -0.035em;
+  color: var(--tx);
+}
+
+/* Quiet editorial note (Focus tip on #000000) */
+.dh-editorial-note {
+  padding: 12px 0;
+  border-top: 1px solid var(--hairline);
+  border-bottom: 1px solid var(--hairline);
+}
+
+.dh-sub-group-toggle {
+  display: flex;
+  width: 100%;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  background: transparent !important;
+  border: 0 !important;
+  border-bottom: 1px solid var(--hairline) !important;
+  border-radius: 0 !important;
+  padding: 10px 0 !important;
+  min-height: 44px;
+  text-align: left;
+}
+
+/* Expandable 2-line Syllabus Chapter Row on #000000 */
+.dh-ch-row {
+  border-bottom: 1px solid var(--hairline);
+  min-width: 0;
+}
+
+.dh-ch-row-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  padding: 11px 0;
+  min-width: 0;
+}
+
+.dh-ch-row-main {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  background: transparent !important;
+  border: 0 !important;
+  padding: 0 !important;
+  min-height: 36px;
+  justify-content: center;
+  text-align: left;
+  color: inherit;
+}
+
+.dh-ch-row-title {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 14.5px;
+  font-weight: 600;
+  color: var(--tx);
+  line-height: 1.3;
+  min-width: 0;
+}
+
+.dh-ch-row-sub {
+  font-size: 12.5px;
+  color: var(--tx-3);
+  padding-left: 14px;
+  line-height: 1.3;
+  font-variant-numeric: tabular-nums;
+}
+
+.dh-ch-tray {
+  padding: 8px 0 14px 14px;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+/* Collapsible Evening Check-in 1-line trigger on #000000 */
+.dh-checkin-trigger {
+  width: 100%;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  padding: 13px 0;
+  min-height: 48px;
+  background: transparent !important;
+  border: 0 !important;
+  border-top: 1px solid var(--hairline) !important;
+  border-bottom: 1px solid var(--hairline) !important;
+  border-radius: 0 !important;
+  color: var(--tx);
+  text-align: left;
+}
+
+.dh-checkin-trigger:hover:not(:disabled) {
+  background: transparent !important;
+  color: var(--ac-ink);
+}
+
+/* Hairline Vault folder rows on #000000 */
+.dh-vault-folder-card {
+  background: transparent;
+  border: 0;
+  border-bottom: 1px solid var(--hairline);
+  border-radius: 0;
+  padding: 12px 2px;
+}
+
+.dh-vault-folder-card:hover {
+  border-color: var(--hairline);
+  background: rgba(255, 255, 255, 0.025);
+}
+
+.dh-vault-folder-grid {
+  gap: 0;
+  border-top: 1px solid var(--hairline);
+}
+
+@media (min-width: 768px) {
+  .dh-vault-folder-grid {
+    column-gap: 24px;
+  }
+}
+
+.dh-vault-empty-toggle {
+  background: transparent;
+  border: 0;
+  border-bottom: 1px solid var(--hairline);
+  border-radius: 0;
+  padding: 12px 0;
+  color: var(--tx-3);
+}
+
+.dh-vault-card {
+  background: linear-gradient(180deg, #0C0909 0%, #050404 100%);
+  border: 1px solid rgba(255, 255, 255, 0.075);
+  border-radius: 16px;
+}
+
+[data-t='light'] .dh-vault-card {
+  background: var(--sf-1);
+  border-color: var(--hairline);
+}
+
+.dh-vault-compact-row {
+  background: transparent;
+  border: 0;
+  border-bottom: 1px solid var(--hairline);
+  border-radius: 0;
+  padding: 10px 0;
+}
+
+/* Override button primary to crisp Lumen Gold with #09090B ink */
+.dh-btn-primary,
+.pri {
+  background: var(--ac) !important;
+  color: var(--ac-on) !important;
+  font-weight: 700;
+}
+
+/* Habit row borderless hairline on #000000 */
+.dh-habit-card {
+  background: transparent !important;
+  border: 0 !important;
+  border-bottom: 1px solid var(--hairline) !important;
+  border-radius: 0 !important;
+  padding: 12px 0 !important;
+  box-shadow: none !important;
+}
 }
 
 @media (prefers-reduced-motion: reduce) {
@@ -8345,6 +8879,22 @@ button.dh-bento-gold-cta:hover:not(:disabled) {
     animation-duration: 0.01ms !important;
     animation-iteration-count: 1 !important;
     transition-duration: 0.01ms !important;
+  }
+
+  .dh-btn:active:not(:disabled),
+  .dh-icon-btn:active:not(:disabled),
+  .dh-chip:active:not(:disabled),
+  .dh-vault-fab:active:not(:disabled),
+  .dh-focus-config-pill:active:not(:disabled),
+  .dh-focus-log-btn:active:not(:disabled),
+  .dh-task-composer-trigger:active:not(:disabled),
+  .ck:active:not(:disabled),
+  .dh-task-check:active:not(:disabled),
+  .dh-confidence-pill:active:not(:disabled),
+  .dh-ghost-pill:active:not(:disabled),
+  .dh-tab-btn:active:not(:disabled),
+  .dh-ch-row-head:active:not(:disabled) {
+    transform: none !important;
   }
 }
 

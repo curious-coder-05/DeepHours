@@ -15,17 +15,13 @@ import {
   Lightbulb,
   RotateCw,
   HeartHandshake,
-  Sparkles,
   Moon,
   Zap,
-  BookOpen,
-  Target,
-  Compass,
-  Repeat,
   AlertCircle,
   Activity,
   ArrowRight,
   ChevronDown,
+  ChevronRight,
   ChevronUp,
   Edit3,
   CornerDownRight,
@@ -80,6 +76,7 @@ import {
 } from '../utils/uiHelpers';
 import { formatCountSummary, pluralize } from '../utils/format';
 import { formatTodayDateCountdownLabel } from '../utils/navHelpers';
+import { formatChapterConfidence } from '../utils/chartHelpers';
 import { triggerHaptic } from '../utils/haptics';
 import { ConsistencyDetailSheet, ExamCountdownCard } from './StatusRow';
 import { BottomSheet } from './BottomSheet';
@@ -89,7 +86,6 @@ import {
   Chip,
   ConcentricProgressRing,
   CountUp,
-  EmptyState,
   Meter,
   Select,
   SectionHeader,
@@ -222,6 +218,7 @@ export const TodayView: React.FC<TodayViewProps> = ({
     date: string;
   } | null>(null);
   const [showUnscheduled, setShowUnscheduled] = useState<boolean>(false);
+  const [checkinOpen, setCheckinOpen] = useState<boolean>(false);
 
   const isTodaySelected = sel === todayKey;
   const isCalendarTrayExpanded = !isTodaySelected || calendarTrayOpen;
@@ -249,10 +246,17 @@ export const TodayView: React.FC<TodayViewProps> = ({
   const p = Math.round(dayProg.pct * 100);
 
   const allLiveHabits = useMemo(() => live(state), [state]);
+  const distinctHabitCats = useMemo(
+    () => new Set(allLiveHabits.map((h) => h.c)).size,
+    [allLiveHabits]
+  );
+  const showHabitCatFilter = allLiveHabits.length >= 4 && distinctHabitCats >= 2;
   const filteredHabits = useMemo(
     () =>
-      allLiveHabits.filter((h) => (cat === 'All' ? true : h.c === cat)),
-    [allLiveHabits, cat]
+      allLiveHabits.filter((h) =>
+        !showHabitCatFilter || cat === 'All' ? true : h.c === cat
+      ),
+    [allLiveHabits, cat, showHabitCatFilter]
   );
   const dueList = useMemo(
     () => filteredHabits.filter((h) => due(state, h, sel)),
@@ -307,21 +311,6 @@ export const TodayView: React.FC<TodayViewProps> = ({
     () => getUiDailyStudyGoalProgress(state, sel, todayKey),
     [state, sel, todayKey]
   );
-
-  // Subject breakdown segments for outer hero ring
-  const outerSegments = useMemo<ConcentricRingSegment[]>(() => {
-    const bySubject = new Map<string, number>();
-    selectedDaySessions.forEach((s) => {
-      bySubject.set(s.subjectId, (bySubject.get(s.subjectId) || 0) + s.activeMs);
-    });
-    return Array.from(bySubject.entries())
-      .sort((a, b) => b[1] - a[1])
-      .map(([subjectId, value]) => ({
-        id: subjectId,
-        value,
-        color: getSubject(state, subjectId).color || 'var(--ac)',
-      }));
-  }, [selectedDaySessions, state]);
 
   // 7-day rolling week summary for proportional mini bars
   const weekDaysSummary = useMemo(() => {
@@ -562,27 +551,20 @@ export const TodayView: React.FC<TodayViewProps> = ({
             )}
             {linkedSub && (
               <span
-                className="pill"
                 style={{
-                  fontSize: 13,
-                  padding: '2px 8px',
-                  background: 'var(--sf-2)',
+                  fontSize: 12.5,
                   color: 'var(--tx-2)',
-                  border: '1px solid var(--line)',
                   display: 'inline-flex',
                   alignItems: 'center',
-                  gap: 5,
+                  gap: 6,
                 }}
               >
                 <span
-                  style={{
-                    width: 7,
-                    height: 7,
-                    borderRadius: '50%',
-                    background: linkedSub.color,
-                  }}
+                  aria-hidden="true"
+                  className="dh-sub-dot"
+                  style={{ background: linkedSub.color }}
                 />
-                {linkedSub.e} {linkedSub.name}
+                {linkedSub.name}
               </span>
             )}
           </div>
@@ -622,49 +604,51 @@ export const TodayView: React.FC<TodayViewProps> = ({
           )}
         </div>
 
-        <div
-          className="dh-habit-controls"
-          onClick={(ev) => ev.stopPropagation()}
-        >
-          {h.tn > 1 && (
-            <>
-              <button
-                type="button"
-                className="s dh-habit-ctrl-btn"
-                aria-label={`Decrease ${h.name}`}
-                onClick={() => {
-                  triggerHaptic('tap');
-                  onIncrementHabit(h.id, -1);
-                }}
-              >
-                −
-              </button>
-              <button
-                type="button"
-                className="s dh-habit-ctrl-btn"
-                aria-label={`Increase ${h.name}`}
-                onClick={() => {
-                  triggerHaptic('tap');
-                  onIncrementHabit(h.id, 1);
-                }}
-              >
-                +
-              </button>
-            </>
-          )}
-          <button
-            type="button"
-            className="s dh-habit-ctrl-btn"
-            title="Skip today (preserves streak)"
-            aria-label={`Skip ${h.name} today`}
-            onClick={() => {
-              triggerHaptic('tap');
-              onSkipHabit(h.id, sel);
-            }}
+        {!autoStudy && (
+          <div
+            className="dh-habit-controls"
+            onClick={(ev) => ev.stopPropagation()}
           >
-            <SkipForward size={15} strokeWidth={1.75} />
-          </button>
-        </div>
+            {h.tn > 1 && (
+              <>
+                <button
+                  type="button"
+                  className="s dh-habit-ctrl-btn"
+                  aria-label={`Decrease ${h.name}`}
+                  onClick={() => {
+                    triggerHaptic('tap');
+                    onIncrementHabit(h.id, -1);
+                  }}
+                >
+                  −
+                </button>
+                <button
+                  type="button"
+                  className="s dh-habit-ctrl-btn"
+                  aria-label={`Increase ${h.name}`}
+                  onClick={() => {
+                    triggerHaptic('tap');
+                    onIncrementHabit(h.id, 1);
+                  }}
+                >
+                  +
+                </button>
+              </>
+            )}
+            <button
+              type="button"
+              className="s dh-habit-ctrl-btn"
+              title="Skip today (preserves streak)"
+              aria-label={`Skip ${h.name} today`}
+              onClick={() => {
+                triggerHaptic('tap');
+                onSkipHabit(h.id, sel);
+              }}
+            >
+              <SkipForward size={15} strokeWidth={1.75} />
+            </button>
+          </div>
+        )}
         </div>
       </SwipeableRow>
     );
@@ -918,6 +902,7 @@ export const TodayView: React.FC<TodayViewProps> = ({
               variant="ghost"
               size="sm"
               onClick={() => {
+                setCheckinOpen(true);
                 const el = document.getElementById('wellbeingReflectionCard');
                 if (el) el.scrollIntoView({ behavior: 'smooth' });
               }}
@@ -931,8 +916,8 @@ export const TodayView: React.FC<TodayViewProps> = ({
       {/* Desktop 1100px+ Two-Column Workspace */}
       <div className="today-desktop-layout">
         <div className="today-main-col dh-today-flow">
-          {/* 4. Top Hero Progress + Compact 1-Tap Focus Launcher */}
-          <Card className="dh-hero-lumen dh-today-card">
+          {/* 4. Top Hero Progress + Compact 1-Tap Focus Launcher (Single Tier-1 Hero) */}
+          <Card className="dh-hero-tier1">
             <div className="hero-grid">
               <div style={{ display: 'flex', justifyContent: 'center' }}>
                 <ConcentricProgressRing
@@ -944,21 +929,16 @@ export const TodayView: React.FC<TodayViewProps> = ({
                         ? 100
                         : 0
                   }
-                  outerSegments={outerSegments}
-                  outerTotal={
-                    studyProg.goalMs > 0 ? studyProg.goalMs : selectedDayTotalMs
-                  }
                   innerPct={p}
-                  innerColor={
-                    p === 100 && dayProg.total > 0 ? 'var(--ok)' : 'var(--ok)'
-                  }
                 >
                   <div>
                     <b
                       style={{
-                        fontSize: 24,
+                        fontSize: 25,
                         fontWeight: 700,
                         lineHeight: 1.05,
+                        letterSpacing: '-0.03em',
+                        color: 'var(--tx)',
                         display: 'block',
                         fontVariantNumeric: 'tabular-nums',
                       }}
@@ -970,7 +950,7 @@ export const TodayView: React.FC<TodayViewProps> = ({
                     </b>
                     <span
                       style={{
-                        fontSize: 13,
+                        fontSize: 12.5,
                         color: 'var(--tx-2)',
                         display: 'block',
                         marginTop: 2,
@@ -978,14 +958,15 @@ export const TodayView: React.FC<TodayViewProps> = ({
                     >
                       {studyProg.goalMs > 0 ? 'Study goal' : 'Daily goal'}
                     </span>
-                    {(dayProg.habitsTotal > 0 || dayProg.tasksTotal > 0) && (
+                    {dayProg.habitsTotal > 0 && (
                       <span
                         style={{
-                          fontSize: 13,
+                          fontSize: 12.5,
                           color: 'var(--ok-ink)',
                           fontWeight: 600,
                           display: 'block',
                           marginTop: 1,
+                          fontVariantNumeric: 'tabular-nums',
                         }}
                       >
                         {p}% habits
@@ -1181,12 +1162,9 @@ export const TodayView: React.FC<TodayViewProps> = ({
                       >
                         <span
                           aria-hidden="true"
+                          className="dh-sub-dot"
                           style={{
-                            width: 9,
-                            height: 9,
-                            borderRadius: '50%',
                             background: effectiveQuickSubject.color,
-                            flexShrink: 0,
                           }}
                         />
                         <div style={{ minWidth: 0, flex: 1 }}>
@@ -1202,7 +1180,7 @@ export const TodayView: React.FC<TodayViewProps> = ({
                               lineHeight: 1.25,
                             }}
                           >
-                            {effectiveQuickSubject.e} {effectiveQuickSubject.name}
+                            {effectiveQuickSubject.name}
                           </span>
                           <span
                             style={{
@@ -1278,51 +1256,40 @@ export const TodayView: React.FC<TodayViewProps> = ({
             </div>
           </Card>
 
-          {/* 5. Subject Daily Targets (when configured) */}
+          {/* 5. Subject Daily Targets (Borderless Tier-0 Section on #000000) */}
           {subjectTargets.length > 0 && (
-            <Card className="dh-today-card">
-              <div className="split" style={{ marginBottom: 10 }}>
-                <div className="row" style={{ gap: 8 }}>
-                  <Target
-                    size={18}
-                    strokeWidth={1.75}
-                    style={{ color: 'var(--ac-ink)' }}
-                  />
-                  <h3 style={{ margin: 0, fontSize: 16 }}>Subject targets</h3>
-                </div>
-                <Button
-                  variant="ghost"
-                  size="sm"
+            <section className="dh-amoled-section">
+              <div className="dh-eyebrow-row">
+                <h3 className="dh-eyebrow">Subject targets</h3>
+                <button
+                  type="button"
+                  className="dh-eyebrow-link"
                   onClick={() =>
                     onManageTargets ? onManageTargets() : onSwitchTab('more')
                   }
                 >
-                  Edit targets
-                </Button>
+                  <span>Edit targets</span>
+                  <ChevronRight size={14} strokeWidth={1.6} aria-hidden="true" />
+                </button>
               </div>
-              <div style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
+              <div className="dh-hairline-list">
                 {subjectTargets.map((row) => (
                   <div
                     key={row.subjectId}
                     style={{
-                      background: 'var(--sf-2)',
-                      borderRadius: 12,
-                      padding: '10px 12px',
-                      border: '1px solid var(--line)',
+                      padding: '12px 0',
+                      borderBottom: '1px solid var(--hairline)',
                     }}
                   >
                     <div className="split" style={{ marginBottom: 6, gap: 8 }}>
                       <div className="row" style={{ gap: 8 }}>
                         <span
-                          style={{
-                            width: 8,
-                            height: 8,
-                            borderRadius: '50%',
-                            background: row.color,
-                          }}
+                          aria-hidden="true"
+                          className="dh-sub-dot"
+                          style={{ background: row.color }}
                         />
-                        <b style={{ fontSize: 13 }}>
-                          {row.subjectEmoji} {row.subjectName}
+                        <b style={{ fontSize: 14, fontWeight: 600 }}>
+                          {row.subjectName}
                         </b>
                       </div>
                       <span
@@ -1334,7 +1301,6 @@ export const TodayView: React.FC<TodayViewProps> = ({
                       >
                         {row.dailyTargetMins > 0 && (
                           <>
-                            Today{' '}
                             <b
                               style={{
                                 color:
@@ -1354,68 +1320,47 @@ export const TodayView: React.FC<TodayViewProps> = ({
                       <Meter
                         value={row.dailyPct}
                         color={row.dailyPct >= 100 ? 'var(--ok)' : row.color}
-                        height={6}
+                        height={5}
                         label={`${row.subjectName} daily target`}
                       />
                     )}
                   </div>
                 ))}
               </div>
-            </Card>
+            </section>
           )}
 
-          {/* 6. Study Next — Top 3 Recommended Chapters */}
+          {/* 6. Study Next — Top 3 Recommended Chapters (Tier-0 Hairline List) */}
           {studyNextItems.length > 0 && (
-            <Card className="dh-today-card">
-              <div className="split" style={{ marginBottom: 10 }}>
-                <div className="row" style={{ gap: 8 }}>
-                  <Compass
-                    size={18}
-                    strokeWidth={1.75}
-                    style={{ color: 'var(--ac-ink)' }}
-                  />
-                  <div>
-                    <h3 style={{ margin: 0, fontSize: 16 }}>Study next</h3>
-                    <small style={{ fontSize: 13 }}>
-                      Ranked by revisions due, mistakes &amp; low confidence
-                    </small>
-                  </div>
-                </div>
-                <Button
-                  variant="ghost"
-                  size="sm"
+            <section className="dh-amoled-section">
+              <div className="dh-eyebrow-row">
+                <h3 className="dh-eyebrow">Study next</h3>
+                <button
+                  type="button"
+                  className="dh-eyebrow-link"
                   onClick={() => onSwitchTab('prep')}
                 >
-                  Syllabus
-                </Button>
+                  <span>Syllabus</span>
+                  <ChevronRight size={14} strokeWidth={1.6} aria-hidden="true" />
+                </button>
               </div>
-              <div className="dh-carousel">
+              <div className="dh-hairline-list">
                 {studyNextItems.map((item) => (
-                  <div
-                    key={item.chapter.id}
-                    className="dh-carousel-card"
-                    style={{
-                      border: '1px solid var(--hairline)',
-                    }}
-                  >
-                    <div style={{ minWidth: 0 }}>
+                  <div key={item.chapter.id} className="dh-hairline-row">
+                    <div style={{ minWidth: 0, flex: 1 }}>
                       <div
                         className="row"
-                        style={{ gap: 7, flexWrap: 'nowrap', marginBottom: 4 }}
+                        style={{ gap: 8, flexWrap: 'nowrap', marginBottom: 2 }}
                       >
                         <span
                           aria-hidden="true"
-                          style={{
-                            width: 8,
-                            height: 8,
-                            borderRadius: '50%',
-                            background: item.subjectColor,
-                            flexShrink: 0,
-                          }}
+                          className="dh-sub-dot"
+                          style={{ background: item.subjectColor }}
                         />
                         <b
                           style={{
-                            fontSize: 14,
+                            fontSize: 14.5,
+                            fontWeight: 600,
                             overflow: 'hidden',
                             textOverflow: 'ellipsis',
                             whiteSpace: 'nowrap',
@@ -1423,39 +1368,28 @@ export const TodayView: React.FC<TodayViewProps> = ({
                             minWidth: 0,
                           }}
                         >
-                          {item.subjectEmoji} {item.chapter.name}
+                          {item.chapter.name}
                         </b>
-                        {item.chapter.confidence && (
-                          <span
-                            style={{
-                              fontSize: 13,
-                              color: 'var(--tx-3)',
-                              fontVariantNumeric: 'tabular-nums',
-                              flexShrink: 0,
-                            }}
-                            aria-label={`Confidence ${item.chapter.confidence} of 5`}
-                          >
-                            {'★'.repeat(item.chapter.confidence)}
-                          </span>
-                        )}
                       </div>
                       <small
                         style={{
                           display: 'block',
-                          fontSize: 13,
-                          color: 'var(--tx-2)',
-                          lineHeight: 1.4,
+                          paddingLeft: 14,
+                          fontSize: 12.5,
+                          color: 'var(--tx-3)',
+                          lineHeight: 1.35,
                         }}
                       >
-                        {item.reasons.join(' · ')}
+                        {item.subjectName} · {item.reasons.join(' · ')}
+                        {(() => {
+                          const confLabel = formatChapterConfidence(item.chapter.confidence);
+                          return confLabel ? ` · ${confLabel}` : '';
+                        })()}
                       </small>
                     </div>
-                    <Button
-                      variant="secondary"
-                      size="sm"
-                      fullWidth
-                      className="dh-glass-accent-btn"
-                      icon={<Play size={13} strokeWidth={2} />}
+                    <button
+                      type="button"
+                      className="dh-ghost-pill"
                       onClick={() =>
                         onQuickStartSession(
                           item.chapter.subjectId,
@@ -1465,60 +1399,63 @@ export const TodayView: React.FC<TodayViewProps> = ({
                         )
                       }
                     >
-                      Focus
-                    </Button>
+                      <span>Focus</span>
+                      <ChevronRight size={13} strokeWidth={1.8} aria-hidden="true" />
+                    </button>
                   </div>
                 ))}
               </div>
-            </Card>
+            </section>
           )}
 
-          {/* 7. Daily Tasks Card */}
-          <Card id="dailyTasksCard" className="dh-today-card">
-            <div className="split" style={{ marginBottom: 10 }}>
+          {/* 7. Daily Tasks (Tier-0 Hairline Section on #000000) */}
+          <section id="dailyTasksCard" className="dh-amoled-section">
+            <div className="dh-eyebrow-row">
               <div className="row" style={{ gap: 8 }}>
-                <h3 style={{ margin: 0, fontSize: 16 }}>Daily tasks</h3>
+                <h3 className="dh-eyebrow">Daily tasks</h3>
                 <span
                   className="dh-meta-count"
                   style={{
+                    fontSize: 12,
                     color:
                       dayTasks.length > 0 && dayProg.tasksDone === dayTasks.length
                         ? 'var(--ok-ink)'
-                        : 'var(--tx-2)',
+                        : 'var(--tx-3)',
                   }}
                 >
                   {dayProg.tasksDone}/{dayProg.tasksTotal}
-                  {dayTasks.length > 0 ? ` · ${pluralize(dayTasks.length, 'task')}` : ''}
                 </span>
               </div>
+              {dayTasks.length > 0 && (
+                <button
+                  type="button"
+                  className="dh-eyebrow-link"
+                  onClick={() => setTaskComposerOpen(true)}
+                >
+                  <Plus size={14} strokeWidth={1.8} aria-hidden="true" />
+                  <span>Add</span>
+                </button>
+              )}
             </div>
 
-            <button
-              type="button"
-              className="dh-task-composer-trigger"
-              style={{ marginBottom: dayTasks.length > 0 ? 10 : 6 }}
-              onClick={() => setTaskComposerOpen(true)}
-            >
-              <span>
-                Add a task for {isTodaySelected ? 'today' : sel}…
-              </span>
-              <Plus size={17} strokeWidth={2} style={{ color: 'var(--ac-ink)', flexShrink: 0 }} />
-            </button>
-
             {dayTasks.length === 0 ? (
-              <EmptyState
-                illustration="noTasks"
-                compact
-                title="No tasks scheduled for this day"
-                description="Tap above to add a goal and tag a subject."
-              />
+              <div className="dh-empty-inline">
+                <span>No tasks scheduled for {isTodaySelected ? 'today' : sel}.</span>
+                <button
+                  type="button"
+                  className="dh-eyebrow-link"
+                  onClick={() => setTaskComposerOpen(true)}
+                >
+                  <span>+ Add task</span>
+                </button>
+              </div>
             ) : (
               <WindowedList
                 items={dayTasks}
                 threshold={100}
-                estimatedRowHeight={62}
+                estimatedRowHeight={56}
                 itemLabel="tasks"
-                style={{ display: 'flex', flexDirection: 'column', gap: 6 }}
+                className="dh-hairline-list"
                 getKey={(task: DailyTask) => task.id}
                 renderItem={(task: DailyTask) => {
                   const sub = task.subjectId
@@ -1539,13 +1476,9 @@ export const TodayView: React.FC<TodayViewProps> = ({
                     >
                       <div
                         style={{
-                          padding: '8px 12px',
-                          borderRadius: 12,
-                          background: 'var(--sf-2)',
-                          border: task.done
-                            ? '1px solid color-mix(in srgb, var(--ok) 40%, var(--line))'
-                            : '1px solid var(--line)',
-                          minHeight: 56,
+                          padding: '10px 0',
+                          borderBottom: '1px solid var(--hairline)',
+                          minHeight: 52,
                           display: 'flex',
                           flexDirection: 'column',
                           justifyContent: 'center',
@@ -1625,27 +1558,20 @@ export const TodayView: React.FC<TodayViewProps> = ({
                               </span>
                               {sub && (
                                 <span
-                                  className="pill"
                                   style={{
-                                    fontSize: 13,
-                                    padding: '2px 8px',
-                                    background: 'var(--sf-1)',
-                                    color: 'var(--tx-2)',
-                                    border: '1px solid var(--line)',
+                                    fontSize: 12.5,
+                                    color: 'var(--tx-3)',
                                     display: 'inline-flex',
                                     alignItems: 'center',
                                     gap: 5,
                                   }}
                                 >
                                   <span
-                                    style={{
-                                      width: 7,
-                                      height: 7,
-                                      borderRadius: '50%',
-                                      background: sub.color,
-                                    }}
+                                    aria-hidden="true"
+                                    className="dh-sub-dot"
+                                    style={{ background: sub.color }}
                                   />
-                                  {sub.e} {sub.name}
+                                  {sub.name}
                                 </span>
                               )}
                             </div>
@@ -1837,7 +1763,7 @@ export const TodayView: React.FC<TodayViewProps> = ({
                               {t.title}
                             </div>
                             <small style={{ fontSize: 13 }}>
-                              From {t.dayKey} {sub ? `· ${sub.e} ${sub.name}` : ''}
+                              From {t.dayKey} {sub ? `· ${sub.name}` : ''}
                             </small>
                           </div>
                           <div className="row" style={{ gap: 6 }}>
@@ -1864,26 +1790,17 @@ export const TodayView: React.FC<TodayViewProps> = ({
                 )}
               </div>
             )}
-          </Card>
+          </section>
 
-          {/* 8. Revisions Due Card (Compact when empty) */}
-          <Card id="revisionsDueCard" className="dh-today-card">
-            <div
-              className="split"
-              style={{
-                marginBottom: allRevisionsCount > 0 ? 10 : 4,
-              }}
-            >
+          {/* 8. Revisions Due (Tier-0 Hairline Section on #000000) */}
+          <section id="revisionsDueCard" className="dh-amoled-section">
+            <div className="dh-eyebrow-row">
               <div className="row" style={{ gap: 8 }}>
-                <Repeat
-                  size={18}
-                  strokeWidth={1.75}
-                  style={{ color: 'var(--ac-ink)' }}
-                />
-                <h3 style={{ margin: 0, fontSize: 16 }}>Revisions due</h3>
+                <h3 className="dh-eyebrow">Revisions due</h3>
                 <span
                   className="dh-meta-count"
                   style={{
+                    fontSize: 12,
                     color:
                       revisionsBundle.overdue.length > 0
                         ? 'var(--err-ink)'
@@ -1895,17 +1812,20 @@ export const TodayView: React.FC<TodayViewProps> = ({
                   {allRevisionsCount}
                 </span>
               </div>
-              <Button
-                variant="ghost"
-                size="sm"
-                onClick={() => onSwitchTab('prep')}
-              >
-                Syllabus
-              </Button>
+              {studyNextItems.length === 0 && (
+                <button
+                  type="button"
+                  className="dh-eyebrow-link"
+                  onClick={() => onSwitchTab('prep')}
+                >
+                  <span>Syllabus</span>
+                  <ChevronRight size={14} strokeWidth={1.6} aria-hidden="true" />
+                </button>
+              )}
             </div>
 
             {allRevisionsCount > 0 && (
-              <div className="dh-edge-fade-rail" style={{ marginBottom: 8 }}>
+              <div className="dh-edge-fade-rail">
                 <Chip
                   selected={revSubjectFilter === 'all'}
                   onClick={() => setRevSubjectFilter('all')}
@@ -1926,7 +1846,7 @@ export const TodayView: React.FC<TodayViewProps> = ({
                       colorDot={s.color}
                       onClick={() => setRevSubjectFilter(s.id)}
                     >
-                      {s.e} {s.name} ({count})
+                      {s.name} ({count})
                     </Chip>
                   );
                 })}
@@ -1934,27 +1854,27 @@ export const TodayView: React.FC<TodayViewProps> = ({
             )}
 
             {overdueRevisions.length === 0 && dueTodayRevisions.length === 0 ? (
-              <div style={{ fontSize: 13, color: 'var(--tx-3)', padding: '2px 0' }}>
-                All caught up — no spaced revisions due today.
+              <div className="dh-empty-inline">
+                <span>All caught up — no spaced revisions due today.</span>
               </div>
             ) : (
-              <div style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
+              <div style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
                 {overdueRevisions.length > 0 && (
                   <div>
                     <div
                       className="row"
                       style={{
                         gap: 6,
-                        fontSize: 13,
+                        fontSize: 12,
                         fontWeight: 600,
                         color: 'var(--err-ink)',
-                        marginBottom: 6,
+                        marginBottom: 4,
                       }}
                     >
-                      <AlertCircle size={14} strokeWidth={2} />
+                      <AlertCircle size={13} strokeWidth={1.8} />
                       <span>Overdue ({overdueRevisions.length})</span>
                     </div>
-                    <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
+                    <div className="dh-hairline-list">
                       {overdueRevisions.map((item) => {
                         const isRescheduling =
                           rescheduleTarget?.chapterId === item.chapterId &&
@@ -1963,11 +1883,8 @@ export const TodayView: React.FC<TodayViewProps> = ({
                           <div
                             key={`${item.chapterId}_${item.revisionId}`}
                             style={{
-                              padding: '10px 12px',
-                              borderRadius: 12,
-                              background: 'var(--sf-2)',
-                              border:
-                                '1px solid color-mix(in srgb, var(--err) 38%, var(--line))',
+                              padding: '11px 0',
+                              borderBottom: '1px solid var(--hairline)',
                             }}
                           >
                             <div className="split" style={{ gap: 10 }}>
@@ -1977,10 +1894,10 @@ export const TodayView: React.FC<TodayViewProps> = ({
                                   className="ck"
                                   aria-label={`Complete ${item.label} for ${item.chapterName}`}
                                   style={{
-                                    width: 36,
-                                    height: 36,
-                                    minWidth: 36,
-                                    minHeight: 36,
+                                    width: 34,
+                                    height: 34,
+                                    minWidth: 34,
+                                    minHeight: 34,
                                   }}
                                   onClick={() =>
                                     onCompleteRevision(
@@ -1989,29 +1906,34 @@ export const TodayView: React.FC<TodayViewProps> = ({
                                     )
                                   }
                                 >
-                                  <Check size={16} strokeWidth={2} />
+                                  <Check size={15} strokeWidth={2} />
                                 </button>
                                 <div style={{ minWidth: 0 }}>
-                                  <b
-                                    style={{
-                                      fontSize: 14,
-                                      display: 'block',
-                                      whiteSpace: 'nowrap',
-                                      overflow: 'hidden',
-                                      textOverflow: 'ellipsis',
-                                    }}
-                                  >
-                                    {item.subject.e} {item.chapterName}
-                                  </b>
-                                  <small style={{ fontSize: 13, color: 'var(--err-ink)' }}>
+                                  <div className="row" style={{ gap: 7 }}>
+                                    <span
+                                      aria-hidden="true"
+                                      className="dh-sub-dot"
+                                      style={{ background: item.subject.color }}
+                                    />
+                                    <b
+                                      style={{
+                                        fontSize: 14,
+                                        whiteSpace: 'nowrap',
+                                        overflow: 'hidden',
+                                        textOverflow: 'ellipsis',
+                                      }}
+                                    >
+                                      {item.chapterName}
+                                    </b>
+                                  </div>
+                                  <small style={{ fontSize: 12.5, color: 'var(--err-ink)', paddingLeft: 13 }}>
                                     {item.label} · {item.daysLate}d overdue ({item.date})
                                   </small>
                                 </div>
                               </div>
-                              <Button
-                                variant="secondary"
-                                size="sm"
-                                icon={<Calendar size={13} strokeWidth={1.75} />}
+                              <button
+                                type="button"
+                                className="dh-ghost-pill"
                                 onClick={() =>
                                   setRescheduleTarget(
                                     isRescheduling
@@ -2024,8 +1946,9 @@ export const TodayView: React.FC<TodayViewProps> = ({
                                   )
                                 }
                               >
-                                Reschedule
-                              </Button>
+                                <Calendar size={13} strokeWidth={1.6} aria-hidden="true" />
+                                <span>Reschedule</span>
+                              </button>
                             </div>
 
                             {isRescheduling && rescheduleTarget && (
@@ -2074,15 +1997,15 @@ export const TodayView: React.FC<TodayViewProps> = ({
                   <div>
                     <div
                       style={{
-                        fontSize: 13,
+                        fontSize: 12,
                         fontWeight: 600,
                         color: 'var(--ac-ink)',
-                        marginBottom: 6,
+                        marginBottom: 4,
                       }}
                     >
                       Due on {isTodaySelected ? 'today' : sel} ({dueTodayRevisions.length})
                     </div>
-                    <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
+                    <div className="dh-hairline-list">
                       {dueTodayRevisions.map((item) => {
                         const isRescheduling =
                           rescheduleTarget?.chapterId === item.chapterId &&
@@ -2091,10 +2014,8 @@ export const TodayView: React.FC<TodayViewProps> = ({
                           <div
                             key={`${item.chapterId}_${item.revisionId}`}
                             style={{
-                              padding: '10px 12px',
-                              borderRadius: 12,
-                              background: 'var(--sf-2)',
-                              border: '1px solid var(--line)',
+                              padding: '11px 0',
+                              borderBottom: '1px solid var(--hairline)',
                             }}
                           >
                             <div className="split" style={{ gap: 10 }}>
@@ -2104,10 +2025,10 @@ export const TodayView: React.FC<TodayViewProps> = ({
                                   className="ck"
                                   aria-label={`Complete ${item.label} for ${item.chapterName}`}
                                   style={{
-                                    width: 36,
-                                    height: 36,
-                                    minWidth: 36,
-                                    minHeight: 36,
+                                    width: 34,
+                                    height: 34,
+                                    minWidth: 34,
+                                    minHeight: 34,
                                   }}
                                   onClick={() =>
                                     onCompleteRevision(
@@ -2116,29 +2037,34 @@ export const TodayView: React.FC<TodayViewProps> = ({
                                     )
                                   }
                                 >
-                                  <Check size={16} strokeWidth={2} />
+                                  <Check size={15} strokeWidth={2} />
                                 </button>
                                 <div style={{ minWidth: 0 }}>
-                                  <b
-                                    style={{
-                                      fontSize: 14,
-                                      display: 'block',
-                                      whiteSpace: 'nowrap',
-                                      overflow: 'hidden',
-                                      textOverflow: 'ellipsis',
-                                    }}
-                                  >
-                                    {item.subject.e} {item.chapterName}
-                                  </b>
-                                  <small style={{ fontSize: 13 }}>
+                                  <div className="row" style={{ gap: 7 }}>
+                                    <span
+                                      aria-hidden="true"
+                                      className="dh-sub-dot"
+                                      style={{ background: item.subject.color }}
+                                    />
+                                    <b
+                                      style={{
+                                        fontSize: 14,
+                                        whiteSpace: 'nowrap',
+                                        overflow: 'hidden',
+                                        textOverflow: 'ellipsis',
+                                      }}
+                                    >
+                                      {item.chapterName}
+                                    </b>
+                                  </div>
+                                  <small style={{ fontSize: 12.5, paddingLeft: 13 }}>
                                     {item.subject.name} · {item.label} due
                                   </small>
                                 </div>
                               </div>
-                              <Button
-                                variant="secondary"
-                                size="sm"
-                                icon={<Calendar size={13} strokeWidth={1.75} />}
+                              <button
+                                type="button"
+                                className="dh-ghost-pill"
                                 onClick={() =>
                                   setRescheduleTarget(
                                     isRescheduling
@@ -2151,8 +2077,9 @@ export const TodayView: React.FC<TodayViewProps> = ({
                                   )
                                 }
                               >
-                                Reschedule
-                              </Button>
+                                <Calendar size={13} strokeWidth={1.6} aria-hidden="true" />
+                                <span>Reschedule</span>
+                              </button>
                             </div>
 
                             {isRescheduling && rescheduleTarget && (
@@ -2198,27 +2125,26 @@ export const TodayView: React.FC<TodayViewProps> = ({
                 )}
               </div>
             )}
-          </Card>
+          </section>
 
-          {/* 9. Habits Section */}
-          <div>
+          {/* 9. Habits Section (Auto-hides 7-pill category strip when <4 habits or <2 categories) */}
+          <section className="dh-amoled-section">
             <SectionHeader
-              title={`Habits (${dayProg.habitsDone}/${dayProg.habitsTotal})`}
+              title={`Habits · ${dayProg.habitsDone}/${dayProg.habitsTotal}`}
               action={
-                <Button
-                  variant="secondary"
-                  size="sm"
-                  className="dh-glass-btn"
-                  icon={<Plus size={15} strokeWidth={2} />}
+                <button
+                  type="button"
+                  className="dh-eyebrow-link"
                   onClick={onNewHabit}
                 >
-                  Habit
-                </Button>
+                  <Plus size={14} strokeWidth={1.8} aria-hidden="true" />
+                  <span>Add</span>
+                </button>
               }
             />
 
-            {allLiveHabits.length > 0 && (
-              <div className="dh-edge-fade-rail" style={{ marginBottom: 6 }}>
+            {showHabitCatFilter && (
+              <div className="dh-edge-fade-rail">
                 <Chip selected={cat === 'All'} onClick={() => onSelectCat('All')}>
                   All
                 </Chip>
@@ -2231,78 +2157,65 @@ export const TodayView: React.FC<TodayViewProps> = ({
             )}
 
             {allLiveHabits.length === 0 ? (
-              <Card className="dh-today-card" style={{ textAlign: 'center', padding: '20px 16px' }}>
-                <Sparkles
-                  size={24}
-                  strokeWidth={1.75}
-                  style={{ color: 'var(--ac-ink)', margin: '0 auto 6px' }}
-                />
-                <b style={{ fontSize: 16, display: 'block' }}>
-                  Start with a proven study habit
-                </b>
-                <small style={{ display: 'block', margin: '4px 0 12px', fontSize: 13 }}>
-                  Tap a starter preset below or create your own custom habit.
-                </small>
-                <div
-                  className="row"
-                  style={{
-                    gap: 6,
-                    flexWrap: 'wrap',
-                    justifyContent: 'center',
-                    marginBottom: 12,
-                  }}
-                >
+              <div
+                style={{
+                  padding: '14px 0',
+                  borderTop: '1px solid var(--hairline)',
+                  borderBottom: '1px solid var(--hairline)',
+                  display: 'flex',
+                  flexDirection: 'column',
+                  gap: 10,
+                }}
+              >
+                <div className="split" style={{ gap: 10, flexWrap: 'wrap' }}>
+                  <span style={{ fontSize: 13.5, color: 'var(--tx-2)' }}>
+                    No habits yet — pick a starter or create one.
+                  </span>
+                  <button
+                    type="button"
+                    className="dh-ghost-pill"
+                    onClick={onNewHabit}
+                  >
+                    + Custom habit
+                  </button>
+                </div>
+                <div className="row" style={{ gap: 6, flexWrap: 'wrap' }}>
                   {STARTERS.map((s, i) => (
                     <Chip key={i} onClick={() => onAddStarter(i)}>
-                      + {s.e} {s.name}
+                      + {s.name}
                     </Chip>
                   ))}
                 </div>
-                <Button
-                  variant="secondary"
-                  size="sm"
-                  className="dh-glass-accent-btn"
-                  onClick={onNewHabit}
-                >
-                  Create custom habit
-                </Button>
-              </Card>
+              </div>
             ) : (
               <>
                 {dueList.length > 0 ? (
-                  dueList.map(renderHabitRow)
+                  <div className="dh-hairline-list">
+                    {dueList.map(renderHabitRow)}
+                  </div>
                 ) : (
-                  <Card className="dh-today-card" style={{ textAlign: 'center', padding: 14 }}>
-                    <small style={{ fontSize: 13 }}>
-                      No habits scheduled in this category today.
-                    </small>
-                  </Card>
+                  <div className="dh-empty-inline">
+                    <span>No habits scheduled in this category today.</span>
+                  </div>
                 )}
 
                 {otherList.length > 0 && (
-                  <div style={{ marginTop: 8 }}>
+                  <div style={{ marginTop: 4 }}>
                     <button
                       type="button"
-                      className="s"
+                      className="dh-eyebrow-link"
                       aria-expanded={showUnscheduled}
-                      style={{
-                        width: '100%',
-                        display: 'flex',
-                        alignItems: 'center',
-                        justifyContent: 'center',
-                        gap: 6,
-                      }}
                       onClick={() => setShowUnscheduled((v) => !v)}
                     >
                       {showUnscheduled ? (
-                        <ChevronUp size={15} strokeWidth={1.75} />
+                        <ChevronUp size={14} strokeWidth={1.6} />
                       ) : (
-                        <ChevronDown size={15} strokeWidth={1.75} />
+                        <ChevronDown size={14} strokeWidth={1.6} />
                       )}
                       <span>Not scheduled today ({otherList.length})</span>
                     </button>
                     {showUnscheduled && (
-                      <div style={{ marginTop: 6, opacity: 0.8 }}>
+                      <div className="dh-hairline-list" style={{ marginTop: 4, opacity: 0.78 }}>
                         {otherList.map(renderHabitRow)}
                       </div>
                     )}
@@ -2310,125 +2223,95 @@ export const TodayView: React.FC<TodayViewProps> = ({
                 )}
               </>
             )}
-          </div>
+          </section>
 
-          {/* 10. Flat Focus Tip Card */}
-          <Card className="dh-today-card">
-            <div className="split" style={{ alignItems: 'flex-start', gap: 12 }}>
-              <div className="row" style={{ gap: 10, alignItems: 'flex-start', flex: 1 }}>
+          {/* 10. Quiet Editorial Focus Tip Note on #000000 */}
+          <section className="dh-amoled-section dh-editorial-note">
+            <div className="dh-eyebrow-row">
+              <div className="row" style={{ gap: 6 }}>
                 <Lightbulb
-                  size={18}
-                  strokeWidth={1.75}
-                  style={{ color: 'var(--ac-ink)', flexShrink: 0, marginTop: 2 }}
+                  size={13}
+                  strokeWidth={1.6}
+                  style={{ color: 'var(--tx-3)', flexShrink: 0 }}
+                  aria-hidden="true"
                 />
-                <div style={{ minWidth: 0 }}>
-                  <div className="row" style={{ gap: 6, marginBottom: 4 }}>
-                    <span
-                      style={{
-                        fontSize: 13,
-                        fontWeight: 600,
-                        color: 'var(--ac-ink)',
-                      }}
-                    >
-                      Focus tip
-                    </span>
-                    <span style={{ fontSize: 13, color: 'var(--tx-3)' }}>
-                      · {dailyTip.tag}
-                    </span>
-                  </div>
-                  <b style={{ fontSize: 14, display: 'block', marginBottom: 3 }}>
-                    {dailyTip.title}
-                  </b>
-                  <p
-                    style={{
-                      margin: 0,
-                      fontSize: 13,
-                      lineHeight: 1.45,
-                      color: 'var(--tx-2)',
-                    }}
-                  >
-                    {dailyTip.tip}
-                  </p>
-                </div>
+                <h3 className="dh-eyebrow">Focus tip · {dailyTip.tag}</h3>
               </div>
-              <Button
-                variant="ghost"
-                size="sm"
-                icon={<RotateCw size={14} strokeWidth={1.75} />}
+              <button
+                type="button"
+                className="dh-eyebrow-link"
                 onClick={() => setTipOffset((n) => n + 1)}
               >
-                Next tip
-              </Button>
+                <RotateCw size={12} strokeWidth={1.7} aria-hidden="true" />
+                <span>Next</span>
+              </button>
             </div>
-          </Card>
+            <div style={{ minWidth: 0 }}>
+              <b style={{ fontSize: 14, fontWeight: 600, display: 'block', marginBottom: 2, color: 'var(--tx)' }}>
+                {dailyTip.title}
+              </b>
+              <p
+                style={{
+                  margin: 0,
+                  fontSize: 13,
+                  lineHeight: 1.45,
+                  color: 'var(--tx-2)',
+                }}
+              >
+                {dailyTip.tip}
+              </p>
+            </div>
+          </section>
         </div>
 
-        {/* Right Rail on Desktop >=1100px: Today's Timeline + Daily Reflection */}
+        {/* Right Rail on Desktop >=1100px: Today's Timeline + Collapsible Evening Check-in */}
         <aside className="today-rail-col dh-today-flow">
-          {/* Today's Study Sessions Timeline */}
-          <Card className="dh-today-card">
-            <div className="split" style={{ marginBottom: 10 }}>
-              <div className="row" style={{ gap: 8 }}>
-                <BookOpen
-                  size={18}
-                  strokeWidth={1.75}
-                  style={{ color: 'var(--ac-ink)' }}
-                />
-                <h3 style={{ margin: 0, fontSize: 16 }}>
-                  {isTodaySelected ? "Today's timeline" : `Sessions (${sel})`}
-                </h3>
-              </div>
-              <Button
-                variant="secondary"
-                size="sm"
-                className="dh-glass-btn"
-                icon={<Plus size={14} strokeWidth={2} />}
+          {/* Today's Study Sessions Timeline (Tier-0 Hairline Section) */}
+          <section className="dh-amoled-section">
+            <div className="dh-eyebrow-row">
+              <h3 className="dh-eyebrow">
+                {isTodaySelected ? "Today's timeline" : `Sessions · ${sel}`}
+              </h3>
+              <button
+                type="button"
+                className="dh-eyebrow-link"
                 onClick={() => onOpenManualSession(effectiveQuickSubId)}
               >
-                Log hours
-              </Button>
+                <Plus size={14} strokeWidth={1.8} aria-hidden="true" />
+                <span>Log hours</span>
+              </button>
             </div>
 
             {selectedDaySessions.length === 0 ? (
-              <EmptyState
-                illustration="noSessions"
-                compact
-                title="No study sessions yet"
-                description="Start a focus timer or log hours manually."
-              />
+              <div className="dh-empty-inline">
+                <span>No study sessions logged yet.</span>
+                <button
+                  type="button"
+                  className="dh-eyebrow-link"
+                  onClick={() => onOpenManualSession(effectiveQuickSubId)}
+                >
+                  <span>Log hours ›</span>
+                </button>
+              </div>
             ) : (
               <WindowedList
                 items={selectedDaySessions}
                 threshold={100}
-                estimatedRowHeight={76}
+                estimatedRowHeight={68}
                 itemLabel="sessions"
-                style={{ display: 'flex', flexDirection: 'column', gap: 8 }}
+                className="dh-hairline-list"
                 getKey={(ses: StudySession) => ses.id}
                 renderItem={(ses: StudySession) => {
                   const sub = getSubject(state, ses.subjectId);
                   const heading = getSessionHeading(state, ses);
                   return (
-                    <div
-                      className="split"
-                      style={{
-                        background: 'var(--sf-2)',
-                        padding: '10px 12px',
-                        borderRadius: 12,
-                        border: '1px solid var(--hairline)',
-                        gap: 10,
-                      }}
-                    >
+                    <div className="dh-hairline-row">
                       <div style={{ minWidth: 0, flex: 1 }}>
                         <div className="row" style={{ gap: 7, flexWrap: 'wrap' }}>
                           <span
                             aria-hidden="true"
-                            style={{
-                              width: 8,
-                              height: 8,
-                              borderRadius: '50%',
-                              background: sub.color,
-                              flexShrink: 0,
-                            }}
+                            className="dh-sub-dot"
+                            style={{ background: sub.color }}
                           />
                           <b
                             style={{
@@ -2438,7 +2321,7 @@ export const TodayView: React.FC<TodayViewProps> = ({
                               textOverflow: 'ellipsis',
                             }}
                           >
-                            {sub.e} {heading}
+                            {heading}
                           </b>
                           <span
                             style={{
@@ -2454,8 +2337,10 @@ export const TodayView: React.FC<TodayViewProps> = ({
                         <small
                           style={{
                             display: 'block',
-                            marginTop: 3,
-                            fontSize: 13,
+                            marginTop: 2,
+                            paddingLeft: 13,
+                            fontSize: 12.5,
+                            color: 'var(--tx-3)',
                             fontVariantNumeric: 'tabular-nums',
                           }}
                         >
@@ -2467,7 +2352,8 @@ export const TodayView: React.FC<TodayViewProps> = ({
                             style={{
                               display: 'block',
                               marginTop: 2,
-                              fontSize: 13,
+                              paddingLeft: 13,
+                              fontSize: 12.5,
                               color: 'var(--tx-2)',
                             }}
                           >
@@ -2479,189 +2365,233 @@ export const TodayView: React.FC<TodayViewProps> = ({
                         type="button"
                         className="s"
                         aria-label={`Delete session ${heading}`}
-                        style={{ color: 'var(--err-ink)', padding: '6px 8px' }}
+                        style={{
+                          color: 'var(--tx-3)',
+                          padding: '6px 8px',
+                          background: 'transparent',
+                          border: 0,
+                        }}
                         onClick={() => onDeleteSession(ses.id)}
                       >
-                        <Trash2 size={14} strokeWidth={1.75} />
+                        <Trash2 size={14} strokeWidth={1.6} />
                       </button>
                     </div>
                   );
                 }}
               />
             )}
-          </Card>
+          </section>
 
-          {/* Daily Reflection & Wellbeing */}
-          <Card id="wellbeingReflectionCard" className="dh-today-card">
-            <h3 style={{ margin: '0 0 10px', fontSize: 16 }}>
-              Reflection &amp; wellbeing
-            </h3>
+          {/* Daily Reflection & Wellbeing (Collapsible 1-Line Evening Check-in Trigger) */}
+          {(() => {
+            const hasLoggedCheckin = Boolean(
+              state.mood[sel] ||
+                typeof sleepHours === 'number' ||
+                typeof energyLevel === 'number' ||
+                (state.notes[sel] || '').trim().length > 0
+            );
+            const isCheckinOpen = checkinOpen || hasLoggedCheckin;
+            return (
+              <section id="wellbeingReflectionCard" className="dh-amoled-section">
+                {!isCheckinOpen ? (
+                  <button
+                    type="button"
+                    className="dh-checkin-trigger"
+                    aria-expanded={false}
+                    onClick={() => {
+                      triggerHaptic('tap');
+                      setCheckinOpen(true);
+                    }}
+                  >
+                    <div style={{ minWidth: 0 }}>
+                      <span className="dh-eyebrow" style={{ display: 'block', color: 'var(--tx)' }}>
+                        Evening check-in
+                      </span>
+                      <span style={{ fontSize: 12.5, color: 'var(--tx-3)' }}>
+                        Mood, sleep, energy &amp; reflection note
+                      </span>
+                    </div>
+                    <ChevronRight size={16} strokeWidth={1.6} style={{ color: 'var(--tx-3)', flexShrink: 0 }} aria-hidden="true" />
+                  </button>
+                ) : (
+                  <>
+                    <div className="dh-eyebrow-row">
+                      <h3 className="dh-eyebrow">Reflection &amp; wellbeing</h3>
+                      {!hasLoggedCheckin && (
+                        <button
+                          type="button"
+                          className="dh-eyebrow-link"
+                          onClick={() => setCheckinOpen(false)}
+                        >
+                          Hide
+                        </button>
+                      )}
+                    </div>
 
-            {/* Mood Selector */}
-            <div style={{ marginBottom: 12 }}>
-              <small style={{ display: 'block', marginBottom: 6, fontSize: 13 }}>
-                How did your study feel?
-              </small>
-              <div className="row" style={{ gap: 6 }}>
-                {MOOD_ITEMS.map(([val, emoji, label]) => {
-                  const isSel = state.mood[sel] === val;
-                  return (
-                    <button
-                      key={val}
-                      type="button"
-                      aria-label={`Set study mood: ${label}`}
-                      aria-pressed={isSel}
-                      onClick={() => onSetMood(val)}
+                    {/* Mood Selector */}
+                    <div>
+                      <div className="row" style={{ gap: 6 }}>
+                        {MOOD_ITEMS.map(([val, emoji, label]) => {
+                          const isSel = state.mood[sel] === val;
+                          return (
+                            <button
+                              key={val}
+                              type="button"
+                              aria-label={`Set study mood: ${label}`}
+                              aria-pressed={isSel}
+                              onClick={() => onSetMood(val)}
+                              style={{
+                                flex: 1,
+                                fontSize: 16,
+                                padding: '8px 0',
+                                borderRadius: 12,
+                                background: isSel ? 'var(--ac-soft)' : 'rgba(255,255,255,0.04)',
+                                border: isSel
+                                  ? '1px solid var(--ac)'
+                                  : '1px solid var(--hairline)',
+                                display: 'flex',
+                                flexDirection: 'column',
+                                alignItems: 'center',
+                                gap: 2,
+                              }}
+                            >
+                              <span>{emoji}</span>
+                              <span
+                                style={{
+                                  fontSize: 12,
+                                  color: isSel ? 'var(--ac-ink)' : 'var(--tx-2)',
+                                  fontWeight: isSel ? 600 : 500,
+                                }}
+                              >
+                                {label}
+                              </span>
+                            </button>
+                          );
+                        })}
+                      </div>
+                    </div>
+
+                    {/* Sleep & Energy Hairline Ledger Row */}
+                    <div
+                      className="row"
                       style={{
-                        flex: 1,
-                        fontSize: 18,
-                        padding: '8px 0',
-                        borderRadius: 12,
-                        background: isSel ? 'var(--ac-soft)' : 'var(--sf-2)',
-                        border: isSel
-                          ? '1px solid var(--ac)'
-                          : '1px solid var(--line)',
-                        display: 'flex',
-                        flexDirection: 'column',
-                        alignItems: 'center',
-                        gap: 2,
+                        gap: 12,
+                        flexWrap: 'wrap',
+                        padding: '10px 0',
+                        borderTop: '1px solid var(--hairline)',
+                        borderBottom: '1px solid var(--hairline)',
                       }}
                     >
-                      <span>{emoji}</span>
-                      <span
+                      <div
                         style={{
-                          fontSize: 13,
-                          color: isSel ? 'var(--ac-ink)' : 'var(--tx-2)',
-                          fontWeight: isSel ? 600 : 500,
+                          flex: '1 1 130px',
+                          display: 'flex',
+                          alignItems: 'center',
+                          justifyContent: 'space-between',
+                          gap: 6,
                         }}
                       >
-                        {label}
-                      </span>
-                    </button>
-                  );
-                })}
-              </div>
-            </div>
+                        <div>
+                          <div
+                            className="row"
+                            style={{ gap: 4, fontSize: 12, color: 'var(--tx-3)' }}
+                          >
+                            <Moon size={12} strokeWidth={1.6} />
+                            <span>Sleep</span>
+                          </div>
+                          <b style={{ fontSize: 15, fontVariantNumeric: 'tabular-nums' }}>
+                            {typeof sleepHours === 'number' ? `${sleepHours}h` : '—'}
+                          </b>
+                        </div>
+                        <div className="row" style={{ gap: 4 }}>
+                          <button
+                            type="button"
+                            className="s"
+                            aria-label="Decrease sleep hours"
+                            onClick={() => {
+                              const base = typeof sleepHours === 'number' ? sleepHours : 7;
+                              onUpdateWellbeing(sel, {
+                                sleep: Math.max(0, +(base - 0.5).toFixed(1)),
+                              });
+                            }}
+                          >
+                            −
+                          </button>
+                          <button
+                            type="button"
+                            className="s"
+                            aria-label="Increase sleep hours"
+                            onClick={() => {
+                              const base = typeof sleepHours === 'number' ? sleepHours : 7;
+                              onUpdateWellbeing(sel, {
+                                sleep: Math.min(14, +(base + 0.5).toFixed(1)),
+                              });
+                            }}
+                          >
+                            +
+                          </button>
+                        </div>
+                      </div>
 
-            {/* Sleep & Energy Row */}
-            <div
-              className="row"
-              style={{
-                gap: 10,
-                marginBottom: 12,
-                flexWrap: 'wrap',
-                background: 'var(--sf-2)',
-                padding: '10px 12px',
-                borderRadius: 12,
-                border: '1px solid var(--line)',
-              }}
-            >
-              <div
-                style={{
-                  flex: '1 1 130px',
-                  display: 'flex',
-                  alignItems: 'center',
-                  justifyContent: 'space-between',
-                  gap: 6,
-                }}
-              >
-                <div>
-                  <div
-                    className="row"
-                    style={{ gap: 4, fontSize: 13, color: 'var(--tx-2)' }}
-                  >
-                    <Moon size={13} strokeWidth={1.75} />
-                    <span>Sleep</span>
-                  </div>
-                  <b style={{ fontSize: 14, fontVariantNumeric: 'tabular-nums' }}>
-                    {typeof sleepHours === 'number' ? `${sleepHours}h` : '—'}
-                  </b>
-                </div>
-                <div className="row" style={{ gap: 4 }}>
-                  <button
-                    type="button"
-                    className="s"
-                    aria-label="Decrease sleep hours"
-                    onClick={() => {
-                      const base = typeof sleepHours === 'number' ? sleepHours : 7;
-                      onUpdateWellbeing(sel, {
-                        sleep: Math.max(0, +(base - 0.5).toFixed(1)),
-                      });
-                    }}
-                  >
-                    −
-                  </button>
-                  <button
-                    type="button"
-                    className="s"
-                    aria-label="Increase sleep hours"
-                    onClick={() => {
-                      const base = typeof sleepHours === 'number' ? sleepHours : 7;
-                      onUpdateWellbeing(sel, {
-                        sleep: Math.min(14, +(base + 0.5).toFixed(1)),
-                      });
-                    }}
-                  >
-                    +
-                  </button>
-                </div>
-              </div>
+                      <div style={{ flex: '1 1 150px' }}>
+                        <div
+                          className="row"
+                          style={{
+                            gap: 4,
+                            fontSize: 12,
+                            color: 'var(--tx-3)',
+                            marginBottom: 4,
+                          }}
+                        >
+                          <Zap size={12} strokeWidth={1.6} />
+                          <span>Energy (1–5)</span>
+                        </div>
+                        <div className="row" style={{ gap: 4 }}>
+                          {([1, 2, 3, 4, 5] as const).map((lvl) => {
+                            const isLit = energyLevel === lvl;
+                            return (
+                              <button
+                                key={lvl}
+                                type="button"
+                                aria-label={`Set energy level ${lvl} of 5`}
+                                aria-pressed={isLit}
+                                onClick={() => onUpdateWellbeing(sel, { energy: lvl })}
+                                style={{
+                                  flex: 1,
+                                  padding: '5px 0',
+                                  minHeight: 32,
+                                  fontSize: 13,
+                                  fontWeight: 600,
+                                  borderRadius: 8,
+                                  background: isLit ? 'var(--ac-soft)' : 'rgba(255,255,255,0.04)',
+                                  color: isLit ? 'var(--ac-ink)' : 'var(--tx-2)',
+                                  border: isLit
+                                    ? '1px solid var(--ac)'
+                                    : '1px solid var(--hairline)',
+                                  fontVariantNumeric: 'tabular-nums',
+                                }}
+                              >
+                                {lvl}
+                              </button>
+                            );
+                          })}
+                        </div>
+                      </div>
+                    </div>
 
-              <div style={{ flex: '1 1 150px' }}>
-                <div
-                  className="row"
-                  style={{
-                    gap: 4,
-                    fontSize: 13,
-                    color: 'var(--tx-2)',
-                    marginBottom: 4,
-                  }}
-                >
-                  <Zap size={13} strokeWidth={1.75} />
-                  <span>Energy (1–5)</span>
-                </div>
-                <div className="row" style={{ gap: 4 }}>
-                  {([1, 2, 3, 4, 5] as const).map((lvl) => {
-                    const isLit = energyLevel === lvl;
-                    return (
-                      <button
-                        key={lvl}
-                        type="button"
-                        aria-label={`Set energy level ${lvl} of 5`}
-                        aria-pressed={isLit}
-                        onClick={() => onUpdateWellbeing(sel, { energy: lvl })}
-                        style={{
-                          flex: 1,
-                          padding: '5px 0',
-                          minHeight: 32,
-                          fontSize: 13,
-                          fontWeight: 600,
-                          borderRadius: 8,
-                          background: isLit ? 'var(--ac-soft)' : 'var(--sf-1)',
-                          color: isLit ? 'var(--ac-ink)' : 'var(--tx-2)',
-                          border: isLit
-                            ? '1px solid var(--ac)'
-                            : '1px solid var(--line)',
-                          fontVariantNumeric: 'tabular-nums',
-                        }}
-                      >
-                        {lvl}
-                      </button>
-                    );
-                  })}
-                </div>
-              </div>
-            </div>
-
-            <textarea
-              id="note"
-              rows={3}
-              aria-label="Daily study reflection note"
-              placeholder="Wins, distractions, or tomorrow's #1 priority..."
-              value={state.notes[sel] || ''}
-              onChange={(e) => onSetNote(e.target.value)}
-            />
-          </Card>
+                    <textarea
+                      id="note"
+                      rows={3}
+                      aria-label="Daily study reflection note"
+                      placeholder="Wins, distractions, or tomorrow's #1 priority..."
+                      value={state.notes[sel] || ''}
+                      onChange={(e) => onSetNote(e.target.value)}
+                    />
+                  </>
+                )}
+              </section>
+            );
+          })()}
         </aside>
       </div>
 
@@ -2880,7 +2810,7 @@ export const TodayView: React.FC<TodayViewProps> = ({
                   colorDot={s.color}
                   onClick={() => setNewTaskSubjectId(s.id)}
                 >
-                  {s.e} {s.name}
+                  {s.name}
                 </Chip>
               ))}
             </div>

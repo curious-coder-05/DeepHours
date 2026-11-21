@@ -17,8 +17,6 @@ import {
   Trash2,
   RotateCw,
   Edit3,
-  BookOpen,
-  ListChecks,
   ChevronDown,
   Clock,
   Lightbulb,
@@ -60,7 +58,7 @@ import {
   type AmbientMixerState,
   type SelectableAmbientPresetId,
 } from '../utils/ambientMixer';
-import { ensureAudioEngine, syncAmbientMixer } from '../utils/audioEngine';
+import { ensureAudioEngine, playSoundCue, syncAmbientMixer } from '../utils/audioEngine';
 import {
   ALL_SUBJECTS_COLOR,
   ALL_SUBJECTS_LABEL,
@@ -99,11 +97,8 @@ import { ExamBleedSheet } from './ExamBleedSheet';
 import { ParkingLotSheet } from './ParkingLotSheet';
 import { StandByDeskOverlay } from './StandByDeskOverlay';
 import {
-  BarChart,
   Button,
-  Card,
   Chip,
-  EmptyState,
   Meter,
   Segmented,
   Select,
@@ -325,7 +320,7 @@ export const FocusView: React.FC<FocusViewProps> = ({
     const checkOvertime = () => {
       const snap = computeExamClockSnapshot(examState, Date.now());
       if (snap.newlyOvertimeSectionIds.length > 0) {
-        playExamOvertimeAlert(Boolean(state.set.snd));
+        playExamOvertimeAlert(Boolean(state.set.snd), snap.newlyOvertimeSectionIds[0]);
         setExamState((prev) =>
           acknowledgeOvertimeAlerts(prev, snap.newlyOvertimeSectionIds)
         );
@@ -367,6 +362,7 @@ export const FocusView: React.FC<FocusViewProps> = ({
     setPaceRecords(updatedRecords);
     setExamState(createInitialExamClockState(examState.sections));
     onSetDeskMode(false);
+    playSoundCue('examFinish', Boolean(state.set.snd));
     onLogExamHallSession?.(record);
     setBleedSheetRecord(record);
   };
@@ -481,22 +477,13 @@ export const FocusView: React.FC<FocusViewProps> = ({
           ? activeHeadingDisplay
           : 'Full Mock'
       }`
-    : `${curSubject.e} ${curSubject.name}${curChapter ? ` · ${curChapter.name}` : ''}${
+    : `${curSubject.name}${curChapter ? ` · ${curChapter.name}` : ''}${
         activeHeadingDisplay && activeHeadingDisplay !== `${curSubject.name} Study`
           ? ` · ${activeHeadingDisplay}`
           : curMode === 'fullMock'
             ? ' · Full Mock'
             : ''
       }`;
-
-  const targetMins = t
-    ? t.targetMs > 0
-      ? +(t.targetMs / 60000).toFixed(1)
-      : 0
-    : +(defaultIdleMs / 60000).toFixed(1);
-  const elapsedMins = m ? +(m.totalActiveMs / 60000).toFixed(1) : 0;
-  const progressRatio =
-    targetMins > 0 ? Math.min(100, Math.round((elapsedMins / targetMins) * 100)) : 0;
 
   // Stopwatch milestone helper (15-min milestones)
   const stopwatchActiveMs = m ? m.totalActiveMs : 0;
@@ -535,9 +522,9 @@ export const FocusView: React.FC<FocusViewProps> = ({
   const activeUiMode: FocusUiMode = examHallSelected ? 'examHall' : curMode;
 
   return (
-    <div>
-      {/* 1. Non-Wrapping Mode Switcher (including Exam Hall Chess-Clock) */}
-      <div className="hide-desk" style={{ marginBottom: 14 }}>
+    <div className="dh-amoled-flow">
+      {/* 1. Minimal Underline Mode Switcher (including Exam Hall Chess-Clock) */}
+      <div className="hide-desk">
         <Segmented
           aria-label="Timer mode"
           value={activeUiMode}
@@ -654,12 +641,9 @@ export const FocusView: React.FC<FocusViewProps> = ({
             >
               <span
                 aria-hidden="true"
+                className="dh-sub-dot"
                 style={{
-                  width: 8,
-                  height: 8,
-                  borderRadius: '50%',
                   background: curSubject.color,
-                  flexShrink: 0,
                 }}
               />
               <span
@@ -1198,44 +1182,6 @@ export const FocusView: React.FC<FocusViewProps> = ({
           </Button>
         </div>
 
-        {/* Custom SVG Session vs Target Chart (Hidden cleanly in Stopwatch mode) */}
-        {!isStopwatch && (
-          <div
-            aria-label="Current study session duration vs target chart"
-            style={{
-              maxWidth: 400,
-              margin: '4px auto 12px',
-              padding: '10px 14px',
-              borderRadius: 12,
-              background: 'var(--sf-2)',
-              border: '1px solid var(--line)',
-              textAlign: 'left',
-            }}
-          >
-            <BarChart
-              orientation="horizontal"
-              height={46}
-              goalValue={targetMins}
-              goalLabel={`${targetMins}m`}
-              valueFormatter={(v) => `${v}m`}
-              ariaLabel="Session duration vs target"
-              data={[
-                {
-                  label: 'Session vs target',
-                  value: elapsedMins,
-                  hint: `${progressRatio}%`,
-                  color:
-                    m?.phase === 'break'
-                      ? 'var(--info)'
-                      : m && m.overtimeMs > 0
-                        ? 'var(--ok)'
-                        : curSubject.color || 'var(--ac)',
-                },
-              ]}
-            />
-          </div>
-        )}
-
         {/* Motivational Quote Bar while timer is active */}
         {m && (
           <div id="focusMotivationalQuote" className="focus-quote-bar">
@@ -1301,8 +1247,12 @@ export const FocusView: React.FC<FocusViewProps> = ({
       </div>
       )}
 
-      {/* 3. Offline 3-Fader Ambient Sound Mixer */}
-      <Card className="hide-desk dh-today-card dh-mixer-card" data-testid="ambient-mixer-card">
+      {/* 3. Offline 3-Fader Ambient Sound Mixer (Borderless Tier-0 on #000000) */}
+      <section
+        className="hide-desk dh-amoled-section dh-mixer-card"
+        style={{ paddingTop: 14, borderTop: '1px solid var(--hairline)' }}
+        data-testid="ambient-mixer-card"
+      >
         <div className="dh-mixer-header">
           <button
             type="button"
@@ -1436,7 +1386,7 @@ export const FocusView: React.FC<FocusViewProps> = ({
 
             <div className="dh-mixer-fader-foot">
               <span className="dh-mixer-offline-note">
-                100% offline Web Audio synthesis
+                Offline Web Audio
               </span>
               <button
                 type="button"
@@ -1448,16 +1398,13 @@ export const FocusView: React.FC<FocusViewProps> = ({
             </div>
           </div>
         )}
-      </Card>
+      </section>
 
-      {/* 4. Session Checklist Card */}
-      <Card className="hide-desk dh-today-card">
-        <div className="split" style={{ marginBottom: 10 }}>
-          <div className="row" style={{ gap: 8 }}>
-            <ListChecks size={18} strokeWidth={1.75} style={{ color: 'var(--ac-ink)' }} />
-            <h3 style={{ margin: 0, fontSize: 18 }}>Session checklist</h3>
-          </div>
-          <small className="dh-meta-count">
+      {/* 4. Session Checklist (Borderless Tier-0 on #000000) */}
+      <section className="hide-desk dh-amoled-section">
+        <div className="dh-eyebrow-row">
+          <h3 className="dh-eyebrow">Session checklist</h3>
+          <small className="dh-meta-count" style={{ fontSize: 12, color: 'var(--tx-3)' }}>
             {globalTodos.filter((x) => x.done).length}/{globalTodos.length} done
           </small>
         </div>
@@ -1472,41 +1419,36 @@ export const FocusView: React.FC<FocusViewProps> = ({
             setNewTodoText('');
           }}
           className="row"
-          style={{ gap: 8, marginBottom: globalTodos.length > 0 ? 10 : 0 }}
+          style={{ gap: 8 }}
         >
           <input
             type="text"
             aria-label="New session checklist micro-goal"
-            placeholder="Add micro-goal (e.g., 30 rotational mechanics MCQs)..."
+            placeholder="Add micro-goal (e.g. 30 rotational mechanics MCQs)…"
             value={newTodoText}
             onChange={(e) => setNewTodoText(e.target.value)}
-            style={{ flex: 1, minHeight: 44, fontSize: 14 }}
+            style={{
+              flex: 1,
+              minHeight: 42,
+              fontSize: 14,
+              background: 'rgba(255,255,255,0.04)',
+              borderColor: 'var(--hairline)',
+            }}
           />
-          <Button
+          <button
             type="submit"
-            variant="secondary"
-            size="md"
-            className="dh-glass-accent-btn"
-            icon={<Plus size={15} strokeWidth={2} />}
+            className="dh-ghost-pill"
+            style={{ minHeight: 42, padding: '0 14px' }}
           >
-            Add
-          </Button>
+            <Plus size={14} strokeWidth={2} aria-hidden="true" />
+            <span>Add</span>
+          </button>
         </form>
 
         {globalTodos.length > 0 && (
-          <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
+          <div className="dh-hairline-list">
             {globalTodos.map((td) => (
-              <div
-                key={td.id}
-                className="split"
-                style={{
-                  background: 'var(--sf-2)',
-                  padding: '8px 12px',
-                  borderRadius: 12,
-                  border: '1px solid var(--hairline)',
-                  gap: 10,
-                }}
-              >
+              <div key={td.id} className="dh-hairline-row">
                 <button
                   type="button"
                   onClick={() => {
@@ -1523,14 +1465,14 @@ export const FocusView: React.FC<FocusViewProps> = ({
                     padding: 0,
                     textAlign: 'left',
                     cursor: 'pointer',
-                    minHeight: 36,
+                    minHeight: 34,
                   }}
                 >
                   <span
                     className={`dh-task-check ${td.done ? 'checked' : ''}`}
-                    style={{ width: 26, height: 26, minWidth: 26, minHeight: 26 }}
+                    style={{ width: 24, height: 24, minWidth: 24, minHeight: 24 }}
                   >
-                    {td.done ? <Check size={14} strokeWidth={2.25} /> : null}
+                    {td.done ? <Check size={13} strokeWidth={2.25} /> : null}
                   </span>
                   <span className={`dh-task-title ${td.done ? 'done' : ''}`}>
                     {td.text}
@@ -1540,48 +1482,55 @@ export const FocusView: React.FC<FocusViewProps> = ({
                   type="button"
                   className="s"
                   aria-label={`Delete ${td.text}`}
-                  style={{ color: 'var(--err-ink)', padding: '6px 8px' }}
+                  style={{
+                    color: 'var(--tx-3)',
+                    padding: '6px 8px',
+                    background: 'transparent',
+                    border: 0,
+                  }}
                   onClick={() => onDeleteTodo(td.id)}
                 >
-                  <Trash2 size={14} strokeWidth={1.75} />
+                  <Trash2 size={14} strokeWidth={1.6} />
                 </button>
               </div>
             ))}
           </div>
         )}
-      </Card>
+      </section>
 
-      {/* 5. Today's Logged Sessions */}
-      <Card className="hide-desk dh-today-card">
-        <div className="split" style={{ marginBottom: 10 }}>
-          <div className="row" style={{ gap: 8 }}>
-            <BookOpen size={18} strokeWidth={1.75} style={{ color: 'var(--ac-ink)' }} />
-            <h3 style={{ margin: 0, fontSize: 18 }}>
-              Today&apos;s sessions ({todaySessions.length})
-            </h3>
-          </div>
-          <Button
-            variant="secondary"
-            size="sm"
-            className="dh-glass-btn"
-            icon={<Plus size={14} strokeWidth={2} />}
+      {/* 5. Today's Logged Sessions (Borderless Tier-0 on #000000) */}
+      <section className="hide-desk dh-amoled-section">
+        <div className="dh-eyebrow-row">
+          <h3 className="dh-eyebrow">
+            Today&apos;s sessions ({todaySessions.length})
+          </h3>
+          <button
+            type="button"
+            className="dh-eyebrow-link"
             onClick={() =>
               onOpenManualSession(effectiveSubId, effectiveChapId || undefined)
             }
           >
-            Log hours
-          </Button>
+            <Plus size={14} strokeWidth={1.8} aria-hidden="true" />
+            <span>Log hours</span>
+          </button>
         </div>
 
         {todaySessions.length === 0 ? (
-          <EmptyState
-            illustration="noSessions"
-            compact
-            title="No sessions logged today"
-            description="Start the focus core above or log completed study hours manually."
-          />
+          <div className="dh-empty-inline">
+            <span>No sessions logged today.</span>
+            <button
+              type="button"
+              className="dh-eyebrow-link"
+              onClick={() =>
+                onOpenManualSession(effectiveSubId, effectiveChapId || undefined)
+              }
+            >
+              <span>Log hours ›</span>
+            </button>
+          </div>
         ) : (
-          <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
+          <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
             <WindowedList
               items={
                 showAllTodaySessions || todaySessions.length <= 10
@@ -1589,35 +1538,21 @@ export const FocusView: React.FC<FocusViewProps> = ({
                   : todaySessions.slice(0, 10)
               }
               threshold={100}
-              estimatedRowHeight={72}
+              estimatedRowHeight={68}
               itemLabel="sessions"
-              style={{ display: 'flex', flexDirection: 'column', gap: 8 }}
+              className="dh-hairline-list"
               getKey={(ses: StudySession) => ses.id}
               renderItem={(ses: StudySession) => {
                 const sSub = getSubject(state, ses.subjectId);
                 const heading = getSessionHeading(state, ses);
                 return (
-                  <div
-                    className="split"
-                    style={{
-                      background: 'var(--sf-2)',
-                      padding: '10px 12px',
-                      borderRadius: 12,
-                      border: '1px solid var(--hairline)',
-                      gap: 10,
-                    }}
-                  >
+                  <div className="dh-hairline-row">
                     <div style={{ minWidth: 0, flex: 1 }}>
                       <div className="row" style={{ gap: 7, flexWrap: 'wrap' }}>
                         <span
                           aria-hidden="true"
-                          style={{
-                            width: 8,
-                            height: 8,
-                            borderRadius: '50%',
-                            background: sSub.color,
-                            flexShrink: 0,
-                          }}
+                          className="dh-sub-dot"
+                          style={{ background: sSub.color }}
                         />
                         <b
                           style={{
@@ -1627,7 +1562,7 @@ export const FocusView: React.FC<FocusViewProps> = ({
                             textOverflow: 'ellipsis',
                           }}
                         >
-                          {sSub.e} {heading}
+                          {heading}
                         </b>
                         <span
                           className="tabular-nums"
@@ -1643,8 +1578,10 @@ export const FocusView: React.FC<FocusViewProps> = ({
                       <small
                         style={{
                           display: 'block',
-                          marginTop: 3,
-                          fontSize: 13,
+                          marginTop: 2,
+                          paddingLeft: 13,
+                          fontSize: 12.5,
+                          color: 'var(--tx-3)',
                           fontVariantNumeric: 'tabular-nums',
                         }}
                       >
@@ -1653,33 +1590,32 @@ export const FocusView: React.FC<FocusViewProps> = ({
                         {ses.note ? ` · "${ses.note}"` : ''}
                       </small>
                     </div>
-                    <Button
-                      variant="secondary"
-                      size="sm"
-                      className="dh-glass-btn"
-                      icon={<Edit3 size={13} strokeWidth={1.75} />}
+                    <button
+                      type="button"
+                      className="dh-ghost-pill"
                       onClick={() => onEditSession(ses.id)}
                     >
-                      Edit
-                    </Button>
+                      <Edit3 size={12} strokeWidth={1.6} aria-hidden="true" />
+                      <span>Edit</span>
+                    </button>
                   </div>
                 );
               }}
             />
             {todaySessions.length > 10 && (
-              <Button
-                variant="ghost"
-                size="sm"
+              <button
+                type="button"
+                className="dh-eyebrow-link"
                 onClick={() => setShowAllTodaySessions((v) => !v)}
               >
                 {showAllTodaySessions
                   ? 'Show recent 10 only'
                   : `Show all ${todaySessions.length} sessions`}
-              </Button>
+              </button>
             )}
           </div>
         )}
-      </Card>
+      </section>
 
       {/* Subject, Chapter & Topic Frosted BottomSheet */}
       <BottomSheet
@@ -1761,7 +1697,7 @@ export const FocusView: React.FC<FocusViewProps> = ({
                   }
                 }}
               >
-                {s.e} {s.name}
+                {s.name}
               </Chip>
             ))}
           </div>

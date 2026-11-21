@@ -5,12 +5,11 @@ import {
   Check,
   ChevronDown,
   ChevronRight,
-  Compass,
   Edit3,
-  FileSpreadsheet,
   Flame,
   Gauge,
   Minus,
+  MoreHorizontal,
   Play,
   Plus,
   Sparkles,
@@ -63,6 +62,7 @@ import {
 import type { ScoreLabSidecarSeed } from '../utils/scoreLab';
 import { triggerHaptic } from '../utils/haptics';
 import { computeUiPaceReport } from '../utils/uiHelpers';
+import { formatChapterConfidence } from '../utils/chartHelpers';
 import { computeVaultCounts } from '../utils/vaultLogic';
 import { listVaultItems } from '../utils/vaultStore';
 import { MockReportSheet } from './MockReportSheet';
@@ -76,7 +76,6 @@ import {
   Card,
   Chip,
   DonutChart,
-  EmptyState,
   Field,
   IconButton,
   Meter,
@@ -85,7 +84,6 @@ import {
   Select,
   Sheet,
   Skeleton,
-  Stat,
   WindowedList,
 } from './ui';
 
@@ -243,7 +241,8 @@ export const PrepView: React.FC<PrepViewProps> = ({
   const [bulkSubjectId, setBulkSubjectId] = useState<string>(defaultSubjectId);
   const [bulkText, setBulkText] = useState<string>('');
 
-  // Inline PYQ Drawer inside chapter
+  // Inline PYQ Drawer & Expandable 2-Line Chapter Row state
+  const [expandedChapterId, setExpandedChapterId] = useState<string | null>(null);
   const [openPyqChapterId, setOpenPyqChapterId] = useState<string | null>(null);
   const [pyqAttemptedDraft, setPyqAttemptedDraft] = useState<string>('30');
   const [pyqCorrectDraft, setPyqCorrectDraft] = useState<string>('24');
@@ -449,7 +448,7 @@ export const PrepView: React.FC<PrepViewProps> = ({
           SUB-VIEW 1: SYLLABUS & REVISIONS
           ========================================== */}
       {activeUiTab === 'syllabus' && (
-        <div className="space-y-4">
+        <div className="dh-amoled-flow">
           {/* Optional 3D Syllabus Astrolabe Scene */}
           <SyllabusAstrolabeScene
             subjects={state.subjects}
@@ -470,36 +469,23 @@ export const PrepView: React.FC<PrepViewProps> = ({
             onOpenBulkPaste={() => setShowBulkPasteSheet(true)}
           />
 
-          {/* Syllabus Pace Calculator Card (with nearest upcoming D-Day fallback) */}
-          <Card>
-            <div className="split mb-3 flex-wrap gap-2">
-              <div className="flex items-center gap-2">
-                <Compass size={18} className="text-[var(--ac-ink)]" aria-hidden="true" />
-                <div>
-                  <h3 className="text-[15px] font-semibold text-[var(--tx)]">
-                    Syllabus pace calculator
-                  </h3>
-                  {paceReport.exam && (
-                    <p className="text-[13px] text-[var(--tx-2)]">
-                      Target: {paceReport.exam.e} {paceReport.exam.title} ({paceReport.exam.date}) ·{' '}
-                      {paceReport.revisionBufferDays}d revision buffer
-                    </p>
-                  )}
-                </div>
+          {/* Syllabus Pace Calculator — Borderless AMOLED Ledger */}
+          <section className="dh-amoled-section">
+            <div className="dh-eyebrow-row">
+              <div className="min-w-0">
+                <h3 className="dh-eyebrow">Syllabus pace</h3>
+                {paceReport.exam && (
+                  <p className="tnum mt-1 text-[13px] text-[var(--tx-2)]">
+                    {paceReport.exam.title} ({paceReport.exam.date}) · {paceReport.revisionBufferDays}d buffer
+                  </p>
+                )}
               </div>
               {paceReport.overall.status !== 'no-exam' &&
                 paceReport.overall.status !== 'past-exam' &&
                 paceReport.overall.status !== 'no-chapters' && (
                   <span
-                    className="rounded-lg px-2.5 py-1 text-[13px] font-semibold"
+                    className="tnum text-[13px] font-semibold"
                     style={{
-                      background:
-                        paceReport.overall.status === 'ahead' ||
-                        paceReport.overall.status === 'completed'
-                          ? 'rgba(74, 222, 128, 0.14)'
-                          : paceReport.overall.status === 'on track'
-                            ? 'var(--ac-soft)'
-                            : 'rgba(251, 146, 60, 0.16)',
                       color:
                         paceReport.overall.status === 'ahead' ||
                         paceReport.overall.status === 'completed'
@@ -521,66 +507,68 @@ export const PrepView: React.FC<PrepViewProps> = ({
             </div>
 
             {paceReport.overall.status === 'no-exam' ? (
-              <div className="rounded-xl border border-[var(--line)] bg-[var(--sf-2)] p-3 text-[13px] text-[var(--tx-2)]">
-                Add an upcoming exam countdown on the Today tab or Settings → Exams to calculate your weekly chapter pace and projected finish date.
+              <div className="dh-empty-inline">
+                <span>Add an exam D-Day in Settings to calculate your weekly chapter pace.</span>
               </div>
             ) : paceReport.overall.status === 'past-exam' ? (
-              <div className="rounded-xl border border-[var(--line)] bg-[var(--sf-2)] p-3 text-[13px] text-[var(--tx-2)]">
-                Your exam date ({paceReport.exam?.date}) has passed. Update your exam date in Settings → Exams to recalculate your syllabus pace.
+              <div className="dh-empty-inline">
+                <span>Exam date ({paceReport.exam?.date}) passed — update it in Settings → Exams.</span>
               </div>
             ) : paceReport.overall.status === 'no-chapters' ? (
-              <div className="rounded-xl border border-[var(--line)] bg-[var(--sf-2)] p-3 text-[13px] text-[var(--tx-2)]">
-                Add chapters below (or use Bulk Paste) to calculate your weekly completion velocity before{' '}
-                <strong className="text-[var(--tx)]">{paceReport.syllabusEndDate}</strong>.
+              <div className="dh-empty-inline">
+                <span>Add chapters below to project completion before {paceReport.syllabusEndDate}.</span>
               </div>
             ) : (
-              <div className="space-y-3">
-                <div className="grid grid-cols-2 gap-2.5 sm:grid-cols-4">
-                  <Stat
-                    label="Syllabus deadline"
-                    value={paceReport.syllabusEndDate || '—'}
-                    sub={`${Math.max(0, paceReport.daysToSyllabusEnd ?? 0)}d left`}
-                  />
-                  <Stat
-                    label="Required pace"
-                    value={`${paceReport.overall.requiredPerWeek}/wk`}
-                    sub={`${paceReport.overall.remaining} ch remaining`}
-                  />
-                  <Stat
-                    label="Your 28d pace"
-                    value={`${paceReport.overall.actualPerWeek}/wk`}
-                    sub={`${paceReport.overall.completedLast28Days} ch in 28d`}
-                  />
-                  <Stat
-                    label="Projected finish"
-                    value={paceReport.overall.projectedFinishDate || 'Need 1+ done'}
-                    sub="At current velocity"
-                  />
+              <div className="dh-ledger-2x2">
+                <div className="dh-ledger-cell">
+                  <div className="dh-ledger-label">Deadline</div>
+                  <div className="dh-ledger-val tnum">{paceReport.syllabusEndDate || '—'}</div>
+                  <div className="dh-ledger-sub tnum">
+                    {Math.max(0, paceReport.daysToSyllabusEnd ?? 0)}d left
+                  </div>
+                </div>
+                <div className="dh-ledger-cell">
+                  <div className="dh-ledger-label">Required pace</div>
+                  <div className="dh-ledger-val tnum">{paceReport.overall.requiredPerWeek}/wk</div>
+                  <div className="dh-ledger-sub tnum">
+                    {paceReport.overall.remaining} ch left
+                  </div>
+                </div>
+                <div className="dh-ledger-cell">
+                  <div className="dh-ledger-label">28d velocity</div>
+                  <div className="dh-ledger-val tnum">{paceReport.overall.actualPerWeek}/wk</div>
+                  <div className="dh-ledger-sub tnum">
+                    {paceReport.overall.completedLast28Days} ch in 28d
+                  </div>
+                </div>
+                <div className="dh-ledger-cell">
+                  <div className="dh-ledger-label">Projected finish</div>
+                  <div className="dh-ledger-val tnum">
+                    {paceReport.overall.projectedFinishDate || 'Need 1+ done'}
+                  </div>
+                  <div className="dh-ledger-sub">At current pace</div>
                 </div>
               </div>
             )}
-          </Card>
+          </section>
 
           {/* Completion per Subject Donut + Progress Rows */}
-          <Card className="space-y-4">
-            <div className="split flex-wrap gap-2">
+          <section className="dh-amoled-section">
+            <div className="dh-eyebrow-row">
               <div>
-                <h3 className="text-[15px] font-semibold text-[var(--tx)]">
-                  Subject completion
-                </h3>
-                <p className="tnum text-[13px] text-[var(--tx-2)]">
-                  {syllabusMetrics.completed} of {syllabusMetrics.total} chapters completed ({syllabusMetrics.pct}%) ·{' '}
-                  {syllabusMetrics.inProgress} in progress
+                <h3 className="dh-eyebrow">Subject completion</h3>
+                <p className="tnum mt-1 text-[13px] text-[var(--tx-2)]">
+                  {syllabusMetrics.completed} of {syllabusMetrics.total} done ({syllabusMetrics.pct}%) · {syllabusMetrics.inProgress} active
                 </p>
               </div>
-              <span className="tnum rounded-lg bg-[var(--ac-soft)] px-2.5 py-1 text-[13px] font-semibold text-[var(--ac-ink)]">
+              <span className="tnum text-[14px] font-semibold text-[var(--ac-ink)]">
                 {syllabusMetrics.pct}%
               </span>
             </div>
 
             <DonutChart
               segments={syllabusMetrics.bySubject.map((row) => ({
-                label: `${row.subject.e} ${row.subject.name}`,
+                label: row.subject.name,
                 value: row.completed,
                 color: row.subject.color,
                 detail: `${row.completed}/${row.total} (${row.pct}%)${
@@ -593,44 +581,41 @@ export const PrepView: React.FC<PrepViewProps> = ({
               valueFormatter={(v) => `${v} ch`}
               ariaLabel="Syllabus completion breakdown by subject"
             />
-          </Card>
+          </section>
 
           {/* Study Next Recommender */}
           {studyNextList.length > 0 && (
-            <Card>
-              <SectionHeader
-                title="Recommended next chapters"
-                subtitle="Prioritized by low confidence, open mistakes, and days since last touch"
-              />
-              <div className="mt-2 divide-y divide-[var(--line)]">
+            <section className="dh-amoled-section">
+              <SectionHeader title="Recommended next" />
+              <div className="dh-hairline-list">
                 {studyNextList.map((item) => {
                   const sub = getSubject(state, item.chapter.subjectId);
                   return (
                     <div
                       key={item.chapter.id}
-                      className="flex flex-wrap items-center justify-between gap-3 py-2.5"
+                      className="dh-hairline-row flex flex-wrap items-center justify-between gap-3"
                     >
                       <div className="min-w-0 flex-1">
                         <div className="flex flex-wrap items-center gap-2">
                           <span
-                            className="h-2.5 w-2.5 rounded-full"
+                            className="dh-sub-dot"
                             style={{ background: sub.color }}
+                            aria-hidden="true"
                           />
                           <span className="text-[14px] font-medium text-[var(--tx)]">
                             {item.chapter.name}
                           </span>
                           <span className="text-[13px] text-[var(--tx-3)]">
-                            {sub.e} {sub.name}
+                            {sub.name}
                           </span>
                         </div>
                         <p className="mt-0.5 text-[13px] text-[var(--tx-2)]">
                           {item.reasons.join(' · ')}
                         </p>
                       </div>
-                      <Button
-                        variant="primary"
-                        size="sm"
-                        icon={<Play size={14} />}
+                      <button
+                        type="button"
+                        className="dh-ghost-pill"
                         onClick={() =>
                           onStartChapterFocus(
                             item.chapter.subjectId,
@@ -639,29 +624,26 @@ export const PrepView: React.FC<PrepViewProps> = ({
                           )
                         }
                       >
-                        Focus
-                      </Button>
+                        Focus ›
+                      </button>
                     </div>
                   );
                 })}
               </div>
-            </Card>
+            </section>
           )}
 
           {/* Add Chapter & Bulk Paste */}
-          <Card>
-            <div className="split mb-3 flex-wrap gap-2">
-              <h3 className="text-[15px] font-semibold text-[var(--tx)]">
-                Add syllabus chapters
-              </h3>
-              <Button
-                variant="secondary"
-                size="sm"
-                icon={<FileSpreadsheet size={15} />}
+          <section className="dh-amoled-section">
+            <div className="dh-eyebrow-row">
+              <h3 className="dh-eyebrow">Add syllabus chapters</h3>
+              <button
+                type="button"
+                className="dh-eyebrow-link"
                 onClick={() => setShowBulkPasteSheet(true)}
               >
-                Bulk paste
-              </Button>
+                Bulk paste ›
+              </button>
             </div>
 
             <form
@@ -677,7 +659,7 @@ export const PrepView: React.FC<PrepViewProps> = ({
                     .filter((s) => !s.arch)
                     .map((s) => ({
                       value: s.id,
-                      label: `${s.e} ${s.name}`,
+                      label: s.name,
                     }))}
                 />
               </div>
@@ -695,7 +677,7 @@ export const PrepView: React.FC<PrepViewProps> = ({
               <div className="sm:col-span-2">
                 <Button
                   type="submit"
-                  variant="primary"
+                  variant="secondary"
                   className="w-full"
                   disabled={!newChapterName.trim()}
                 >
@@ -703,10 +685,12 @@ export const PrepView: React.FC<PrepViewProps> = ({
                 </Button>
               </div>
             </form>
-          </Card>
+          </section>
 
-          {/* Search & Filters */}
-          <Card>
+          {/* Search & Filters + Collapsible Subject Chapter Groups */}
+          <section className="dh-amoled-section">
+            <SectionHeader title="Chapters" />
+
             <div className="space-y-3">
               <div className="flex items-center gap-1.5 overflow-x-auto pb-1">
                 <Chip
@@ -724,7 +708,7 @@ export const PrepView: React.FC<PrepViewProps> = ({
                       colorDot={s.color}
                       onClick={() => setFilterSub(s.id)}
                     >
-                      {s.e} {s.name}
+                      {s.name}
                     </Chip>
                   ))}
               </div>
@@ -749,443 +733,487 @@ export const PrepView: React.FC<PrepViewProps> = ({
                 />
               </div>
             </div>
-          </Card>
 
-          {/* Collapsible Subject Chapter Groups */}
-          {state.chapters.length === 0 ? (
-            <EmptyState
-              illustration="noSyllabus"
-              title="Your syllabus tracker is empty"
-              description="Add chapters individually or paste your entire NEET syllabus to track completion, confidence, and spaced revisions."
-              action={
-                <Button
-                  variant="primary"
-                  size="sm"
-                  icon={<FileSpreadsheet size={15} />}
+            {state.chapters.length === 0 ? (
+              <div className="dh-empty-inline mt-2">
+                <span>No syllabus chapters yet.</span>
+                <button
+                  type="button"
+                  className="dh-eyebrow-link"
                   onClick={() => setShowBulkPasteSheet(true)}
                 >
-                  Bulk paste chapters
-                </Button>
-              }
-            />
-          ) : (
-            <div className="space-y-3">
-              {chaptersBySubject.map(({ subject, chapters, totalCount, completedCount }) => {
-                if (chapters.length === 0 && filterSub === 'all' && totalCount === 0) {
-                  return null;
-                }
-                const isCollapsed = Boolean(collapsedSubjects[subject.id]);
-                const pct =
-                  totalCount > 0 ? Math.round((completedCount / totalCount) * 100) : 0;
+                  Bulk paste ›
+                </button>
+              </div>
+            ) : (
+              <div className="mt-2 space-y-6">
+                {chaptersBySubject.map(({ subject, chapters, totalCount, completedCount }) => {
+                  if (chapters.length === 0 && filterSub === 'all' && totalCount === 0) {
+                    return null;
+                  }
+                  const isCollapsed = Boolean(collapsedSubjects[subject.id]);
+                  const pct =
+                    totalCount > 0 ? Math.round((completedCount / totalCount) * 100) : 0;
 
-                return (
-                  <Card key={subject.id}>
-                    <button
-                      type="button"
-                      onClick={() => toggleSubjectCollapse(subject.id)}
-                      className="flex w-full items-center justify-between gap-3 text-left"
-                      aria-expanded={!isCollapsed}
-                    >
-                      <div className="flex items-center gap-2.5">
-                        {isCollapsed ? (
-                          <ChevronRight size={18} className="text-[var(--tx-2)]" />
-                        ) : (
-                          <ChevronDown size={18} className="text-[var(--tx-2)]" />
-                        )}
-                        <span
-                          className="h-3 w-3 rounded-full"
-                          style={{ background: subject.color }}
-                        />
-                        <span className="text-[15px] font-semibold text-[var(--tx)]">
-                          {subject.e} {subject.name}
+                  return (
+                    <div key={subject.id}>
+                      <button
+                        type="button"
+                        onClick={() => toggleSubjectCollapse(subject.id)}
+                        className="dh-sub-group-toggle"
+                        aria-expanded={!isCollapsed}
+                      >
+                        <div className="flex items-center gap-2">
+                          {isCollapsed ? (
+                            <ChevronRight size={16} className="text-[var(--tx-3)]" />
+                          ) : (
+                            <ChevronDown size={16} className="text-[var(--tx-3)]" />
+                          )}
+                          <span
+                            className="dh-sub-dot"
+                            style={{ background: subject.color }}
+                            aria-hidden="true"
+                          />
+                          <span className="text-[14.5px] font-semibold text-[var(--tx)]">
+                            {subject.name}
+                          </span>
+                        </div>
+                        <span className="tnum text-[13px] text-[var(--tx-2)]">
+                          {completedCount}/{totalCount} ({pct}%)
                         </span>
-                      </div>
-                      <span className="tnum text-[13px] text-[var(--tx-2)]">
-                        {completedCount}/{totalCount} done ({pct}%)
-                      </span>
-                    </button>
+                      </button>
 
-                    {!isCollapsed && (
-                      <div className="mt-3">
-                        {chapters.length === 0 ? (
-                          <div className="py-4 text-center text-[13px] text-[var(--tx-2)]">
-                            No chapters match the current filter in {subject.name}.
-                          </div>
-                        ) : (
-                          <WindowedList
-                            items={chapters}
-                            threshold={100}
-                            estimatedRowHeight={148}
-                            itemLabel="chapters"
-                            className="divide-y divide-[var(--line)]"
-                            getKey={(ch) => ch.id}
-                            renderItem={(ch) => {
-                              const revs = getSortedChapterRevisions(ch);
-                              const pyqSummary = getChapterPYQStats(state, ch.id);
-                              const suggestedDraft = suggestedRevDrafts[ch.id];
-                              const isPyqOpen = openPyqChapterId === ch.id;
-                              const isConfPrompt = confidencePromptChapterId === ch.id;
+                      {!isCollapsed && (
+                        <div>
+                          {chapters.length === 0 ? (
+                            <div className="dh-empty-inline">
+                              <span>No chapters match the current filter in {subject.name}.</span>
+                            </div>
+                          ) : (
+                            <WindowedList
+                              items={chapters}
+                              threshold={100}
+                              estimatedRowHeight={68}
+                              itemLabel="chapters"
+                              className="dh-hairline-list"
+                              getKey={(ch) => ch.id}
+                              renderItem={(ch) => {
+                                const revs = getSortedChapterRevisions(ch);
+                                const pyqSummary = getChapterPYQStats(state, ch.id);
+                                const suggestedDraft = suggestedRevDrafts[ch.id];
+                                const isPyqOpen = openPyqChapterId === ch.id;
+                                const isConfPrompt = confidencePromptChapterId === ch.id;
+                                const isExpanded =
+                                  expandedChapterId === ch.id ||
+                                  isPyqOpen ||
+                                  Boolean(suggestedDraft) ||
+                                  isConfPrompt;
+                                const statusLabel =
+                                  ch.status === 'completed'
+                                    ? 'Completed'
+                                    : ch.status === 'inProgress'
+                                      ? 'In progress'
+                                      : 'Not started';
+                                const activeVaultCount = chapterVaultCounts[ch.id]?.active ?? 0;
 
-                              return (
-                                <div className="space-y-2.5 py-3">
-                                  <div className="flex flex-wrap items-start justify-between gap-2">
-                                    <div className="min-w-0 flex-1 space-y-1.5">
-                                      <div className="flex flex-wrap items-center gap-2">
-                                        <span className="text-[14.5px] font-semibold text-[var(--tx)]">
-                                          {ch.name}
-                                        </span>
-                                        {ch.completedOn && ch.status === 'completed' && (
-                                          <span className="tnum rounded-md bg-[var(--sf-2)] px-2 py-0.5 text-[13px] text-[var(--ok-ink)]">
-                                            Done {ch.completedOn}
-                                          </span>
-                                        )}
-                                        {pyqSummary.attempted > 0 && (
-                                          <span className="tnum rounded-md bg-[var(--sf-2)] px-2 py-0.5 text-[13px] text-[var(--ac-ink)]">
-                                            PYQ {pyqSummary.correct}/{pyqSummary.attempted} (
-                                            {pyqSummary.accuracyPct}%)
-                                          </span>
-                                        )}
-                                        {(chapterVaultCounts[ch.id]?.active ?? 0) > 0 && (
-                                          <button
-                                            type="button"
-                                            onClick={() => {
-                                              setVaultChapterJump({
-                                                nonce: Date.now(),
-                                                subjectId: ch.subjectId,
-                                                chapterId: ch.id,
-                                              });
-                                              handleSelectUiTab('vault');
+                                const metaParts: string[] = [statusLabel];
+                                const confText = formatChapterConfidence(ch.confidence);
+                                if (confText) metaParts.push(confText);
+                                if (pyqSummary.attempted > 0) {
+                                  metaParts.push(`PYQ ${pyqSummary.accuracyPct}%`);
+                                }
+                                if (revs.length > 0) {
+                                  metaParts.push(`${revs.length} rev`);
+                                }
+                                if (ch.completedOn && ch.status === 'completed') {
+                                  metaParts.push(ch.completedOn);
+                                }
+
+                                return (
+                                  <div className="dh-ch-row">
+                                    {/* Collapsed 2-Line Head */}
+                                    <div className="dh-ch-row-head">
+                                      <button
+                                        type="button"
+                                        className="dh-ch-row-main"
+                                        aria-expanded={isExpanded}
+                                        onClick={() =>
+                                          setExpandedChapterId((prev) =>
+                                            prev === ch.id ? null : ch.id
+                                          )
+                                        }
+                                      >
+                                        <div className="dh-ch-row-title">
+                                          <span
+                                            className="dh-sub-dot"
+                                            style={{
+                                              background:
+                                                ch.status === 'completed'
+                                                  ? 'var(--ok)'
+                                                  : ch.status === 'inProgress'
+                                                    ? subject.color
+                                                    : 'var(--tx-3)',
                                             }}
-                                            className="tnum inline-flex items-center gap-1 rounded-md border border-[var(--line)] bg-[var(--sf-2)] px-2 py-0.5 text-[13px] font-medium text-[var(--tx-2)] hover:border-[var(--ac)]"
-                                          >
-                                            <Camera size={12} strokeWidth={1.75} aria-hidden="true" />
-                                            Vault · {chapterVaultCounts[ch.id].active}
-                                          </button>
+                                            aria-hidden="true"
+                                          />
+                                          <span className="truncate">{ch.name}</span>
+                                          {activeVaultCount > 0 && (
+                                            <span className="tnum shrink-0 text-[12px] font-medium text-[var(--tx-3)]">
+                                              · {activeVaultCount} Vault
+                                            </span>
+                                          )}
+                                        </div>
+                                        <div className="dh-ch-row-sub tnum">
+                                          {metaParts.join(' · ')}
+                                        </div>
+                                      </button>
+
+                                      <div className="flex shrink-0 items-center gap-1.5">
+                                        <button
+                                          type="button"
+                                          className="dh-ghost-pill"
+                                          aria-label={`Start focus for ${ch.name}`}
+                                          onClick={() =>
+                                            onStartChapterFocus(ch.subjectId, ch.id, ch.name)
+                                          }
+                                        >
+                                          <Play size={12} aria-hidden="true" />
+                                          Focus
+                                        </button>
+                                        <IconButton
+                                          size={36}
+                                          label={`More actions for ${ch.name}`}
+                                          aria-expanded={isExpanded}
+                                          onClick={() =>
+                                            setExpandedChapterId((prev) =>
+                                              prev === ch.id ? null : ch.id
+                                            )
+                                          }
+                                        >
+                                          <MoreHorizontal size={16} />
+                                        </IconButton>
+                                      </div>
+                                    </div>
+
+                                    {/* Expanded Inline Controls Tray */}
+                                    {isExpanded && (
+                                      <div className="dh-ch-tray">
+                                        <div className="flex flex-wrap items-center justify-between gap-2">
+                                          <div className="w-40">
+                                            <Select
+                                              value={ch.status}
+                                              onChange={(nextVal) => {
+                                                const nextStatus = nextVal as ChapterStatus;
+                                                onUpdateChapter(ch.id, { status: nextStatus });
+                                                if (
+                                                  nextStatus === 'completed' &&
+                                                  ch.status !== 'completed'
+                                                ) {
+                                                  const base = todayKey;
+                                                  const intervals =
+                                                    state.set.revisionIntervals &&
+                                                    state.set.revisionIntervals.length > 0
+                                                      ? state.set.revisionIntervals
+                                                      : [1, 3, 7, 21];
+                                                  setSuggestedRevDrafts((prev) => ({
+                                                    ...prev,
+                                                    [ch.id]: intervals.map((d) => addD(base, d)),
+                                                  }));
+                                                  setConfidencePromptChapterId(ch.id);
+                                                }
+                                              }}
+                                              ariaLabel={`Status for ${ch.name}`}
+                                              options={STATUS_OPTIONS}
+                                            />
+                                          </div>
+
+                                          <div className="flex flex-wrap items-center gap-1.5">
+                                            <button
+                                              type="button"
+                                              className="dh-ghost-pill"
+                                              onClick={() =>
+                                                setOpenPyqChapterId(isPyqOpen ? null : ch.id)
+                                              }
+                                            >
+                                              PYQ
+                                            </button>
+                                            {activeVaultCount > 0 && (
+                                              <button
+                                                type="button"
+                                                className="dh-ghost-pill tnum"
+                                                onClick={() => {
+                                                  setVaultChapterJump({
+                                                    nonce: Date.now(),
+                                                    subjectId: ch.subjectId,
+                                                    chapterId: ch.id,
+                                                  });
+                                                  handleSelectUiTab('vault');
+                                                }}
+                                              >
+                                                <Camera size={12} strokeWidth={1.75} aria-hidden="true" />
+                                                Vault · {activeVaultCount}
+                                              </button>
+                                            )}
+                                            <IconButton
+                                              size={36}
+                                              label={`Delete ${ch.name}`}
+                                              onClick={() => onDeleteChapter(ch.id)}
+                                            >
+                                              <Trash2 size={15} />
+                                            </IconButton>
+                                          </div>
+                                        </div>
+
+                                        {/* Confidence 1-5 selector + Add revision */}
+                                        <div className="flex flex-wrap items-center justify-between gap-2 text-[13px] text-[var(--tx-2)]">
+                                          <div className="flex items-center gap-1.5">
+                                            <span>Confidence</span>
+                                            {([1, 2, 3, 4, 5] as const).map((lvl) => {
+                                              const active = (ch.confidence ?? 0) >= lvl;
+                                              return (
+                                                <button
+                                                  key={lvl}
+                                                  type="button"
+                                                  onClick={() => {
+                                                    onUpdateChapter(ch.id, { confidence: lvl });
+                                                    if (isConfPrompt) {
+                                                      setConfidencePromptChapterId(null);
+                                                    }
+                                                  }}
+                                                  aria-label={`Set confidence ${lvl} of 5 for ${ch.name}`}
+                                                  className={`tnum h-7 w-7 rounded-md border text-[13px] font-semibold transition-colors ${
+                                                    active
+                                                      ? 'border-[var(--ac)] bg-[var(--ac-soft)] text-[var(--ac-ink)]'
+                                                      : 'border-[var(--line)] bg-[var(--sf-2)] text-[var(--tx-3)]'
+                                                  }`}
+                                                >
+                                                  {lvl}
+                                                </button>
+                                              );
+                                            })}
+                                            {isConfPrompt && (
+                                              <span className="text-[13px] text-[var(--ac-ink)]">
+                                                Rate confidence
+                                              </span>
+                                            )}
+                                          </div>
+
+                                          <div className="flex items-center gap-1.5">
+                                            <input
+                                              type="date"
+                                              value={newRevDates[ch.id] || ''}
+                                              onChange={(e) =>
+                                                setNewRevDates((prev) => ({
+                                                  ...prev,
+                                                  [ch.id]: e.target.value,
+                                                }))
+                                              }
+                                              aria-label={`Revision date for ${ch.name}`}
+                                              className="h-8 rounded-lg border border-[var(--line)] bg-[var(--sf-2)] px-2 text-[13px] text-[var(--tx)]"
+                                            />
+                                            <button
+                                              type="button"
+                                              className="dh-ghost-pill"
+                                              onClick={() => {
+                                                const dt = newRevDates[ch.id] || addD(todayKey, 3);
+                                                onAddRevision(ch.id, dt);
+                                                setNewRevDates((prev) => ({ ...prev, [ch.id]: '' }));
+                                              }}
+                                            >
+                                              + Rev
+                                            </button>
+                                          </div>
+                                        </div>
+
+                                        {/* Suggested Spaced Revisions */}
+                                        {suggestedDraft && (
+                                          <div className="rounded-xl border border-[var(--ac-line)] bg-[var(--ac-soft)] p-3">
+                                            <div className="split mb-2 flex-wrap gap-2">
+                                              <span className="flex items-center gap-1.5 text-[13px] font-semibold text-[var(--ac-ink)]">
+                                                <Sparkles size={14} aria-hidden="true" /> Suggested spaced revisions (
+                                                {(state.set.revisionIntervals &&
+                                                state.set.revisionIntervals.length > 0
+                                                  ? state.set.revisionIntervals
+                                                  : [1, 3, 7, 21]
+                                                )
+                                                  .map((d) => `+${d}d`)
+                                                  .join(', ')}
+                                                )
+                                              </span>
+                                              <div className="flex gap-1.5">
+                                                <Button
+                                                  variant="primary"
+                                                  size="sm"
+                                                  onClick={() => {
+                                                    for (const dt of suggestedDraft) {
+                                                      if (dt) onAddRevision(ch.id, dt);
+                                                    }
+                                                    setSuggestedRevDrafts((prev) => {
+                                                      const next = { ...prev };
+                                                      delete next[ch.id];
+                                                      return next;
+                                                    });
+                                                  }}
+                                                >
+                                                  Schedule all {suggestedDraft.length}
+                                                </Button>
+                                                <Button
+                                                  variant="ghost"
+                                                  size="sm"
+                                                  onClick={() =>
+                                                    setSuggestedRevDrafts((prev) => {
+                                                      const next = { ...prev };
+                                                      delete next[ch.id];
+                                                      return next;
+                                                    })
+                                                  }
+                                                >
+                                                  Dismiss
+                                                </Button>
+                                              </div>
+                                            </div>
+                                            <div className="grid grid-cols-2 gap-2 sm:grid-cols-4">
+                                              {suggestedDraft.map((dVal, idx) => (
+                                                <input
+                                                  key={idx}
+                                                  type="date"
+                                                  aria-label={`Suggested revision ${idx + 1} date for ${ch.name}`}
+                                                  value={dVal}
+                                                  onChange={(e) => {
+                                                    const copy = [...suggestedDraft];
+                                                    copy[idx] = e.target.value;
+                                                    setSuggestedRevDrafts((prev) => ({
+                                                      ...prev,
+                                                      [ch.id]: copy,
+                                                    }));
+                                                  }}
+                                                  className="h-8 rounded-lg border border-[var(--line)] bg-[var(--sf-1)] px-2 text-[13px] text-[var(--tx)]"
+                                                />
+                                              ))}
+                                            </div>
+                                          </div>
+                                        )}
+
+                                        {/* Inline PYQ Quick Drawer */}
+                                        {isPyqOpen && (
+                                          <div className="rounded-xl border border-[var(--line)] bg-[var(--sf-2)] p-3">
+                                            <div className="mb-2 text-[13px] font-semibold text-[var(--tx)]">
+                                              Log PYQ batch for {ch.name}
+                                            </div>
+                                            <div className="flex flex-wrap items-center gap-2">
+                                              <input
+                                                type="number"
+                                                min={1}
+                                                value={pyqAttemptedDraft}
+                                                onChange={(e) => setPyqAttemptedDraft(e.target.value)}
+                                                placeholder="Attempted"
+                                                aria-label="Attempted PYQs"
+                                                className="h-9 w-24 rounded-lg border border-[var(--line)] bg-[var(--sf-1)] px-2.5 text-[13px] text-[var(--tx)]"
+                                              />
+                                              <input
+                                                type="number"
+                                                min={0}
+                                                value={pyqCorrectDraft}
+                                                onChange={(e) => setPyqCorrectDraft(e.target.value)}
+                                                placeholder="Correct"
+                                                aria-label="Correct PYQs"
+                                                className="h-9 w-24 rounded-lg border border-[var(--line)] bg-[var(--sf-1)] px-2.5 text-[13px] text-[var(--tx)]"
+                                              />
+                                              <Button
+                                                variant="primary"
+                                                size="sm"
+                                                onClick={() => {
+                                                  const att = Math.max(
+                                                    1,
+                                                    Math.round(Number(pyqAttemptedDraft) || 0)
+                                                  );
+                                                  const cor = Math.max(
+                                                    0,
+                                                    Math.min(
+                                                      att,
+                                                      Math.round(Number(pyqCorrectDraft) || 0)
+                                                    )
+                                                  );
+                                                  onAddPYQ({
+                                                    chapterId: ch.id,
+                                                    attempted: att,
+                                                    correct: cor,
+                                                    dayKey: todayKey,
+                                                  });
+                                                  setOpenPyqChapterId(null);
+                                                }}
+                                              >
+                                                Save PYQ
+                                              </Button>
+                                            </div>
+                                          </div>
+                                        )}
+
+                                        {/* Revisions pills */}
+                                        {revs.length > 0 && (
+                                          <div className="flex flex-wrap items-center gap-1.5 pt-1">
+                                            {revs.map((rev) => {
+                                              const isOverdue = !rev.done && rev.date < todayKey;
+                                              return (
+                                                <div
+                                                  key={rev.id}
+                                                  className={`inline-flex items-center gap-1.5 rounded-lg border px-2 py-1 text-[13px] ${
+                                                    rev.done
+                                                      ? 'border-[var(--ok)]/30 bg-[var(--ok)]/10 text-[var(--ok-ink)]'
+                                                      : isOverdue
+                                                        ? 'border-[var(--err)]/40 bg-[var(--err)]/10 text-[var(--err-ink)]'
+                                                        : 'border-[var(--line)] bg-[var(--sf-2)] text-[var(--tx-2)]'
+                                                  }`}
+                                                >
+                                                  <button
+                                                    type="button"
+                                                    onClick={() => onToggleRevision(ch.id, rev.id)}
+                                                    className="flex items-center gap-1 font-semibold"
+                                                  >
+                                                    <Check size={12} aria-hidden="true" />
+                                                    <span>{rev.label}</span>
+                                                  </button>
+                                                  <input
+                                                    type="date"
+                                                    value={rev.date}
+                                                    onChange={(e) =>
+                                                      onUpdateRevisionDate(
+                                                        ch.id,
+                                                        rev.id,
+                                                        e.target.value
+                                                      )
+                                                    }
+                                                    aria-label={`${rev.label} revision date`}
+                                                    className="tnum bg-transparent text-[13px] focus:outline-none"
+                                                  />
+                                                  <button
+                                                    type="button"
+                                                    onClick={() => onDeleteRevision(ch.id, rev.id)}
+                                                    aria-label={`Delete ${rev.label}`}
+                                                    className="text-[var(--tx-3)] hover:text-[var(--err-ink)]"
+                                                  >
+                                                    ×
+                                                  </button>
+                                                </div>
+                                              );
+                                            })}
+                                          </div>
                                         )}
                                       </div>
-                                      <div className="max-w-[220px]">
-                                        <Meter
-                                          value={
-                                            ch.status === 'completed'
-                                              ? 100
-                                              : ch.status === 'inProgress'
-                                                ? 50
-                                                : 0
-                                          }
-                                          max={100}
-                                          color={
-                                            ch.status === 'completed'
-                                              ? 'var(--ok)'
-                                              : subject.color
-                                          }
-                                        />
-                                      </div>
-                                    </div>
-
-                                  <div className="flex flex-wrap items-center gap-1.5">
-                                    <div className="w-36">
-                                      <Select
-                                        value={ch.status}
-                                        onChange={(nextVal) => {
-                                          const nextStatus = nextVal as ChapterStatus;
-                                          onUpdateChapter(ch.id, { status: nextStatus });
-                                          if (
-                                            nextStatus === 'completed' &&
-                                            ch.status !== 'completed'
-                                          ) {
-                                            const base = todayKey;
-                                            const intervals =
-                                              state.set.revisionIntervals &&
-                                              state.set.revisionIntervals.length > 0
-                                                ? state.set.revisionIntervals
-                                                : [1, 3, 7, 21];
-                                            setSuggestedRevDrafts((prev) => ({
-                                              ...prev,
-                                              [ch.id]: intervals.map((d) => addD(base, d)),
-                                            }));
-                                            setConfidencePromptChapterId(ch.id);
-                                          }
-                                        }}
-                                        ariaLabel={`Status for ${ch.name}`}
-                                        options={STATUS_OPTIONS}
-                                      />
-                                    </div>
-
-                                    <Button
-                                      variant="secondary"
-                                      size="sm"
-                                      icon={<Play size={13} />}
-                                      onClick={() =>
-                                        onStartChapterFocus(ch.subjectId, ch.id, ch.name)
-                                      }
-                                    >
-                                      Focus
-                                    </Button>
-
-                                    <Button
-                                      variant="ghost"
-                                      size="sm"
-                                      onClick={() =>
-                                        setOpenPyqChapterId(isPyqOpen ? null : ch.id)
-                                      }
-                                    >
-                                      PYQ
-                                    </Button>
-
-                                    <IconButton
-                                      label={`Delete ${ch.name}`}
-                                      onClick={() => onDeleteChapter(ch.id)}
-                                    >
-                                      <Trash2 size={16} />
-                                    </IconButton>
-                                  </div>
-                                </div>
-
-                                {/* Confidence 1-5 selector */}
-                                <div className="flex flex-wrap items-center justify-between gap-2 text-[13px] text-[var(--tx-2)]">
-                                  <div className="flex items-center gap-1.5">
-                                    <span>Confidence:</span>
-                                    {([1, 2, 3, 4, 5] as const).map((lvl) => {
-                                      const active = (ch.confidence ?? 0) >= lvl;
-                                      return (
-                                        <button
-                                          key={lvl}
-                                          type="button"
-                                          onClick={() =>
-                                            onUpdateChapter(ch.id, { confidence: lvl })
-                                          }
-                                          aria-label={`Set confidence ${lvl} of 5 for ${ch.name}`}
-                                          className={`tnum h-7 w-7 rounded-md border text-[13px] font-semibold transition-colors ${
-                                            active
-                                              ? 'border-[var(--ac)] bg-[var(--ac-soft)] text-[var(--ac-ink)]'
-                                              : 'border-[var(--line)] bg-[var(--sf-2)] text-[var(--tx-3)]'
-                                          }`}
-                                        >
-                                          {lvl}
-                                        </button>
-                                      );
-                                    })}
-                                    {isConfPrompt && (
-                                      <span className="text-[13px] text-[var(--ac-ink)]">
-                                        Rate your confidence!
-                                      </span>
                                     )}
                                   </div>
-
-                                  {/* Add revision date inline */}
-                                  <div className="flex items-center gap-1.5">
-                                    <input
-                                      type="date"
-                                      value={newRevDates[ch.id] || ''}
-                                      onChange={(e) =>
-                                        setNewRevDates((prev) => ({
-                                          ...prev,
-                                          [ch.id]: e.target.value,
-                                        }))
-                                      }
-                                      aria-label={`Revision date for ${ch.name}`}
-                                      className="h-8 rounded-lg border border-[var(--line)] bg-[var(--sf-2)] px-2 text-[13px] text-[var(--tx)]"
-                                    />
-                                    <Button
-                                      variant="secondary"
-                                      size="sm"
-                                      onClick={() => {
-                                        const dt = newRevDates[ch.id] || addD(todayKey, 3);
-                                        onAddRevision(ch.id, dt);
-                                        setNewRevDates((prev) => ({ ...prev, [ch.id]: '' }));
-                                      }}
-                                    >
-                                      + Rev
-                                    </Button>
-                                  </div>
-                                </div>
-
-                                {/* Suggested Spaced Revisions */}
-                                {suggestedDraft && (
-                                  <div className="rounded-xl border border-[var(--ac-line)] bg-[var(--ac-soft)] p-3">
-                                    <div className="split mb-2 flex-wrap gap-2">
-                                      <span className="flex items-center gap-1.5 text-[13px] font-semibold text-[var(--ac-ink)]">
-                                        <Sparkles size={14} aria-hidden="true" /> Suggested spaced revisions (
-                                        {(state.set.revisionIntervals &&
-                                        state.set.revisionIntervals.length > 0
-                                          ? state.set.revisionIntervals
-                                          : [1, 3, 7, 21]
-                                        )
-                                          .map((d) => `+${d}d`)
-                                          .join(', ')}
-                                        )
-                                      </span>
-                                      <div className="flex gap-1.5">
-                                        <Button
-                                          variant="primary"
-                                          size="sm"
-                                          onClick={() => {
-                                            for (const dt of suggestedDraft) {
-                                              if (dt) onAddRevision(ch.id, dt);
-                                            }
-                                            setSuggestedRevDrafts((prev) => {
-                                              const next = { ...prev };
-                                              delete next[ch.id];
-                                              return next;
-                                            });
-                                          }}
-                                        >
-                                          Schedule all {suggestedDraft.length}
-                                        </Button>
-                                        <Button
-                                          variant="ghost"
-                                          size="sm"
-                                          onClick={() =>
-                                            setSuggestedRevDrafts((prev) => {
-                                              const next = { ...prev };
-                                              delete next[ch.id];
-                                              return next;
-                                            })
-                                          }
-                                        >
-                                          Dismiss
-                                        </Button>
-                                      </div>
-                                    </div>
-                                    <div className="grid grid-cols-2 gap-2 sm:grid-cols-4">
-                                      {suggestedDraft.map((dVal, idx) => (
-                                        <input
-                                          key={idx}
-                                          type="date"
-                                          aria-label={`Suggested revision ${idx + 1} date for ${ch.name}`}
-                                          value={dVal}
-                                          onChange={(e) => {
-                                            const copy = [...suggestedDraft];
-                                            copy[idx] = e.target.value;
-                                            setSuggestedRevDrafts((prev) => ({
-                                              ...prev,
-                                              [ch.id]: copy,
-                                            }));
-                                          }}
-                                          className="h-8 rounded-lg border border-[var(--line)] bg-[var(--sf-1)] px-2 text-[13px] text-[var(--tx)]"
-                                        />
-                                      ))}
-                                    </div>
-                                  </div>
-                                )}
-
-                                {/* Inline PYQ Quick Drawer */}
-                                {isPyqOpen && (
-                                  <div className="rounded-xl border border-[var(--line)] bg-[var(--sf-2)] p-3">
-                                    <div className="mb-2 text-[13px] font-semibold text-[var(--tx)]">
-                                      Log PYQ batch for {ch.name}
-                                    </div>
-                                    <div className="flex flex-wrap items-center gap-2">
-                                      <input
-                                        type="number"
-                                        min={1}
-                                        value={pyqAttemptedDraft}
-                                        onChange={(e) => setPyqAttemptedDraft(e.target.value)}
-                                        placeholder="Attempted"
-                                        aria-label="Attempted PYQs"
-                                        className="h-9 w-24 rounded-lg border border-[var(--line)] bg-[var(--sf-1)] px-2.5 text-[13px] text-[var(--tx)]"
-                                      />
-                                      <input
-                                        type="number"
-                                        min={0}
-                                        value={pyqCorrectDraft}
-                                        onChange={(e) => setPyqCorrectDraft(e.target.value)}
-                                        placeholder="Correct"
-                                        aria-label="Correct PYQs"
-                                        className="h-9 w-24 rounded-lg border border-[var(--line)] bg-[var(--sf-1)] px-2.5 text-[13px] text-[var(--tx)]"
-                                      />
-                                      <Button
-                                        variant="primary"
-                                        size="sm"
-                                        onClick={() => {
-                                          const att = Math.max(
-                                            1,
-                                            Math.round(Number(pyqAttemptedDraft) || 0)
-                                          );
-                                          const cor = Math.max(
-                                            0,
-                                            Math.min(
-                                              att,
-                                              Math.round(Number(pyqCorrectDraft) || 0)
-                                            )
-                                          );
-                                          onAddPYQ({
-                                            chapterId: ch.id,
-                                            attempted: att,
-                                            correct: cor,
-                                            dayKey: todayKey,
-                                          });
-                                          setOpenPyqChapterId(null);
-                                        }}
-                                      >
-                                        Save PYQ
-                                      </Button>
-                                    </div>
-                                  </div>
-                                )}
-
-                                {/* Revisions pills */}
-                                {revs.length > 0 && (
-                                  <div className="flex flex-wrap items-center gap-1.5 pt-1">
-                                    {revs.map((rev) => {
-                                      const isOverdue = !rev.done && rev.date < todayKey;
-                                      return (
-                                        <div
-                                          key={rev.id}
-                                          className={`inline-flex items-center gap-1.5 rounded-lg border px-2 py-1 text-[13px] ${
-                                            rev.done
-                                              ? 'border-[var(--ok)]/30 bg-[var(--ok)]/10 text-[var(--ok-ink)]'
-                                              : isOverdue
-                                                ? 'border-[var(--err)]/40 bg-[var(--err)]/10 text-[var(--err-ink)]'
-                                                : 'border-[var(--line)] bg-[var(--sf-2)] text-[var(--tx-2)]'
-                                          }`}
-                                        >
-                                          <button
-                                            type="button"
-                                            onClick={() => onToggleRevision(ch.id, rev.id)}
-                                            className="flex items-center gap-1 font-semibold"
-                                          >
-                                            <Check size={12} aria-hidden="true" />
-                                            <span>{rev.label}</span>
-                                          </button>
-                                          <input
-                                            type="date"
-                                            value={rev.date}
-                                            onChange={(e) =>
-                                              onUpdateRevisionDate(
-                                                ch.id,
-                                                rev.id,
-                                                e.target.value
-                                              )
-                                            }
-                                            aria-label={`${rev.label} revision date`}
-                                            className="tnum bg-transparent text-[13px] focus:outline-none"
-                                          />
-                                          <button
-                                            type="button"
-                                            onClick={() => onDeleteRevision(ch.id, rev.id)}
-                                            aria-label={`Delete ${rev.label}`}
-                                            className="text-[var(--tx-3)] hover:text-[var(--err-ink)]"
-                                          >
-                                            ×
-                                          </button>
-                                        </div>
-                                      );
-                                    })}
-                                  </div>
-                                )}
-                              </div>
-                            );
-                          }}
-                        />
-                        )}
-                      </div>
-                    )}
-                  </Card>
-                );
-              })}
-            </div>
-          )}
+                                );
+                              }}
+                            />
+                          )}
+                        </div>
+                      )}
+                    </div>
+                  );
+                })}
+              </div>
+            )}
+          </section>
 
           {/* Bulk Paste Chapters Sheet */}
           <Sheet
@@ -1202,7 +1230,7 @@ export const PrepView: React.FC<PrepViewProps> = ({
                     .filter((s) => !s.arch)
                     .map((s) => ({
                       value: s.id,
-                      label: `${s.e} ${s.name}`,
+                      label: s.name,
                     }))}
                 />
               </Field>
@@ -1243,31 +1271,25 @@ export const PrepView: React.FC<PrepViewProps> = ({
           SUB-VIEW 2: MOCK TESTS & ANALYTICS
           ========================================== */}
       {activeUiTab === 'mocks' && (
-        <div className="space-y-4">
-          <Card>
-            <div className="split mb-3 flex-wrap gap-2">
-              <div>
-                <h3 className="text-[16px] font-semibold text-[var(--tx)]">
-                  Mock test performance &amp; accuracy
-                </h3>
-                <p className="text-[13px] text-[var(--tx-2)]">
-                  NEET 720-mark progression, negative marking analysis &amp; subject breakdown
-                </p>
-              </div>
+        <div className="dh-amoled-flow">
+          {/* Tier-1 Hero Card — Single Gold CTA + Hairline 2x2 Ledger */}
+          <Card className="dh-hero-tier1">
+            <div className="split mb-4 flex-wrap gap-2">
+              <h3 className="dh-eyebrow">Mock tests</h3>
               <div className="flex flex-wrap items-center gap-2">
                 <button
                   type="button"
                   data-testid="score-lab-open-btn"
-                  className="dh-leak-scorelab-btn"
+                  className="dh-ghost-pill"
                   onClick={handleOpenScoreLabFromHeader}
                 >
-                  <Gauge size={15} strokeWidth={1.85} aria-hidden="true" />
-                  <span>Score Lab · Simulate target</span>
+                  <Gauge size={14} strokeWidth={1.85} aria-hidden="true" />
+                  <span>Score Lab</span>
                 </button>
                 <Button
                   variant="primary"
                   size="sm"
-                  icon={<Plus size={16} />}
+                  icon={<Plus size={15} />}
                   onClick={onOpenNewMock}
                 >
                   Log mock test
@@ -1275,204 +1297,185 @@ export const PrepView: React.FC<PrepViewProps> = ({
               </div>
             </div>
 
-            <div className="grid grid-cols-2 gap-2.5 sm:grid-cols-4">
-              <Stat
-                label="Mocks logged"
-                value={String(state.mocks.length)}
-                sub="Full & part tests"
-              />
-              <Stat
-                label="Last 5 avg"
-                value={
-                  state.mocks.length > 0 ? `${mocksOverview.avgLast5Score}/720` : '—'
-                }
-                sub="Recent trend"
-              />
-              <Stat
-                label="Personal best"
-                value={state.mocks.length > 0 ? `${mocksOverview.bestScore}/720` : '—'}
-                sub={`Target ${targetScore}`}
-              />
-              <div className="rounded-xl border border-[var(--line)] bg-[var(--sf-2)] p-3">
-                <Field label="Target score">
-                  <input
-                    type="number"
-                    min={100}
-                    max={720}
-                    step={5}
-                    value={targetScore}
-                    onChange={(e) =>
-                      onUpdateTargetScore(
-                        Math.max(100, Math.min(720, Number(e.target.value) || 650))
-                      )
-                    }
-                    aria-label="Target mock score"
-                    className="tnum h-8 w-full rounded-lg border border-[var(--line)] bg-[var(--sf-1)] px-2 text-[14px] font-semibold text-[var(--ac-ink)]"
-                  />
-                </Field>
+            <div className="dh-ledger-2x2">
+              <div className="dh-ledger-cell">
+                <div className="dh-ledger-label">Mocks logged</div>
+                <div className="dh-ledger-val tnum">{state.mocks.length}</div>
+                <div className="dh-ledger-sub">Full &amp; part tests</div>
+              </div>
+              <div className="dh-ledger-cell">
+                <div className="dh-ledger-label">Last 5 avg</div>
+                <div className="dh-ledger-val tnum">
+                  {state.mocks.length > 0 ? `${mocksOverview.avgLast5Score}/720` : '—'}
+                </div>
+                <div className="dh-ledger-sub">Recent trend</div>
+              </div>
+              <div className="dh-ledger-cell">
+                <div className="dh-ledger-label">Personal best</div>
+                <div className="dh-ledger-val tnum">
+                  {state.mocks.length > 0 ? `${mocksOverview.bestScore}/720` : '—'}
+                </div>
+                <div className="dh-ledger-sub tnum">Target {targetScore}</div>
+              </div>
+              <div className="dh-ledger-cell">
+                <label htmlFor="targetMockScoreInput" className="dh-ledger-label block">
+                  Target score
+                </label>
+                <input
+                  id="targetMockScoreInput"
+                  type="number"
+                  min={100}
+                  max={720}
+                  step={5}
+                  value={targetScore}
+                  onChange={(e) =>
+                    onUpdateTargetScore(
+                      Math.max(100, Math.min(720, Number(e.target.value) || 650))
+                    )
+                  }
+                  aria-label="Target mock score"
+                  className="tnum mt-1 h-8 w-20 rounded-none border-0 border-b border-[var(--hairline)] bg-transparent px-0 text-[18px] font-semibold text-[var(--ac-ink)] focus:border-[var(--ac)] focus:outline-none"
+                />
               </div>
             </div>
 
             {mocksOverview.lowestAccuracySubject && (
-              <div className="mt-3 flex items-center gap-2 rounded-xl border border-[var(--warn)]/30 bg-[var(--warn)]/10 px-3 py-2 text-[13px] text-[var(--warn-ink)]">
-                <AlertTriangle size={15} />
+              <div className="mt-4 flex items-center gap-2 border-t border-[var(--hairline)] pt-3 text-[13px] text-[var(--warn-ink)]">
+                <AlertTriangle size={14} className="shrink-0" aria-hidden="true" />
                 <span>
-                  Focus area: <strong>{mocksOverview.lowestAccuracySubject.e} {mocksOverview.lowestAccuracySubject.name}</strong> has the lowest accuracy ({mocksOverview.lowestAccuracySubject.accuracyPct}%) across recent mocks.
+                  Lowest accuracy: <strong className="text-[var(--tx)]">{mocksOverview.lowestAccuracySubject.name}</strong> ({mocksOverview.lowestAccuracySubject.accuracyPct}%) across recent mocks.
                 </span>
               </div>
             )}
           </Card>
 
-          {/* Negative-Marking Leak Detector: Blunt AMOLED Avoidable Marks Bleed Summary */}
-          <Card className="dh-leak-summary-card" data-testid="avoidable-bleed-card">
-            <div className="dh-leak-summary-head">
-              <div className="min-w-0 flex-1">
-                <div className="dh-leak-title-row">
-                  <Flame size={16} strokeWidth={1.9} className="dh-leak-icon" aria-hidden="true" />
-                  <h3 className="text-[15px] font-semibold text-[var(--tx)]">
-                    Avoidable Marks Bleed
-                  </h3>
+          {/* Negative-Marking Leak Detector — Shown once at least 1 mock is logged */}
+          {state.mocks.length > 0 && (
+            <section className="dh-amoled-section" data-testid="avoidable-bleed-card">
+              <div className="dh-eyebrow-row">
+                <div className="flex items-center gap-2">
+                  <Flame size={14} strokeWidth={1.9} className="dh-leak-icon" aria-hidden="true" />
+                  <h3 className="dh-eyebrow">Avoidable marks bleed</h3>
                 </div>
-                <p className="mt-0.5 text-[13px] text-[var(--tx-2)]">
-                  Each wrong NEET question costs −{NEET_MARKS_PER_WRONG_SWING} net marks (+4 lost + −1 negative).
-                </p>
+                {avoidableBleed.totalErrors > 0 && (
+                  <div className="dh-leak-total-pill tnum" data-testid="avoidable-bleed-total">
+                    −{avoidableBleed.totalNetMarksLost} marks
+                  </div>
+                )}
               </div>
-              {avoidableBleed.totalErrors > 0 && (
-                <div className="dh-leak-total-pill tnum" data-testid="avoidable-bleed-total">
-                  −{avoidableBleed.totalNetMarksLost} marks
+
+              {avoidableBleed.totalErrors > 0 && avoidableBleed.topLeak ? (
+                <div className="dh-leak-body">
+                  <div className="dh-leak-callout" data-testid="avoidable-bleed-top-leak">
+                    <span className="dh-leak-callout-label">#1 leak</span>
+                    <strong className="text-[var(--tx)]">{avoidableBleed.topLeak.label}</strong>
+                    <span className="tnum dh-leak-callout-val">
+                      −{avoidableBleed.topLeak.netMarksLost} marks ({avoidableBleed.topLeak.count} Q · {avoidableBleed.topLeak.sharePct}%)
+                    </span>
+                    <span className="tnum dh-leak-callout-meta">
+                      Last {avoidableBleed.includedMocksCount} tagged {avoidableBleed.includedMocksCount === 1 ? 'mock' : 'mocks'} · avg −{avoidableBleed.avgMarksLostPerMock}/mock
+                    </span>
+                  </div>
+
+                  <div className="dh-leak-bars">
+                    {avoidableBleed.categories.map((cat) => (
+                      <div key={cat.key} className="dh-leak-bar-row">
+                        <div className="dh-leak-bar-head">
+                          <span className={`dh-leak-bar-name ${avoidableBleed.topLeak?.key === cat.key ? 'is-top' : ''}`}>
+                            {cat.label}
+                          </span>
+                          <span className="tnum dh-leak-bar-metrics">
+                            {cat.count} Q · −{cat.netMarksLost}m
+                          </span>
+                        </div>
+                        <div className="dh-leak-track" aria-hidden="true">
+                          <div
+                            className={`dh-leak-fill is-${cat.accent}`}
+                            style={{
+                              width: `${cat.count > 0 ? Math.max(6, cat.sharePct) : 0}%`,
+                              background: cat.barColor,
+                            }}
+                          />
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              ) : (
+                <div className="dh-empty-inline">
+                  <span>
+                    Open Leak Detector on any mock below (−{NEET_MARKS_PER_WRONG_SWING} net marks per wrong Q).
+                  </span>
                 </div>
               )}
-            </div>
-
-            {avoidableBleed.totalErrors > 0 && avoidableBleed.topLeak ? (
-              <div className="dh-leak-body">
-                <div className="dh-leak-callout" data-testid="avoidable-bleed-top-leak">
-                  <span className="dh-leak-callout-label">#1 leak</span>
-                  <strong className="text-[var(--tx)]">{avoidableBleed.topLeak.label}</strong>
-                  <span className="tnum dh-leak-callout-val">
-                    −{avoidableBleed.topLeak.netMarksLost} marks ({avoidableBleed.topLeak.count} Q · {avoidableBleed.topLeak.sharePct}%)
-                  </span>
-                  <span className="tnum dh-leak-callout-meta">
-                    Last {avoidableBleed.includedMocksCount} tagged {avoidableBleed.includedMocksCount === 1 ? 'mock' : 'mocks'} · avg −{avoidableBleed.avgMarksLostPerMock}/mock
-                  </span>
-                </div>
-
-                <div className="dh-leak-bars">
-                  {avoidableBleed.categories.map((cat) => (
-                    <div key={cat.key} className="dh-leak-bar-row">
-                      <div className="dh-leak-bar-head">
-                        <span className={`dh-leak-bar-name ${avoidableBleed.topLeak?.key === cat.key ? 'is-top' : ''}`}>
-                          {cat.label}
-                        </span>
-                        <span className="tnum dh-leak-bar-metrics">
-                          {cat.count} Q · −{cat.netMarksLost}m
-                        </span>
-                      </div>
-                      <div className="dh-leak-track" aria-hidden="true">
-                        <div
-                          className={`dh-leak-fill is-${cat.accent}`}
-                          style={{
-                            width: `${cat.count > 0 ? Math.max(6, cat.sharePct) : 0}%`,
-                            background: cat.barColor,
-                          }}
-                        />
-                      </div>
-                    </div>
-                  ))}
-                </div>
-              </div>
-            ) : (
-              <div className="dh-leak-empty">
-                <p className="text-[13px] text-[var(--tx-2)]">
-                  {state.mocks.length > 0
-                    ? 'Open "Leak Detector" on any mock card below to tag Misread Question, Formula Blank, Time Panic, or Concept Gap errors.'
-                    : 'Log a mock test and tag why wrong questions happened to expose your #1 avoidable marks leak.'}
-                </p>
-              </div>
-            )}
-          </Card>
+            </section>
+          )}
 
           {/* Mock Score Progression Chart */}
           {mocksOverview.newestFirst.length >= 2 && (
-            <Card>
-              <SectionHeader
-                title="Mock score progression"
-                subtitle={`Chronological score trajectory across ${mocksOverview.newestFirst.length} mocks vs ${targetScore} target`}
+            <section className="dh-amoled-section">
+              <SectionHeader title="Score progression" />
+              <AreaLineChart
+                height={190}
+                data={mocksOverview.newestFirst
+                  .slice()
+                  .reverse()
+                  .map(({ mock, report }) => ({
+                    label: mock.dayKey.slice(5),
+                    value: report.totalScore,
+                    hint: `${mock.name} · ${report.accuracyPct}% acc`,
+                  }))}
+                goalValue={targetScore}
+                goalLabel={`Target ${targetScore}`}
+                valueFormatter={(v) => `${Math.round(v)}`}
+                ariaLabel="Mock test score progression"
               />
-              <div className="mt-3">
-                <AreaLineChart
-                  height={190}
-                  data={mocksOverview.newestFirst
-                    .slice()
-                    .reverse()
-                    .map(({ mock, report }) => ({
-                      label: mock.dayKey.slice(5),
-                      value: report.totalScore,
-                      hint: `${mock.name} · ${report.accuracyPct}% acc`,
-                    }))}
-                  goalValue={targetScore}
-                  goalLabel={`Target ${targetScore}`}
-                  valueFormatter={(v) => `${Math.round(v)}`}
-                  ariaLabel="Mock test score progression"
-                />
-              </div>
-            </Card>
+            </section>
           )}
 
-          {/* Error & Pacing Insights Card */}
+          {/* Error & Pacing Insights */}
           {mockDiagnosticsAgg.mocksWithDiagnosticsCount >= 1 && (
-            <Card>
-              <SectionHeader
-                title="Error & pacing insights"
-                subtitle={`Across ${mockDiagnosticsAgg.mocksWithDiagnosticsCount} diagnosed mock${
-                  mockDiagnosticsAgg.mocksWithDiagnosticsCount === 1 ? '' : 's'
-                } · ${mockDiagnosticsAgg.totalLostMarks} marks lost (${mockDiagnosticsAgg.totalRecoverableMarks} recoverable)`}
-              />
+            <section className="dh-amoled-section">
+              <div className="dh-eyebrow-row">
+                <h3 className="dh-eyebrow">Error &amp; pacing</h3>
+                <span className="tnum text-[13px] text-[var(--tx-2)]">
+                  {mockDiagnosticsAgg.totalLostMarks} lost · {mockDiagnosticsAgg.totalRecoverableMarks} recoverable
+                </span>
+              </div>
 
-              <div className="mt-3 space-y-4">
-                <div className="space-y-2.5">
-                  <div className="text-[13px] font-semibold text-[var(--tx)]">
-                    Where marks are bleeding
-                  </div>
-                  <div className="grid gap-2.5 sm:grid-cols-2">
-                    {BLEEDING_CATEGORIES.map((cat) => {
-                      const count = mockDiagnosticsAgg.bleedingCounts[cat.key];
-                      const lostMarks = mockDiagnosticsAgg.bleedingMarks[cat.key];
-                      return (
-                        <div
-                          key={cat.key}
-                          className="rounded-xl border border-[var(--line)] bg-[var(--sf-2)] p-2.5"
-                        >
-                          <div className="split mb-1.5 text-[13px]">
-                            <span className="font-medium text-[var(--tx)]">
-                              {cat.label}
-                            </span>
-                            <span className="tnum font-semibold text-[var(--tx)]">
-                              {count} Q · {lostMarks} marks
-                            </span>
-                          </div>
-                          <Meter
-                            value={lostMarks}
-                            max={Math.max(1, mockDiagnosticsAgg.totalLostMarks)}
-                            color={cat.color}
-                            height={7}
-                            label={`${cat.label} lost marks`}
-                          />
+              <div className="space-y-4">
+                <div className="dh-hairline-list">
+                  {BLEEDING_CATEGORIES.map((cat) => {
+                    const count = mockDiagnosticsAgg.bleedingCounts[cat.key];
+                    const lostMarks = mockDiagnosticsAgg.bleedingMarks[cat.key];
+                    return (
+                      <div key={cat.key} className="dh-hairline-row space-y-1.5">
+                        <div className="split text-[13px]">
+                          <span className="font-medium text-[var(--tx)]">
+                            {cat.label}
+                          </span>
+                          <span className="tnum font-semibold text-[var(--tx)]">
+                            {count} Q · {lostMarks}m
+                          </span>
                         </div>
-                      );
-                    })}
-                  </div>
+                        <Meter
+                          value={lostMarks}
+                          max={Math.max(1, mockDiagnosticsAgg.totalLostMarks)}
+                          color={cat.color}
+                          height={6}
+                          label={`${cat.label} lost marks`}
+                        />
+                      </div>
+                    );
+                  })}
                 </div>
 
                 {mockDiagnosticsAgg.timedMocksCount >= 1 && (
-                  <div className="space-y-2.5 border-t border-[var(--line)] pt-3">
-                    <div className="split flex-wrap gap-1">
-                      <span className="text-[13px] font-semibold text-[var(--tx)]">
-                        Avg subject pacing
-                      </span>
+                  <div className="space-y-2 pt-2">
+                    <div className="dh-eyebrow-row">
+                      <span className="dh-eyebrow">Avg subject pacing</span>
                       <span className="tnum text-[13px] text-[var(--tx-2)]">
-                        Across {mockDiagnosticsAgg.timedMocksCount} timed mock
-                        {mockDiagnosticsAgg.timedMocksCount === 1 ? '' : 's'}
+                        {mockDiagnosticsAgg.timedMocksCount} timed
                       </span>
                     </div>
                     {(() => {
@@ -1490,20 +1493,17 @@ export const PrepView: React.FC<PrepViewProps> = ({
                         0
                       );
                       return (
-                        <div className="grid gap-2 sm:grid-cols-2">
+                        <div className="dh-hairline-list">
                           {orderedPacing.map(({ subject, pacing }) => (
-                            <div
-                              key={subject.id}
-                              className="rounded-xl border border-[var(--line)] bg-[var(--sf-2)] p-2.5"
-                            >
-                              <div className="split mb-1.5 text-[13px]">
-                                <span className="flex items-center gap-1.5 font-medium text-[var(--tx)]">
+                            <div key={subject.id} className="dh-hairline-row space-y-1.5">
+                              <div className="split text-[13px]">
+                                <span className="flex items-center gap-2 font-medium text-[var(--tx)]">
                                   <span
                                     aria-hidden="true"
-                                    className="h-2.5 w-2.5 rounded-full"
+                                    className="dh-sub-dot"
                                     style={{ background: subject.color }}
                                   />
-                                  {subject.e} {subject.name}
+                                  {subject.name}
                                 </span>
                                 <span className="tnum font-semibold text-[var(--tx)]">
                                   {pacing.avgMinutes}m avg
@@ -1513,7 +1513,7 @@ export const PrepView: React.FC<PrepViewProps> = ({
                                 value={pacing.avgMinutes}
                                 max={Math.max(1, totalAvgMins)}
                                 color={subject.color}
-                                height={7}
+                                height={6}
                                 label={`${subject.name} average minutes`}
                               />
                             </div>
@@ -1524,255 +1524,257 @@ export const PrepView: React.FC<PrepViewProps> = ({
                   </div>
                 )}
               </div>
-            </Card>
+            </section>
           )}
 
-          {/* Mock List */}
-          {mocksOverview.newestFirst.length === 0 ? (
-            <EmptyState
-              illustration="noMocks"
-              title="No mock tests logged yet"
-              description="Log your coaching or full-length NEET mock scores to visualize score trends, accuracy, and negative marking losses."
-              action={
-                <Button
-                  variant="primary"
-                  size="sm"
-                  icon={<Plus size={15} />}
+          {/* Mock List — Hairline AMOLED Ledger */}
+          <section className="dh-amoled-section">
+            <SectionHeader title="Logged mocks" />
+            {mocksOverview.newestFirst.length === 0 ? (
+              <div className="dh-empty-inline">
+                <span>No mock tests logged yet.</span>
+                <button
+                  type="button"
+                  className="dh-eyebrow-link"
                   onClick={onOpenNewMock}
                 >
-                  Log first mock test
-                </Button>
-              }
-            />
-          ) : (
-            <WindowedList
-              items={mocksOverview.newestFirst}
-              threshold={100}
-              estimatedRowHeight={180}
-              itemLabel="mocks"
-              className="space-y-3"
-              getKey={({ mock }) => mock.id}
-              renderItem={({ mock, report }) => {
-                const diag = mockDiagnosticsMap[mock.id];
-                const showCleanBadge = Boolean(
-                  diag && hasBleedingEntries(diag.bleeding)
-                );
-                const cleanInfo = showCleanBadge
-                  ? computeCleanScore(
-                      report.totalScore,
-                      mock.maxMarks,
-                      diag?.bleeding
-                    )
-                  : null;
-                const timeSummary = diag
-                  ? formatSubjectTimeSummary(
-                      diag.subjectMinutes,
-                      state.subjects
-                    )
-                  : '';
+                  Log first mock ›
+                </button>
+              </div>
+            ) : (
+              <WindowedList
+                items={mocksOverview.newestFirst}
+                threshold={100}
+                estimatedRowHeight={168}
+                itemLabel="mocks"
+                className="dh-hairline-list"
+                getKey={({ mock }) => mock.id}
+                renderItem={({ mock, report }) => {
+                  const diag = mockDiagnosticsMap[mock.id];
+                  const showCleanBadge = Boolean(
+                    diag && hasBleedingEntries(diag.bleeding)
+                  );
+                  const cleanInfo = showCleanBadge
+                    ? computeCleanScore(
+                        report.totalScore,
+                        mock.maxMarks,
+                        diag?.bleeding
+                      )
+                    : null;
+                  const timeSummary = diag
+                    ? formatSubjectTimeSummary(
+                        diag.subjectMinutes,
+                        state.subjects
+                      )
+                    : '';
 
-                return (
-                <Card
-                  className="dh-mock-card-clickable"
-                  data-testid={`mock-card-${mock.id}`}
-                  onClick={() => {
-                    triggerHaptic('tap');
-                    setActiveReportMockId(mock.id);
-                  }}
-                >
-                  <div className="flex flex-wrap items-start justify-between gap-2">
-                    <div className="min-w-0 flex-1">
-                      <div className="flex flex-wrap items-center gap-2">
-                        <h4 className="text-[15px] font-semibold text-[var(--tx)]">
-                          {mock.name}
-                        </h4>
-                        <span className="tnum rounded-lg bg-[var(--ac-soft)] px-2.5 py-0.5 text-[13px] font-bold text-[var(--ac-ink)]">
-                          {report.totalScore} / {mock.maxMarks} ({report.pct}%)
-                        </span>
-                        {cleanInfo && (
-                          <span className="tnum rounded-lg border border-[var(--line)] bg-[var(--sf-2)] px-2.5 py-0.5 text-[13px] font-semibold text-[var(--ok-ink)]">
-                            Clean {cleanInfo.cleanScore}
-                          </span>
-                        )}
-                      </div>
-                      <p className="tnum mt-0.5 text-[13px] text-[var(--tx-2)]">
-                        {mock.dayKey} · Accuracy {report.accuracyPct}% · +{report.totalCorrect} correct · −{report.totalWrong} wrong · {report.totalUnattempted} left
-                      </p>
-                      {timeSummary && (
-                        <p className="tnum mt-0.5 text-[13px] text-[var(--tx-2)]">
-                          {timeSummary}
-                        </p>
-                      )}
-                      {mock.note && (
-                        <p className="mt-1 text-[13px] text-[var(--tx-2)]">{mock.note}</p>
-                      )}
-                    </div>
+                  return (
                     <div
-                      className="flex items-center gap-1.5"
-                      onClick={(e) => e.stopPropagation()}
+                      className="dh-hairline-row dh-mock-card-clickable py-4"
+                      data-testid={`mock-card-${mock.id}`}
+                      onClick={() => {
+                        triggerHaptic('tap');
+                        setActiveReportMockId(mock.id);
+                      }}
                     >
-                      <button
-                        type="button"
-                        data-testid={`mock-report-open-${mock.id}`}
-                        aria-label={`Open scorecard report for ${mock.name}`}
-                        className="dh-mock-report-chip"
-                        onClick={(e) => {
-                          e.stopPropagation();
-                          triggerHaptic('tap');
-                          setActiveReportMockId(mock.id);
-                        }}
-                      >
-                        <span>Report</span>
-                        <ChevronRight size={14} strokeWidth={2} aria-hidden="true" />
-                      </button>
-                      <IconButton
-                        label={`Edit ${mock.name}`}
-                        onClick={(e) => {
-                          e.stopPropagation();
-                          onEditMock(mock.id);
-                        }}
-                      >
-                        <Edit3 size={16} />
-                      </IconButton>
-                      <IconButton
-                        label={`Delete ${mock.name}`}
-                        onClick={(e) => {
-                          e.stopPropagation();
-                          onDeleteMock(mock.id);
-                        }}
-                      >
-                        <Trash2 size={16} />
-                      </IconButton>
-                    </div>
-                  </div>
-
-                  <div className="mt-3 grid gap-2 sm:grid-cols-3">
-                    {report.bySubject
-                      .filter((bs) => bs.attempted > 0 || bs.unattempted > 0)
-                      .map((bs) => (
-                        <div
-                          key={bs.subjectId}
-                          className="rounded-xl border border-[var(--line)] bg-[var(--sf-2)] p-2.5"
-                        >
-                          <div className="split text-[13px]">
-                            <span className="font-medium text-[var(--tx)]">
-                              {bs.e} {bs.name}
+                      <div className="flex flex-wrap items-start justify-between gap-2">
+                        <div className="min-w-0 flex-1">
+                          <div className="flex flex-wrap items-center gap-2">
+                            <h4 className="text-[15px] font-semibold text-[var(--tx)]">
+                              {mock.name}
+                            </h4>
+                            <span className="tnum text-[14px] font-bold text-[var(--ac-ink)]">
+                              {report.totalScore}/{mock.maxMarks} ({report.pct}%)
                             </span>
-                            <span className="tnum font-semibold text-[var(--tx)]">
-                              {bs.score} pts ({bs.accuracyPct}%)
-                            </span>
-                          </div>
-                          <div className="tnum mt-1 text-[13px] text-[var(--tx-3)]">
-                            +{bs.correct} / −{bs.wrong} / {bs.unattempted} skip
-                          </div>
-                        </div>
-                      ))}
-                  </div>
-
-                  {/* Per-Mock Inline Expandable Negative-Marking Leak Detector */}
-                  {(() => {
-                    const leakCounts =
-                      mockLeaksMap[mock.id]?.counts ?? createEmptyMockLeaks();
-                    const taggedTotal = getTotalLeakErrors(leakCounts);
-                    const taggedMarksLost = computeNetMarksBleed(taggedTotal);
-                    const isLeakOpen = expandedLeakMockId === mock.id;
-                    return (
-                      <div
-                        className="dh-leak-mock-wrap"
-                        onClick={(e) => e.stopPropagation()}
-                      >
-                        <button
-                          type="button"
-                          data-testid={`mock-leak-toggle-${mock.id}`}
-                          aria-expanded={isLeakOpen}
-                          className={`dh-leak-mock-trigger ${isLeakOpen ? 'is-open' : ''}`}
-                          onClick={(e) => {
-                            e.stopPropagation();
-                            triggerHaptic('tap');
-                            setExpandedLeakMockId(isLeakOpen ? null : mock.id);
-                          }}
-                        >
-                          <span className="dh-leak-mock-trigger-left">
-                            <Flame size={14} strokeWidth={1.9} aria-hidden="true" />
-                            <span>Leak Detector</span>
-                            {taggedTotal > 0 ? (
-                              <span className="dh-leak-mock-badge tnum">
-                                {taggedTotal} Q · −{taggedMarksLost}m
+                            {cleanInfo && (
+                              <span className="tnum text-[13px] font-semibold text-[var(--ok-ink)]">
+                                · Clean {cleanInfo.cleanScore}
                               </span>
-                            ) : (
-                              <span className="dh-leak-mock-hint">Tag error causes</span>
                             )}
-                          </span>
-                          <ChevronDown
-                            size={15}
-                            strokeWidth={1.85}
-                            className={`dh-leak-chevron ${isLeakOpen ? 'is-open' : ''}`}
-                            aria-hidden="true"
-                          />
-                        </button>
-
-                        {isLeakOpen && (
-                          <div
-                            className="dh-leak-drawer"
-                            data-testid={`mock-leak-drawer-${mock.id}`}
-                          >
-                            <div className="dh-leak-drawer-grid">
-                              {MOCK_LEAK_CATEGORIES.map((cat) => {
-                                const val = leakCounts[cat.key];
-                                const lost = computeNetMarksBleed(val);
-                                return (
-                                  <div key={cat.key} className="dh-leak-stepper-row">
-                                    <div className="min-w-0">
-                                      <div className="dh-leak-stepper-label">{cat.label}</div>
-                                      <div className="dh-leak-stepper-sub tnum">
-                                        {val > 0 ? `−${lost} net marks` : '0 errors'}
-                                      </div>
-                                    </div>
-                                    <div className="dh-leak-stepper-controls">
-                                      <button
-                                        type="button"
-                                        aria-label={`Decrease ${cat.label} for ${mock.name}`}
-                                        data-testid={`leak-dec-${mock.id}-${cat.key}`}
-                                        className="dh-leak-step-btn"
-                                        disabled={val <= 0}
-                                        onClick={() =>
-                                          handleAdjustMockLeak(mock.id, cat.key, -1)
-                                        }
-                                      >
-                                        <Minus size={14} strokeWidth={2} aria-hidden="true" />
-                                      </button>
-                                      <span
-                                        className="dh-leak-step-val tnum"
-                                        data-testid={`leak-val-${mock.id}-${cat.key}`}
-                                      >
-                                        {val}
-                                      </span>
-                                      <button
-                                        type="button"
-                                        aria-label={`Increase ${cat.label} for ${mock.name}`}
-                                        data-testid={`leak-inc-${mock.id}-${cat.key}`}
-                                        className="dh-leak-step-btn"
-                                        onClick={() =>
-                                          handleAdjustMockLeak(mock.id, cat.key, 1)
-                                        }
-                                      >
-                                        <Plus size={14} strokeWidth={2} aria-hidden="true" />
-                                      </button>
-                                    </div>
-                                  </div>
-                                );
-                              })}
-                            </div>
                           </div>
-                        )}
+                          <p className="tnum mt-1 text-[13px] text-[var(--tx-2)]">
+                            {mock.dayKey} · {report.accuracyPct}% acc · +{report.totalCorrect} / −{report.totalWrong} / {report.totalUnattempted} left
+                          </p>
+                          {timeSummary && (
+                            <p className="tnum mt-0.5 text-[13px] text-[var(--tx-3)]">
+                              {timeSummary}
+                            </p>
+                          )}
+                          {mock.note && (
+                            <p className="mt-1 text-[13px] text-[var(--tx-2)]">{mock.note}</p>
+                          )}
+                        </div>
+                        <div
+                          className="flex items-center gap-1"
+                          onClick={(e) => e.stopPropagation()}
+                        >
+                          <button
+                            type="button"
+                            data-testid={`mock-report-open-${mock.id}`}
+                            aria-label={`Open scorecard report for ${mock.name}`}
+                            className="dh-ghost-pill"
+                            onClick={(e) => {
+                              e.stopPropagation();
+                              triggerHaptic('tap');
+                              setActiveReportMockId(mock.id);
+                            }}
+                          >
+                            <span>Report</span>
+                            <ChevronRight size={13} strokeWidth={2} aria-hidden="true" />
+                          </button>
+                          <IconButton
+                            size={36}
+                            label={`Edit ${mock.name}`}
+                            onClick={(e) => {
+                              e.stopPropagation();
+                              onEditMock(mock.id);
+                            }}
+                          >
+                            <Edit3 size={15} />
+                          </IconButton>
+                          <IconButton
+                            size={36}
+                            label={`Delete ${mock.name}`}
+                            onClick={(e) => {
+                              e.stopPropagation();
+                              onDeleteMock(mock.id);
+                            }}
+                          >
+                            <Trash2 size={15} />
+                          </IconButton>
+                        </div>
                       </div>
-                    );
-                  })()}
-                </Card>
-                );
-              }}
-            />
-          )}
+
+                      {/* Clean inline subject breakdown strip */}
+                      <div className="mt-3 flex flex-wrap gap-x-5 gap-y-1.5 text-[13px]">
+                        {report.bySubject
+                          .filter((bs) => bs.attempted > 0 || bs.unattempted > 0)
+                          .map((bs) => {
+                            const subObj = getSubject(state, bs.subjectId);
+                            return (
+                              <div key={bs.subjectId} className="inline-flex items-center gap-1.5">
+                                <span
+                                  className="dh-sub-dot"
+                                  style={{ background: subObj.color }}
+                                  aria-hidden="true"
+                                />
+                                <span className="text-[var(--tx-2)]">{bs.name}</span>
+                                <span className="tnum font-semibold text-[var(--tx)]">
+                                  {bs.score}
+                                </span>
+                                <span className="tnum text-[var(--tx-3)]">
+                                  ({bs.accuracyPct}%)
+                                </span>
+                              </div>
+                            );
+                          })}
+                      </div>
+
+                      {/* Per-Mock Inline Expandable Negative-Marking Leak Detector */}
+                      {(() => {
+                        const leakCounts =
+                          mockLeaksMap[mock.id]?.counts ?? createEmptyMockLeaks();
+                        const taggedTotal = getTotalLeakErrors(leakCounts);
+                        const taggedMarksLost = computeNetMarksBleed(taggedTotal);
+                        const isLeakOpen = expandedLeakMockId === mock.id;
+                        return (
+                          <div
+                            className="dh-leak-mock-wrap"
+                            onClick={(e) => e.stopPropagation()}
+                          >
+                            <button
+                              type="button"
+                              data-testid={`mock-leak-toggle-${mock.id}`}
+                              aria-expanded={isLeakOpen}
+                              className={`dh-leak-mock-trigger ${isLeakOpen ? 'is-open' : ''}`}
+                              onClick={(e) => {
+                                e.stopPropagation();
+                                triggerHaptic('tap');
+                                setExpandedLeakMockId(isLeakOpen ? null : mock.id);
+                              }}
+                            >
+                              <span className="dh-leak-mock-trigger-left">
+                                <Flame size={14} strokeWidth={1.9} aria-hidden="true" />
+                                <span>Leak Detector</span>
+                                {taggedTotal > 0 ? (
+                                  <span className="dh-leak-mock-badge tnum">
+                                    {taggedTotal} Q · −{taggedMarksLost}m
+                                  </span>
+                                ) : (
+                                  <span className="dh-leak-mock-hint">Tag error causes</span>
+                                )}
+                              </span>
+                              <ChevronDown
+                                size={15}
+                                strokeWidth={1.85}
+                                className={`dh-leak-chevron ${isLeakOpen ? 'is-open' : ''}`}
+                                aria-hidden="true"
+                              />
+                            </button>
+
+                            {isLeakOpen && (
+                              <div
+                                className="dh-leak-drawer"
+                                data-testid={`mock-leak-drawer-${mock.id}`}
+                              >
+                                <div className="dh-leak-drawer-grid">
+                                  {MOCK_LEAK_CATEGORIES.map((cat) => {
+                                    const val = leakCounts[cat.key];
+                                    const lost = computeNetMarksBleed(val);
+                                    return (
+                                      <div key={cat.key} className="dh-leak-stepper-row">
+                                        <div className="min-w-0">
+                                          <div className="dh-leak-stepper-label">{cat.label}</div>
+                                          <div className="dh-leak-stepper-sub tnum">
+                                            {val > 0 ? `−${lost} net marks` : '0 errors'}
+                                          </div>
+                                        </div>
+                                        <div className="dh-leak-stepper-controls">
+                                          <button
+                                            type="button"
+                                            aria-label={`Decrease ${cat.label} for ${mock.name}`}
+                                            data-testid={`leak-dec-${mock.id}-${cat.key}`}
+                                            className="dh-leak-step-btn"
+                                            disabled={val <= 0}
+                                            onClick={() =>
+                                              handleAdjustMockLeak(mock.id, cat.key, -1)
+                                            }
+                                          >
+                                            <Minus size={14} strokeWidth={2} aria-hidden="true" />
+                                          </button>
+                                          <span
+                                            className="dh-leak-step-val tnum"
+                                            data-testid={`leak-val-${mock.id}-${cat.key}`}
+                                          >
+                                            {val}
+                                          </span>
+                                          <button
+                                            type="button"
+                                            aria-label={`Increase ${cat.label} for ${mock.name}`}
+                                            data-testid={`leak-inc-${mock.id}-${cat.key}`}
+                                            className="dh-leak-step-btn"
+                                            onClick={() =>
+                                              handleAdjustMockLeak(mock.id, cat.key, 1)
+                                            }
+                                          >
+                                            <Plus size={14} strokeWidth={2} aria-hidden="true" />
+                                          </button>
+                                        </div>
+                                      </div>
+                                    );
+                                  })}
+                                </div>
+                              </div>
+                            )}
+                          </div>
+                        );
+                      })()}
+                    </div>
+                  );
+                }}
+              />
+            )}
+          </section>
 
           <MockReportSheet
             open={Boolean(activeReportMock)}

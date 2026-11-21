@@ -5,14 +5,12 @@ import { getChapterPYQStats, getSubject } from '../utils/studyLogic';
 import { Button } from './ui/Button';
 import { Card } from './ui/Card';
 import { Chip } from './ui/Chip';
-import { EmptyState } from './ui/EmptyState';
 import { Field } from './ui/Field';
 import { IconButton } from './ui/IconButton';
 import { Meter } from './ui/Meter';
 import { SectionHeader } from './ui/SectionHeader';
 import { Select } from './ui/Select';
 import { Sheet } from './ui/Sheet';
-import { Stat } from './ui/Stat';
 import { WindowedList } from './ui/WindowedList';
 
 export interface PYQViewProps {
@@ -140,22 +138,15 @@ export const PYQView: React.FC<PYQViewProps> = ({
   };
 
   return (
-    <div className="space-y-4">
-      {/* Summary KPIs */}
-      <Card>
-        <div className="split mb-3 flex-wrap gap-2">
-          <div>
-            <h3 className="text-[16px] font-semibold text-[var(--tx)]">
-              Previous Year Questions (PYQ) Tracker
-            </h3>
-            <p className="text-[13px] text-[var(--tx-2)]">
-              Track chapter-wise NEET PYQ volume and accuracy across 37-year question banks
-            </p>
-          </div>
+    <div className="dh-amoled-flow">
+      {/* Tier-1 Summary Hero */}
+      <Card className="dh-hero-tier1">
+        <div className="split mb-4 flex-wrap gap-2">
+          <h3 className="dh-eyebrow">PYQ tracker</h3>
           <Button
             variant="primary"
             size="sm"
-            icon={<Plus size={16} />}
+            icon={<Plus size={15} />}
             onClick={() => openLogForChapter()}
             disabled={state.chapters.length === 0}
           >
@@ -163,81 +154,74 @@ export const PYQView: React.FC<PYQViewProps> = ({
           </Button>
         </div>
 
-        <div className="grid grid-cols-1 gap-2.5 min-[360px]:grid-cols-2 sm:grid-cols-3">
-          <Stat
-            label="Questions solved"
-            value={pyqStats.totalAttempted.toLocaleString()}
-            sub={`${pyqStats.totalLogs} sets logged`}
-          />
-          <Stat
-            label="Correct answers"
-            value={pyqStats.totalCorrect.toLocaleString()}
-            sub="Verified PYQs"
-          />
-          <Stat
-            label="Overall accuracy"
-            value={pyqStats.overallAcc !== null ? `${pyqStats.overallAcc}%` : '—'}
-            sub={
-              pyqStats.overallAcc !== null && pyqStats.overallAcc >= 85
-                ? 'Strong accuracy'
-                : 'Target 85%+'
-            }
-          />
+        <div className="dh-ledger-3col">
+          <div className="dh-ledger-cell">
+            <div className="dh-ledger-label">Solved</div>
+            <div className="dh-ledger-val tnum">{pyqStats.totalAttempted.toLocaleString()}</div>
+            <div className="dh-ledger-sub tnum">{pyqStats.totalLogs} sets</div>
+          </div>
+          <div className="dh-ledger-cell">
+            <div className="dh-ledger-label">Correct</div>
+            <div className="dh-ledger-val tnum">{pyqStats.totalCorrect.toLocaleString()}</div>
+            <div className="dh-ledger-sub">Verified</div>
+          </div>
+          <div className="dh-ledger-cell">
+            <div className="dh-ledger-label">Accuracy</div>
+            <div className="dh-ledger-val tnum">
+              {pyqStats.overallAcc !== null ? `${pyqStats.overallAcc}%` : '—'}
+            </div>
+            <div className="dh-ledger-sub">
+              {pyqStats.overallAcc !== null && pyqStats.overallAcc >= 85 ? 'Strong' : 'Target 85%+'}
+            </div>
+          </div>
         </div>
       </Card>
 
-      {/* Filter Bar */}
-      <Card>
-        <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
-          <div className="flex items-center gap-1.5 overflow-x-auto pb-1">
+      {/* Borderless Filter Bar */}
+      <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+        <div className="flex items-center gap-1.5 overflow-x-auto pb-1">
+          <Chip
+            selected={filterSubjectId === 'all'}
+            onClick={() => setFilterSubjectId('all')}
+          >
+            All subjects
+          </Chip>
+          {state.subjects.map((s) => (
             <Chip
-              selected={filterSubjectId === 'all'}
-              onClick={() => setFilterSubjectId('all')}
+              key={s.id}
+              selected={filterSubjectId === s.id}
+              colorDot={s.color}
+              onClick={() => setFilterSubjectId(s.id)}
             >
-              All subjects
+              {s.name}
             </Chip>
-            {state.subjects.map((s) => (
-              <Chip
-                key={s.id}
-                selected={filterSubjectId === s.id}
-                colorDot={s.color}
-                onClick={() => setFilterSubjectId(s.id)}
-              >
-                {s.e} {s.name}
-              </Chip>
-            ))}
-          </div>
-          <input
-            type="search"
-            value={searchQuery}
-            onChange={(e) => setSearchQuery(e.target.value)}
-            placeholder="Search chapter…"
-            aria-label="Search PYQ chapters"
-            className="h-10 rounded-xl border border-[var(--line)] bg-[var(--sf-2)] px-3 text-[13px] text-[var(--tx)] sm:w-56"
-          />
+          ))}
         </div>
-      </Card>
+        <input
+          type="search"
+          value={searchQuery}
+          onChange={(e) => setSearchQuery(e.target.value)}
+          placeholder="Search chapter…"
+          aria-label="Search PYQ chapters"
+          className="h-10 rounded-xl border border-[var(--line)] bg-[var(--sf-2)] px-3 text-[13px] text-[var(--tx)] sm:w-56"
+        />
+      </div>
 
       {state.chapters.length === 0 ? (
-        <EmptyState
-          illustration="noPyqs"
-          title="Add syllabus chapters first"
-          description="Add chapters in the Syllabus tab to start logging chapter-wise PYQ practice sets."
-        />
+        <div className="dh-empty-inline">
+          <span>Add chapters in Syllabus first to log chapter-wise PYQ batches.</span>
+        </div>
       ) : (
         <>
           {/* Chapter-wise PYQ coverage */}
-          <Card>
-            <SectionHeader
-              title="Chapter-wise PYQ coverage"
-              subtitle="Tap + Log on any chapter to record a new PYQ batch"
-            />
+          <section className="dh-amoled-section">
+            <SectionHeader title="Chapter-wise coverage" />
             <WindowedList
               items={pyqStats.chapterSummaries}
               threshold={100}
-              estimatedRowHeight={74}
+              estimatedRowHeight={68}
               itemLabel="chapters"
-              className="mt-2 divide-y divide-[var(--line)]"
+              className="dh-hairline-list"
               getKey={({ chapter }) => chapter.id}
               renderItem={({ chapter, subject, summary }) => {
                 const accColor =
@@ -249,18 +233,19 @@ export const PYQView: React.FC<PYQViewProps> = ({
                         ? 'var(--warn)'
                         : 'var(--err)';
                 return (
-                  <div className="flex flex-wrap items-center justify-between gap-3 py-2.5">
+                  <div className="dh-hairline-row flex flex-wrap items-center justify-between gap-3">
                     <div className="min-w-0 flex-1">
                       <div className="flex items-center gap-2">
                         <span
-                          className="h-2.5 w-2.5 shrink-0 rounded-full"
+                          className="dh-sub-dot"
                           style={{ background: subject.color }}
+                          aria-hidden="true"
                         />
                         <span className="truncate text-[14px] font-medium text-[var(--tx)]">
                           {chapter.name}
                         </span>
-                        <span className="text-[13px] text-[var(--tx-3)]">
-                          {subject.e} {subject.name}
+                        <span className="shrink-0 text-[13px] text-[var(--tx-3)]">
+                          {subject.name}
                         </span>
                       </div>
                       <div className="mt-1.5 flex items-center gap-3">
@@ -279,39 +264,33 @@ export const PYQView: React.FC<PYQViewProps> = ({
                       </div>
                     </div>
 
-                    <Button
-                      variant="secondary"
-                      size="sm"
+                    <button
+                      type="button"
+                      className="dh-ghost-pill"
                       onClick={() => openLogForChapter(chapter.id, chapter.subjectId)}
                     >
                       + Log
-                    </Button>
+                    </button>
                   </div>
                 );
               }}
             />
-          </Card>
+          </section>
 
           {/* Recent PYQ Logs */}
-          {pyqStats.filteredEntries.length === 0 ? (
-            <EmptyState
-              compact
-              illustration="noPyqs"
-              title="No PYQ batches logged for this filter"
-              description="Tap + Log on any chapter above or log a new PYQ batch to track chapter accuracy."
-            />
-          ) : (
-            <Card>
-              <SectionHeader
-                title="Recent PYQ logs"
-                subtitle={`${pyqStats.filteredEntries.length} recorded practice batches`}
-              />
+          <section className="dh-amoled-section">
+            <SectionHeader title="Recent PYQ logs" />
+            {pyqStats.filteredEntries.length === 0 ? (
+              <div className="dh-empty-inline">
+                <span>No PYQ batches logged for this filter yet.</span>
+              </div>
+            ) : (
               <WindowedList
                 items={pyqStats.filteredEntries}
                 threshold={100}
-                estimatedRowHeight={62}
+                estimatedRowHeight={58}
                 itemLabel="PYQ logs"
-                className="mt-2 divide-y divide-[var(--line)]"
+                className="dh-hairline-list"
                 getKey={(entry) => entry.id}
                 renderItem={(entry) => {
                   const ch = state.chapters.find((c) => c.id === entry.chapterId);
@@ -321,17 +300,18 @@ export const PYQView: React.FC<PYQViewProps> = ({
                       ? Math.round((entry.correct / entry.attempted) * 100)
                       : 0;
                   return (
-                    <div className="flex items-center justify-between gap-3 py-2.5">
+                    <div className="dh-hairline-row flex items-center justify-between gap-3">
                       <div className="min-w-0 flex-1">
                         <div className="flex flex-wrap items-center gap-2">
                           <span
-                            className="h-2 w-2 rounded-full"
+                            className="dh-sub-dot"
                             style={{ background: sub.color }}
+                            aria-hidden="true"
                           />
                           <span className="text-[13.5px] font-medium text-[var(--tx)]">
                             {ch ? ch.name : 'Chapter'}
                           </span>
-                          <span className="tnum rounded-md bg-[var(--sf-2)] px-2 py-0.5 text-[13px] font-medium text-[var(--ac-ink)]">
+                          <span className="tnum text-[13px] font-semibold text-[var(--ac-ink)]">
                             {entry.correct}/{entry.attempted} ({acc}%)
                           </span>
                           <span className="tnum text-[13px] text-[var(--tx-3)]">
@@ -340,17 +320,18 @@ export const PYQView: React.FC<PYQViewProps> = ({
                         </div>
                       </div>
                       <IconButton
+                        size={36}
                         label="Delete PYQ log"
                         onClick={() => onDeletePYQ(entry.id)}
                       >
-                        <Trash2 size={16} />
+                        <Trash2 size={15} />
                       </IconButton>
                     </div>
                   );
                 }}
               />
-            </Card>
-          )}
+            )}
+          </section>
         </>
       )}
 
@@ -371,7 +352,7 @@ export const PYQView: React.FC<PYQViewProps> = ({
               }}
               options={state.subjects.map((s) => ({
                 value: s.id,
-                label: `${s.e} ${s.name}`,
+                label: s.name,
               }))}
             />
           </Field>

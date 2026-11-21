@@ -22,12 +22,9 @@ export const Chip: React.FC<ChipProps> = ({
     {colorDot && (
       <span
         aria-hidden="true"
+        className="dh-sub-dot"
         style={{
-          width: '8px',
-          height: '8px',
-          borderRadius: '99px',
           background: colorDot,
-          flexShrink: 0,
         }}
       />
     )}

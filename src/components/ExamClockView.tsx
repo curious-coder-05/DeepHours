@@ -1,6 +1,5 @@
 import React, { useEffect, useState } from 'react';
 import {
-  Clock,
   Lightbulb,
   Maximize2,
   Pause,
@@ -77,8 +76,8 @@ export const ExamClockView: React.FC<ExamClockViewProps> = ({
   if (!isActive) {
     const omrConfig = examState.sections.find((s) => s.id === 'omr');
     return (
-      <div className="dh-exam-wrap">
-        <Card className="dh-today-card dh-exam-setup-card">
+      <div className="dh-exam-wrap dh-amoled-flow">
+        <Card className="dh-hero-tier1 dh-exam-setup-card">
           <div className="split" style={{ marginBottom: 12, gap: 10 }}>
             <div>
               <h2 className="dh-exam-title">NEET 3-Hour Chess-Clock</h2>
@@ -206,26 +205,24 @@ export const ExamClockView: React.FC<ExamClockViewProps> = ({
           </Button>
         </Card>
 
-        {/* Recent Local Exam Pace Splits */}
+        {/* Recent Local Exam Pace Splits (Tier-0 Hairline Section on #000000) */}
         {paceRecords.length > 0 && (
-          <Card className="dh-today-card">
-            <div className="split" style={{ marginBottom: 10 }}>
-              <div className="row" style={{ gap: 8 }}>
-                <Clock size={16} strokeWidth={1.8} style={{ color: 'var(--ac-ink)' }} />
-                <h3 style={{ margin: 0, fontSize: 16 }}>Recent exam pace logs</h3>
-              </div>
-              <span className="dh-meta-count tabular-nums">
+          <section className="dh-amoled-section">
+            <div className="dh-eyebrow-row">
+              <h3 className="dh-eyebrow">Recent exam pace logs</h3>
+              <span className="dh-meta-count tabular-nums" style={{ fontSize: 12, color: 'var(--tx-3)' }}>
                 {paceRecords.length} saved
               </span>
             </div>
-            <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
+            <div className="dh-hairline-list">
               {paceRecords.slice(0, 5).map((rec) => {
                 const worstBleed = rec.sections.find((s) => s.status === 'bleed');
                 return (
                   <button
                     key={rec.id}
                     type="button"
-                    className="dh-exam-history-row"
+                    className="dh-hairline-row"
+                    style={{ border: 0, borderBottom: '1px solid var(--hairline)', borderRadius: 0, width: '100%', textAlign: 'left', padding: '12px 0', background: 'transparent' }}
                     onClick={() => {
                       triggerHaptic('tap');
                       onInspectRecord(rec);
@@ -246,12 +243,12 @@ export const ExamClockView: React.FC<ExamClockViewProps> = ({
                           : ' · Balanced pace'}
                       </div>
                     </div>
-                    <span className="dh-exam-history-link">View bleed</span>
+                    <span className="dh-exam-history-link">View bleed ›</span>
                   </button>
                 );
               })}
             </div>
-          </Card>
+          </section>
         )}
       </div>
     );
@@ -264,7 +261,7 @@ export const ExamClockView: React.FC<ExamClockViewProps> = ({
 
   return (
     <div className="dh-exam-wrap">
-      <Card className="dh-today-card dh-exam-live-card">
+      <Card className="dh-hero-tier1 dh-exam-live-card">
         {/* Top Live Header */}
         <div className="dh-exam-live-head">
           <div style={{ minWidth: 0 }}>

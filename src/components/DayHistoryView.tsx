@@ -43,11 +43,7 @@ import {
 } from '../utils/studyLogic';
 import { computeDayXpBreakdown } from '../utils/xp';
 import { Button } from './ui/Button';
-import { Card } from './ui/Card';
 import { IconButton } from './ui/IconButton';
-import { SectionHeader } from './ui/SectionHeader';
-import { Segmented } from './ui/Segmented';
-import { Stat } from './ui/Stat';
 import { WindowedList } from './ui/WindowedList';
 
 export interface DayHistoryViewProps {
@@ -58,8 +54,6 @@ export interface DayHistoryViewProps {
   onEditSession?: (sessionId: string) => void;
   onOpenManualSession?: (defaultSubjectId?: string) => void;
 }
-
-type DayRecordFilter = 'all' | 'did' | 'missed';
 
 const MONTH_NAMES = [
   'January',
@@ -282,8 +276,7 @@ export const DayHistoryView: React.FC<DayHistoryViewProps> = ({
       ? initialDateKey
       : todayKey
   );
-  const [filterMode, setFilterMode] = useState<DayRecordFilter>('all');
-  const [showCalendarPicker, setShowCalendarPicker] = useState<boolean>(true);
+  const [showCalendarPicker, setShowCalendarPicker] = useState<boolean>(false);
 
   useEffect(() => {
     if (initialDateKey && /^\d{4}-\d{2}-\d{2}$/.test(initialDateKey)) {
@@ -376,22 +369,22 @@ export const DayHistoryView: React.FC<DayHistoryViewProps> = ({
     record.revisionsMissed.length +
     (!record.isFuture && !record.isRestDay && !record.metMinStudyTarget ? 1 : 0);
 
-  const showDidSection = filterMode === 'all' || filterMode === 'did';
-  const showMissedSection = filterMode === 'all' || filterMode === 'missed';
+  const totalActivityCount = totalDidCount + totalMissedCount + record.habitsSkipped.length;
 
   return (
-    <div className="space-y-4">
+    <div className="dh-amoled-flow">
       {/* Top Date Selector & Collapsible Month Calendar */}
-      <Card>
-        <div className="split flex-wrap gap-3">
+      <section className="dh-amoled-section">
+        <div
+          className="split flex-wrap gap-3 pb-3"
+          style={{ borderBottom: '1px solid var(--hairline)' }}
+        >
           <div>
-            <span className="text-[13px] font-medium text-[var(--ac-ink)]">
-              Daily activity history
-            </span>
-            <h3 className="text-[17px] font-semibold text-[var(--tx)]">
+            <span className="dh-eyebrow block">Daily activity history</span>
+            <h3 className="mt-0.5 text-[17px] font-semibold text-[var(--tx)]">
               {formatReadableDate(selectedDayKey)}
             </h3>
-            <p className="tnum text-[13px] text-[var(--tx-2)]">
+            <p className="tnum text-[12.5px] text-[var(--tx-3)]">
               {selectedDayKey}
               {selectedDayKey === todayKey
                 ? ' · Today'
@@ -402,7 +395,7 @@ export const DayHistoryView: React.FC<DayHistoryViewProps> = ({
             </p>
           </div>
 
-          <div className="flex flex-wrap items-center gap-1.5">
+          <div className="flex w-full items-center gap-1.5 sm:w-auto">
             <IconButton
               label="Previous day"
               onClick={() => handleSelectDate(addD(selectedDayKey, -1))}
@@ -416,7 +409,7 @@ export const DayHistoryView: React.FC<DayHistoryViewProps> = ({
               onChange={(e) => {
                 if (e.target.value) handleSelectDate(e.target.value);
               }}
-              className="tnum h-10 rounded-xl border border-[var(--line)] bg-[var(--sf-2)] px-3 text-[13px] font-medium text-[var(--tx)]"
+              className="tnum h-9 w-auto min-w-0 flex-1 rounded-xl border border-[var(--hairline)] bg-[var(--inset-group-bg,#0A0C10)] px-2.5 text-[13px] font-medium text-[var(--tx)] sm:w-[152px] sm:flex-none"
             />
             <IconButton
               label="Next day"
@@ -436,36 +429,36 @@ export const DayHistoryView: React.FC<DayHistoryViewProps> = ({
           </div>
         </div>
 
-        <div className="split mt-3 border-t border-[var(--line)] pt-3 flex-wrap gap-2">
-          <Button
-            variant="ghost"
-            size="sm"
-            icon={
-              showCalendarPicker ? (
-                <ChevronDown size={15} />
-              ) : (
-                <Calendar size={15} />
-              )
-            }
+        <div className="split flex-wrap gap-2">
+          <button
+            type="button"
+            className="dh-eyebrow-link"
             onClick={() => setShowCalendarPicker((v) => !v)}
           >
-            {showCalendarPicker ? 'Hide month calendar' : 'Show month calendar'}
-          </Button>
+            {showCalendarPicker ? (
+              <ChevronDown size={14} aria-hidden="true" />
+            ) : (
+              <Calendar size={14} aria-hidden="true" />
+            )}
+            <span>
+              {showCalendarPicker ? 'Hide month calendar' : 'Show month calendar'}
+            </span>
+          </button>
 
           {onSelectDateInToday && (
-            <Button
-              variant="secondary"
-              size="sm"
-              icon={<Edit3 size={14} />}
+            <button
+              type="button"
+              className="dh-ghost-pill"
               onClick={() => onSelectDateInToday(selectedDayKey)}
             >
-              Edit day in Today tab
-            </Button>
+              <Edit3 size={13} aria-hidden="true" />
+              <span>Edit in Today</span>
+            </button>
           )}
         </div>
 
         {showCalendarPicker && (
-          <div className="mt-3 rounded-xl border border-[var(--line)] bg-[var(--sf-2)] p-3">
+          <div className="rounded-2xl border border-[var(--hairline)] bg-[var(--sf-1)] p-3">
             <div className="split mb-2.5">
               <Button
                 variant="secondary"
@@ -502,7 +495,7 @@ export const DayHistoryView: React.FC<DayHistoryViewProps> = ({
                 return (
                   <span
                     key={i}
-                    className="text-[13px] font-medium text-[var(--tx-3)]"
+                    className="text-[12px] font-medium text-[var(--tx-3)]"
                   >
                     {DN[dow]}
                   </span>
@@ -513,7 +506,7 @@ export const DayHistoryView: React.FC<DayHistoryViewProps> = ({
             <div className="grid grid-cols-7 gap-1">
               {calendarCells.map((cell, idx) => {
                 if (!cell) {
-                  return <div key={`empty_${idx}`} className="min-h-[38px]" />;
+                  return <div key={`empty_${idx}`} className="min-h-[36px]" />;
                 }
                 const hasActivity = cell.studyMs > 0 || cell.doneCount > 0;
                 const allDone =
@@ -524,16 +517,16 @@ export const DayHistoryView: React.FC<DayHistoryViewProps> = ({
                     type="button"
                     onClick={() => handleSelectDate(cell.dayKey)}
                     title={`${cell.dayKey}: Studied ${fmtHMShort(cell.studyMs)} · ${cell.doneCount}/${cell.totalCount} (${cell.pct}%)`}
-                    className={`tnum flex min-h-[38px] flex-col items-center justify-center gap-0.5 rounded-lg border text-[13px] transition-colors ${
+                    className={`tnum flex min-h-[36px] flex-col items-center justify-center gap-0.5 rounded-lg border text-[13px] transition-colors ${
                       cell.isSelected
                         ? 'border-[var(--ac)] bg-[var(--ac-soft)] font-bold text-[var(--ac-ink)]'
                         : cell.isToday
-                          ? 'border-[var(--ok)] bg-[var(--sf-1)] font-semibold text-[var(--tx)]'
+                          ? 'border-[var(--ok)] bg-transparent font-semibold text-[var(--tx)]'
                           : allDone && !cell.isFuture
-                            ? 'border-[var(--line)] bg-[var(--sf-1)] font-medium text-[var(--ok-ink)]'
+                            ? 'border-[var(--hairline)] bg-transparent font-medium text-[var(--ok-ink)]'
                             : hasActivity
-                              ? 'border-[var(--line)] bg-[var(--sf-1)] text-[var(--tx)]'
-                              : 'border-transparent bg-[var(--sf-1)] text-[var(--tx-2)]'
+                              ? 'border-[var(--hairline)] bg-transparent text-[var(--tx)]'
+                              : 'border-transparent bg-transparent text-[var(--tx-3)]'
                     }`}
                     style={{ opacity: cell.isFuture ? 0.45 : 1 }}
                   >
@@ -552,525 +545,499 @@ export const DayHistoryView: React.FC<DayHistoryViewProps> = ({
             </div>
           </div>
         )}
-      </Card>
 
-      {/* Day Summary KPIs */}
-      <div className="grid grid-cols-2 gap-3 sm:grid-cols-4">
-        <Stat
-          label="Study time"
-          value={fmtHMShort(record.studyMs)}
-          sub={
-            record.metMinStudyTarget
-              ? `Met ${fmtHMShort(record.minTargetMs)} goal`
-              : `Goal ${fmtHMShort(record.minTargetMs)}`
-          }
-        />
-        <Stat
-          label="Habits due"
-          value={`${record.habitsCompleted.length}/${
-            record.habitsCompleted.length + record.habitsMissed.length
-          }`}
-          sub={
-            record.habitsMissed.length === 0
-              ? 'All due completed'
-              : `${record.habitsMissed.length} missed`
-          }
-        />
-        <Stat
-          label="Daily tasks"
-          value={`${record.tasksCompleted.length}/${
-            record.tasksCompleted.length + record.tasksMissed.length
-          }`}
-          sub={
-            record.tasksMissed.length === 0
-              ? 'All tasks finished'
-              : `${record.tasksMissed.length} unfinished`
-          }
-        />
-        <Stat
-          label="XP earned"
-          value={`+${record.xpEarned} XP`}
-          sub={`${record.sessions.length} ${
-            record.sessions.length === 1 ? 'session' : 'sessions'
-          } logged`}
-        />
-      </div>
+        {/* Day Summary KPIs — Hairline 2x2 Metric Ledger */}
+        <div className="dh-ledger-2x2">
+          <div className="dh-ledger-cell">
+            <span className="dh-ledger-label">Study time</span>
+            <span className="dh-ledger-val tnum">{fmtHMShort(record.studyMs)}</span>
+            <span className="dh-ledger-sub">
+              {record.metMinStudyTarget
+                ? `Met ${fmtHMShort(record.minTargetMs)} goal`
+                : `Goal ${fmtHMShort(record.minTargetMs)}`}
+            </span>
+          </div>
+          <div className="dh-ledger-cell">
+            <span className="dh-ledger-label">Habits due</span>
+            <span className="dh-ledger-val tnum">
+              {record.habitsCompleted.length}/
+              {record.habitsCompleted.length + record.habitsMissed.length}
+            </span>
+            <span className="dh-ledger-sub">
+              {record.habitsMissed.length === 0
+                ? 'All completed'
+                : `${record.habitsMissed.length} missed`}
+            </span>
+          </div>
+          <div className="dh-ledger-cell">
+            <span className="dh-ledger-label">Daily tasks</span>
+            <span className="dh-ledger-val tnum">
+              {record.tasksCompleted.length}/
+              {record.tasksCompleted.length + record.tasksMissed.length}
+            </span>
+            <span className="dh-ledger-sub">
+              {record.tasksMissed.length === 0
+                ? 'All finished'
+                : `${record.tasksMissed.length} unfinished`}
+            </span>
+          </div>
+          <div className="dh-ledger-cell">
+            <span className="dh-ledger-label">XP earned</span>
+            <span className="dh-ledger-val tnum">+{record.xpEarned} XP</span>
+            <span className="dh-ledger-sub">
+              {record.sessions.length}{' '}
+              {record.sessions.length === 1 ? 'session' : 'sessions'}
+            </span>
+          </div>
+        </div>
+      </section>
 
-      {/* Segmented Filter */}
-      <Segmented<DayRecordFilter>
-        value={filterMode}
-        onChange={setFilterMode}
-        ariaLabel="Day record filter"
-        options={[
-          {
-            value: 'all',
-            label: `Full day (${totalDidCount + totalMissedCount})`,
-          },
-          { value: 'did', label: `Did (${totalDidCount})` },
-          { value: 'missed', label: `Didn't do (${totalMissedCount})` },
-        ]}
-      />
+      {/* Unified Activity Log — Single Clean Hairline List with Check/Cross Indicators */}
+      <section className="dh-amoled-section" data-testid="day-history-unified-list">
+        <div className="dh-eyebrow-row">
+          <div className="flex items-center gap-2">
+            <h3 className="dh-eyebrow">Day activity</h3>
+            <span className="tnum text-[12px] text-[var(--tx-3)]">
+              {totalDidCount} done · {totalMissedCount} missed
+            </span>
+          </div>
+          {onOpenManualSession && (
+            <button
+              type="button"
+              className="dh-eyebrow-link"
+              onClick={() => onOpenManualSession()}
+            >
+              <Plus size={14} strokeWidth={1.8} aria-hidden="true" />
+              <span>Log session</span>
+            </button>
+          )}
+        </div>
 
-      {/* Section 1: Did */}
-      {showDidSection && (
-        <Card className="space-y-4">
-          <SectionHeader
-            title={`Did on ${selectedDayKey}`}
-            subtitle="Completed habits, tasks, study sessions, chapters, revisions, and logs"
-            action={
-              <span className="tnum rounded-md bg-[var(--sf-2)] px-2.5 py-1 text-[13px] font-medium text-[var(--ok-ink)]">
-                {totalDidCount} completed
-              </span>
-            }
-          />
+        {totalActivityCount === 0 ? (
+          <div className="dh-empty-inline">
+            <span>No activity recorded on {selectedDayKey}.</span>
+          </div>
+        ) : (
+          <div className="dh-hairline-list">
+            {/* Daily Study Minimum Status */}
+            {!record.isFuture && !record.isRestDay && (
+              <div className="dh-hairline-row">
+                <div className="flex min-w-0 items-center gap-2.5 text-[14px] font-medium text-[var(--tx)]">
+                  {record.metMinStudyTarget ? (
+                    <CheckCircle2
+                      size={16}
+                      className="shrink-0 text-[var(--ok-ink)]"
+                      aria-hidden="true"
+                    />
+                  ) : (
+                    <XCircle
+                      size={16}
+                      className="shrink-0 text-[var(--err-ink)]"
+                      aria-hidden="true"
+                    />
+                  )}
+                  <span className="truncate">
+                    {record.metMinStudyTarget
+                      ? 'Daily study minimum met'
+                      : 'Daily study minimum not reached'}
+                  </span>
+                </div>
+                <span
+                  className="tnum shrink-0 text-[13px] font-medium"
+                  style={{
+                    color: record.metMinStudyTarget
+                      ? 'var(--ok-ink)'
+                      : 'var(--err-ink)',
+                  }}
+                >
+                  {fmtHMShort(record.studyMs)} / {fmtHMShort(record.minTargetMs)}
+                </span>
+              </div>
+            )}
 
-          {totalDidCount === 0 ? (
-            <div className="rounded-xl border border-[var(--line)] bg-[var(--sf-2)] p-4 text-center text-[13px] text-[var(--tx-2)]">
-              No completed habits, tasks, or study sessions recorded on{' '}
-              <strong>{selectedDayKey}</strong>.
-            </div>
-          ) : (
-            <div className="space-y-4">
-              {/* Habits Completed */}
-              {record.habitsCompleted.length > 0 && (
-                <div>
-                  <h4 className="mb-2 text-[13px] font-semibold text-[var(--tx-2)]">
-                    Habits completed ({record.habitsCompleted.length})
-                  </h4>
-                  <div className="divide-y divide-[var(--line)] rounded-xl border border-[var(--line)] bg-[var(--sf-2)] px-3">
-                    {record.habitsCompleted.map(({ habit, value, target, unit }) => (
-                      <div
-                        key={habit.id}
-                        className="flex items-center justify-between gap-2 py-2.5 text-[13.5px]"
-                      >
-                        <span className="flex items-center gap-2 font-medium text-[var(--tx)]">
-                          <CheckCircle2 size={16} className="shrink-0 text-[var(--ok-ink)]" aria-hidden="true" />
-                          {habit.e} {habit.name}
-                          <span className="inline-flex items-center gap-1.5 rounded-md border border-[var(--line)] bg-[var(--sf-1)] px-2 py-0.5 text-[13px] text-[var(--tx-2)]">
+            {/* Study Sessions (Windowed for long days) */}
+            {record.sessions.length > 0 && (
+              <WindowedList
+                items={record.sessions}
+                threshold={100}
+                estimatedRowHeight={68}
+                itemLabel="sessions"
+                getKey={(ses) => ses.id}
+                renderItem={(ses) => {
+                  const sub = getSubject(state, ses.subjectId);
+                  const heading = getSessionHeading(state, ses);
+                  return (
+                    <div className="dh-hairline-row">
+                      <div className="flex min-w-0 flex-1 items-start gap-2.5">
+                        <CheckCircle2
+                          size={16}
+                          className="mt-0.5 shrink-0 text-[var(--ok-ink)]"
+                          aria-hidden="true"
+                        />
+                        <div className="min-w-0 flex-1">
+                          <div className="flex items-center gap-2 text-[14px] font-medium text-[var(--tx)]">
                             <span
+                              className="dh-sub-dot"
+                              style={{ background: sub.color }}
                               aria-hidden="true"
-                              className="h-2 w-2 rounded-full"
-                              style={{ background: CC[habit.c] || 'var(--tx-3)' }}
                             />
-                            {habit.c}
-                          </span>
-                        </span>
-                        <span className="tnum text-[13px] font-semibold text-[var(--ok-ink)]">
-                          {value}/{target} {unit}
-                        </span>
-                      </div>
-                    ))}
-                  </div>
-                </div>
-              )}
-
-              {/* Tasks Completed */}
-              {record.tasksCompleted.length > 0 && (
-                <div>
-                  <h4 className="mb-2 text-[13px] font-semibold text-[var(--tx-2)]">
-                    Daily tasks finished ({record.tasksCompleted.length})
-                  </h4>
-                  <div className="divide-y divide-[var(--line)] rounded-xl border border-[var(--line)] bg-[var(--sf-2)] px-3">
-                    {record.tasksCompleted.map((task) => {
-                      const sub = task.subjectId
-                        ? getSubject(state, task.subjectId)
-                        : null;
-                      return (
-                        <div
-                          key={task.id}
-                          className="flex items-center justify-between gap-2 py-2.5 text-[13.5px]"
-                        >
-                          <span className="flex items-center gap-2 font-medium text-[var(--tx)]">
-                            <CheckCircle2 size={16} className="shrink-0 text-[var(--ok-ink)]" aria-hidden="true" />
-                            {task.title}
-                          </span>
-                          {sub && (
-                            <span className="rounded-md bg-[var(--sf-1)] px-2 py-0.5 text-[13px] text-[var(--tx-2)]">
-                              {sub.e} {sub.name}
+                            <span className="truncate">
+                              {sub.name} · {heading}
                             </span>
-                          )}
-                        </div>
-                      );
-                    })}
-                  </div>
-                </div>
-              )}
-
-              {/* Study Sessions */}
-              {record.sessions.length > 0 && (
-                <div>
-                  <div className="split mb-2">
-                    <h4 className="text-[13px] font-semibold text-[var(--tx-2)]">
-                      Study sessions ({record.sessions.length} ·{' '}
-                      {fmtHMShort(record.studyMs)})
-                    </h4>
-                    {onOpenManualSession && (
-                      <Button
-                        variant="ghost"
-                        size="sm"
-                        icon={<Plus size={14} />}
-                        onClick={() => onOpenManualSession()}
-                      >
-                        Log session
-                      </Button>
-                    )}
-                  </div>
-                  <WindowedList
-                    items={record.sessions}
-                    threshold={100}
-                    estimatedRowHeight={72}
-                    itemLabel="sessions"
-                    className="divide-y divide-[var(--line)] rounded-xl border border-[var(--line)] bg-[var(--sf-2)] px-3"
-                    getKey={(ses) => ses.id}
-                    renderItem={(ses) => {
-                      const sub = getSubject(state, ses.subjectId);
-                      const heading = getSessionHeading(state, ses);
-                      return (
-                        <div className="flex items-center justify-between gap-3 py-2.5">
-                          <div className="min-w-0 flex-1">
-                            <div className="flex items-center gap-2 text-[13.5px] font-medium text-[var(--tx)]">
-                              <span
-                                className="h-2 w-2 shrink-0 rounded-full"
-                                style={{ background: sub.color }}
-                              />
-                              <span className="truncate">
-                                {sub.e} {sub.name} · {heading}
-                              </span>
-                            </div>
-                            <p className="tnum text-[13px] text-[var(--tx-2)]">
-                              {fmtClockTime(ses.startTs)} – {fmtClockTime(ses.endTs)} ·{' '}
-                              {ses.mode} · Purity {ses.purity ?? 100}%
+                          </div>
+                          <p className="tnum mt-0.5 text-[12.5px] text-[var(--tx-3)]">
+                            {fmtClockTime(ses.startTs)} – {fmtClockTime(ses.endTs)} ·{' '}
+                            {ses.mode} · {ses.purity ?? 100}% purity
+                          </p>
+                          {ses.note && (
+                            <p className="mt-0.5 text-[12.5px] text-[var(--tx-2)]">
+                              “{ses.note}”
                             </p>
-                            {ses.note && (
-                              <p className="mt-0.5 text-[13px] text-[var(--tx-2)]">
-                                “{ses.note}”
-                              </p>
-                            )}
-                          </div>
-                          <div className="flex shrink-0 items-center gap-2">
-                            <strong className="tnum text-[13.5px] text-[var(--ok-ink)]">
-                              {fmtHMShort(ses.activeMs)}
-                            </strong>
-                            {onEditSession && (
-                              <Button
-                                variant="secondary"
-                                size="sm"
-                                onClick={() => onEditSession(ses.id)}
-                              >
-                                Edit
-                              </Button>
-                            )}
-                          </div>
-                        </div>
-                      );
-                    }}
-                  />
-                </div>
-              )}
-
-              {/* Chapters & Revisions */}
-              {(record.chaptersCompleted.length > 0 ||
-                record.revisionsCompleted.length > 0) && (
-                <div>
-                  <h4 className="mb-2 text-[13px] font-semibold text-[var(--tx-2)]">
-                    Chapters &amp; revisions completed
-                  </h4>
-                  <div className="divide-y divide-[var(--line)] rounded-xl border border-[var(--line)] bg-[var(--sf-2)] px-3">
-                    {record.chaptersCompleted.map((ch) => {
-                      const sub = getSubject(state, ch.subjectId);
-                      return (
-                        <div
-                          key={`ch_${ch.id}`}
-                          className="flex items-center justify-between gap-2 py-2.5 text-[13.5px]"
-                        >
-                          <span className="text-[var(--tx)]">
-                            Completed chapter: <strong>{ch.name}</strong> ({sub.e}{' '}
-                            {sub.name})
-                          </span>
-                          <span className="tnum text-[13px] font-semibold text-[var(--ac-ink)]">
-                            +25 XP
-                          </span>
-                        </div>
-                      );
-                    })}
-                    {record.revisionsCompleted.map((rev, idx) => {
-                      const sub = getSubject(state, rev.chapter.subjectId);
-                      return (
-                        <div
-                          key={`rev_${rev.chapter.id}_${idx}`}
-                          className="flex items-center justify-between gap-2 py-2.5 text-[13.5px]"
-                        >
-                          <span className="text-[var(--tx)]">
-                            Revision {rev.label}: <strong>{rev.chapter.name}</strong> (
-                            {sub.e} {sub.name})
-                          </span>
-                          <span className="text-[13px] font-semibold text-[var(--ok-ink)]">
-                            Done
-                          </span>
-                        </div>
-                      );
-                    })}
-                  </div>
-                </div>
-              )}
-
-              {/* Mocks, PYQs, Mistakes & Doubts */}
-              {(record.mocks.length > 0 ||
-                record.pyqEntries.length > 0 ||
-                record.mistakes.length > 0 ||
-                record.doubtsCreated.length > 0) && (
-                <div>
-                  <h4 className="mb-2 text-[13px] font-semibold text-[var(--tx-2)]">
-                    Mocks, PYQs &amp; practice logs
-                  </h4>
-                  <div className="divide-y divide-[var(--line)] rounded-xl border border-[var(--line)] bg-[var(--sf-2)] px-3">
-                    {record.mocks.map((mk) => {
-                      const sc = computeMockScore(mk, state.subjects);
-                      return (
-                        <div
-                          key={mk.id}
-                          className="flex items-center justify-between gap-2 py-2.5 text-[13.5px]"
-                        >
-                          <span className="text-[var(--tx)]">
-                            Mock test: <strong>{mk.name}</strong>
-                          </span>
-                          <strong className="tnum text-[13px] text-[var(--ac-ink)]">
-                            {sc.totalScore}/{sc.maxMarks} ({sc.accuracyPct}%)
-                          </strong>
-                        </div>
-                      );
-                    })}
-                    {record.pyqEntries.map((pq) => {
-                      const ch = state.chapters.find((c) => c.id === pq.chapterId);
-                      return (
-                        <div
-                          key={pq.id}
-                          className="flex items-center justify-between gap-2 py-2.5 text-[13.5px]"
-                        >
-                          <span className="text-[var(--tx)]">
-                            PYQ practice: <strong>{ch ? ch.name : 'Chapter'}</strong>
-                          </span>
-                          <strong className="tnum text-[13px] text-[var(--tx)]">
-                            {pq.correct}/{pq.attempted} correct
-                          </strong>
-                        </div>
-                      );
-                    })}
-                    {record.mistakes.map((ms) => {
-                      const sub = getSubject(state, ms.subjectId);
-                      return (
-                        <div
-                          key={ms.id}
-                          className="flex items-center justify-between gap-2 py-2.5 text-[13.5px]"
-                        >
-                          <span className="text-[var(--tx)]">
-                            Mistake ({sub.e} {sub.name} · {ms.reason}):{' '}
-                            {ms.note || 'Logged'}
-                          </span>
-                          <span className="text-[13px] text-[var(--tx-2)]">
-                            {ms.resolved ? 'Resolved' : 'Open'}
-                          </span>
-                        </div>
-                      );
-                    })}
-                    {record.doubtsCreated.map((db) => {
-                      const sub = getSubject(state, db.subjectId);
-                      return (
-                        <div
-                          key={db.id}
-                          className="flex items-center justify-between gap-2 py-2.5 text-[13.5px]"
-                        >
-                          <span className="text-[var(--tx)]">
-                            Doubt ({sub.e} {sub.name}): {db.text}
-                          </span>
-                          <span className="text-[13px] text-[var(--tx-2)]">
-                            {db.resolved ? 'Resolved' : 'Open'}
-                          </span>
-                        </div>
-                      );
-                    })}
-                  </div>
-                </div>
-              )}
-
-              {/* Wellbeing & Reflection */}
-              {(record.sleepHours !== undefined ||
-                record.energyLevel !== undefined ||
-                record.moodValue !== undefined ||
-                Boolean(record.dailyNote)) && (
-                <div>
-                  <h4 className="mb-2 text-[13px] font-semibold text-[var(--tx-2)]">
-                    Wellbeing &amp; reflection
-                  </h4>
-                  <div className="rounded-xl border border-[var(--line)] bg-[var(--sf-2)] p-3 text-[13px] text-[var(--tx)] space-y-1.5">
-                    <div className="flex flex-wrap gap-4">
-                      {record.sleepHours !== undefined && (
-                        <span>
-                          Sleep: <strong className="tnum">{record.sleepHours}h</strong>
-                        </span>
-                      )}
-                      {record.energyLevel !== undefined && (
-                        <span>
-                          Energy:{' '}
-                          <strong className="tnum">{record.energyLevel}/5</strong>
-                        </span>
-                      )}
-                      {record.moodValue !== undefined &&
-                        MOOD_LABELS[record.moodValue] && (
-                          <span>
-                            Mood: <strong>{MOOD_LABELS[record.moodValue]}</strong>
-                          </span>
-                        )}
-                    </div>
-                    {record.dailyNote && (
-                      <p className="border-t border-[var(--line)] pt-2 text-[var(--tx-2)]">
-                        Reflection: “{record.dailyNote}”
-                      </p>
-                    )}
-                  </div>
-                </div>
-              )}
-            </div>
-          )}
-        </Card>
-      )}
-
-      {/* Section 2: Didn't Do */}
-      {showMissedSection && (
-        <Card className="space-y-4">
-          <SectionHeader
-            title={`Didn't do on ${selectedDayKey}`}
-            subtitle="Unfinished habits, pending tasks, and missed revisions"
-            action={
-              <span className="tnum rounded-md bg-[var(--sf-2)] px-2.5 py-1 text-[13px] font-medium text-[var(--err-ink)]">
-                {totalMissedCount} missed
-              </span>
-            }
-          />
-
-          {totalMissedCount === 0 ? (
-            <div className="rounded-xl border border-[var(--line)] bg-[var(--sf-2)] p-4 text-center text-[13px] font-medium text-[var(--ok-ink)]">
-              Nothing missed on {selectedDayKey}. All due habits, tasks, and targets were
-              completed.
-            </div>
-          ) : (
-            <div className="space-y-4">
-              {!record.isFuture &&
-                !record.isRestDay &&
-                !record.metMinStudyTarget && (
-                  <div className="flex items-center justify-between gap-2 rounded-xl border border-[var(--line)] bg-[var(--sf-2)] px-3 py-2.5 text-[13px]">
-                    <span className="flex items-center gap-2 font-medium text-[var(--tx)]">
-                      <XCircle size={16} className="shrink-0 text-[var(--err-ink)]" aria-hidden="true" />
-                      Daily study minimum not reached
-                    </span>
-                    <span className="tnum text-[13px] text-[var(--err-ink)]">
-                      {fmtHMShort(record.studyMs)} / {fmtHMShort(record.minTargetMs)}
-                    </span>
-                  </div>
-                )}
-
-              {record.habitsMissed.length > 0 && (
-                <div>
-                  <h4 className="mb-2 text-[13px] font-semibold text-[var(--tx-2)]">
-                    Due habits not completed ({record.habitsMissed.length})
-                  </h4>
-                  <div className="divide-y divide-[var(--line)] rounded-xl border border-[var(--line)] bg-[var(--sf-2)] px-3">
-                    {record.habitsMissed.map(({ habit, value, target, unit }) => (
-                      <div
-                        key={habit.id}
-                        className="flex items-center justify-between gap-2 py-2.5 text-[13.5px]"
-                      >
-                        <span className="flex items-center gap-2 font-medium text-[var(--tx)]">
-                          <XCircle size={16} className="shrink-0 text-[var(--err-ink)]" aria-hidden="true" />
-                          {habit.e} {habit.name}
-                        </span>
-                        <span className="tnum text-[13px] text-[var(--err-ink)]">
-                          {value}/{target} {unit}
-                        </span>
-                      </div>
-                    ))}
-                  </div>
-                </div>
-              )}
-
-              {record.tasksMissed.length > 0 && (
-                <div>
-                  <h4 className="mb-2 text-[13px] font-semibold text-[var(--tx-2)]">
-                    Unfinished daily tasks ({record.tasksMissed.length})
-                  </h4>
-                  <div className="divide-y divide-[var(--line)] rounded-xl border border-[var(--line)] bg-[var(--sf-2)] px-3">
-                    {record.tasksMissed.map((task) => {
-                      const sub = task.subjectId
-                        ? getSubject(state, task.subjectId)
-                        : null;
-                      return (
-                        <div
-                          key={task.id}
-                          className="flex items-center justify-between gap-2 py-2.5 text-[13.5px]"
-                        >
-                          <span className="flex items-center gap-2 font-medium text-[var(--tx)]">
-                            <XCircle size={16} className="shrink-0 text-[var(--err-ink)]" aria-hidden="true" />
-                            {task.title}
-                          </span>
-                          {sub && (
-                            <span className="rounded-md bg-[var(--sf-1)] px-2 py-0.5 text-[13px] text-[var(--tx-2)]">
-                              {sub.e} {sub.name}
-                            </span>
                           )}
                         </div>
-                      );
-                    })}
-                  </div>
-                </div>
-              )}
+                      </div>
+                      <div className="flex shrink-0 items-center gap-2">
+                        <strong className="tnum text-[13.5px] text-[var(--ok-ink)]">
+                          {fmtHMShort(ses.activeMs)}
+                        </strong>
+                        {onEditSession && (
+                          <Button
+                            variant="secondary"
+                            size="sm"
+                            onClick={() => onEditSession(ses.id)}
+                          >
+                            Edit
+                          </Button>
+                        )}
+                      </div>
+                    </div>
+                  );
+                }}
+              />
+            )}
 
-              {record.revisionsMissed.length > 0 && (
-                <div>
-                  <h4 className="mb-2 text-[13px] font-semibold text-[var(--tx-2)]">
-                    Scheduled revisions not marked done ({record.revisionsMissed.length})
-                  </h4>
-                  <div className="divide-y divide-[var(--line)] rounded-xl border border-[var(--line)] bg-[var(--sf-2)] px-3">
-                    {record.revisionsMissed.map((rev, idx) => {
-                      const sub = getSubject(state, rev.chapter.subjectId);
-                      return (
-                        <div
-                          key={`missed_rev_${rev.chapter.id}_${idx}`}
-                          className="flex items-center justify-between gap-2 py-2.5 text-[13.5px]"
-                        >
-                          <span className="text-[var(--tx)]">
-                            {rev.label}: <strong>{rev.chapter.name}</strong> ({sub.e}{' '}
-                            {sub.name})
-                          </span>
-                          <span className="tnum text-[13px] text-[var(--err-ink)]">
-                            Due {rev.scheduledDate}
-                          </span>
-                        </div>
-                      );
-                    })}
-                  </div>
-                </div>
-              )}
+            {/* Habits Completed */}
+            {record.habitsCompleted.map(({ habit, value, target, unit }) => (
+              <div key={`h_done_${habit.id}`} className="dh-hairline-row">
+                <span className="flex min-w-0 items-center gap-2.5 text-[14px] font-medium text-[var(--tx)]">
+                  <CheckCircle2
+                    size={16}
+                    className="shrink-0 text-[var(--ok-ink)]"
+                    aria-hidden="true"
+                  />
+                  <span
+                    className="dh-sub-dot"
+                    style={{ background: CC[habit.c] || 'var(--tx-3)' }}
+                    aria-hidden="true"
+                  />
+                  <span className="truncate">{habit.name}</span>
+                  <span className="shrink-0 text-[12.5px] text-[var(--tx-3)]">
+                    {habit.c}
+                  </span>
+                </span>
+                <span className="tnum shrink-0 text-[13px] font-medium text-[var(--ok-ink)]">
+                  {value}/{target} {unit}
+                </span>
+              </div>
+            ))}
 
-              {record.habitsSkipped.length > 0 && (
-                <div>
-                  <h4 className="mb-2 text-[13px] font-semibold text-[var(--tx-2)]">
-                    Skipped habits ({record.habitsSkipped.length})
-                  </h4>
-                  <div className="flex flex-wrap gap-2">
-                    {record.habitsSkipped.map((h) => (
+            {/* Habits Missed */}
+            {record.habitsMissed.map(({ habit, value, target, unit }) => (
+              <div key={`h_miss_${habit.id}`} className="dh-hairline-row">
+                <span className="flex min-w-0 items-center gap-2.5 text-[14px] font-medium text-[var(--tx)]">
+                  <XCircle
+                    size={16}
+                    className="shrink-0 text-[var(--err-ink)]"
+                    aria-hidden="true"
+                  />
+                  <span
+                    className="dh-sub-dot"
+                    style={{ background: CC[habit.c] || 'var(--tx-3)' }}
+                    aria-hidden="true"
+                  />
+                  <span className="truncate">{habit.name}</span>
+                </span>
+                <span className="tnum shrink-0 text-[13px] text-[var(--err-ink)]">
+                  {value}/{target} {unit}
+                </span>
+              </div>
+            ))}
+
+            {/* Habits Skipped */}
+            {record.habitsSkipped.map((h) => (
+              <div key={`h_skip_${h.id}`} className="dh-hairline-row">
+                <span className="flex min-w-0 items-center gap-2.5 text-[14px] text-[var(--tx-2)]">
+                  <span
+                    className="dh-sub-dot"
+                    style={{ background: 'var(--tx-3)' }}
+                    aria-hidden="true"
+                  />
+                  <span className="truncate">{h.name}</span>
+                </span>
+                <span className="shrink-0 text-[12.5px] text-[var(--tx-3)]">
+                  Skipped
+                </span>
+              </div>
+            ))}
+
+            {/* Tasks Completed */}
+            {record.tasksCompleted.map((task) => {
+              const sub = task.subjectId ? getSubject(state, task.subjectId) : null;
+              return (
+                <div key={`t_done_${task.id}`} className="dh-hairline-row">
+                  <span className="flex min-w-0 items-center gap-2.5 text-[14px] font-medium text-[var(--tx)]">
+                    <CheckCircle2
+                      size={16}
+                      className="shrink-0 text-[var(--ok-ink)]"
+                      aria-hidden="true"
+                    />
+                    <span className="truncate">{task.title}</span>
+                  </span>
+                  {sub && (
+                    <span className="flex shrink-0 items-center gap-1.5 text-[12.5px] text-[var(--tx-3)]">
                       <span
-                        key={h.id}
-                        className="rounded-lg border border-[var(--line)] bg-[var(--sf-2)] px-2.5 py-1 text-[13px] text-[var(--tx-2)]"
-                      >
-                        {h.e} {h.name}
-                      </span>
-                    ))}
-                  </div>
+                        className="dh-sub-dot"
+                        style={{ background: sub.color }}
+                        aria-hidden="true"
+                      />
+                      <span>{sub.name}</span>
+                    </span>
+                  )}
                 </div>
+              );
+            })}
+
+            {/* Tasks Missed */}
+            {record.tasksMissed.map((task) => {
+              const sub = task.subjectId ? getSubject(state, task.subjectId) : null;
+              return (
+                <div key={`t_miss_${task.id}`} className="dh-hairline-row">
+                  <span className="flex min-w-0 items-center gap-2.5 text-[14px] font-medium text-[var(--tx)]">
+                    <XCircle
+                      size={16}
+                      className="shrink-0 text-[var(--err-ink)]"
+                      aria-hidden="true"
+                    />
+                    <span className="truncate">{task.title}</span>
+                  </span>
+                  {sub && (
+                    <span className="flex shrink-0 items-center gap-1.5 text-[12.5px] text-[var(--tx-3)]">
+                      <span
+                        className="dh-sub-dot"
+                        style={{ background: sub.color }}
+                        aria-hidden="true"
+                      />
+                      <span>{sub.name}</span>
+                    </span>
+                  )}
+                </div>
+              );
+            })}
+
+            {/* Chapters Completed */}
+            {record.chaptersCompleted.map((ch) => {
+              const sub = getSubject(state, ch.subjectId);
+              return (
+                <div key={`ch_${ch.id}`} className="dh-hairline-row">
+                  <span className="flex min-w-0 items-center gap-2.5 text-[14px] text-[var(--tx)]">
+                    <CheckCircle2
+                      size={16}
+                      className="shrink-0 text-[var(--ok-ink)]"
+                      aria-hidden="true"
+                    />
+                    <span
+                      className="dh-sub-dot"
+                      style={{ background: sub.color }}
+                      aria-hidden="true"
+                    />
+                    <span className="truncate">
+                      Completed <strong>{ch.name}</strong> ({sub.name})
+                    </span>
+                  </span>
+                  <span className="tnum shrink-0 text-[13px] font-semibold text-[var(--ac-ink)]">
+                    +25 XP
+                  </span>
+                </div>
+              );
+            })}
+
+            {/* Revisions Completed */}
+            {record.revisionsCompleted.map((rev, idx) => {
+              const sub = getSubject(state, rev.chapter.subjectId);
+              return (
+                <div key={`rev_${rev.chapter.id}_${idx}`} className="dh-hairline-row">
+                  <span className="flex min-w-0 items-center gap-2.5 text-[14px] text-[var(--tx)]">
+                    <CheckCircle2
+                      size={16}
+                      className="shrink-0 text-[var(--ok-ink)]"
+                      aria-hidden="true"
+                    />
+                    <span
+                      className="dh-sub-dot"
+                      style={{ background: sub.color }}
+                      aria-hidden="true"
+                    />
+                    <span className="truncate">
+                      {rev.label}: <strong>{rev.chapter.name}</strong> ({sub.name})
+                    </span>
+                  </span>
+                  <span className="shrink-0 text-[12.5px] font-medium text-[var(--ok-ink)]">
+                    Done
+                  </span>
+                </div>
+              );
+            })}
+
+            {/* Revisions Missed */}
+            {record.revisionsMissed.map((rev, idx) => {
+              const sub = getSubject(state, rev.chapter.subjectId);
+              return (
+                <div key={`missed_rev_${rev.chapter.id}_${idx}`} className="dh-hairline-row">
+                  <span className="flex min-w-0 items-center gap-2.5 text-[14px] text-[var(--tx)]">
+                    <XCircle
+                      size={16}
+                      className="shrink-0 text-[var(--err-ink)]"
+                      aria-hidden="true"
+                    />
+                    <span
+                      className="dh-sub-dot"
+                      style={{ background: sub.color }}
+                      aria-hidden="true"
+                    />
+                    <span className="truncate">
+                      {rev.label}: <strong>{rev.chapter.name}</strong> ({sub.name})
+                    </span>
+                  </span>
+                  <span className="tnum shrink-0 text-[12.5px] text-[var(--err-ink)]">
+                    Due {rev.scheduledDate}
+                  </span>
+                </div>
+              );
+            })}
+
+            {/* Mocks */}
+            {record.mocks.map((mk) => {
+              const sc = computeMockScore(mk, state.subjects);
+              return (
+                <div key={mk.id} className="dh-hairline-row">
+                  <span className="flex min-w-0 items-center gap-2.5 text-[14px] text-[var(--tx)]">
+                    <CheckCircle2
+                      size={16}
+                      className="shrink-0 text-[var(--ok-ink)]"
+                      aria-hidden="true"
+                    />
+                    <span className="truncate">
+                      Mock: <strong>{mk.name}</strong>
+                    </span>
+                  </span>
+                  <strong className="tnum shrink-0 text-[13px] text-[var(--ac-ink)]">
+                    {sc.totalScore}/{sc.maxMarks} ({sc.accuracyPct}%)
+                  </strong>
+                </div>
+              );
+            })}
+
+            {/* PYQ Practice */}
+            {record.pyqEntries.map((pq) => {
+              const ch = state.chapters.find((c) => c.id === pq.chapterId);
+              return (
+                <div key={pq.id} className="dh-hairline-row">
+                  <span className="flex min-w-0 items-center gap-2.5 text-[14px] text-[var(--tx)]">
+                    <CheckCircle2
+                      size={16}
+                      className="shrink-0 text-[var(--ok-ink)]"
+                      aria-hidden="true"
+                    />
+                    <span className="truncate">
+                      PYQ: <strong>{ch ? ch.name : 'Chapter'}</strong>
+                    </span>
+                  </span>
+                  <strong className="tnum shrink-0 text-[13px] text-[var(--tx)]">
+                    {pq.correct}/{pq.attempted}
+                  </strong>
+                </div>
+              );
+            })}
+
+            {/* Mistakes */}
+            {record.mistakes.map((ms) => {
+              const sub = getSubject(state, ms.subjectId);
+              return (
+                <div key={ms.id} className="dh-hairline-row">
+                  <span className="flex min-w-0 items-center gap-2.5 text-[14px] text-[var(--tx)]">
+                    <span
+                      className="dh-sub-dot"
+                      style={{ background: sub.color }}
+                      aria-hidden="true"
+                    />
+                    <span className="truncate">
+                      Mistake ({sub.name} · {ms.reason}): {ms.note || 'Logged'}
+                    </span>
+                  </span>
+                  <span className="shrink-0 text-[12.5px] text-[var(--tx-3)]">
+                    {ms.resolved ? 'Resolved' : 'Open'}
+                  </span>
+                </div>
+              );
+            })}
+
+            {/* Doubts */}
+            {record.doubtsCreated.map((db) => {
+              const sub = getSubject(state, db.subjectId);
+              return (
+                <div key={db.id} className="dh-hairline-row">
+                  <span className="flex min-w-0 items-center gap-2.5 text-[14px] text-[var(--tx)]">
+                    <span
+                      className="dh-sub-dot"
+                      style={{ background: sub.color }}
+                      aria-hidden="true"
+                    />
+                    <span className="truncate">
+                      Doubt ({sub.name}): {db.text}
+                    </span>
+                  </span>
+                  <span className="shrink-0 text-[12.5px] text-[var(--tx-3)]">
+                    {db.resolved ? 'Resolved' : 'Open'}
+                  </span>
+                </div>
+              );
+            })}
+          </div>
+        )}
+      </section>
+
+      {/* Wellbeing & Reflection — Shown only when logged for this date */}
+      {(record.sleepHours !== undefined ||
+        record.energyLevel !== undefined ||
+        record.moodValue !== undefined ||
+        Boolean(record.dailyNote)) && (
+        <section className="dh-amoled-section">
+          <h3 className="dh-eyebrow">Wellbeing &amp; reflection</h3>
+          <div className="dh-hairline-list">
+            <div className="dh-hairline-row flex-wrap gap-4 text-[13.5px] text-[var(--tx)]">
+              {record.sleepHours !== undefined && (
+                <span>
+                  Sleep <strong className="tnum">{record.sleepHours}h</strong>
+                </span>
+              )}
+              {record.energyLevel !== undefined && (
+                <span>
+                  Energy <strong className="tnum">{record.energyLevel}/5</strong>
+                </span>
+              )}
+              {record.moodValue !== undefined && MOOD_LABELS[record.moodValue] && (
+                <span>
+                  Mood <strong>{MOOD_LABELS[record.moodValue]}</strong>
+                </span>
               )}
             </div>
-          )}
-        </Card>
+            {record.dailyNote && (
+              <div className="dh-hairline-row text-[13px] text-[var(--tx-2)]">
+                <span>“{record.dailyNote}”</span>
+              </div>
+            )}
+          </div>
+        </section>
       )}
     </div>
   );

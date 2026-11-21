@@ -1,5 +1,4 @@
-import { ensureAudioEngine } from './audioEngine';
-import { triggerHaptic } from './haptics';
+import { playSoundCue } from './audioEngine';
 
 export type ExamSectionId = 'bio' | 'chem' | 'phy' | 'omr';
 
@@ -557,39 +556,15 @@ export function formatExamRecordNote(record: ExamPaceRecord): string {
 }
 
 /**
- * Fires a clean 2-second alert chime via audioEngine's shared AudioContext
- * and a distinct overtime haptic pulse via haptics.ts. Strictly called once per section.
+ * Fires three warm unmistakable low felt thuds (98 -> 78 Hz + 700 Hz LPF felt
+ * transient) via audioEngine's master bus, rate-limited to once per 20s per
+ * section, paired with [40, 60, 40, 60, 80] haptics.
  */
-export function playExamOvertimeAlert(soundEnabled: boolean): void {
-  triggerHaptic('overtime');
-  if (!soundEnabled) return;
-  try {
-    const { ctx, mediaStreamDest } = ensureAudioEngine();
-    if (!ctx) return;
-    const base = ctx.currentTime;
-    // Clean 2.0-second gentle three-tone alert chime (D5 -> A4 -> D5)
-    const notes: Array<{ freq: number; offset: number; dur: number }> = [
-      { freq: 587.33, offset: 0.0, dur: 0.58 },
-      { freq: 440.0, offset: 0.65, dur: 0.58 },
-      { freq: 587.33, offset: 1.3, dur: 0.7 },
-    ];
-    for (const note of notes) {
-      const osc = ctx.createOscillator();
-      const gain = ctx.createGain();
-      osc.type = 'sine';
-      osc.frequency.setValueAtTime(note.freq, base + note.offset);
-      gain.gain.setValueAtTime(0.001, base + note.offset);
-      gain.gain.linearRampToValueAtTime(0.14, base + note.offset + 0.04);
-      gain.gain.exponentialRampToValueAtTime(0.0008, base + note.offset + note.dur);
-      osc.connect(gain);
-      gain.connect(ctx.destination);
-      if (mediaStreamDest) gain.connect(mediaStreamDest);
-      osc.start(base + note.offset);
-      osc.stop(base + note.offset + note.dur + 0.02);
-    }
-  } catch {
-    // ignore restricted Web Audio environments
-  }
+export function playExamOvertimeAlert(
+  soundEnabled: boolean,
+  sectionId?: string
+): void {
+  playSoundCue('examOvertime', soundEnabled, { sectionId });
 }
 
 /* ── Strict Local-Only Storage Helpers (Zero Firestore Schema Changes) ── */

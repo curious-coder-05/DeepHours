@@ -1,3 +1,7 @@
+import { computeAmbientChannelGain } from './soundRecipes';
+
+export { computeAmbientChannelGain };
+
 export type AmbientChannelKey = 'brown' | 'rain' | 'tick';
 
 export type AmbientPresetId =
@@ -64,19 +68,19 @@ export const AMBIENT_CHANNEL_META: ReadonlyArray<{
     key: 'brown',
     label: 'Brown noise',
     shortLabel: 'Brown',
-    hint: 'Deep low-pass rumble',
+    hint: 'Warm room tone (prime loops)',
   },
   {
     key: 'rain',
     label: 'Soft rain',
     shortLabel: 'Rain',
-    hint: 'Modulated rainfall texture',
+    hint: 'Multi-layer rain on glass',
   },
   {
     key: 'tick',
     label: 'Mech tick',
     shortLabel: 'Tick',
-    hint: '1 Hz watch escapement',
+    hint: 'Damped 1 Hz escapement',
   },
 ];
 
