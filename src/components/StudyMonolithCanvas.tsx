@@ -265,10 +265,15 @@ export const StudyMonolithCanvas: React.FC<StudyMonolithCanvasProps> = ({
     const dx = Math.min(11, Math.max(5, Math.round(barW * 0.34)));
     const dy = -Math.round(dx * 0.56);
 
+    const safeScaleMax = Math.max(15, Number.isFinite(st.scale.maxMin) ? st.scale.maxMin : 360);
+    const safeGoalMin = Math.max(
+      15,
+      Number.isFinite(st.dailyGoalMin) && st.dailyGoalMin > 0 ? st.dailyGoalMin : 360
+    );
     const yForMin = (mins: number) =>
-      baseY - (Math.max(0, Math.min(st.scale.maxMin, mins)) / st.scale.maxMin) * plotH;
+      baseY - (Math.max(0, Math.min(safeScaleMax, Number.isFinite(mins) ? mins : 0)) / safeScaleMax) * plotH;
 
-    const goalY = Math.round(yForMin(st.dailyGoalMin)) + 0.5;
+    const goalY = Math.round(yForMin(safeGoalMin)) + 0.5;
     const staggerMs = st.rangeDays === 7 ? STAGGER_7D_MS : STAGGER_14D_MS;
     const totalSweepMs = Math.max(0, N - 1) * staggerMs + PILLAR_ANIM_DURATION_MS;
     const elapsedMs = nowTs !== null ? Math.max(0, nowTs - animStartTsRef.current) : totalSweepMs;
@@ -645,6 +650,7 @@ export const StudyMonolithCanvas: React.FC<StudyMonolithCanvasProps> = ({
       const canvas = canvasRef.current;
       if (!canvas || series.length === 0) return null;
       const rect = canvas.getBoundingClientRect();
+      if (rect.width <= 0) return null;
       const localX = clientX - rect.left;
       const plotW = Math.max(40, rect.width - padLeft - padRight);
       const rel = (localX - padLeft) / plotW;

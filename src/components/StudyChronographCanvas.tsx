@@ -42,9 +42,14 @@ export const StudyChronographCanvas: React.FC<StudyChronographCanvasProps> = ({
     return () => window.removeEventListener('resize', onResize);
   }, []);
 
+  const safeGoalMin = Math.max(
+    15,
+    Math.round(Number.isFinite(dailyGoalMin) && dailyGoalMin > 0 ? dailyGoalMin : 360)
+  );
+
   const data30d = useMemo(
-    () => buildChronograph30d(todayKey, sessions, subjects, dailyGoalMin),
-    [todayKey, sessions, subjects, dailyGoalMin]
+    () => buildChronograph30d(todayKey, sessions, subjects, safeGoalMin),
+    [todayKey, sessions, subjects, safeGoalMin]
   );
 
   const data24h = useMemo(() => buildChronograph24h(sessions), [sessions]);
@@ -112,8 +117,8 @@ export const StudyChronographCanvas: React.FC<StudyChronographCanvasProps> = ({
     }
 
     if (mode === '30d') {
-      const spokeScaleMax = Math.max(dailyGoalMin * 1.32, data30d.maxDayMin, 120);
-      const goalFrac = Math.min(0.84, dailyGoalMin / spokeScaleMax);
+      const spokeScaleMax = Math.max(safeGoalMin * 1.32, data30d.maxDayMin, 120);
+      const goalFrac = Math.min(0.84, safeGoalMin / spokeScaleMax);
       const goalR = innerR + spokeSpan * goalFrac;
 
       // Dashed Lumen Gold goal reference circle
@@ -438,13 +443,14 @@ export const StudyChronographCanvas: React.FC<StudyChronographCanvasProps> = ({
     ctx.fillText(subText, cx, cy + 19);
 
     ctx.restore();
-  }, [mode, data30d, data24h, dailyGoalMin, activeIdx, dialSize]);
+  }, [mode, data30d, data24h, safeGoalMin, activeIdx, dialSize]);
 
   const resolveSpokeFromPointer = useCallback(
     (clientX: number, clientY: number): { idx: number | null; inCenter: boolean } => {
       const canvas = canvasRef.current;
       if (!canvas) return { idx: null, inCenter: false };
       const rect = canvas.getBoundingClientRect();
+      if (rect.width <= 0 || rect.height <= 0) return { idx: null, inCenter: false };
       const dx = clientX - rect.left - rect.width / 2;
       const dy = clientY - rect.top - rect.height / 2;
       const dist = Math.hypot(dx, dy);
@@ -514,7 +520,7 @@ export const StudyChronographCanvas: React.FC<StudyChronographCanvasProps> = ({
     mode === '24h' && activeIdx !== null ? data24h.slots[activeIdx] || null : null;
 
   const cadencePct = Math.round((data30d.activeDays30 / 30) * 100);
-  const goalHoursText = formatMinutesCompact(dailyGoalMin);
+  const goalHoursText = formatMinutesCompact(safeGoalMin);
   const rhythmWindowText =
     data24h.avgStartTime !== '—' && data24h.avgWrapUpTime !== '—'
       ? `${data24h.avgStartTime} – ${data24h.avgWrapUpTime}`

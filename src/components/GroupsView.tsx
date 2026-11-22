@@ -1336,6 +1336,13 @@ export const GroupsView: React.FC<GroupsViewProps> = ({
   };
 
   const handleLeaveGroup = async (groupId: string) => {
+    const groupDoc = snapshots[groupId]?.doc;
+    if (myUid && groupDoc && groupDoc.ownerUid === myUid) {
+      setConfirmLeaveGroupId(null);
+      setShowOwnerDrawer(true);
+      showToast('Squad owners cannot leave — use Close & delete group in Owner tools.');
+      return;
+    }
     setActionBusy(true);
     try {
       await leaveGroupInCloud({ groupId, budget: groupBudget });
@@ -3333,7 +3340,18 @@ export const GroupsView: React.FC<GroupsViewProps> = ({
                       Group writes today: {groupBudget.getWritesToday()}/60 · Reads:{' '}
                       {groupBudget.getReadsToday()}/150
                     </span>
-                    {confirmLeaveGroupId === activeGroupId ? (
+                    {isOwner ? (
+                      <Button
+                        variant="secondary"
+                        size="sm"
+                        onClick={() => {
+                          setShowOwnerDrawer(true);
+                          setConfirmCloseGroupId(activeGroupId);
+                        }}
+                      >
+                        Close squad in Owner tools
+                      </Button>
+                    ) : confirmLeaveGroupId === activeGroupId ? (
                       <div className="flex items-center gap-2">
                         <Button
                           variant="danger"

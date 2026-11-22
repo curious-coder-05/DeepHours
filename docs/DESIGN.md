@@ -1,126 +1,84 @@
-# Deep Hours — Design System Specification
+# Deep Hours — Design System Specification (v42 Rose Copper AMOLED)
 
 ## 1. Art Direction
-- **Restrained, content-first, calm**: Deep Hours is a daily study instrument for medical entrance preparation. Surfaces stay quiet so timers, chapters, mocks, and analytics remain legible for hours.
-- **No decorative clutter**:
-  - Flat surface fills only — no gradient buttons, no gradient headline text, no animated background drifts.
-  - No neon outer glows or colored shadows.
-  - Translucent glass (`backdrop-filter: blur(14px)`) is restricted strictly to the sticky `TopBar` and `BottomTabBar`.
-  - No nested cards inside cards — secondary groupings inside cards use flat subtle containers (`--sf-2`) or hairline dividers (`--line`).
-  - **Icons**: Lucide SVG icons (`1.75` stroke width, `20px` / `24px`) for all UI chrome. Emoji are kept only where user-chosen or user content (avatars, habit icons, subject icons).
-  - **Microcopy**: Sentence case, plain language, zero hype or jargon (`Insights`, `Community`, `History`, `Focus sounds`, `Digital`, `Mono`, `Analog`). All-caps micro labels are prohibited.
+- **Flagship OLED Hardware Restraint**: Deep Hours is a precision daily study instrument for NEET preparation. Dark and AMOLED modes anchor directly onto pure `#000000` black so timers, chapters, mock analytics, and canvas instruments stay crisp and battery-friendly over multi-hour sessions.
+- **Strict 3-Tier Surface Hierarchy**:
+  - **Tier 0 (Canvas)**: Pure `#000000` borderless sections separated by `28px` vertical rhythm and `1px solid rgba(255, 255, 255, 0.07)` hairlines.
+  - **Tier 1 (Single Hero Card per Viewport)**: At most one elevated obsidian card (`.dh-hero-tier1`, `#0C0909` → `#050404`) per primary screen, lit by a calibrated **Rose Copper** top skylight (`rgba(251, 146, 60, 0.175)` → `rgba(244, 114, 182, 0.095)`) and a crisp top specular rim (`rgba(253, 186, 116, 0.26)` border / `rgba(254, 215, 170, 0.19)` inner edge). Never box secondary sections into competing hero cards.
+  - **Tier 2 (Grouped Lists & Ghost Controls)**: Neutral dark obsidian inset groups (`#0B0909` surface, `#0F0D0D` active dock controls, `16px` radius, `16px`-indented hairlines) and tactile hairline ghost buttons (`scale(0.975)` active press).
+- **Single Primary CTA Discipline**: One solid **Lumen Gold** (`#F5C542`, `#09090B` ink) primary action per viewport. No gradient buttons, no gradient headline text, no neon outer glows, and no nested cards inside cards.
+- **Icons & Subject Dots**: Lucide SVG icons (`1.75` stroke width) for all UI chrome. Subjects render with standardized `6px` semantic color dots across Today, Focus, Prep, Vault, Insights, and PYQs (zero subject emojis in chips or Floating Video PiP headers). Emoji are restricted to user-chosen identity avatars, habit icons, and cheer reactions.
 
 ---
 
 ## 2. Color Tokens
 
-### Dark Default (`[data-t="dark"]` — Graphite Depth)
+### Pure AMOLED Dark Default (`[data-t="dark"]` — Rose Copper AMOLED)
 | Token | Value | Usage |
 | --- | --- | --- |
-| `--bg` | `#0B0D10` | Canvas background |
-| `--sf-1` | `#14181F` | Primary card & navigation rail surface |
-| `--sf-2` | `#1B2029` | Controls, inputs, secondary rows |
-| `--sf-3` | `#232A35` | Hover / pressed / elevated controls |
-| `--line` | `rgba(255, 255, 255, 0.10)` | Hairline borders & dividers |
-| `--tx` | `#ECEFF4` | Primary text |
-| `--tx-2` | `#A3ABB8` | Secondary text |
+| `--bg` | `#000000` | Pure AMOLED base canvas (`theme-color: #000000`) |
+| `--sf-1` | `#0B0909` | Inset grouped lists, sheets, and navigation rail surface |
+| `--sf-2` | `#0F0D0D` | Secondary controls, inputs, and hero dock pills |
+| `--sf-3` | `#181515` | Hover / pressed / elevated controls |
+| `--line` | `rgba(255, 255, 255, 0.08)` | Hairline borders & section dividers |
+| `--tx` | `#FFFFFF` / `#F4F4F5` | Primary text & zero-glow tabular readouts |
+| `--tx-2` | `#A1A1AA` | Secondary text |
 | `--tx-3` | `#8E97A6` | Tertiary metadata text (AA readable) |
+| Rose Copper Skylight | `rgba(251, 146, 60, 0.175)` → `rgba(244, 114, 182, 0.095)` | Top skylight restricted strictly to Tier-1 hero cards & Floating Video PiP |
 
-### AMOLED True-Black Dark (`[data-t="dark"][data-amoled="1"]`)
-Persisted separately in `localStorage` under `dh_amoled` (`"1"` / `"0"`):
-- `--bg: #000000`
-- `--sf-1: #0A0C0F`
-- `--sf-2: #12151A`
-- `--sf-3: #1A1E25`
-- `--line: rgba(255, 255, 255, 0.10)`
-
-### Light Warm Paper (`[data-t="light"]`)
-- `--bg: #F6F4EF`
+### Light Warm Paper (`[data-t="light"]` — Unaffected)
+- `--bg: #F6F4EF` (`theme-color: #F6F4EF`)
 - `--sf-1: #FFFFFF`
 - `--sf-2: #EFECE5`
 - `--sf-3: #E6E1D7`
 - `--line: rgba(20, 22, 26, 0.10)`
-- `--tx: #14161A`
-- `--tx-2: #4B515C`
-- `--tx-3: #68707D`
+- `--tx: #14161A`, `--tx-2: #4B515C`, `--tx-3: #565E6B`
 
-### Accent & Contrast Rules
-- Default signature accent **"Lumen"**: `#F5C451` with on-accent ink `#1A1400`.
-- All user-selectable accent presets (`Lumen`, `Sky`, `Mint`, `Indigo`, `Violet`, `Rose`, `Amber`) dynamically compute:
-  - `--ac`: selected accent hex
-  - `--ac-on`: highest-contrast dark (`#1A1400`) or light (`#FFFFFF`) text for solid primary controls (`>= 4.5:1` WCAG AA)
-  - `--ac-ink`: readable accent text for tinted states (`12%` accent fill + `1px` accent border), automatically darkened on light warm paper so yellow/amber accents achieve `>= 4.5:1` contrast everywhere.
-  - `--ac-soft`: `color-mix(in srgb, var(--ac) 12%, transparent)`
-  - `--ac-bd`: `color-mix(in srgb, var(--ac) 48%, transparent)`
-
-### Semantic Colors
-- `--ok` (Success): `#4ADE80` (dark) / `#15803D` (light ink)
-- `--warn` (Warning): `#FB923C` (dark) / `#C2410C` (light ink)
-- `--err` (Danger): `#F87171` (dark) / `#B91C1C` (light ink)
-- `--info` (Info): `#60A5FA` (dark) / `#1D4ED8` (light ink)
-
-### Subject Colors
-User subject colors stay intact and are used exclusively as **dots, thin progress meters, bar series, and subtle borders** — never as full card fills. Any text placed directly over a subject fill computes its readable ink via `getReadableOnColor`.
+### Accent & Semantic Tokens
+- Default signature accent **"Lumen Gold"**: `#F5C542` with `#09090B` primary button ink.
+- User-selectable accents (`Lumen`, `Sky`, `Mint`, `Indigo`, `Violet`, `Rose`, `Amber`) dynamically compute WCAG AA `--ac-on`, `--ac-ink`, `--ac-soft`, and `--ac-bd`.
+- **ProgressRing**: Machined obsidian channels (`#12151C`), molten amber-to-gold outer study arc (`#EA580C` → `#F59E0B` → `#FCD34D`), and vivid emerald inner habits arc (`#059669` → `#10B981` → `#34D399`).
+- **Semantic**: `--ok` `#4ADE80` / `#15803D`, `--warn` `#FB923C` / `#C2410C`, `--err` `#F87171` / `#B91C1C`, `--info` `#60A5FA` / `#1D4ED8`.
 
 ---
 
 ## 3. Typography
-- **UI Typeface**: `Geist Variable` (self-hosted `@fontsource-variable/geist`) with `font-variant-numeric: tabular-nums` on numeric counters and tables.
-- **Monospace Typeface**: `Geist Mono Variable` (self-hosted `@fontsource-variable/geist-mono`) used **exclusively** on study timers (`FocusView`, `MiniTimerBar`, active counters), the `10m Timeline` clock grid, and the `20px` revealed Answer chip inside Question Vault & Revision Deck cards.
-- **Type Scale** (minimum UI font size `13px`; zero `<13px` text in shell/cards):
-  - Display: `46px` (`font-weight: 700`, `line-height: 1.02`, `letter-spacing: -0.025em`)
-  - Title: `30px` phone / `32px` desktop (`font-weight: 700`, `line-height: 1.15`, `letter-spacing: -0.02em`)
-  - Heading: `20px` (`font-weight: 600`, `line-height: 1.25`)
-  - Body: `16px` (`font-weight: 500`, `line-height: 1.5`)
-  - Secondary: `14px` (`font-weight: 500`, `line-height: 1.45`)
-  - Caption / Meta: `13px` (`font-weight: 500`, `line-height: 1.35`)
+- **UI Typeface**: `Geist Variable` (self-hosted `@fontsource-variable/geist`) with `font-variant-numeric: tabular-nums` on every numeric counter, KPI ledger, and table.
+- **Monospace Typeface**: `Geist Mono Variable` (self-hosted `@fontsource-variable/geist-mono`) used on study timers (`FocusView`, `MiniTimerBar`, `StandByDeskOverlay`, PiP), the `10m Timeline` clock grid, and revealed Answer chips inside Question Vault & Revision Deck cards.
+- **Type Scale**:
+  - Display: `40px`–`46px` (`font-weight: 700`, `letter-spacing: -0.025em`)
+  - Title: `clamp()` fluid header sizing (`24px`–`32px`, `font-weight: 700`)
+  - Heading: `18px`–`20px` (`font-weight: 600`)
+  - Body: `15px`–`16px` (`font-weight: 500`)
+  - Secondary / Caption: `13px`–`14px` (with restrained `11px` uppercase `SectionHeader` eyebrows tracking section cadence)
 
 ---
 
-## 4. Layout Grid, Spacing & Motion
-- **Grid**: `4pt` base unit.
-- **Gutters & Max Width**: `20px` phone (`<768px`), `32px` tablet & desktop (`>=768px`); max content width `1120px`.
+## 4. Layout Grid, Navigation & Motion
+- **Grid**: `4pt` base unit; `16px`–`20px` phone gutters, `32px` tablet/desktop gutters, `1120px` max content width.
 - **Navigation Shell**:
-  - `<768px`: Bottom 5-tab bar (`Today`, `Focus`, `Prep`, `Insights`, `Community`) — no FAB.
-  - `>=768px`: Fixed left navigation rail (`232px`), scrollable content stage.
-  - `>=1100px`: `Today` shifts to a two-column workspace with today's sessions & reflection anchored in the right rail.
-- **Sizing & Radii**:
-  - Card padding: `16px`–`20px`; section gap: `32px` (or `24px` compact within views).
-  - List rows: `min-height: 56px`; interactive tap targets: `>=48px` (controls `40px`/`48px`).
-  - Border radius: Controls `12px`, Cards `16px`, Sheets `24px`.
-- **Motion**:
-  - Durations: `120ms` (press/hover), `200ms` (state switch/segmented), `320ms` (sheet/modal/page).
-  - Curves: `--ease-out: cubic-bezier(0.16, 1, 0.3, 1)` and `--ease-spring: cubic-bezier(0.34, 1.56, 0.64, 1)`.
-  - Respects `prefers-reduced-motion: reduce`.
+  - `<768px`: Translucent AMOLED bottom 5-tab dock (`rgba(5, 5, 7, 0.86)`, `blur(22px)`) with `Today`, `Focus`, `Prep`, `Insights`, `Community` and a centered `4px` Lumen Gold active dot (no FAB).
+  - `>=768px`: Fixed left navigation rail (`232px`) + scrollable content stage; `>=1100px` `Today` uses a 2-column workspace.
+  - **Settings & Account**: Portaled frosted left slide-over `SettingsDrawer` opened via top-bar menu icon (`☰`), drilling cleanly into full-screen `SettingsView` sections.
+- **Motion & Tactile Feedback**:
+  - Press physics `active:scale-[0.975]`, cubic ease-out (`1 - (1 - t)^3`) staggered canvas entrance on `StudyMonolithCanvas` (zero overshoot, skipped cleanly under `prefers-reduced-motion: reduce`), and ref-counted haptics (`src/utils/haptics.ts`).
 
 ---
 
-## 5. UI Primitives (`src/components/ui/`)
-- `Button` (`primary` | `secondary` | `ghost` | `danger`, size `40` | `48`)
-- `IconButton` (required `aria-label`, `>=44/48px` target)
-- `Card` (flat `--sf-1`, `1px solid var(--line)`, radius `16px`)
-- `ListRow` (leading, title, subtitle, trailing, optional chevron, `>=56px`)
-- `Segmented` (animated sliding thumb via `transform`, accessible `role="tablist"`)
-- `Chip` (tinted active state with `12%` accent background + `--ac-ink` + `1px` border)
-- `Switch` (`role="switch"`, keyboard accessible)
-- `Field` (accessible label, hint, error message)
-- `Select` (button trigger opening a searchable/scrollable `Sheet` option picker instead of native `<select>`)
-- `Sheet` (drag handle pill mobile bottom sheet / centered modal desktop, backdrop & Escape dismiss, focus trap)
-- `Dialog` (confirmation & prompt dialog with focus return)
-- `ProgressRing`, `ConcentricProgressRing`, `Meter`, `Stat`, `CountUp`, `EmptyState`, `Illustration` (`noSyllabus` | `noSessions` | `noTasks` | `signedOutCommunity` | `noMocks` | `noMistakes` | `noDoubts` | `noPyqs` | `noVault`), `Skeleton`, `Toast`, `TopBar`, `BrandLogo`, `SectionHeader`, `OnboardingSheet` (`localStorage` `'dh_onboarded_v2'`)
-- **Custom SVG Chart Kit (`src/components/ui/Charts.tsx`)**: `Sparkline`, `AreaLineChart`, `BarChart`, `DonutChart`, `RadialClock24h`, `HeatmapGrid`, `SemiCircleGauge` — crisp zero-dependency interactive SVG charts (no `recharts` dependency) using `--tx-3` `13px` labels, horizontal hairlines (`--line`), smooth pointer tooltips, and explicit `EmptyState` fallbacks.
-- **Hero & Surface Elevation**: Hero Lumen cards (`.dh-hero-lumen`) carry an ambient radial Lumen wash above crisp top inner-edge highlights (`--sf-highlight`), and are never applied directly onto `Scene3D` WebGL containers.
+## 5. UI Primitives, Charts & 2D Canvas Instruments
+- **Primitives (`src/components/ui/`)**: `Button`, `IconButton`, `Card`, `ListRow`, `Segmented` (minimal `2px` gold underline rail), `Chip`, `Switch`, `Field`, `Select` (searchable `Sheet` picker), `Sheet`, `BottomSheet` (frosted AMOLED bottom sheet), `Dialog`, `ProgressRing`, `ConcentricProgressRing`, `Meter`, `Stat`, `CountUp`, `EmptyState`, `Skeleton`, `Toast`, `TopBar`, `BrandLogo`, `SectionHeader`, `WindowedList`, `OnboardingSheet`.
+- **Zero-Dependency SVG Chart Kit (`src/components/ui/Charts.tsx`)**: Active exports are `AreaLineChart`, `BarChart`, `DonutChart`, and `SemiCircleGauge` (no `recharts` dependency; dead legacy exports removed in v41).
+- **High-DPI 2D Canvas Instruments (Zero WebGL on Insights)**:
+  - `StudyMonolithCanvas.tsx` (Top Rose Copper Tier-1 hero in `Insights > Overview`): 3D isometric monolith bars (`7d`/`14d`), Subject `Stack` 3-face shading, translucent Goal Horizon plane, molten Lumen Gold goal ignition + soft top halo, `4px` obsidian plinths on `0m` days, staggered cubic ease-out entrance (`380ms`, `28ms`/`16ms` stagger, zero overshoot), pointer scrubbing, `Open day ›`, and `Share proof`.
+  - `StudyChronographCanvas.tsx` (Directly below on pure `#000000`, `28px` vertical rhythm + `1px` hairline): Dual-mode watch-face dial (`30d Rhythm` 30-spoke dial with dashed goal ring & perimeter streak arc; `24h Clock` with Rose Copper peak-2h midnight-wrap wedge), live radial scrubbing into `#050404` center hub, and companion 2×2 hairline Telemetry Ledger.
+  - **Floating Video & Document PiP (`useFloatingTimerPiP.ts`, `pipHelpers.ts`)**: `1280×720` 2x Rose Copper obsidian canvas (`rgba(251, 146, 60, 0.15)` → `rgba(244, 114, 182, 0.08)` skylight, `#FFFFFF` zero-glow tabular digits, emoji-free subject dot header, solar crimson Exam Hall overtime, and `0.001`-gain `60 Hz` audio keepalive).
 
 ---
 
-## 6. 3D Scenes Policy (`settings.ui3d` & `settings.ui3dQuality`)
-- `settings.ui3d`: `'auto' | 'on' | 'off'` (default `'auto'`).
-- `settings.ui3dQuality`: `'auto' | 'high' | 'lite'` (default `'auto'`), exposed in `Settings > Appearance` whenever `ui3d !== 'off'`.
-- `'off'` disables WebGL canvas creation completely.
-- **FPS Governor & Single Context Guard**: In `'auto'` quality on hardware GPUs, `Scene3D` samples active frame pacing over 2 seconds (`evaluateFpsGovernor`) and automatically downgrades the session to `'lite'` with a toast notice if average frame time exceeds `28ms`. Overlay scenes (`OnboardingSheet`, `RewardBurstDialog`) carry `priority="overlay"` so any background stage WebGL context suspends immediately, keeping active WebGL contexts `<= 1`.
-- **R4 V2 & Polish**:
-  - `FocusOrbitScene`: `1.3x` scaled core orb with stronger Fresnel rim & additive halo behind a radial `--bg` digit scrim, radial tap-ripple shader wave (`uTapOrigin`, `uTapProgress`), Stopwatch 15m concentric rings, Flow overtime coronal rays, opt-in gyroscope tilt parallax toggle, and on-demand renders in Lite / `prefers-reduced-motion`.
-  - `StudySkylineScene` (**3D Study City**): Procedural twilight sky gradient + `FogExp2`, stacked subject-colored tower segments with bright lit `CanvasTexture` windows, brightened ground pads, weekend boulevard separation, front week labels, compact pulsing peak ground halo ring, today's crown pulse, intro camera fly-in, `12w`/`30d` auto-fitted camera distance, 2-finger pinch zoom, `12 weeks | 30 days` switch, and `Replay` timelapse with live date ticker.
-  - `SyllabusGalaxyScene`: Spiral arms per active subject, constellation `LineSegments` illuminating as chapters complete, additive star halos, completion shooting-star streak, smooth camera fly-to subject arm, 2-finger pinch zoom, and an in-memory spiral `"Preview"` constellation at 0 chapters with `+ Add chapter` / `Bulk paste` CTAs.
-  - `RewardBurstDialog`: Lazy overlay for Level-Up, 7d/30d Streak, and Perfect Day milestones with `ExtrudeGeometry` beveled 3D medal, `InstancedMesh` confetti, conditional haptics, ~2.8s auto-close, and 2D reduced-motion fallback.
-
+## 6. Three.js Scenes Policy (`settings.ui3d` & `settings.ui3dQuality`)
+- `three` is strictly lazy-loaded and isolated from the entry bundle. Active WebGL contexts stay `<= 1` (`priority="overlay"` suspends background stage; `StandByDeskOverlay` unmounts `FocusOrbitScene` completely; `Insights` uses `0` WebGL canvases).
+- Respects `settings.ui3d` (`Auto | On | Off`), `settings.ui3dQuality` (`Auto | High | Lite`), `prefers-reduced-motion`, and the 2-second FPS Governor (`evaluateFpsGovernor`). Every Three.js scene is wrapped in a silent `ErrorBoundary` so driver failures degrade gracefully.
+- **Active 3D Scenes**:
+  - `FocusOrbitScene` (**Solar Eclipse Focus Core** in `FocusView` & `OnboardingSheet`): Continuous-Fresnel volcanic obsidian-ember sphere (`SphereGeometry(1.48)`), BackSide corona fading strictly to `0.0` at silhouette, subtle geodesic cage & 72-tick champagne ring, circular ember dust, live Session Heat progression, and local `Solar Eclipse | Lumen Gold | Crimson Ember` palettes.
+  - `SyllabusAstrolabeScene` (**3D Gyroscopic Astrolabe** in `Prep > Syllabus`): Full-bleed `#000000` borderless stage with molten-gold Fresnel geodesic sun core, champagne-gold tilted orbital rings, 4-state PBR faceted octahedron chapter crystals (`RoomEnvironment` reflections), dual-torus target reticle, and floating top/bottom scrim overlays.
+  - `RewardBurstDialog`: Lazy milestone overlay (`ExtrudeGeometry` 3D medal + `InstancedMesh` confetti) with 2D reduced-motion fallback.

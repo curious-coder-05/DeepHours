@@ -1,6 +1,10 @@
 import assert from 'node:assert/strict';
+import fs from 'node:fs';
+import path from 'node:path';
 import test from 'node:test';
 import {
+  CHEER_DAYKEY_WINDOW_MS,
+  CHEER_TS_WINDOW_MS,
   createCooldownGuard,
   detectImageMagicBytes,
   encodeCsvRow,
@@ -14,6 +18,7 @@ import {
   sanitizeTextControlChars,
   stripDangerousKeys,
   validateFirestoreCheerContract,
+  validateFirestoreGroupSelfLeaveContract,
   validateFirestoreMemberEntryContract,
   validateFirestoreUserDocContract,
   validateImageFileSignature,
@@ -23,7 +28,19 @@ import {
 } from './security.ts';
 import { createDefaultState, logicalKey } from './studyLogic.ts';
 import { partitionStateToCloudDocs } from './cloudSync.ts';
-import { buildMyMemberEntry, makeCheerId } from './groups.ts';
+import {
+  buildActiveSessionAuraPayload,
+  buildMyMemberEntry,
+  makeCheerId,
+  sanitizeActiveSessionAura,
+} from './groups.ts';
+import {
+  buildChronograph24h,
+  buildChronograph30d,
+  buildMonolithSeries,
+  computeMonolithScale,
+  formatGoalHoursLabel,
+} from './insightsCanvas.ts';
 
 // ---------------------------------------------------------------------------
 // 1. Prototype pollution defense
@@ -252,9 +269,9 @@ test('sanitizeTextControlChars strips control characters and clamps length', () 
 });
 
 // ---------------------------------------------------------------------------
-// 7. Firestore Rules v24 Contract Verification
+// 7. Firestore Rules v42 Contract Verification
 // ---------------------------------------------------------------------------
-test('partitionStateToCloudDocs payloads satisfy Firestore v24 user doc rules and clamp activeMs', () => {
+test('partitionStateToCloudDocs payloads satisfy Firestore v42 user doc rules and clamp activeMs', () => {
   const state = createDefaultState();
   state.profile = { nick: 'Aarav\u0000\n', emoji: '🩺', updatedAt: 1_760_000_000_000 };
   state.sessions.push({
@@ -290,25 +307,26 @@ test('partitionStateToCloudDocs payloads satisfy Firestore v24 user doc rules an
   assert.equal(coreDoc.profile.nick, 'Aarav');
 });
 
-test('buildMyMemberEntry & cheers satisfy Firestore v24 squad rules with zero PII leakage', () => {
+test('buildMyMemberEntry & cheers satisfy Firestore v42 squad rules with zero PII leakage', () => {
   const state = createDefaultState();
+  const reqTimeMs = Date.UTC(2026, 9, 15, 12, 0, 0);
   // Intentionally supply an invalid email-like nickname with control chars to verify fallback sanitization
   state.profile = {
     nick: 'evil@gmail.com\u0007',
     emoji: '🩺',
     examYear: 2027,
-    updatedAt: 1_760_000_000_000,
+    updatedAt: reqTimeMs - 10_000,
   };
 
   const entry = buildMyMemberEntry(state, '2026-10-15', {
-    joinedAt: 1_750_000_000_000,
+    joinedAt: reqTimeMs - 86_400_000,
     sh: { t: true, x: true, s: true, m: true, l: true },
     activeSession: {
-      startedAt: 1_760_000_000_000,
+      startedAt: reqTimeMs - 60_000,
       subjectLabel: 'Biology',
       subjectColor: '#34D399',
     },
-    now: 1_760_000_100_000,
+    now: reqTimeMs,
   });
 
   const memberCheck = validateFirestoreMemberEntryContract(entry);
@@ -318,13 +336,260 @@ test('buildMyMemberEntry & cheers satisfy Firestore v24 squad rules with zero PI
   assert.equal('photoURL' in (entry as unknown as Record<string, unknown>), false);
 
   const cheerId = makeCheerId('2026-10-15', 'uid_sender', 'uid_target');
-  const cheerCheck = validateFirestoreCheerContract(cheerId, {
-    from: 'uid_sender',
-    to: 'uid_target',
-    fromNick: entry.nick,
-    dayKey: '2026-10-15',
-    e: '🔥',
-    ts: 1_760_000_100_000,
-  });
+  const cheerCheck = validateFirestoreCheerContract(
+    cheerId,
+    {
+      from: 'uid_sender',
+      to: 'uid_target',
+      fromNick: entry.nick,
+      dayKey: '2026-10-15',
+      e: '🔥',
+      ts: reqTimeMs,
+    },
+    reqTimeMs
+  );
   assert.equal(cheerCheck.ok, true, `Cheer failed rules contract: ${cheerCheck.errors.join(', ')}`);
 });
+
+test('v42 cheer contract enforces ±26h ts bounds and ±48h valid calendar dayKey bounds', () => {
+  const reqTimeMs = Date.UTC(2026, 9, 15, 12, 0, 0); // 2026-10-15T12:00:00Z
+
+  // Valid timezone/day-reset offset (-1 day and +1 day within ±48h, ts within ±26h)
+  for (const dayKey of ['2026-10-14', '2026-10-15', '2026-10-16']) {
+    const id = makeCheerId(dayKey, 'uidA', 'uidB');
+    const res = validateFirestoreCheerContract(
+      id,
+      { from: 'uidA', to: 'uidB', fromNick: 'Aarav', dayKey, e: '👏', ts: reqTimeMs - 3_600_000 },
+      reqTimeMs
+    );
+    assert.equal(res.ok, true, `Expected ${dayKey} to pass: ${res.errors.join(', ')}`);
+  }
+
+  // ts outside ±26h (±27h) must be rejected
+  const staleTsRes = validateFirestoreCheerContract(
+    makeCheerId('2026-10-15', 'uidA', 'uidB'),
+    {
+      from: 'uidA',
+      to: 'uidB',
+      fromNick: 'Aarav',
+      dayKey: '2026-10-15',
+      e: '🔥',
+      ts: reqTimeMs - (CHEER_TS_WINDOW_MS + 3_600_000),
+    },
+    reqTimeMs
+  );
+  assert.equal(staleTsRes.ok, false);
+
+  const futureTsRes = validateFirestoreCheerContract(
+    makeCheerId('2026-10-15', 'uidA', 'uidB'),
+    {
+      from: 'uidA',
+      to: 'uidB',
+      fromNick: 'Aarav',
+      dayKey: '2026-10-15',
+      e: '🔥',
+      ts: reqTimeMs + (CHEER_TS_WINDOW_MS + 3_600_000),
+    },
+    reqTimeMs
+  );
+  assert.equal(futureTsRes.ok, false);
+
+  // Backdated / future-dated dayKeys beyond ±48h and invalid calendar dates must be rejected
+  for (const badDayKey of ['2020-01-01', '2029-12-31', '2026-10-10', '2026-02-31', '2026-13-01']) {
+    const res = validateFirestoreCheerContract(
+      makeCheerId(badDayKey, 'uidA', 'uidB'),
+      {
+        from: 'uidA',
+        to: 'uidB',
+        fromNick: 'Aarav',
+        dayKey: badDayKey,
+        e: '💪',
+        ts: reqTimeMs,
+      },
+      reqTimeMs
+    );
+    assert.equal(res.ok, false, `Expected backfilled/invalid dayKey ${badDayKey} to be rejected`);
+  }
+  assert.equal(CHEER_TS_WINDOW_MS, 93_600_000);
+  assert.equal(CHEER_DAYKEY_WINDOW_MS, 172_800_000);
+});
+
+test('v42 squad Case B self-leave blocks ownerUid (prevents orphaned squads) and allows regular members', () => {
+  const groupDoc = {
+    ownerUid: 'uid_owner',
+    members: {
+      uid_owner: {},
+      uid_member: {},
+    },
+  };
+  const ownerLeave = validateFirestoreGroupSelfLeaveContract(groupDoc, 'uid_owner');
+  assert.equal(ownerLeave.ok, false);
+
+  const memberLeave = validateFirestoreGroupSelfLeaveContract(groupDoc, 'uid_member');
+  assert.equal(memberLeave.ok, true, memberLeave.errors.join(', '));
+});
+
+test('v42 activeSession contract enforces integer startedAt and strict hex subjectColor', () => {
+  const baseEntry = {
+    nick: 'Aarav',
+    emoji: '🩺',
+    joinedAt: 1_760_000_000_000,
+    updatedAt: 1_760_000_100_000,
+    sh: { t: true, x: true, s: true, m: true, l: true },
+  };
+
+  for (const validHex of ['#FFF', '#F5C542', '#34D399CC']) {
+    const ok = validateFirestoreMemberEntryContract({
+      ...baseEntry,
+      activeSession: {
+        startedAt: 1_760_000_050_000,
+        subjectLabel: 'Physics',
+        subjectColor: validHex,
+      },
+    });
+    assert.equal(ok.ok, true, `Expected ${validHex} to pass: ${ok.errors.join(', ')}`);
+  }
+
+  // Float startedAt rejected
+  const floatStarted = validateFirestoreMemberEntryContract({
+    ...baseEntry,
+    activeSession: {
+      startedAt: 1_760_000_050_000.5,
+      subjectLabel: 'Physics',
+      subjectColor: '#F5C542',
+    },
+  });
+  assert.equal(floatStarted.ok, false);
+
+  // Non-hex colors rejected
+  for (const badColor of ['rgb(245, 197, 66)', 'gold', 'javascript:alert(1)', '#12', '#123456789']) {
+    const bad = validateFirestoreMemberEntryContract({
+      ...baseEntry,
+      activeSession: {
+        startedAt: 1_760_000_050_000,
+        subjectLabel: 'Physics',
+        subjectColor: badColor,
+      },
+    });
+    assert.equal(bad.ok, false, `Expected non-hex ${badColor} to be rejected`);
+  }
+
+  // Client sanitizers guarantee v42 rule compliance with #F5C542 fallback and integer ms
+  const sanitized = sanitizeActiveSessionAura({
+    startedAt: 1_760_000_050_000.75,
+    subjectLabel: 'Organic Chem',
+    subjectColor: 'rgb(255, 100, 50)',
+  });
+  assert.ok(sanitized);
+  assert.equal(Number.isInteger(sanitized.startedAt), true);
+  assert.equal(sanitized.subjectColor, '#F5C542');
+
+  const payload = buildActiveSessionAuraPayload({
+    startedAt: 1_760_000_050_000.9,
+    subjectName: 'Biology',
+    subjectColor: 'not-a-hex',
+  });
+  assert.ok(payload);
+  assert.equal(Number.isInteger(payload.startedAt), true);
+  assert.equal(payload.subjectColor, '#F5C542');
+});
+
+test('firestore.rules contains v42 hardening clauses and keeps static cheer checks before exists()/get()', () => {
+  const rulesText = fs.readFileSync(path.resolve(process.cwd(), 'firestore.rules'), 'utf8');
+  assert.match(rulesText, /function isRecentCheerDayKey\(dayKey\)/);
+  assert.match(rulesText, /duration\.value\(48,\s*'h'\)/);
+  assert.match(rulesText, /request\.time\.toMillis\(\)\s*-\s*93600000/);
+  assert.match(rulesText, /request\.time\.toMillis\(\)\s*\+\s*93600000/);
+  assert.match(rulesText, /resource\.data\.ownerUid != request\.auth\.uid/);
+  assert.match(rulesText, /m\.activeSession\.startedAt is int && m\.activeSession\.startedAt > 0/);
+  assert.match(rulesText, /m\.activeSession\.subjectColor\.matches\('\^#\[0-9a-fA-F\]\{3,8\}\$'\)/);
+
+  // Zero-read DoS guard: static cheer checks must precede exists() and bothAreGroupMembers()
+  const cheerSectionStart = rulesText.indexOf('match /cheers/{cheerId}');
+  assert.ok(cheerSectionStart > 0);
+  const cheerSection = rulesText.slice(cheerSectionStart);
+  const dayKeyCheckIdx = cheerSection.indexOf('isRecentCheerDayKey(request.resource.data.dayKey)');
+  const tsCheckIdx = cheerSection.indexOf('request.time.toMillis() - 93600000');
+  const existsIdx = cheerSection.indexOf('exists(/databases/');
+  const bothMembersIdx = cheerSection.indexOf('bothAreGroupMembers(');
+  assert.ok(dayKeyCheckIdx > 0 && tsCheckIdx > 0 && existsIdx > 0 && bothMembersIdx > 0);
+  assert.ok(dayKeyCheckIdx < existsIdx, 'isRecentCheerDayKey must run before exists()');
+  assert.ok(tsCheckIdx < existsIdx, 'ts bounds check must run before exists()');
+  assert.ok(existsIdx < bothMembersIdx, 'exists() must run before get() in bothAreGroupMembers');
+});
+
+// ---------------------------------------------------------------------------
+// 8. v40–v42 Insights Canvas Edge-Case Guards (NaN, 0m, Midnight Wrap)
+// ---------------------------------------------------------------------------
+test('insightsCanvas helpers handle 0m days, single-session day, 24h midnight wrap, and NaN/0 goal safely', () => {
+  assert.equal(formatGoalHoursLabel(Number.NaN), '6h GOAL');
+  assert.equal(formatGoalHoursLabel(0), '6h GOAL');
+  assert.equal(formatGoalHoursLabel(-120), '6h GOAL');
+  assert.equal(formatGoalHoursLabel(360), '6h GOAL');
+
+  const subjects = [
+    { id: 'bio', name: 'Biology', color: '#34D399', e: '🧬', arch: 0, todos: [] },
+    { id: 'phy', name: 'Physics', color: '#60A5FA', e: '⚛️', arch: 0, todos: [] },
+  ];
+
+  // Empty sessions + NaN goal must produce finite scale and 0m bars
+  const emptyMonolith = buildMonolithSeries('2026-10-15', [], subjects, 7, Number.NaN);
+  assert.equal(emptyMonolith.length, 7);
+  assert.equal(emptyMonolith.every((d) => d.totalMin === 0), true);
+  const emptyScale = computeMonolithScale(0, Number.NaN);
+  assert.equal(Number.isFinite(emptyScale.maxMin) && emptyScale.maxMin > 0, true);
+
+  // Single-session day + midnight wrap-around (23:30 -> 00:30 next morning)
+  const lateStart = new Date(2026, 9, 14, 23, 30, 0).getTime();
+  const lateEnd = lateStart + 60 * 60_000; // 60m crossing midnight
+  const sessions = [
+    {
+      id: 's_wrap',
+      subjectId: 'bio',
+      dayKey: '2026-10-14',
+      startTs: lateStart,
+      endTs: lateEnd,
+      activeMs: 60 * 60_000,
+      pausedMs: 0,
+      pauseCount: 0,
+      overtimeMs: 0,
+      mode: 'stopwatch' as const,
+      purity: 100,
+      rating: 0,
+      note: '',
+      updatedAt: lateEnd,
+    },
+    {
+      id: 's_nan_ts',
+      subjectId: 'phy',
+      dayKey: '2026-10-15',
+      startTs: Number.NaN,
+      endTs: Number.NaN,
+      activeMs: 30 * 60_000,
+      pausedMs: 0,
+      pauseCount: 0,
+      overtimeMs: 0,
+      mode: 'stopwatch' as const,
+      purity: 100,
+      rating: 0,
+      note: '',
+      updatedAt: lateEnd,
+    },
+  ];
+
+  const clock24h = buildChronograph24h(sessions);
+  assert.equal(clock24h.slots.length, 24);
+  assert.equal(clock24h.slots[23].minutes, 30);
+  assert.equal(clock24h.slots[0].minutes, 30);
+  assert.equal(clock24h.peakWindowStart, 23);
+  assert.equal(clock24h.slots[23].inPeakWindow, true);
+  assert.equal(clock24h.slots[0].inPeakWindow, true);
+  assert.equal(Number.isFinite(clock24h.maxHourMin), true);
+
+  const rhythm30d = buildChronograph30d('2026-10-15', sessions, subjects, 0);
+  assert.equal(rhythm30d.spokes.length, 30);
+  assert.equal(Number.isFinite(rhythm30d.avgMinPerDay30), true);
+  assert.equal(Number.isFinite(rhythm30d.goalHitRatePct), true);
+  assert.equal(Number.isFinite(rhythm30d.maxDayMin), true);
+});
+

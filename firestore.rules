@@ -1,7 +1,7 @@
 rules_version = '2';
 
 // ============================================================================
-// Deep Hours NEET Study Logger — Firestore Security Rules (v24 Hardened)
+// Deep Hours NEET Study Logger — Firestore Security Rules (v42 Hardened)
 // ============================================================================
 // Manual Firebase Console Rules Playground Test Cases:
 // 1. Personal Sync (users/{uid}/meta/core):
@@ -96,11 +96,11 @@ service cloud.firestore {
           m.activeSession is map
           && m.activeSession.keys().hasAll(['startedAt','subjectLabel','subjectColor'])
           && m.activeSession.keys().hasOnly(['startedAt','subjectLabel','subjectColor'])
-          && m.activeSession.startedAt is number && m.activeSession.startedAt > 0
+          && m.activeSession.startedAt is int && m.activeSession.startedAt > 0
           && m.activeSession.subjectLabel is string
           && m.activeSession.subjectLabel.size() >= 1 && m.activeSession.subjectLabel.size() <= 40
           && m.activeSession.subjectColor is string
-          && m.activeSession.subjectColor.size() >= 1 && m.activeSession.subjectColor.size() <= 24
+          && m.activeSession.subjectColor.matches('^#[0-9a-fA-F]{3,8}$')
         ))
         && (!('weeks' in m) || (m.weeks is map && m.weeks.size() <= 14));
     }
@@ -111,6 +111,18 @@ service cloud.firestore {
         && g.keys().hasOnly(['weeklyMinutes','updatedAt'])
         && g.weeklyMinutes is int && g.weeklyMinutes >= 60 && g.weeklyMinutes <= 300000
         && g.updatedAt is int && g.updatedAt > 0;
+    }
+
+    function isRecentCheerDayKey(dayKey) {
+      let parts = dayKey.split('-');
+      let y = int(parts[0]);
+      let m = int(parts[1]);
+      let d = int(parts[2]);
+      return y >= 2020 && y <= 2100
+        && m >= 1 && m <= 12
+        && d >= 1 && d <= 31
+        && timestamp.date(y, m, d) >= request.time - duration.value(48, 'h')
+        && timestamp.date(y, m, d) <= request.time + duration.value(48, 'h');
     }
 
     function bothAreGroupMembers(groupId, toUid) {
@@ -206,7 +218,8 @@ service cloud.firestore {
               )
               ||
               (
-                request.resource.data.members.diff(resource.data.members).removedKeys().hasOnly([request.auth.uid])
+                resource.data.ownerUid != request.auth.uid
+                && request.resource.data.members.diff(resource.data.members).removedKeys().hasOnly([request.auth.uid])
                 && request.resource.data.members.diff(resource.data.members).changedKeys().size() == 0
               )
             )
@@ -250,8 +263,11 @@ service cloud.firestore {
           && request.resource.data.fromNick.size() >= 1 && request.resource.data.fromNick.size() <= 20
           && request.resource.data.dayKey is string
           && request.resource.data.dayKey.matches('^\\d{4}-\\d{2}-\\d{2}$')
+          && isRecentCheerDayKey(request.resource.data.dayKey)
           && request.resource.data.e in ['👏', '🔥', '💪']
-          && request.resource.data.ts is int && request.resource.data.ts > 0
+          && request.resource.data.ts is int
+          && request.resource.data.ts >= request.time.toMillis() - 93600000
+          && request.resource.data.ts <= request.time.toMillis() + 93600000
           && cheerId == request.resource.data.dayKey + '_' + request.auth.uid + '_' + request.resource.data.to
           && exists(/databases/$(database)/documents/groups/$(groupId))
           && bothAreGroupMembers(groupId, request.resource.data.to);

@@ -114,7 +114,8 @@ export function formatMinutesCompact(totalMin: number): string {
 }
 
 export function formatGoalHoursLabel(dailyGoalMin: number): string {
-  const hrs = Math.max(0.25, dailyGoalMin / 60);
+  const safeMin = Number.isFinite(dailyGoalMin) && dailyGoalMin > 0 ? dailyGoalMin : 360;
+  const hrs = Math.max(0.25, safeMin / 60);
   const rounded = Number.isInteger(hrs) ? String(hrs) : hrs.toFixed(1).replace(/\.0$/, '');
   return `${rounded}h GOAL`;
 }
@@ -466,7 +467,8 @@ function circularMeanClockMinutes(minutesOfDay: number[]): string {
     cosSum += Math.cos(rad);
   }
   if (Math.hypot(sinSum, cosSum) < 1e-6) {
-    const avg = Math.round(minutesOfDay.reduce((a, b) => a + b, 0) / minutesOfDay.length) % 1440;
+    const rawAvg = Math.round(minutesOfDay.reduce((a, b) => a + b, 0) / minutesOfDay.length);
+    const avg = ((rawAvg % 1440) + 1440) % 1440;
     return `${pad2(Math.floor(avg / 60))}:${pad2(avg % 60)}`;
   }
   let meanRad = Math.atan2(sinSum, cosSum);
@@ -561,9 +563,13 @@ export function buildChronograph24h(
   const endMinutesList: number[] = [];
   for (const b of dayBounds.values()) {
     const sd = new Date(b.firstStartTs);
-    startMinutesList.push(sd.getHours() * 60 + sd.getMinutes());
+    if (Number.isFinite(sd.getTime())) {
+      startMinutesList.push(sd.getHours() * 60 + sd.getMinutes());
+    }
     const ed = new Date(b.lastEndTs);
-    endMinutesList.push(ed.getHours() * 60 + ed.getMinutes());
+    if (Number.isFinite(ed.getTime())) {
+      endMinutesList.push(ed.getHours() * 60 + ed.getMinutes());
+    }
   }
 
   const slots: Chronograph24hSlot[] = hourMins.map((minutes, hour) => {

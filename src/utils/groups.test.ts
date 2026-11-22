@@ -377,7 +377,17 @@ describe('Zero-Chat Live Co-Study Aura (v29)', () => {
     assert.deepEqual(sanitized, {
       startedAt: now,
       subjectLabel: 'Physics',
-      subjectColor: '#F5C451',
+      subjectColor: '#F5C542',
+    });
+    const sanitizedRgb = sanitizeActiveSessionAura({
+      startedAt: now + 0.75,
+      subjectLabel: 'Physics',
+      subjectColor: 'rgb(255, 0, 0)',
+    });
+    assert.deepEqual(sanitizedRgb, {
+      startedAt: Math.floor(now),
+      subjectLabel: 'Physics',
+      subjectColor: '#F5C542',
     });
 
     // Squad filtering only keeps active members (excludes stale >6h and future >5m)

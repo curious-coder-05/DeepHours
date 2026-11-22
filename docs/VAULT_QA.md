@@ -32,9 +32,10 @@ Verify these flows on both mobile touch viewports (`360×800` / `390×844`) and 
 - [ ] `Shuffle` reorders cleanly; swipe left/right and keyboard shortcuts (`ArrowLeft`/`ArrowRight`, `A`, `S`, `M`, `Escape`) work; Next image preloads cleanly.
 - [ ] Tapping question or solution photo opens `VaultZoomViewer` (`z-index: 95`) supporting pinch-to-zoom, pan, double-tap zoom toggle, and `+`/`-`/`Reset` buttons.
 
-## 5. Offline IndexedDB & Scoped Google Drive (`drive.file`)
-- [ ] Vault stores items, blobs, tombstones, and meta strictly in IndexedDB `deephours-vault` (`navigator.storage.persist()` requested on first save).
+## 5. Offline IndexedDB, `.dhvault.json` Archives & Upload Security
+- [ ] Vault stores items, blobs, tombstones, and meta strictly locally in IndexedDB `deephours-vault` (`navigator.storage.persist()` requested on first save; `onblocked` handled cleanly across tabs).
 - [ ] `Erase all device data` checkbox `"Also erase my Vault on this device"` defaults unchecked; when checked it wipes `deephours-vault`.
-- [ ] `googleDrive.ts` requests only `https://www.googleapis.com/auth/drive.file` and creates/uses a single flat `"Deep Hours Vault"` folder (auto-migrating any legacy `"Deep Hours Backups"` folder).
-- [ ] `Settings > Google Drive` shows account status, `"Open in Drive"`, Vault count & storage bytes, Last sync, `"Sync now"`, `"Back up now"` (uploads `.json` & `.csv`), backup list (`Restore` & `Delete` dialogs), `"Restore Vault from Drive"` with progress `<Meter>`, and `"Disconnect"`.
-- [ ] `Settings > Data` includes `"Delete Vault from Drive"` confirmation `<Dialog>` that deletes `vault-index.json` and `q_*`/`s_*` files from Drive without deleting local questions or study backups.
+- [ ] Uploads strictly accept raster JPEG, PNG, and WebP only — SVG, GIF, HTML, plain text, spoofed `.png`/`.webp` files failing binary magic-byte checks, files `> 25 MB`, and decompression bombs (`> 12,000 px` or `> 48 MP`) are rejected with a clear inline message.
+- [ ] Exporting a Vault archive writes a portable `.dhvault.json` bundle containing question metadata and encoded raster blobs without leaking prototype keys.
+- [ ] Importing a `.dhvault.json` archive strips dangerous keys (`__proto__`, `constructor`, `prototype`), validates every Base64 image's binary raster magic bytes and total decoded byte cap (`<= 45 MB`), and commits in a single atomic IndexedDB transaction.
+- [ ] `VaultAnswerCurtain` (`Answer curtain`, `Mask bottom half`, `Peek / Reveal`, and draggable amber handle) works inside Quick-View, Zoom Viewer, and Revision Deck without interfering with scroll or sheet gestures.

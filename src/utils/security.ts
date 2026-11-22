@@ -7,7 +7,7 @@
  * - Quota-safe `localStorage` helpers with global QuotaExceeded notification hook
  * - Local-timezone calendar date-key formatting (IST UTC+5:30 safe)
  * - Client-side write cooldown rate limiter
- * - Firestore security-rule contract validators (mirrors `firestore.rules` v24)
+ * - Firestore security-rule contract validators (mirrors `firestore.rules` v42)
  */
 
 export const DANGEROUS_OBJECT_KEYS = new Set([
@@ -483,7 +483,7 @@ export function createCooldownGuard(
   };
 }
 
-/* ── Firestore Rules v24 Contract Validators (for unit testing & pre-flight verification) ── */
+/* ── Firestore Rules v42 Contract Validators (for unit testing & pre-flight verification) ── */
 
 const ALLOWED_MEMBER_KEYS = new Set([
   'nick',
@@ -660,8 +660,8 @@ export function validateFirestoreMemberEntryContract(
       ) {
         errors.push('activeSession must have exact keys startedAt,subjectLabel,subjectColor');
       }
-      if (typeof a.startedAt !== 'number' || !Number.isFinite(a.startedAt) || a.startedAt <= 0) {
-        errors.push('activeSession.startedAt must be positive number');
+      if (!Number.isInteger(a.startedAt) || (a.startedAt as number) <= 0) {
+        errors.push('activeSession.startedAt must be positive int');
       }
       if (
         typeof a.subjectLabel !== 'string' ||
@@ -672,10 +672,9 @@ export function validateFirestoreMemberEntryContract(
       }
       if (
         typeof a.subjectColor !== 'string' ||
-        a.subjectColor.length < 1 ||
-        a.subjectColor.length > 24
+        !/^#[0-9a-fA-F]{3,8}$/.test(a.subjectColor)
       ) {
-        errors.push('activeSession.subjectColor must be 1..24 chars');
+        errors.push('activeSession.subjectColor must match ^#[0-9a-fA-F]{3,8}$');
       }
     }
   }
@@ -691,9 +690,13 @@ export function validateFirestoreMemberEntryContract(
   return { ok: errors.length === 0, errors };
 }
 
+export const CHEER_TS_WINDOW_MS = 93_600_000; // ±26 hours
+export const CHEER_DAYKEY_WINDOW_MS = 48 * 3_600_000; // ±48 hours
+
 export function validateFirestoreCheerContract(
   cheerId: string,
-  cheer: unknown
+  cheer: unknown,
+  requestTimeMs?: number
 ): { ok: boolean; errors: string[] } {
   const errors: string[] = [];
   if (!cheer || typeof cheer !== 'object' || Array.isArray(cheer)) {
@@ -714,18 +717,70 @@ export function validateFirestoreCheerContract(
   ) {
     errors.push('fromNick must be 1..20 chars');
   }
+  const refTimeMs =
+    typeof requestTimeMs === 'number' && Number.isFinite(requestTimeMs)
+      ? requestTimeMs
+      : typeof c.ts === 'number' && Number.isFinite(c.ts)
+        ? c.ts
+        : Date.now();
   if (typeof c.dayKey !== 'string' || !/^\d{4}-\d{2}-\d{2}$/.test(c.dayKey)) {
     errors.push('dayKey must be YYYY-MM-DD');
+  } else {
+    const [yStr, mStr, dStr] = c.dayKey.split('-');
+    const y = Number(yStr);
+    const m = Number(mStr);
+    const d = Number(dStr);
+    const dt = new Date(Date.UTC(y, m - 1, d));
+    const validCalendarDate =
+      y >= 2020 &&
+      y <= 2100 &&
+      m >= 1 &&
+      m <= 12 &&
+      d >= 1 &&
+      d <= 31 &&
+      dt.getUTCFullYear() === y &&
+      dt.getUTCMonth() === m - 1 &&
+      dt.getUTCDate() === d;
+    if (!validCalendarDate) {
+      errors.push('dayKey must be a valid calendar date in 2020..2100');
+    } else {
+      const dayUtcMs = dt.getTime();
+      if (
+        dayUtcMs < refTimeMs - CHEER_DAYKEY_WINDOW_MS ||
+        dayUtcMs > refTimeMs + CHEER_DAYKEY_WINDOW_MS
+      ) {
+        errors.push('dayKey must fall within ±48 hours of request.time');
+      }
+    }
   }
   if (typeof c.e !== 'string' || !ALLOWED_CHEER_SET.has(c.e)) {
     errors.push('e must be one of 👏, 🔥, 💪');
   }
   if (!Number.isInteger(c.ts) || (c.ts as number) <= 0) {
     errors.push('ts must be positive int');
+  } else if (
+    (c.ts as number) < refTimeMs - CHEER_TS_WINDOW_MS ||
+    (c.ts as number) > refTimeMs + CHEER_TS_WINDOW_MS
+  ) {
+    errors.push('ts must fall within ±26 hours of request.time');
   }
   const expectedId = `${String(c.dayKey)}_${String(c.from)}_${String(c.to)}`;
   if (cheerId !== expectedId) {
     errors.push(`cheerId mismatch: expected ${expectedId}`);
+  }
+  return { ok: errors.length === 0, errors };
+}
+
+export function validateFirestoreGroupSelfLeaveContract(
+  groupDoc: { ownerUid: string; members: Record<string, unknown> },
+  callerUid: string
+): { ok: boolean; errors: string[] } {
+  const errors: string[] = [];
+  if (!callerUid || !(callerUid in groupDoc.members)) {
+    errors.push('Caller must be an existing group member to self-leave');
+  }
+  if (groupDoc.ownerUid === callerUid) {
+    errors.push('Squad owner cannot self-leave in Case B (prevents orphaned squads)');
   }
   return { ok: errors.length === 0, errors };
 }

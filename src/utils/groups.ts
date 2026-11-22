@@ -1128,6 +1128,13 @@ export function computeWeeklyGroupGoalProgress(
   };
 }
 
+const STRICT_HEX_COLOR_RE = /^#(?:[0-9a-fA-F]{3}|[0-9a-fA-F]{4}|[0-9a-fA-F]{6}|[0-9a-fA-F]{8})$/;
+
+function normalizeStrictHexColor(raw: unknown, fallback = '#F5C542'): string {
+  const trimmed = typeof raw === 'string' ? raw.trim() : '';
+  return STRICT_HEX_COLOR_RE.test(trimmed) ? trimmed : fallback;
+}
+
 export function sanitizeActiveSessionAura(
   raw: unknown
 ): ActiveSessionAura | null {
@@ -1137,15 +1144,9 @@ export function sanitizeActiveSessionAura(
   if (!Number.isFinite(startedAt) || startedAt <= 0) return null;
   const subjectLabel = sanitizePlainText(rec.subjectLabel, 40, '');
   if (!subjectLabel) return null;
-  const rawColor =
-    typeof rec.subjectColor === 'string' ? rec.subjectColor.trim() : '';
-  const safeColor =
-    /^#[0-9a-fA-F]{3,8}$/.test(rawColor) ||
-    /^(?:rgb|hsl)a?\([0-9.,%\s]+\)$/.test(rawColor)
-      ? rawColor.slice(0, 24)
-      : '#F5C451';
+  const safeColor = normalizeStrictHexColor(rec.subjectColor, '#F5C542');
   return {
-    startedAt: Math.floor(startedAt),
+    startedAt: Math.max(1, Math.floor(startedAt)),
     subjectLabel,
     subjectColor: safeColor,
   };
@@ -1218,9 +1219,7 @@ export function buildActiveSessionAuraPayload(params: {
     40,
     'Deep Study'
   );
-  const rawColor = (params.subjectColor || '').trim();
-  const safeColor =
-    /^#[0-9a-fA-F]{3,8}$/.test(rawColor) ? rawColor.slice(0, 24) : '#F5C451';
+  const safeColor = normalizeStrictHexColor(params.subjectColor, '#F5C542');
   return {
     startedAt,
     subjectLabel: cleanLabel,
@@ -2271,8 +2270,13 @@ export async function leaveGroupInCloud(params: {
   const user = auth?.currentUser;
   if (!user || !db) return;
 
+  const cachedGroup = loadCachedGroupSnapshots()[params.groupId]?.doc;
+  if (cachedGroup && cachedGroup.ownerUid === user.uid) {
+    throw new Error('Squad owners cannot leave their own squad. Use Close Group instead.');
+  }
+
   if (params.budget.canWrite(1)) {
-    const now = Date.now();
+    const now = Math.floor(Date.now());
     try {
       await updateDoc(doc(db, 'groups', params.groupId), {
         [`members.${user.uid}`]: deleteField(),
@@ -2538,7 +2542,7 @@ export async function sendCheerInCloud(params: {
       throw new Error('You have already cheered this member today.');
     }
   }
-  const now = Date.now();
+  const now = Math.floor(Date.now());
   try {
     await setDoc(cheerRef, {
       from: user.uid,

@@ -41,18 +41,13 @@ Deep Hours works completely offline without an account. To enable optional Googl
 2. Select a region close to you (e.g., `asia-south1` or `asia-east1`) and start in **Production mode**.
 
 ### 5. Deploy `firestore.rules`
-1. Copy the contents of [`firestore.rules`](./firestore.rules) into **Firestore Database > Rules** in the Firebase Console and click **Publish** (or deploy via the Firebase CLI with `firebase deploy --only firestore:rules`):
-   ```
-   rules_version = '2';
-   service cloud.firestore {
-     match /databases/{database}/documents {
-       match /users/{userId}/{document=**} {
-         allow read, write: if request.auth != null && request.auth.uid == userId;
-       }
-     }
-   }
-   ```
-2. This rule guarantees that each authenticated user can only read and write documents under `/users/{uid}/**`.
+1. Copy the full contents of [`firestore.rules`](./firestore.rules) (v42 Hardened) into **Firestore Database > Rules** in the Firebase Console and click **Publish** (or deploy via the Firebase CLI with `firebase deploy --only firestore:rules`).
+2. These rules enforce:
+   - Verified Google authentication (`request.auth.token.email_verified == true`) across all paths and a catch-all default deny.
+   - Strict per-user isolation under `/users/{uid}/meta/*` and `/users/{uid}/months/*`.
+   - Anti-scraping Squad rules under `/groups/{groupId}` (`allow list: if false`, immutable `ownerUid`/`createdAt`/`memberCap`/`joinedAt`, strict 16-key `members.{uid}` schema with zero PII, owner-orphan protection, and strict `activeSession` int/hex typing).
+   - Zero-read DoS and backfill protection on `/groups/{groupId}/cheers/{cheerId}` (static checks before `exists()`/`get()`, `±26h` `ts` window, and `±48h` calendar `dayKey` window).
+   - See [`security_spec.md`](./security_spec.md) and [`docs/SECURITY_AUDIT.md`](./docs/SECURITY_AUDIT.md) for the complete specification.
 
 ### 6. Configure Environment Variables (Optional Override)
 By default, the app reads `/firebase-applet-config.json` when running in AI Studio, or `VITE_FIREBASE_*` environment variables on Vercel/local builds:
@@ -74,8 +69,8 @@ VITE_FIREBASE_FIRESTORE_DATABASE_ID=(default)
 # Start development server on port 3000
 npm run dev
 
-# Run unit tests (Node built-in test runner via tsx)
-npx tsx --test src/utils/studyLogic.test.ts
+# Run all unit tests (Node built-in test runner via tsx)
+npx tsx --test src/utils/*.test.ts
 
 # Type-check and build for production
 npm run lint

@@ -911,7 +911,7 @@ export default function App() {
       if (metaTheme) {
         metaTheme.setAttribute(
           'content',
-          t === 'light' ? '#F6F4EF' : isAmoled ? '#000000' : '#0B0D10'
+          t === 'light' ? '#F6F4EF' : '#000000'
         );
       }
     };
