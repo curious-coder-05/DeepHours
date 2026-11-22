@@ -3,6 +3,10 @@ import { readRawSavedDataForDownload } from '../utils/storage';
 
 interface ErrorBoundaryProps {
   children: React.ReactNode;
+  variant?: 'page' | 'section';
+  scopeLabel?: string;
+  resetKey?: string | number;
+  silentFallback?: React.ReactNode;
 }
 
 interface ErrorBoundaryState {
@@ -38,6 +42,28 @@ export class ErrorBoundary extends React.Component<
     };
   }
 
+  componentDidUpdate(prevProps: ErrorBoundaryProps) {
+    if (
+      this.state.hasError &&
+      prevProps.resetKey !== undefined &&
+      prevProps.resetKey !== this.props.resetKey
+    ) {
+      this.setState({
+        hasError: false,
+        errorMsg: '',
+        downloadNotice: null,
+      });
+    }
+  }
+
+  handleResetSection = () => {
+    this.setState({
+      hasError: false,
+      errorMsg: '',
+      downloadNotice: null,
+    });
+  };
+
   handleDownloadRawData = async () => {
     try {
       this.setState({ downloadNotice: null });
@@ -64,6 +90,54 @@ export class ErrorBoundary extends React.Component<
 
   render() {
     if (this.state.hasError) {
+      if (this.props.silentFallback !== undefined) {
+        return this.props.silentFallback;
+      }
+
+      if (this.props.variant === 'section') {
+        const label = this.props.scopeLabel || 'this view';
+        return (
+          <section
+            role="alert"
+            className="mx-auto my-6 max-w-lg rounded-[20px] border border-[rgba(255,255,255,0.08)] bg-[#0A0808] p-5 text-left"
+          >
+            <h2 className="text-[16px] font-semibold tracking-[-0.02em] text-[var(--tx)]">
+              Could not render {label}
+            </h2>
+            <p className="mt-1.5 text-[13px] leading-relaxed text-[var(--tx-2)]">
+              Your study data is safely stored on this device. Reload this view or download a
+              backup JSON copy below.
+            </p>
+            {this.state.errorMsg && (
+              <p className="mono mt-3 break-words rounded-lg bg-[#141010] px-2.5 py-2 text-[12px] text-[var(--err-ink)]">
+                {this.state.errorMsg}
+              </p>
+            )}
+            {this.state.downloadNotice && (
+              <p className="mt-2.5 rounded-lg bg-[#141010] px-2.5 py-2 text-[12px] font-medium text-[var(--warn-ink)]">
+                {this.state.downloadNotice}
+              </p>
+            )}
+            <div className="mt-4 flex flex-wrap gap-2">
+              <button
+                type="button"
+                className="pri g"
+                onClick={this.handleResetSection}
+              >
+                Reload view
+              </button>
+              <button
+                type="button"
+                className="g"
+                onClick={this.handleDownloadRawData}
+              >
+                Download backup JSON
+              </button>
+            </div>
+          </section>
+        );
+      }
+
       return (
         <main
           id="v"

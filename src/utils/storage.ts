@@ -1,4 +1,10 @@
 import type { PulseHabitState } from '../types';
+import {
+  safeJsonParse,
+  safeJsonParseStrict,
+  safeLocalStorageGet,
+  safeLocalStorageSet,
+} from './security.ts';
 import { logicalKey, norm } from './studyLogic.ts';
 
 export class StorageLoadError extends Error {
@@ -14,36 +20,92 @@ export interface DailyBackupSnapshot {
   state: PulseHabitState;
 }
 
-const idbPromise: Promise<IDBDatabase> | null =
-  typeof indexedDB !== 'undefined'
-    ? new Promise((resolve, reject) => {
-        try {
-          const req = indexedDB.open('deephours', 1);
-          req.onupgradeneeded = () => {
-            if (!req.result.objectStoreNames.contains('kv')) {
-              req.result.createObjectStore('kv');
-            }
+let idbOpenPromise: Promise<IDBDatabase> | null = null;
+
+function openPrimaryIdb(): Promise<IDBDatabase> {
+  if (typeof indexedDB === 'undefined') {
+    return Promise.reject(new Error('IndexedDB unavailable'));
+  }
+  if (!idbOpenPromise) {
+    idbOpenPromise = new Promise<IDBDatabase>((resolve, reject) => {
+      try {
+        const req = indexedDB.open('deephours', 1);
+        req.onupgradeneeded = () => {
+          if (!req.result.objectStoreNames.contains('kv')) {
+            req.result.createObjectStore('kv');
+          }
+        };
+        req.onsuccess = () => {
+          const db = req.result;
+          db.onversionchange = () => {
+            db.close();
+            idbOpenPromise = null;
           };
-          req.onsuccess = () => resolve(req.result);
-          req.onerror = () => reject(req.error || new Error('IndexedDB open error'));
-        } catch (err) {
-          reject(err);
-        }
-      })
-    : null;
+          resolve(db);
+        };
+        req.onerror = () => {
+          idbOpenPromise = null;
+          reject(req.error || new Error('IndexedDB open error'));
+        };
+        req.onblocked = () => {
+          idbOpenPromise = null;
+          reject(new Error('IndexedDB open blocked by another tab'));
+        };
+      } catch (err) {
+        idbOpenPromise = null;
+        reject(err);
+      }
+    });
+  }
+  return idbOpenPromise;
+}
 
 export function kv(mode: 'get' | 'put', key: string, val?: unknown): Promise<unknown> {
-  if (!idbPromise) return Promise.reject(new Error('IndexedDB unavailable'));
-  return idbPromise.then(
+  if (typeof indexedDB === 'undefined') {
+    return Promise.reject(new Error('IndexedDB unavailable'));
+  }
+  return openPrimaryIdb().then(
     (db) =>
       new Promise((resolve, reject) => {
         try {
           const tx = db.transaction('kv', mode === 'get' ? 'readonly' : 'readwrite');
           const store = tx.objectStore('kv');
           const req = mode === 'get' ? store.get(key) : store.put(val, key);
-          req.onsuccess = () => resolve(req.result);
-          req.onerror = () => reject(req.error || new Error('IndexedDB request error'));
+          let settled = false;
+          let resultVal: unknown = undefined;
+          req.onsuccess = () => {
+            resultVal = req.result;
+            if (mode === 'get' && !settled) {
+              settled = true;
+              resolve(resultVal);
+            }
+          };
+          req.onerror = () => {
+            if (!settled) {
+              settled = true;
+              reject(req.error || new Error('IndexedDB request error'));
+            }
+          };
+          tx.oncomplete = () => {
+            if (!settled) {
+              settled = true;
+              resolve(resultVal);
+            }
+          };
+          tx.onerror = () => {
+            if (!settled) {
+              settled = true;
+              reject(tx.error || new Error('IndexedDB transaction error'));
+            }
+          };
+          tx.onabort = () => {
+            if (!settled) {
+              settled = true;
+              reject(tx.error || new Error('IndexedDB transaction aborted'));
+            }
+          };
         } catch (err) {
+          idbOpenPromise = null;
           reject(err);
         }
       })
@@ -55,13 +117,7 @@ export function kv(mode: 'get' | 'put', key: string, val?: unknown): Promise<unk
  * can distinguish a brand-new install from a device where data previously existed.
  */
 function markDataSeen(): void {
-  try {
-    if (typeof localStorage !== 'undefined') {
-      localStorage.setItem('dh_seen', '1');
-    }
-  } catch {
-    // ignore localStorage access errors
-  }
+  safeLocalStorageSet('dh_seen', '1');
 }
 
 /**
@@ -210,13 +266,7 @@ export async function writeSafetyBackupSnapshot(state: PulseHabitState): Promise
       savedAt: Date.now(),
       state: JSON.parse(JSON.stringify(state)),
     };
-    try {
-      if (typeof localStorage !== 'undefined') {
-        localStorage.setItem('dh_pre_sync_backup', JSON.stringify(snapshot));
-      }
-    } catch {
-      // ignore localStorage quota error
-    }
+    safeLocalStorageSet('dh_pre_sync_backup', JSON.stringify(snapshot));
     const existing = await readValidBackups();
     const updated = [snapshot, ...existing]
       .sort((a, b) => b.savedAt - a.savedAt)
@@ -236,13 +286,8 @@ export async function restoreFromLatestBackup(): Promise<PulseHabitState | null>
       ...valid[0].state,
       savedAt: Date.now(),
     });
-    try {
-      if (typeof localStorage !== 'undefined') {
-        localStorage.setItem('dh', JSON.stringify(restored));
-        markDataSeen();
-      }
-    } catch {
-      // ignore localStorage error
+    if (safeLocalStorageSet('dh', JSON.stringify(restored)).ok) {
+      markDataSeen();
     }
     try {
       await kv('put', 's', restored);
@@ -276,12 +321,7 @@ export async function readRawSavedDataForDownload(): Promise<string | null> {
   try {
     const idbState = await kv('get', 's');
     if (typeof idbState === 'string' && isNonEmptySerializedPayload(idbState)) {
-      let ts = 0;
-      try {
-        ts = getSavedAt(JSON.parse(idbState));
-      } catch {
-        // leave ts = 0
-      }
+      const ts = getSavedAt(safeJsonParse(idbState, null));
       candidates.push({ ts, priority: 3, payload: idbState });
     } else if (isPlainStateRecord(idbState) && Object.keys(idbState).length > 0) {
       const serialized = JSON.stringify(idbState, null, 2);
@@ -310,32 +350,16 @@ export async function readRawSavedDataForDownload(): Promise<string | null> {
   }
 
   // 3. Check localStorage "dh" then "ph"
-  try {
-    if (typeof localStorage !== 'undefined') {
-      const dh = localStorage.getItem('dh');
-      if (isNonEmptySerializedPayload(dh)) {
-        let ts = 0;
-        try {
-          ts = getSavedAt(JSON.parse(dh));
-        } catch {
-          // leave ts = 0
-        }
-        candidates.push({ ts, priority: 4, payload: dh });
-      } else {
-        const ph = localStorage.getItem('ph');
-        if (isNonEmptySerializedPayload(ph)) {
-          let ts = 0;
-          try {
-            ts = getSavedAt(JSON.parse(ph));
-          } catch {
-            // leave ts = 0
-          }
-          candidates.push({ ts, priority: 1, payload: ph });
-        }
-      }
+  const dh = safeLocalStorageGet('dh');
+  if (isNonEmptySerializedPayload(dh)) {
+    const ts = getSavedAt(safeJsonParse(dh, null));
+    candidates.push({ ts, priority: 4, payload: dh });
+  } else {
+    const ph = safeLocalStorageGet('ph');
+    if (isNonEmptySerializedPayload(ph)) {
+      const ts = getSavedAt(safeJsonParse(ph, null));
+      candidates.push({ ts, priority: 1, payload: ph });
     }
-  } catch {
-    // ignore localStorage read error
   }
 
   if (candidates.length === 0) return null;
@@ -377,7 +401,7 @@ export async function loadInitialState(): Promise<PulseHabitState> {
       const rawStr = dhStr ?? phStr;
       if (rawStr !== null) {
         lsHadEntry = true;
-        const parsed = JSON.parse(rawStr);
+        const parsed = safeJsonParseStrict(rawStr);
         if (isPlainStateRecord(parsed)) {
           lsRaw = parsed;
           if (dhStr === null && phStr !== null) {
@@ -459,13 +483,8 @@ export async function loadInitialState(): Promise<PulseHabitState> {
   }
 
   if (needsResave && chosenRaw) {
-    try {
-      if (typeof localStorage !== 'undefined') {
-        localStorage.setItem('dh', JSON.stringify(state));
-        markDataSeen();
-      }
-    } catch {
-      // ignore localStorage write error
+    if (safeLocalStorageSet('dh', JSON.stringify(state)).ok) {
+      markDataSeen();
     }
     try {
       await kv('put', 's', state);
@@ -492,14 +511,9 @@ export function persistState(state: PulseHabitState, onSaved?: () => void): void
     savedAt: now,
   };
 
-  try {
-    if (typeof localStorage !== 'undefined') {
-      // F4: Write only localStorage key "dh" going forward + mark "dh_seen"
-      localStorage.setItem('dh', JSON.stringify(stamped));
-      markDataSeen();
-    }
-  } catch {
-    // ignore quota errors
+  // F4: Write only localStorage key "dh" going forward + mark "dh_seen" (notifies on QuotaExceeded)
+  if (safeLocalStorageSet('dh', JSON.stringify(stamped)).ok) {
+    markDataSeen();
   }
 
   if (saveTimer) clearTimeout(saveTimer);

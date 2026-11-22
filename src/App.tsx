@@ -148,9 +148,17 @@ import {
   setAmoledPref,
 } from './utils/uiHelpers';
 import { AppShell } from './components/AppShell';
+import { ErrorBoundary } from './components/ErrorBoundary';
 import { QuickActionsSheet, type QuickActionKind } from './components/QuickActionsSheet';
 import { Skeleton, Toast } from './components/ui';
 import { TodayView } from './components/TodayView';
+import {
+  createCooldownGuard,
+  encodeCsvRow,
+  onStorageQuotaExceeded,
+  safeJsonParseStrict,
+  safeLocalStorageSet,
+} from './utils/security';
 import { Modals, type ModalState } from './components/Modals';
 import { CommandPalette } from './components/CommandPalette';
 import { KeyboardShortcutsSheet } from './components/KeyboardShortcutsSheet';
@@ -1219,7 +1227,16 @@ export default function App() {
       cs.checkRedirectSignInResult().catch(() => {});
 
       unsubAuth = cs.subscribeToAuthChanges((user) => {
+        const prevUid = authUserRef.current?.uid || null;
         if (user) {
+          if (prevUid && prevUid !== user.uid) {
+            // Account switch on same device: wipe previous account's cached sync/squad state
+            syncControllerRef.current?.resetOutbox();
+            cs.clearSyncOutboxOnSignOut();
+            void getGroupsMod()
+              .then((gm) => gm.clearAllCachedGroupSnapshots())
+              .catch(() => {});
+          }
           const u = {
             uid: user.uid,
             email: user.email,
@@ -1231,6 +1248,13 @@ export default function App() {
           cs.testFirestoreConnection().catch(() => {});
           void ensureGroupBudget();
         } else {
+          if (prevUid) {
+            syncControllerRef.current?.resetOutbox();
+            cs.clearSyncOutboxOnSignOut();
+            void getGroupsMod()
+              .then((gm) => gm.clearAllCachedGroupSnapshots())
+              .catch(() => {});
+          }
           authUserRef.current = null;
           setAuthUser(null);
           setSyncStatus('off');
@@ -1328,15 +1352,28 @@ export default function App() {
     [ensureGroupBudget]
   );
 
+  const liveAuraToggleCooldownRef = useRef(createCooldownGuard(1_500));
+
+  useEffect(() => {
+    const quotaToastCooldown = createCooldownGuard(15_000);
+    return onStorageQuotaExceeded(() => {
+      if (quotaToastCooldown.tryAcquire().allowed) {
+        showToast(
+          'Device storage is full — export a JSON backup or free browser space to keep saving.'
+        );
+      }
+    });
+  }, [showToast]);
+
   const handleToggleLiveAuraEnabled = useCallback(
     (enabled: boolean) => {
+      if (!liveAuraToggleCooldownRef.current.tryAcquire().allowed) {
+        showToast('Wait a moment before toggling Live Aura again');
+        return;
+      }
       setLiveAuraEnabled(enabled);
       liveAuraEnabledRef.current = enabled;
-      try {
-        localStorage.setItem('dh_live_aura_enabled_v1', enabled ? '1' : '0');
-      } catch {
-        // Ignore storage errors
-      }
+      safeLocalStorageSet('dh_live_aura_enabled_v1', enabled ? '1' : '0');
       auraControllerRef.current?.setEnabled(enabled);
       if (!enabled) {
         liveStatusRef.current = null;
@@ -3192,7 +3229,8 @@ export default function App() {
       >
         <main id="v" aria-live="polite">
           {!isSettingsOpen && tab === 'today' && (
-            <TodayView
+            <ErrorBoundary variant="section" scopeLabel="Today" resetKey={`today-${sel}`}>
+              <TodayView
               state={state}
               sel={sel}
               todayKey={todayKey}
@@ -3285,9 +3323,11 @@ export default function App() {
             }}
             onShareTodayProof={() => handleOpenDailyProofCard(sel)}
           />
+          </ErrorBoundary>
         )}
 
         {!isSettingsOpen && tab === 'prep' && (
+          <ErrorBoundary variant="section" scopeLabel="Prep" resetKey={`prep-${prepSubTab}`}>
           <Suspense fallback={lazyFallback}>
             <PrepView
               state={state}
@@ -3342,9 +3382,11 @@ export default function App() {
               }}
             />
           </Suspense>
+          </ErrorBoundary>
         )}
 
         {!isSettingsOpen && tab === 'focus' && (
+          <ErrorBoundary variant="section" scopeLabel="Focus" resetKey={`focus-${deskMode ? 'desk' : 'std'}`}>
           <Suspense fallback={lazyFallback}>
             <FocusView
               state={state}
@@ -3469,9 +3511,11 @@ export default function App() {
               onEditSession={(sesId) => setModal({ type: 'manualSession', id: sesId })}
             />
           </Suspense>
+          </ErrorBoundary>
         )}
 
         {!isSettingsOpen && tab === 'groups' && (
+          <ErrorBoundary variant="section" scopeLabel="Community" resetKey={`groups-${authUser?.uid || 'anon'}`}>
           <Suspense fallback={lazyFallback}>
             {groupBudgetReady && groupBudgetRef.current ? (
               <GroupsView
@@ -3530,9 +3574,11 @@ export default function App() {
               lazyFallback
             )}
           </Suspense>
+          </ErrorBoundary>
         )}
 
         {!isSettingsOpen && tab === 'stats' && (
+          <ErrorBoundary variant="section" scopeLabel="Insights" resetKey={`stats-${statsSubTab}`}>
           <Suspense fallback={lazyFallback}>
             <StatsView
               state={state}
@@ -3557,9 +3603,11 @@ export default function App() {
               onToast={showToast}
             />
           </Suspense>
+          </ErrorBoundary>
         )}
 
         {isSettingsOpen && (
+          <ErrorBoundary variant="section" scopeLabel="Settings" resetKey={`settings-${activeSettingsSection || 'root'}`}>
           <Suspense fallback={lazyFallback}>
             <SettingsView
               state={state}
@@ -3602,8 +3650,11 @@ export default function App() {
               } catch {
                 // Best-effort presence clear before revoking auth session
               }
-              const cs = await getCloudSyncMod();
+              const [cs, gm] = await Promise.all([getCloudSyncMod(), getGroupsMod()]);
               await cs.signOutGoogleAccount();
+              syncControllerRef.current?.resetOutbox();
+              cs.clearSyncOutboxOnSignOut();
+              gm.clearAllCachedGroupSnapshots();
               showToast('Signed out of Cloud Sync');
             }}
             onSyncNow={async () => {
@@ -3736,10 +3787,6 @@ export default function App() {
             }}
             onExportCsv={() => {
               const cur = stateRef.current;
-              const escCsv = (val: string): string => {
-                const safe = /^[ \t\r\n\u0000-\u001f]*[=+\-@]/.test(val) ? `'${val}` : val;
-                return `"${safe.replace(/"/g, '""')}"`;
-              };
               const rows = [
                 'type,date,subject,heading_or_title,minutes_or_score,purity_or_accuracy_pct,note',
               ];
@@ -3748,9 +3795,15 @@ export default function App() {
                 const subName = sub ? sub.name : 'General';
                 const heading = getSessionHeading(cur, s);
                 rows.push(
-                  `study_session,${s.dayKey},${escCsv(subName)},${escCsv(heading)},${Math.round(
-                    s.activeMs / 60000
-                  )},${s.purity || 100},${escCsv(s.note || '')}`
+                  encodeCsvRow([
+                    'study_session',
+                    s.dayKey,
+                    subName,
+                    heading,
+                    Math.round(s.activeMs / 60000),
+                    s.purity || 100,
+                    s.note || '',
+                  ])
                 );
               });
               cur.habits.forEach((h) =>
@@ -3758,16 +3811,22 @@ export default function App() {
                   .sort()
                   .forEach(([k, e]) => {
                     rows.push(
-                      `habit,${k},"Habit",${escCsv(h.name)},${e.v},100,""`
+                      encodeCsvRow(['habit', k, 'Habit', h.name, e.v, 100, ''])
                     );
                   })
               );
               cur.mocks.forEach((m) => {
                 const sc = computeMockScore(m, cur.subjects);
                 rows.push(
-                  `mock_test,${m.dayKey},"All Subjects",${escCsv(m.name)},${sc.totalScore},${
-                    sc.accuracyPct
-                  },${escCsv(m.note || '')}`
+                  encodeCsvRow([
+                    'mock_test',
+                    m.dayKey,
+                    'All Subjects',
+                    m.name,
+                    sc.totalScore,
+                    sc.accuracyPct,
+                    m.note || '',
+                  ])
                 );
               });
               cur.chapters.forEach((ch) => {
@@ -3776,18 +3835,28 @@ export default function App() {
                 const revs = getSortedChapterRevisions(ch);
                 if (revs.length === 0) {
                   rows.push(
-                    `chapter,${ch.completedOn || ''},${escCsv(subName)},${escCsv(ch.name)},${
-                      ch.confidence || 0
-                    },100,${escCsv(`status:${ch.status}`)}`
+                    encodeCsvRow([
+                      'chapter',
+                      ch.completedOn || '',
+                      subName,
+                      ch.name,
+                      ch.confidence || 0,
+                      100,
+                      `status:${ch.status}`,
+                    ])
                   );
                 } else {
                   revs.forEach((r) => {
                     rows.push(
-                      `chapter_revision,${r.date},${escCsv(subName)},${escCsv(
-                        `${ch.name} (${r.label})`
-                      )},${r.done ? 1 : 0},100,${escCsv(
-                        r.done ? `done:${r.doneOn || r.date}` : 'pending'
-                      )}`
+                      encodeCsvRow([
+                        'chapter_revision',
+                        r.date,
+                        subName,
+                        `${ch.name} (${r.label})`,
+                        r.done ? 1 : 0,
+                        100,
+                        r.done ? `done:${r.doneOn || r.date}` : 'pending',
+                      ])
                     );
                   });
                 }
@@ -3796,9 +3865,15 @@ export default function App() {
                 const sub = cur.subjects.find((x) => x.id === m.subjectId);
                 const subName = sub ? sub.name : 'Subject';
                 rows.push(
-                  `mistake,${m.dayKey},${escCsv(subName)},${escCsv(m.reason)},${
-                    m.resolved ? 1 : 0
-                  },100,${escCsv(m.note || '')}`
+                  encodeCsvRow([
+                    'mistake',
+                    m.dayKey,
+                    subName,
+                    m.reason,
+                    m.resolved ? 1 : 0,
+                    100,
+                    m.note || '',
+                  ])
                 );
               });
               (cur.doubts || []).forEach((d) => {
@@ -3806,9 +3881,15 @@ export default function App() {
                 const subName = sub ? sub.name : 'Subject';
                 const dateStr = logicalKey(d.createdAt, cur.set.dayResetHour ?? 0);
                 rows.push(
-                  `doubt,${dateStr},${escCsv(subName)},${escCsv(d.text)},${
-                    d.resolved ? 1 : 0
-                  },100,"${d.resolved ? 'resolved' : 'open'}"`
+                  encodeCsvRow([
+                    'doubt',
+                    dateStr,
+                    subName,
+                    d.text,
+                    d.resolved ? 1 : 0,
+                    100,
+                    d.resolved ? 'resolved' : 'open',
+                  ])
                 );
               });
               (cur.pyq || []).forEach((p) => {
@@ -3821,22 +3902,36 @@ export default function App() {
                 const acc =
                   p.attempted > 0 ? Math.round((p.correct / p.attempted) * 100) : 0;
                 rows.push(
-                  `pyq,${p.dayKey},${escCsv(subName)},${escCsv(chName)},${
-                    p.attempted
-                  },${acc},"correct:${p.correct}/${p.attempted}"`
+                  encodeCsvRow([
+                    'pyq',
+                    p.dayKey,
+                    subName,
+                    chName,
+                    p.attempted,
+                    acc,
+                    `correct:${p.correct}/${p.attempted}`,
+                  ])
                 );
               });
               Object.entries(cur.wellbeing || {})
                 .sort(([a], [b]) => a.localeCompare(b))
                 .forEach(([dk, wb]) => {
                   rows.push(
-                    `wellbeing,${dk},"Wellbeing","Sleep & Energy",${wb.sleep ?? 0},${
-                      wb.energy ?? 0
-                    },"sleep:${wb.sleep ?? '-'}h energy:${wb.energy ?? '-'}"`
+                    encodeCsvRow([
+                      'wellbeing',
+                      dk,
+                      'Wellbeing',
+                      'Sleep & Energy',
+                      wb.sleep ?? 0,
+                      wb.energy ?? 0,
+                      `sleep:${wb.sleep ?? '-'}h energy:${wb.energy ?? '-'}`,
+                    ])
                   );
                 });
               (cur.restDays || []).forEach((dk) => {
-                rows.push(`rest_day,${dk},"Rest Pass","Protected Rest Day",1,100,""`);
+                rows.push(
+                  encodeCsvRow(['rest_day', dk, 'Rest Pass', 'Protected Rest Day', 1, 100, ''])
+                );
               });
               (cur.tasks || []).forEach((t) => {
                 const sub = t.subjectId
@@ -3844,9 +3939,15 @@ export default function App() {
                   : undefined;
                 const subName = sub ? sub.name : 'General';
                 rows.push(
-                  `daily_task,${t.dayKey},${escCsv(subName)},${escCsv(t.title)},${
-                    t.done ? 1 : 0
-                  },100,"${t.done ? 'done' : 'pending'}"`
+                  encodeCsvRow([
+                    'daily_task',
+                    t.dayKey,
+                    subName,
+                    t.title,
+                    t.done ? 1 : 0,
+                    100,
+                    t.done ? 'done' : 'pending',
+                  ])
                 );
               });
               downloadFile(
@@ -3863,7 +3964,7 @@ export default function App() {
               // F1: Keep whole-state snapshot for JSON import
               const snapJson = JSON.stringify(stateRef.current);
               try {
-                const parsed = JSON.parse(await file.text());
+                const parsed = safeJsonParseStrict(await file.text());
                 if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) {
                   throw new Error('Invalid schema');
                 }
@@ -3877,7 +3978,7 @@ export default function App() {
                 setSel(newToday);
                 saveNextState(restored, { suppressMilestones: true });
                 showToast('Full backup restored!', () => {
-                  const reverted = norm(JSON.parse(snapJson));
+                  const reverted = norm(safeJsonParseStrict(snapJson));
                   saveNextState(reverted, { suppressMilestones: true });
                 });
               } catch {
@@ -3887,6 +3988,7 @@ export default function App() {
               onRequestReset={() => setModal({ type: 'confirmReset' })}
             />
           </Suspense>
+          </ErrorBoundary>
         )}
         </main>
       </AppShell>

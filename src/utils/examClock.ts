@@ -1,4 +1,9 @@
 import { playSoundCue } from './audioEngine';
+import {
+  safeJsonParse,
+  safeLocalStorageRemove,
+  safeLocalStorageSet,
+} from './security.ts';
 
 export type ExamSectionId = 'bio' | 'chem' | 'phy' | 'omr';
 
@@ -593,7 +598,7 @@ export function loadActiveExamClockState(storage?: StorageLike): ExamClockState 
   try {
     const raw = store.getItem(ACTIVE_EXAM_STORAGE_KEY);
     if (!raw) return null;
-    const parsed = JSON.parse(raw) as Partial<ExamClockState>;
+    const parsed = safeJsonParse<Partial<ExamClockState> | null>(raw, null);
     if (
       !parsed ||
       typeof parsed !== 'object' ||
@@ -630,25 +635,17 @@ export function saveActiveExamClockState(
 ): void {
   const store = getSafeStorage(storage);
   if (!store) return;
-  try {
-    if (state.status === 'running' || state.status === 'paused') {
-      store.setItem(ACTIVE_EXAM_STORAGE_KEY, JSON.stringify(state));
-    } else {
-      store.removeItem(ACTIVE_EXAM_STORAGE_KEY);
-    }
-  } catch {
-    // ignore storage quota errors
+  if (state.status === 'running' || state.status === 'paused') {
+    safeLocalStorageSet(ACTIVE_EXAM_STORAGE_KEY, JSON.stringify(state), store);
+  } else {
+    safeLocalStorageRemove(ACTIVE_EXAM_STORAGE_KEY, store);
   }
 }
 
 export function clearActiveExamClockState(storage?: StorageLike): void {
   const store = getSafeStorage(storage);
   if (!store) return;
-  try {
-    store.removeItem(ACTIVE_EXAM_STORAGE_KEY);
-  } catch {
-    // ignore
-  }
+  safeLocalStorageRemove(ACTIVE_EXAM_STORAGE_KEY, store);
 }
 
 export function loadExamPaceRecords(storage?: StorageLike): ExamPaceRecord[] {
@@ -657,7 +654,7 @@ export function loadExamPaceRecords(storage?: StorageLike): ExamPaceRecord[] {
   try {
     const raw = store.getItem(EXAM_PACE_HISTORY_KEY);
     if (!raw) return [];
-    const parsed = JSON.parse(raw);
+    const parsed = safeJsonParse<unknown>(raw, null);
     if (!Array.isArray(parsed)) return [];
     return parsed.filter(
       (r): r is ExamPaceRecord =>
@@ -679,11 +676,7 @@ export function saveExamPaceRecord(
     MAX_LOCAL_PACE_RECORDS
   );
   if (store) {
-    try {
-      store.setItem(EXAM_PACE_HISTORY_KEY, JSON.stringify(next));
-    } catch {
-      // ignore storage quota errors
-    }
+    safeLocalStorageSet(EXAM_PACE_HISTORY_KEY, JSON.stringify(next), store);
   }
   return next;
 }

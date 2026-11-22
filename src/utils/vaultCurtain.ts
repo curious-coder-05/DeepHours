@@ -1,3 +1,9 @@
+import {
+  isDangerousKey,
+  safeJsonParse,
+  safeLocalStorageSet,
+} from './security.ts';
+
 export const VAULT_CURTAIN_STORAGE_KEY = 'dh_vault_curtain_v1';
 export const VAULT_CURTAIN_CHANGE_EVENT = 'dh:vault-curtain-change';
 
@@ -71,13 +77,13 @@ export function loadAllVaultCurtains(
   try {
     const raw = storage.getItem(VAULT_CURTAIN_STORAGE_KEY);
     if (!raw) return {};
-    const parsed = JSON.parse(raw);
+    const parsed = safeJsonParse<unknown>(raw, null);
     if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) {
       return {};
     }
     const out: VaultCurtainMap = {};
     for (const [id, value] of Object.entries(parsed as Record<string, unknown>)) {
-      if (typeof id === 'string' && id.trim()) {
+      if (typeof id === 'string' && id.trim() && !isDangerousKey(id)) {
         out[id] = normalizeCurtainConfig(value);
       }
     }
@@ -102,11 +108,10 @@ export function saveVaultCurtainConfig(
   storage: StorageLike | null = getDefaultStorage()
 ): VaultCurtainConfig {
   const normalized = normalizeCurtainConfig(config);
-  if (!itemId || !storage) return normalized;
-  try {
-    const map = loadAllVaultCurtains(storage);
-    map[itemId] = normalized;
-    storage.setItem(VAULT_CURTAIN_STORAGE_KEY, JSON.stringify(map));
+  if (!itemId || !storage || isDangerousKey(itemId)) return normalized;
+  const map = loadAllVaultCurtains(storage);
+  map[itemId] = normalized;
+  if (safeLocalStorageSet(VAULT_CURTAIN_STORAGE_KEY, JSON.stringify(map), storage).ok) {
     if (typeof window !== 'undefined') {
       window.dispatchEvent(
         new CustomEvent(VAULT_CURTAIN_CHANGE_EVENT, {
@@ -114,8 +119,6 @@ export function saveVaultCurtainConfig(
         })
       );
     }
-  } catch {
-    // ignore quota / storage errors
   }
   return normalized;
 }
@@ -124,15 +127,11 @@ export function removeVaultCurtainConfig(
   itemId: string,
   storage: StorageLike | null = getDefaultStorage()
 ): void {
-  if (!itemId || !storage) return;
-  try {
-    const map = loadAllVaultCurtains(storage);
-    if (itemId in map) {
-      delete map[itemId];
-      storage.setItem(VAULT_CURTAIN_STORAGE_KEY, JSON.stringify(map));
-    }
-  } catch {
-    // ignore storage errors
+  if (!itemId || !storage || isDangerousKey(itemId)) return;
+  const map = loadAllVaultCurtains(storage);
+  if (itemId in map) {
+    delete map[itemId];
+    safeLocalStorageSet(VAULT_CURTAIN_STORAGE_KEY, JSON.stringify(map), storage);
   }
 }
 

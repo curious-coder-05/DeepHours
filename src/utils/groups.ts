@@ -35,6 +35,14 @@ import {
 } from './insights';
 import { addD, computeMockScore, isManualStudySession } from './studyLogic';
 import { computeXpByDay, computeTotalXp } from './xp';
+import {
+  createCooldownGuard,
+  isDangerousKey,
+  safeJsonParse,
+  safeLocalStorageGet,
+  safeLocalStorageRemove,
+  safeLocalStorageSet,
+} from './security.ts';
 
 export const GROUP_CODE_ALPHABET = 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789';
 export const MAX_JOINED_GROUPS = 3;
@@ -506,7 +514,13 @@ export function buildMyMemberEntry(
 ): MemberEntry {
   const now = options.now ?? Date.now();
   const nickCheck = validateNickname(state.profile?.nick || '');
-  const nick = nickCheck.valid ? nickCheck.cleaned : (state.profile?.nick || 'Aspirant').slice(0, 20) || 'Aspirant';
+  const nick = nickCheck.valid
+    ? nickCheck.cleaned
+    : sanitizePlainText(
+        (state.profile?.nick || '').replace(/@+/g, ''),
+        20,
+        'Aspirant'
+      );
   const emoji = sanitizePlainText(
     state.profile?.emoji || state.set?.avatarEmoji || '🩺',
     8,
@@ -1551,36 +1565,24 @@ function getUtcDayKey(ts = Date.now()): string {
 
 function loadBudgetState(now = Date.now()): DailyBudgetState {
   const today = getUtcDayKey(now);
-  try {
-    if (typeof localStorage === 'undefined') {
-      return { dayKey: today, writes: 0, reads: 0, cheers: 0 };
-    }
-    const raw = localStorage.getItem(GROUP_BUDGET_STORAGE_KEY);
-    if (!raw) return { dayKey: today, writes: 0, reads: 0, cheers: 0 };
-    const parsed = JSON.parse(raw) as Partial<DailyBudgetState>;
-    if (parsed.dayKey !== today) {
-      return { dayKey: today, writes: 0, reads: 0, cheers: 0 };
-    }
-    return {
-      dayKey: today,
-      writes: Math.max(0, Math.floor(Number(parsed.writes) || 0)),
-      reads: Math.max(0, Math.floor(Number(parsed.reads) || 0)),
-      cheers: Math.max(0, Math.floor(Number(parsed.cheers) || 0)),
-      pausedUntilDayKey: parsed.pausedUntilDayKey,
-    };
-  } catch {
+  const raw = safeLocalStorageGet(GROUP_BUDGET_STORAGE_KEY);
+  if (!raw) return { dayKey: today, writes: 0, reads: 0, cheers: 0 };
+  const parsed = safeJsonParse<Partial<DailyBudgetState> | null>(raw, null);
+  if (!parsed || typeof parsed !== 'object' || parsed.dayKey !== today) {
     return { dayKey: today, writes: 0, reads: 0, cheers: 0 };
   }
+  return {
+    dayKey: today,
+    writes: Math.max(0, Math.floor(Number(parsed.writes) || 0)),
+    reads: Math.max(0, Math.floor(Number(parsed.reads) || 0)),
+    cheers: Math.max(0, Math.floor(Number(parsed.cheers) || 0)),
+    pausedUntilDayKey:
+      typeof parsed.pausedUntilDayKey === 'string' ? parsed.pausedUntilDayKey : undefined,
+  };
 }
 
 function saveBudgetState(state: DailyBudgetState): void {
-  try {
-    if (typeof localStorage !== 'undefined') {
-      localStorage.setItem(GROUP_BUDGET_STORAGE_KEY, JSON.stringify(state));
-    }
-  } catch {
-    // Ignore storage quota errors
-  }
+  safeLocalStorageSet(GROUP_BUDGET_STORAGE_KEY, JSON.stringify(state));
 }
 
 export function isQuotaError(err: unknown): boolean {
@@ -2013,67 +2015,53 @@ export function loadCachedGroupSnapshots(): Record<string, CachedGroupSnapshot> 
   for (const [k, v] of memoryGroupCache.entries()) {
     out[k] = v;
   }
-  try {
-    if (typeof localStorage !== 'undefined') {
-      const raw = localStorage.getItem(GROUP_CACHE_STORAGE_KEY);
-      if (raw) {
-        const parsed = JSON.parse(raw) as Record<string, CachedGroupSnapshot>;
-        if (parsed && typeof parsed === 'object') {
-          for (const [gid, snap] of Object.entries(parsed)) {
-            if (
-              gid === '__proto__' ||
-              gid === 'constructor' ||
-              gid === 'prototype'
-            ) {
-              continue;
-            }
-            if (snap && snap.doc && typeof snap.fetchedAt === 'number') {
-              const mem = out[gid];
-              const memUpdated = Number(mem?.doc?.updatedAt) || 0;
-              const diskUpdated = Number(snap.doc.updatedAt) || 0;
-              if (
-                !mem ||
-                diskUpdated > memUpdated ||
-                (diskUpdated === memUpdated && snap.fetchedAt > mem.fetchedAt)
-              ) {
-                out[gid] = snap;
-                memoryGroupCache.set(gid, snap);
-              }
-            }
+  const raw = safeLocalStorageGet(GROUP_CACHE_STORAGE_KEY);
+  if (raw) {
+    const parsed = safeJsonParse<Record<string, CachedGroupSnapshot> | null>(raw, null);
+    if (parsed && typeof parsed === 'object' && !Array.isArray(parsed)) {
+      for (const [gid, snap] of Object.entries(parsed)) {
+        if (isDangerousKey(gid)) continue;
+        if (snap && snap.doc && typeof snap.fetchedAt === 'number') {
+          const mem = out[gid];
+          const memUpdated = Number(mem?.doc?.updatedAt) || 0;
+          const diskUpdated = Number(snap.doc.updatedAt) || 0;
+          if (
+            !mem ||
+            diskUpdated > memUpdated ||
+            (diskUpdated === memUpdated && snap.fetchedAt > mem.fetchedAt)
+          ) {
+            out[gid] = snap;
+            memoryGroupCache.set(gid, snap);
           }
         }
       }
     }
-  } catch {
-    // Ignore storage read errors
   }
   return out;
 }
 
 export function saveCachedGroupSnapshot(snapshot: CachedGroupSnapshot): void {
   memoryGroupCache.set(snapshot.groupId, snapshot);
-  try {
-    if (typeof localStorage !== 'undefined') {
-      const all = loadCachedGroupSnapshots();
-      all[snapshot.groupId] = snapshot;
-      localStorage.setItem(GROUP_CACHE_STORAGE_KEY, JSON.stringify(all));
-    }
-  } catch {
-    // Ignore storage quota errors
-  }
+  const all = loadCachedGroupSnapshots();
+  all[snapshot.groupId] = snapshot;
+  safeLocalStorageSet(GROUP_CACHE_STORAGE_KEY, JSON.stringify(all));
 }
 
 export function removeCachedGroupSnapshot(groupId: string): void {
   memoryGroupCache.delete(groupId);
-  try {
-    if (typeof localStorage !== 'undefined') {
-      const all = loadCachedGroupSnapshots();
-      delete all[groupId];
-      localStorage.setItem(GROUP_CACHE_STORAGE_KEY, JSON.stringify(all));
-    }
-  } catch {
-    // Ignore
-  }
+  const all = loadCachedGroupSnapshots();
+  delete all[groupId];
+  safeLocalStorageSet(GROUP_CACHE_STORAGE_KEY, JSON.stringify(all));
+}
+
+/**
+ * Wipes all cached squad snapshots and daily group budget counters on sign-out or account switch
+ * so cached member rosters never leak across Google accounts on shared devices.
+ */
+export function clearAllCachedGroupSnapshots(): void {
+  memoryGroupCache.clear();
+  safeLocalStorageRemove(GROUP_CACHE_STORAGE_KEY);
+  safeLocalStorageRemove(GROUP_BUDGET_STORAGE_KEY);
 }
 
 // ============================================================================
@@ -2515,6 +2503,8 @@ export async function fetchGroupSnapshotFromCloud(params: {
   return cachedSnap;
 }
 
+const cheerWriteCooldown = createCooldownGuard(2_500);
+
 export async function sendCheerInCloud(params: {
   groupId: string;
   toUid: string;
@@ -2531,6 +2521,9 @@ export async function sendCheerInCloud(params: {
   if (user.uid === params.toUid) throw new Error('You cannot cheer yourself.');
   if (!ALLOWED_CHEER_EMOJIS.includes(params.emoji)) {
     throw new Error('Invalid cheer emoji.');
+  }
+  if (!cheerWriteCooldown.tryAcquire().allowed) {
+    throw new Error('Wait a moment before sending another cheer.');
   }
   if (!params.budget.canSendCheer()) {
     throw new Error('Daily cheer limit (10/day) reached.');
@@ -2679,7 +2672,7 @@ export async function ownerCloseGroupInCloud(params: {
 }
 
 /**
- * Called by "Delete my cloud data" in MoreView / App.tsx (Milestone 2.7):
+ * Called by "Delete my cloud data" in SettingsView / App.tsx (Milestone 2.7):
  * Removes the user's entry from all joined groups, deletes any group owned by the user,
  * and best-effort deletes up to 20 sent cheers per group within budget limits.
  */

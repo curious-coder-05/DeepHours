@@ -32,21 +32,14 @@ export {
   type IllustrationName,
 } from './Illustrations';
 export {
-  Sparkline,
   AreaLineChart,
   BarChart,
   DonutChart,
-  RadialClock24h,
-  HeatmapGrid,
   SemiCircleGauge,
-  type SparklineProps,
   type AreaLineChartProps,
   type BarChartProps,
   type DonutChartProps,
   type DonutSegment,
-  type RadialClock24hProps,
-  type HeatmapGridProps,
-  type HeatmapCell,
   type SemiCircleGaugeProps,
   type ChartPoint,
 } from './Charts';

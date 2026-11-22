@@ -1,6 +1,7 @@
 import type { MockSubjectScore, MockTest, Subject } from '../types';
 import { computeMockScore, parseD } from './studyLogic';
 import { getMockDiagnostic } from './mockDiagnostics';
+import { isDangerousKey, safeJsonParse, safeLocalStorageSet } from './security.ts';
 
 export const MOCK_REPORT_STORAGE_KEY = 'dh_mock_report_v1';
 export const NEET_MAX_MARKS = 720;
@@ -591,7 +592,7 @@ export function loadAllMockReportDetails(
   try {
     const raw = storage.getItem(MOCK_REPORT_STORAGE_KEY);
     if (!raw) return {};
-    const parsed = JSON.parse(raw);
+    const parsed = safeJsonParse<unknown>(raw, null);
     if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) {
       return {};
     }
@@ -599,7 +600,7 @@ export function loadAllMockReportDetails(
     for (const [mockId, entry] of Object.entries(
       parsed as Record<string, unknown>
     )) {
-      if (!mockId.trim() || !entry || typeof entry !== 'object') continue;
+      if (!mockId.trim() || isDangerousKey(mockId) || !entry || typeof entry !== 'object') continue;
       out[mockId] = normalizeMockReportDetails(
         entry as Partial<MockReportDetails>
       );
@@ -628,14 +629,10 @@ export function saveMockReportDetails(
     ...normalizeMockReportDetails(details),
     updatedAt: Date.now(),
   };
-  if (!mockId || !storage) return normalized;
-  try {
-    const all = loadAllMockReportDetails(storage);
-    all[mockId] = normalized;
-    storage.setItem(MOCK_REPORT_STORAGE_KEY, JSON.stringify(all));
-  } catch {
-    // ignore storage quota errors
-  }
+  if (!mockId || !storage || isDangerousKey(mockId)) return normalized;
+  const all = loadAllMockReportDetails(storage);
+  all[mockId] = normalized;
+  safeLocalStorageSet(MOCK_REPORT_STORAGE_KEY, JSON.stringify(all), storage);
   return normalized;
 }
 
@@ -643,15 +640,11 @@ export function deleteMockReportDetails(
   mockId: string,
   storage: StorageLike | null = getDefaultStorage()
 ): void {
-  if (!mockId || !storage) return;
-  try {
-    const all = loadAllMockReportDetails(storage);
-    if (mockId in all) {
-      delete all[mockId];
-      storage.setItem(MOCK_REPORT_STORAGE_KEY, JSON.stringify(all));
-    }
-  } catch {
-    // ignore storage errors
+  if (!mockId || !storage || isDangerousKey(mockId)) return;
+  const all = loadAllMockReportDetails(storage);
+  if (mockId in all) {
+    delete all[mockId];
+    safeLocalStorageSet(MOCK_REPORT_STORAGE_KEY, JSON.stringify(all), storage);
   }
 }
 
@@ -659,9 +652,5 @@ export function clearAllMockReportDetails(
   storage: StorageLike | null = getDefaultStorage()
 ): void {
   if (!storage) return;
-  try {
-    storage.setItem(MOCK_REPORT_STORAGE_KEY, JSON.stringify({}));
-  } catch {
-    // ignore
-  }
+  safeLocalStorageSet(MOCK_REPORT_STORAGE_KEY, JSON.stringify({}), storage);
 }

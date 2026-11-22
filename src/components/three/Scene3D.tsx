@@ -389,7 +389,7 @@ const Scene3DInner: React.FC<Scene3DProps> = ({
         canvas.style.height = '100%';
         canvas.style.touchAction = 'pan-y';
 
-        container.innerHTML = '';
+        container.replaceChildren();
         container.appendChild(canvas);
 
         const scene = new THREE.Scene();
@@ -686,7 +686,7 @@ const Scene3DInner: React.FC<Scene3DProps> = ({
         rendererInstance.dispose();
       }
       if (container) {
-        container.innerHTML = '';
+        container.replaceChildren();
       }
     };
   }, [

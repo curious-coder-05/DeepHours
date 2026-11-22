@@ -53,6 +53,8 @@ function openVaultDb(): Promise<IDBDatabase> {
     };
     req.onsuccess = () => resolve(req.result);
     req.onerror = () => reject(req.error || new Error('Failed to open Vault database'));
+    req.onblocked = () =>
+      reject(new Error('Vault database is open in another tab. Close other tabs and retry.'));
   });
 }
 

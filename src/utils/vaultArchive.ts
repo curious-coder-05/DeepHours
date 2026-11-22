@@ -1,27 +1,24 @@
+import {
+  ALLOWED_RASTER_IMAGE_MIMES,
+  MAX_IMAGE_PIXEL_DIMENSION,
+  detectImageMagicBytes,
+  normalizeAllowedRasterMime,
+  safeJsonParseStrict,
+} from './security.ts';
 import { sanitizeVaultItem } from './vaultLogic.ts';
 import type { VaultItem } from './vaultTypes.ts';
 
 export const VAULT_ARCHIVE_FORMAT = 'deep-hours-vault-archive' as const;
 export const VAULT_ARCHIVE_VERSION = 1 as const;
 export const VAULT_ARCHIVE_EXTENSION = '.dhvault.json' as const;
-export const MAX_VAULT_ARCHIVE_BYTES = 60 * 1024 * 1024; // 60 MB archive ceiling
+export const MAX_VAULT_ARCHIVE_BYTES = 60 * 1024 * 1024; // 60 MB raw archive ceiling
+export const MAX_VAULT_ARCHIVE_DECODED_BYTES = 45 * 1024 * 1024; // 45 MB total decoded image ceiling
 export const MAX_VAULT_ARCHIVE_ENTRIES = 2000;
 export const MAX_VAULT_IMAGE_BYTES = 5 * 1024 * 1024; // 5 MB per decoded image ceiling
 
-export const ALLOWED_VAULT_IMAGE_MIMES = new Set<string>([
-  'image/webp',
-  'image/jpeg',
-  'image/png',
-  'image/gif',
-  'image/avif',
-]);
-
-function normalizeAllowedImageMime(rawMime: unknown): string | null {
-  if (typeof rawMime !== 'string') return null;
-  const cleaned = rawMime.trim().toLowerCase();
-  const mapped = cleaned === 'image/jpg' ? 'image/jpeg' : cleaned;
-  return ALLOWED_VAULT_IMAGE_MIMES.has(mapped) ? mapped : null;
-}
+export const ALLOWED_VAULT_IMAGE_MIMES = new Set<string>(
+  ALLOWED_RASTER_IMAGE_MIMES
+);
 
 function estimateBase64DecodedBytes(cleanB64: string): number {
   const len = cleanB64.length;
@@ -34,14 +31,15 @@ function parseValidatedDataUrl(dataUrl: unknown): {
   mime: string;
   cleanB64: string;
   decodedBytes: number;
+  bytes: Uint8Array;
   normalizedDataUrl: string;
 } | null {
   if (typeof dataUrl !== 'string') return null;
   const trimmed = dataUrl.trim();
   const match = /^data:([^;,]+);base64,([A-Za-z0-9+/=\s]+)$/.exec(trimmed);
   if (!match) return null;
-  const mime = normalizeAllowedImageMime(match[1]);
-  if (!mime) return null;
+  const declaredMime = normalizeAllowedRasterMime(match[1]);
+  if (!declaredMime) return null;
   const cleanB64 = match[2].replace(/\s+/g, '');
   if (
     cleanB64.length === 0 ||
@@ -50,25 +48,35 @@ function parseValidatedDataUrl(dataUrl: unknown): {
   ) {
     return null;
   }
-  const decodedBytes = estimateBase64DecodedBytes(cleanB64);
-  if (decodedBytes <= 0 || decodedBytes > MAX_VAULT_IMAGE_BYTES) {
+  const estimatedBytes = estimateBase64DecodedBytes(cleanB64);
+  if (estimatedBytes <= 0 || estimatedBytes > MAX_VAULT_IMAGE_BYTES) {
+    return null;
+  }
+  let bytes: Uint8Array;
+  try {
+    bytes = base64ToBytes(cleanB64);
+  } catch {
+    return null;
+  }
+  if (bytes.byteLength <= 0 || bytes.byteLength > MAX_VAULT_IMAGE_BYTES) {
+    return null;
+  }
+  // Verify actual binary magic bytes match an allowed raster format (JPEG / PNG / WebP)
+  const detectedMime = detectImageMagicBytes(bytes);
+  if (!detectedMime) {
     return null;
   }
   return {
-    mime,
+    mime: detectedMime,
     cleanB64,
-    decodedBytes,
-    normalizedDataUrl: `data:${mime};base64,${cleanB64}`,
+    decodedBytes: bytes.byteLength,
+    bytes,
+    normalizedDataUrl: `data:${detectedMime};base64,${cleanB64}`,
   };
 }
 
 function safeJsonParseArchive(rawJson: string): unknown {
-  return JSON.parse(rawJson, (key, value) => {
-    if (key === '__proto__' || key === 'constructor' || key === 'prototype') {
-      return undefined;
-    }
-    return value;
-  });
+  return safeJsonParseStrict(rawJson);
 }
 
 export interface VaultArchiveEncodedBlob {
@@ -178,22 +186,13 @@ export function decodeVaultBlob(encoded: VaultArchiveEncodedBlob): {
   if (!parsed) {
     throw new Error('Vault archive contains an invalid or unsupported image payload.');
   }
-  // Always derive MIME strictly from the validated raster data URL (ignore spoofed encoded.mime)
-  const { mime, cleanB64 } = parsed;
-  let bytes: Uint8Array;
-  try {
-    bytes = base64ToBytes(cleanB64);
-  } catch {
-    throw new Error('Vault archive contains corrupted base64 image data.');
-  }
-  if (bytes.byteLength === 0 || bytes.byteLength > MAX_VAULT_IMAGE_BYTES) {
-    throw new Error('Vault archive image exceeds the 5 MB safety limit.');
-  }
+  // Always derive MIME strictly from binary magic bytes (ignore spoofed encoded.mime)
+  const { mime, bytes } = parsed;
   const blob = new Blob([bytes.buffer as ArrayBuffer], { type: mime });
   return {
     blob,
-    width: Math.max(0, Math.round(Number(encoded.width) || 0)),
-    height: Math.max(0, Math.round(Number(encoded.height) || 0)),
+    width: Math.min(MAX_IMAGE_PIXEL_DIMENSION, Math.max(0, Math.round(Number(encoded.width) || 0))),
+    height: Math.min(MAX_IMAGE_PIXEL_DIMENSION, Math.max(0, Math.round(Number(encoded.height) || 0))),
     mime,
   };
 }
@@ -246,16 +245,10 @@ function extractValidatedEncodedBlob(
   const candidate = val as Partial<VaultArchiveEncodedBlob>;
   const parsed = parseValidatedDataUrl(candidate.dataUrl);
   if (!parsed) return null;
-  // Verify base64 decodes cleanly upfront before any IndexedDB transaction begins
-  try {
-    atob(parsed.cleanB64);
-  } catch {
-    return null;
-  }
   return {
     mime: parsed.mime,
-    width: Math.max(0, Math.round(Number(candidate.width) || 0)),
-    height: Math.max(0, Math.round(Number(candidate.height) || 0)),
+    width: Math.min(MAX_IMAGE_PIXEL_DIMENSION, Math.max(0, Math.round(Number(candidate.width) || 0))),
+    height: Math.min(MAX_IMAGE_PIXEL_DIMENSION, Math.max(0, Math.round(Number(candidate.height) || 0))),
     bytes: parsed.decodedBytes,
     dataUrl: parsed.normalizedDataUrl,
   };
@@ -296,6 +289,7 @@ export function parseVaultArchiveJson(rawJson: string): VaultArchiveBundle {
   }
 
   const sanitizedEntries: VaultArchiveEntry[] = [];
+  let totalDecodedBytes = 0;
   for (const rawEntry of obj.entries) {
     if (!rawEntry || typeof rawEntry !== 'object' || Array.isArray(rawEntry)) continue;
     const entry = rawEntry as Partial<VaultArchiveEntry>;
@@ -325,6 +319,11 @@ export function parseVaultArchiveJson(rawJson: string): VaultArchiveBundle {
         );
       }
       sValid = parsedSol;
+    }
+
+    totalDecodedBytes += qValid.bytes + (sValid ? sValid.bytes : 0);
+    if (totalDecodedBytes > MAX_VAULT_ARCHIVE_DECODED_BYTES) {
+      throw new Error('Vault archive exceeds total decoded image safety limit (45 MB).');
     }
 
     const cleanItem = sanitizeVaultItem({

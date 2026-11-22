@@ -40,6 +40,13 @@ import type {
 } from '../types';
 import { cloneLog, norm } from './studyLogic.ts';
 import { writeSafetyBackupSnapshot } from './storage.ts';
+import {
+  safeJsonParse,
+  safeLocalStorageGet,
+  safeLocalStorageRemove,
+  safeLocalStorageSet,
+  sanitizeTextControlChars,
+} from './security.ts';
 
 // Initialize Firebase App, Auth, and Firestore in browser (default memory cache only — NO offline persistence, NO onSnapshot)
 const app =
@@ -516,6 +523,12 @@ export function partitionStateToCloudDocs(
   // Strip local-only timer state; never sync activeTimer
   const cleanSet = sanitizeForFirestore({ ...state.set });
   const hasRestDayTs = Object.keys(state.restDayUpdatedAt || {}).length > 0;
+  const rawProfile = state.profile || { nick: '', emoji: state.set.avatarEmoji || '🩺' };
+  const cleanProfile = {
+    ...rawProfile,
+    nick: sanitizeTextControlChars(rawProfile.nick || '', 40),
+    emoji: sanitizeTextControlChars(rawProfile.emoji || state.set.avatarEmoji || '🩺', 8) || '🩺',
+  };
   const coreDoc: MetaCoreDoc = {
     set: cleanSet,
     subjects: sanitizeForFirestore(arrayToIdMap(state.subjects)),
@@ -528,9 +541,7 @@ export function partitionStateToCloudDocs(
     bonus: state.bonus || 0,
     exp: state.exp || 0,
     ob: state.ob || 0,
-    profile: sanitizeForFirestore(
-      state.profile || { nick: '', emoji: state.set.avatarEmoji || '🩺' }
-    ),
+    profile: sanitizeForFirestore(cleanProfile),
     groupHistory: sanitizeForFirestore(state.groupHistory || {}),
     groupsConfig: sanitizeForFirestore(
       state.groupsConfig || { consentAccepted: false, joined: [] }
@@ -589,7 +600,12 @@ export function partitionStateToCloudDocs(
 
   for (const ses of state.sessions || []) {
     const mDoc = ensureMonth((ses.dayKey || '').slice(0, 7));
-    mDoc.sessions[ses.id] = ses;
+    const safeActiveMs =
+      typeof ses.activeMs === 'number' && Number.isFinite(ses.activeMs)
+        ? Math.max(0, Math.min(86_400_000, Math.round(ses.activeMs)))
+        : 0;
+    mDoc.sessions[ses.id] =
+      safeActiveMs === ses.activeMs ? ses : { ...ses, activeMs: safeActiveMs };
     const ts = ses.updatedAt || ses.endTs || 1;
     if (ts > mDoc.updatedAt) mDoc.updatedAt = ts;
   }
@@ -1283,7 +1299,7 @@ export function loadSyncOutboxMeta(): SyncOutboxMeta {
         firstSignInMergedUids: [...memoryOutboxMeta.firstSignInMergedUids],
       };
     }
-    const raw = localStorage.getItem('dh_sync_meta');
+    const raw = safeLocalStorageGet('dh_sync_meta');
     if (!raw) {
       return {
         ...DEFAULT_OUTBOX_META,
@@ -1293,7 +1309,16 @@ export function loadSyncOutboxMeta(): SyncOutboxMeta {
         firstSignInMergedUids: [],
       };
     }
-    const parsed = JSON.parse(raw) as Partial<SyncOutboxMeta>;
+    const parsed = safeJsonParse<Partial<SyncOutboxMeta> | null>(raw, null);
+    if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) {
+      return {
+        ...DEFAULT_OUTBOX_META,
+        dirtyDocs: [],
+        knownRemoteDocTs: {},
+        lastSyncedSignatures: {},
+        firstSignInMergedUids: [],
+      };
+    }
     return {
       ...(typeof parsed.activeUid === 'string' && parsed.activeUid
         ? { activeUid: parsed.activeUid }
@@ -1337,19 +1362,29 @@ export function saveSyncOutboxMeta(meta: SyncOutboxMeta): void {
     lastSyncedSignatures: safeSigs,
     firstSignInMergedUids: [...(meta.firstSignInMergedUids || [])],
   };
-  try {
-    if (typeof localStorage !== 'undefined') {
-      localStorage.setItem(
-        'dh_sync_meta',
-        JSON.stringify({
-          ...meta,
-          lastSyncedSignatures: safeSigs,
-        })
-      );
-    }
-  } catch {
-    // ignore storage errors
-  }
+  safeLocalStorageSet(
+    'dh_sync_meta',
+    JSON.stringify({
+      ...meta,
+      knownRemoteDocTs: safeRemoteTs,
+      lastSyncedSignatures: safeSigs,
+    })
+  );
+}
+
+/**
+ * Clears in-memory and localStorage sync outbox metadata on sign-out or account switch
+ * so signatures/timestamps never leak across accounts on a shared device.
+ */
+export function clearSyncOutboxOnSignOut(): void {
+  memoryOutboxMeta = {
+    ...DEFAULT_OUTBOX_META,
+    dirtyDocs: [],
+    knownRemoteDocTs: {},
+    lastSyncedSignatures: {},
+    firstSignInMergedUids: [],
+  };
+  safeLocalStorageRemove('dh_sync_meta');
 }
 
 const VOLATILE_SIGNATURE_KEYS = new Set(['updatedAt', 'savedAt', 'lastSyncedAt']);

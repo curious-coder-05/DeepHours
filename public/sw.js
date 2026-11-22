@@ -1,4 +1,4 @@
-const CACHE_NAME = 'deep-hours-v40';
+const CACHE_NAME = 'deep-hours-v41';
 const ASSETS = [
   '/',
   '/index.html',
@@ -110,8 +110,21 @@ self.addEventListener('fetch', event => {
   if (event.request.method !== 'GET') return;
 
   const url = new URL(event.request.url);
-  if (url.origin !== self.location.origin) return;
+  // Explicitly bypass Firebase Auth, Google APIs, and cross-origin endpoints
   if (
+    url.origin !== self.location.origin ||
+    /(?:^|\.)(?:googleapis\.com|gstatic\.com|firebaseapp\.com|firebaseio\.com)$/i.test(
+      url.hostname
+    ) ||
+    url.hostname.includes('identitytoolkit') ||
+    url.hostname.includes('securetoken')
+  ) {
+    return;
+  }
+  if (
+    url.pathname.startsWith('/__/auth/') ||
+    url.pathname.startsWith('/__/firebase/') ||
+    url.pathname.startsWith('/api/') ||
     url.pathname.startsWith('/src/') ||
     url.pathname.startsWith('/@') ||
     url.pathname.startsWith('/node_modules/')

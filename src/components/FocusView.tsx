@@ -59,6 +59,7 @@ import {
   type SelectableAmbientPresetId,
 } from '../utils/ambientMixer';
 import { ensureAudioEngine, playSoundCue, syncAmbientMixer } from '../utils/audioEngine';
+import { ErrorBoundary } from './ErrorBoundary';
 import {
   ALL_SUBJECTS_COLOR,
   ALL_SUBJECTS_LABEL,
@@ -732,24 +733,31 @@ export const FocusView: React.FC<FocusViewProps> = ({
                 opacity: aesthetic === 'retro' ? 0.42 : 1,
               }}
             >
-              <FocusOrbitScene
-                ui3dSetting={state.set.ui3d || 'auto'}
-                ui3dQuality={state.set.ui3dQuality || 'auto'}
-                deskMode={deskMode}
-                priority="stage"
-                hapticsEnabled={Boolean(state.set.snd)}
-                status={m ? m.status : 'idle'}
-                mode={curMode}
-                phase={m ? m.phase : 'work'}
-                subjectColor={curSubject.color}
-                subjectName={curSubject.name}
-                progressPct={m ? m.progressPct : 0}
-                totalActiveMs={m ? m.totalActiveMs : 0}
-                overtimeMs={m ? m.overtimeMs : 0}
-                completedPomodorosToday={completedPomodorosToday}
-                height={336}
-                onBreatheStateChange={setBreatheCue}
-              />
+              <ErrorBoundary
+                variant="section"
+                scopeLabel="3D focus orb"
+                resetKey={`${state.set.ui3d || 'auto'}-${state.set.ui3dQuality || 'auto'}`}
+                silentFallback={null}
+              >
+                <FocusOrbitScene
+                  ui3dSetting={state.set.ui3d || 'auto'}
+                  ui3dQuality={state.set.ui3dQuality || 'auto'}
+                  deskMode={deskMode}
+                  priority="stage"
+                  hapticsEnabled={Boolean(state.set.snd)}
+                  status={m ? m.status : 'idle'}
+                  mode={curMode}
+                  phase={m ? m.phase : 'work'}
+                  subjectColor={curSubject.color}
+                  subjectName={curSubject.name}
+                  progressPct={m ? m.progressPct : 0}
+                  totalActiveMs={m ? m.totalActiveMs : 0}
+                  overtimeMs={m ? m.overtimeMs : 0}
+                  completedPomodorosToday={completedPomodorosToday}
+                  height={336}
+                  onBreatheStateChange={setBreatheCue}
+                />
+              </ErrorBoundary>
             </div>
           )}
 

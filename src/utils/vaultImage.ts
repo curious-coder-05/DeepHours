@@ -1,9 +1,19 @@
+import {
+  MAX_IMAGE_PIXEL_DIMENSION,
+  MAX_IMAGE_TOTAL_PIXELS,
+  validateImageFileSignature,
+  validateImagePixelBounds,
+  validateRasterImageMetadata,
+  type AllowedRasterImageMime,
+} from './security.ts';
+
 export const MAX_IMAGE_FILE_BYTES = 25 * 1024 * 1024;
 export const TARGET_BLOB_BYTES = 150 * 1024;
 export const MAX_OUTPUT_WIDTH = 1080;
 export const MAX_OUTPUT_HEIGHT = 2400;
 export const WORKING_MAX_LONG_SIDE = 2048;
 export const MIN_CROP_SIZE_PX = 64;
+export { MAX_IMAGE_PIXEL_DIMENSION, MAX_IMAGE_TOTAL_PIXELS };
 
 export interface CropRect {
   x: number;
@@ -45,24 +55,21 @@ export function validateImageFileCandidate(file: {
   size: number;
   name?: string;
 }): { ok: boolean; reason?: string } {
-  const type = (file.type || '').toLowerCase();
-  const name = (file.name || '').toLowerCase();
-  const looksLikeImage =
-    type.startsWith('image/') ||
-    /\.(png|jpe?g|webp|heic|heif|bmp|gif)$/.test(name);
-  if (!looksLikeImage) {
-    return { ok: false, reason: 'Please choose an image file (JPG, PNG, WebP).' };
-  }
-  if (!Number.isFinite(file.size) || file.size <= 0) {
-    return { ok: false, reason: 'The selected image file is empty.' };
-  }
-  if (file.size > MAX_IMAGE_FILE_BYTES) {
-    return {
-      ok: false,
-      reason: 'Image exceeds the 25 MB limit. Please crop or choose a smaller photo.',
-    };
-  }
-  return { ok: true };
+  return validateRasterImageMetadata(file, MAX_IMAGE_FILE_BYTES);
+}
+
+/**
+ * Verifies metadata AND binary file signature (JPEG / PNG / WebP magic bytes),
+ * rejecting SVG, HTML, text, and spoofed extensions/MIME headers.
+ */
+export async function validateImageFileWithMagicBytes(
+  file: Blob & { name?: string; type?: string }
+): Promise<{
+  ok: boolean;
+  detectedMime?: AllowedRasterImageMime;
+  reason?: string;
+}> {
+  return validateImageFileSignature(file, MAX_IMAGE_FILE_BYTES);
 }
 
 export function computeWorkingDimensions(
@@ -224,25 +231,40 @@ export function resolveEncodedMimeFallback(returnedBlobType: string): {
 }
 
 export async function decodeImageFile(file: File): Promise<ImageBitmap | HTMLImageElement> {
+  const sigCheck = await validateImageFileWithMagicBytes(file);
+  if (!sigCheck.ok) {
+    throw new Error(sigCheck.reason || 'Unsupported image file.');
+  }
+
+  let decoded: ImageBitmap | HTMLImageElement | null = null;
   if (typeof createImageBitmap === 'function') {
     try {
-      return await createImageBitmap(file, { imageOrientation: 'from-image' });
+      decoded = await createImageBitmap(file, { imageOrientation: 'from-image' });
     } catch {
       // Fallback to HTMLImageElement below
     }
   }
-  const url = URL.createObjectURL(file);
-  try {
-    const img = await new Promise<HTMLImageElement>((resolve, reject) => {
-      const el = new Image();
-      el.onload = () => resolve(el);
-      el.onerror = () => reject(new Error('Could not decode selected image'));
-      el.src = url;
-    });
-    return img;
-  } finally {
-    URL.revokeObjectURL(url);
+  if (!decoded) {
+    const url = URL.createObjectURL(file);
+    try {
+      decoded = await new Promise<HTMLImageElement>((resolve, reject) => {
+        const el = new Image();
+        el.onload = () => resolve(el);
+        el.onerror = () => reject(new Error('Could not decode selected image'));
+        el.src = url;
+      });
+    } finally {
+      URL.revokeObjectURL(url);
+    }
   }
+
+  const dims = getDecodedImageSize(decoded);
+  const bounds = validateImagePixelBounds(dims.width, dims.height);
+  if (!bounds.ok) {
+    closeDecodedImage(decoded);
+    throw new Error(bounds.reason || 'Image resolution exceeds safety limits.');
+  }
+  return decoded;
 }
 
 export function getDecodedImageSize(source: ImageBitmap | HTMLImageElement): {

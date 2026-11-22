@@ -1,3 +1,4 @@
+import { safeJsonParse, safeLocalStorageSet } from './security.ts';
 import { computeAmbientChannelGain } from './soundRecipes';
 
 export { computeAmbientChannelGain };
@@ -246,7 +247,7 @@ export function loadAmbientMixerState(
     if (!store) return createDefaultAmbientMixerState();
     const raw = store.getItem(AMBIENT_MIXER_STORAGE_KEY);
     if (!raw) return createDefaultAmbientMixerState();
-    const parsed = JSON.parse(raw) as Partial<AmbientMixerState> | null;
+    const parsed = safeJsonParse<Partial<AmbientMixerState> | null>(raw, null);
     if (!parsed || typeof parsed !== 'object') {
       return createDefaultAmbientMixerState();
     }
@@ -285,8 +286,15 @@ export function saveAmbientMixerState(
         ? normalizeAmbientChannels(state.lastActiveChannels)
         : { ...DEFAULT_FALLBACK_CHANNELS },
     };
-    store.setItem(AMBIENT_MIXER_STORAGE_KEY, JSON.stringify(payload));
-    if (typeof window !== 'undefined') {
+    const res = safeLocalStorageSet(
+      AMBIENT_MIXER_STORAGE_KEY,
+      JSON.stringify(payload),
+      {
+        getItem: () => null,
+        setItem: (k, v) => store.setItem(k, v),
+      }
+    );
+    if (res.ok && typeof window !== 'undefined') {
       window.dispatchEvent(
         new CustomEvent<AmbientMixerState>(AMBIENT_MIXER_EVENT, {
           detail: payload,

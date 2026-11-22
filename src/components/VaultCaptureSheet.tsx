@@ -5,9 +5,14 @@ import { uid } from '../utils/studyLogic';
 import {
   closeDecodedImage,
   decodeImageFile,
-  validateImageFileCandidate,
+  validateImageFileWithMagicBytes,
   type ProcessedVaultImage,
 } from '../utils/vaultImage';
+import {
+  safeLocalStorageGet,
+  safeLocalStorageRemove,
+  safeLocalStorageSet,
+} from '../utils/security';
 import { clampVaultSolutionText, clampVaultText } from '../utils/vaultLogic';
 import { getVaultBlob, saveVaultItem } from '../utils/vaultStore';
 import { VAULT_LIMITS, type VaultItem, type VaultKind } from '../utils/vaultTypes';
@@ -41,21 +46,14 @@ export interface VaultCaptureSheetProps {
 type CaptureStep = 'source' | 'crop-q' | 'crop-s' | 'details';
 
 function readStoredString(key: string): string {
-  try {
-    return typeof window !== 'undefined' ? window.localStorage.getItem(key) || '' : '';
-  } catch {
-    return '';
-  }
+  return safeLocalStorageGet(key) || '';
 }
 
 function writeStoredString(key: string, val: string): void {
-  try {
-    if (typeof window !== 'undefined') {
-      if (val) window.localStorage.setItem(key, val);
-      else window.localStorage.removeItem(key);
-    }
-  } catch {
-    // ignore storage errors
+  if (val) {
+    safeLocalStorageSet(key, val);
+  } else {
+    safeLocalStorageRemove(key);
   }
 }
 
@@ -295,11 +293,7 @@ export const VaultCaptureSheet: React.FC<VaultCaptureSheetProps> = ({
   ) => {
     if (!file) return;
     setErrorMsg(null);
-    const check = validateImageFileCandidate({
-      type: file.type,
-      size: file.size,
-      name: file.name,
-    });
+    const check = await validateImageFileWithMagicBytes(file);
     if (!check.ok) {
       setErrorMsg(check.reason || 'Unsupported image file.');
       return;
@@ -321,8 +315,12 @@ export const VaultCaptureSheet: React.FC<VaultCaptureSheetProps> = ({
         setRemoveExistingSolImage(false);
         setStep('crop-s');
       }
-    } catch {
-      setErrorMsg('Could not open that image. Please try another JPG, PNG, or WebP photo.');
+    } catch (err) {
+      setErrorMsg(
+        err instanceof Error && err.message
+          ? err.message
+          : 'Could not open that image. Please try another JPG, PNG, or WebP photo.'
+      );
     }
   };
 
@@ -509,11 +507,11 @@ export const VaultCaptureSheet: React.FC<VaultCaptureSheetProps> = ({
             </div>
           )}
 
-          {/* Hidden file inputs */}
+          {/* Hidden file inputs (strict raster-only accept list) */}
           <input
             ref={qCameraRef}
             type="file"
-            accept="image/*"
+            accept="image/jpeg,image/png,image/webp"
             capture="environment"
             hidden
             onChange={(e) => {
@@ -524,7 +522,7 @@ export const VaultCaptureSheet: React.FC<VaultCaptureSheetProps> = ({
           <input
             ref={qGalleryRef}
             type="file"
-            accept="image/*"
+            accept="image/jpeg,image/png,image/webp"
             hidden
             onChange={(e) => {
               void handlePickImageFile(e.target.files?.[0], 'q');
@@ -534,7 +532,7 @@ export const VaultCaptureSheet: React.FC<VaultCaptureSheetProps> = ({
           <input
             ref={sCameraRef}
             type="file"
-            accept="image/*"
+            accept="image/jpeg,image/png,image/webp"
             capture="environment"
             hidden
             onChange={(e) => {
@@ -545,7 +543,7 @@ export const VaultCaptureSheet: React.FC<VaultCaptureSheetProps> = ({
           <input
             ref={sGalleryRef}
             type="file"
-            accept="image/*"
+            accept="image/jpeg,image/png,image/webp"
             hidden
             onChange={(e) => {
               void handlePickImageFile(e.target.files?.[0], 's');

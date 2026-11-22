@@ -63,6 +63,7 @@ import type { ScoreLabSidecarSeed } from '../utils/scoreLab';
 import { triggerHaptic } from '../utils/haptics';
 import { computeUiPaceReport } from '../utils/uiHelpers';
 import { formatChapterConfidence } from '../utils/chartHelpers';
+import { ErrorBoundary } from './ErrorBoundary';
 import { computeVaultCounts } from '../utils/vaultLogic';
 import { listVaultItems } from '../utils/vaultStore';
 import { MockReportSheet } from './MockReportSheet';
@@ -450,24 +451,31 @@ export const PrepView: React.FC<PrepViewProps> = ({
       {activeUiTab === 'syllabus' && (
         <div className="dh-amoled-flow">
           {/* Optional 3D Syllabus Astrolabe Scene */}
-          <SyllabusAstrolabeScene
-            subjects={state.subjects}
-            chapters={state.chapters}
-            dueChapterIds={dueChapterIds}
-            ui3dSetting={state.set.ui3d || 'auto'}
-            ui3dQuality={state.set.ui3dQuality || 'auto'}
-            activeSubjectId={filterSub}
-            onSelectSubjectFilter={setFilterSub}
-            onSelectChapter={(ch) =>
-              onStartChapterFocus(ch.subjectId, ch.id, ch.name)
-            }
-            onOpenAddChapter={() => {
-              const el = document.getElementById('newChapterNameInput');
-              el?.scrollIntoView({ behavior: 'smooth', block: 'center' });
-              el?.focus();
-            }}
-            onOpenBulkPaste={() => setShowBulkPasteSheet(true)}
-          />
+          <ErrorBoundary
+            variant="section"
+            scopeLabel="3D syllabus astrolabe"
+            resetKey={`${state.set.ui3d || 'auto'}-${state.set.ui3dQuality || 'auto'}`}
+            silentFallback={null}
+          >
+            <SyllabusAstrolabeScene
+              subjects={state.subjects}
+              chapters={state.chapters}
+              dueChapterIds={dueChapterIds}
+              ui3dSetting={state.set.ui3d || 'auto'}
+              ui3dQuality={state.set.ui3dQuality || 'auto'}
+              activeSubjectId={filterSub}
+              onSelectSubjectFilter={setFilterSub}
+              onSelectChapter={(ch) =>
+                onStartChapterFocus(ch.subjectId, ch.id, ch.name)
+              }
+              onOpenAddChapter={() => {
+                const el = document.getElementById('newChapterNameInput');
+                el?.scrollIntoView({ behavior: 'smooth', block: 'center' });
+                el?.focus();
+              }}
+              onOpenBulkPaste={() => setShowBulkPasteSheet(true)}
+            />
+          </ErrorBoundary>
 
           {/* Syllabus Pace Calculator — Borderless AMOLED Ledger */}
           <section className="dh-amoled-section">

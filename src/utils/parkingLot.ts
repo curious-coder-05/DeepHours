@@ -1,3 +1,9 @@
+import {
+  safeJsonParse,
+  safeLocalStorageRemove,
+  safeLocalStorageSet,
+} from './security.ts';
+
 export interface ParkedThought {
   id: string;
   text: string;
@@ -34,7 +40,7 @@ export function loadParkedThoughts(storage?: StorageLike): ParkedThought[] {
   try {
     const raw = store.getItem(PARKING_LOT_STORAGE_KEY);
     if (!raw) return [];
-    const parsed = JSON.parse(raw);
+    const parsed = safeJsonParse<unknown>(raw, null);
     if (!Array.isArray(parsed)) return [];
     return parsed
       .filter(
@@ -59,17 +65,14 @@ export function saveParkedThoughts(
 ): void {
   const store = getSafeStorage(storage);
   if (!store) return;
-  try {
-    if (thoughts.length === 0) {
-      store.removeItem(PARKING_LOT_STORAGE_KEY);
-    } else {
-      store.setItem(
-        PARKING_LOT_STORAGE_KEY,
-        JSON.stringify(thoughts.slice(0, MAX_THOUGHTS))
-      );
-    }
-  } catch {
-    // ignore storage errors
+  if (thoughts.length === 0) {
+    safeLocalStorageRemove(PARKING_LOT_STORAGE_KEY, store);
+  } else {
+    safeLocalStorageSet(
+      PARKING_LOT_STORAGE_KEY,
+      JSON.stringify(thoughts.slice(0, MAX_THOUGHTS)),
+      store
+    );
   }
 }
 

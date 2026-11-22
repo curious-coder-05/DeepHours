@@ -73,6 +73,12 @@ import {
   computeTotalXp,
   computeXpByDay,
 } from '../utils/xp';
+import {
+  isDangerousKey,
+  safeJsonParse,
+  safeLocalStorageGet,
+  safeLocalStorageSet,
+} from '../utils/security';
 import { BarChart } from './ui/Charts';
 import { Button } from './ui/Button';
 import { Card } from './ui/Card';
@@ -94,39 +100,22 @@ const GROUP_EMOJIS = ['🩺', '🧬', '🔬', '⚕️', '🔥', '🎯', '📚', 
 const PACE_TARGET_STORAGE_KEY = 'dh_group_pace_targets_v1';
 
 function loadPaceTargets(): Record<string, string> {
-  try {
-    if (typeof localStorage === 'undefined') return {};
-    const raw = localStorage.getItem(PACE_TARGET_STORAGE_KEY);
-    if (!raw) return {};
-    const parsed = JSON.parse(raw);
-    if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) return {};
-    const out: Record<string, string> = {};
-    for (const [gid, uid] of Object.entries(parsed)) {
-      if (
-        gid === '__proto__' ||
-        gid === 'constructor' ||
-        gid === 'prototype'
-      ) {
-        continue;
-      }
-      if (typeof gid === 'string' && typeof uid === 'string' && uid) {
-        out[gid] = uid;
-      }
+  const raw = safeLocalStorageGet(PACE_TARGET_STORAGE_KEY);
+  if (!raw) return {};
+  const parsed = safeJsonParse<unknown>(raw, null);
+  if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) return {};
+  const out: Record<string, string> = {};
+  for (const [gid, uid] of Object.entries(parsed as Record<string, unknown>)) {
+    if (isDangerousKey(gid)) continue;
+    if (typeof gid === 'string' && typeof uid === 'string' && uid) {
+      out[gid] = uid;
     }
-    return out;
-  } catch {
-    return {};
   }
+  return out;
 }
 
 function savePaceTargets(map: Record<string, string>): void {
-  try {
-    if (typeof localStorage !== 'undefined') {
-      localStorage.setItem(PACE_TARGET_STORAGE_KEY, JSON.stringify(map));
-    }
-  } catch {
-    // ignore storage errors
-  }
+  safeLocalStorageSet(PACE_TARGET_STORAGE_KEY, JSON.stringify(map));
 }
 
 function formatRelativeAgo(ts: number, now: number): string {

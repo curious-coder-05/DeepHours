@@ -1,4 +1,9 @@
 import type { MockTest } from '../types';
+import {
+  isDangerousKey,
+  safeJsonParse,
+  safeLocalStorageSet,
+} from './security.ts';
 
 export const MOCK_LEAKS_STORAGE_KEY = 'dh_mock_leaks_v1';
 export const NEET_MARKS_PER_WRONG_SWING = 5; // +4 marks lost + -1 negative penalty = -5 net marks
@@ -148,13 +153,13 @@ export function loadAllMockLeaks(
   try {
     const raw = storage.getItem(MOCK_LEAKS_STORAGE_KEY);
     if (!raw) return {};
-    const parsed = JSON.parse(raw);
+    const parsed = safeJsonParse<unknown>(raw, null);
     if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) {
       return {};
     }
     const out: MockLeakMap = {};
     for (const [mockId, entry] of Object.entries(parsed as Record<string, unknown>)) {
-      if (!mockId.trim() || !entry || typeof entry !== 'object') continue;
+      if (!mockId.trim() || isDangerousKey(mockId) || !entry || typeof entry !== 'object') continue;
       const rec = entry as Record<string, unknown>;
       const counts = normalizeMockLeakCounts(rec.counts ?? rec);
       if (hasAnyMockLeaks(counts)) {
@@ -186,21 +191,17 @@ export function saveMockLeaks(
   storage: StorageLike | null = getDefaultStorage()
 ): MockLeakCounts {
   const normalized = normalizeMockLeakCounts(counts);
-  if (!mockId || !storage) return normalized;
-  try {
-    const all = loadAllMockLeaks(storage);
-    if (hasAnyMockLeaks(normalized)) {
-      all[mockId] = {
-        counts: normalized,
-        updatedAt: Date.now(),
-      };
-    } else {
-      delete all[mockId];
-    }
-    storage.setItem(MOCK_LEAKS_STORAGE_KEY, JSON.stringify(all));
-  } catch {
-    // ignore storage quota errors
+  if (!mockId || !storage || isDangerousKey(mockId)) return normalized;
+  const all = loadAllMockLeaks(storage);
+  if (hasAnyMockLeaks(normalized)) {
+    all[mockId] = {
+      counts: normalized,
+      updatedAt: Date.now(),
+    };
+  } else {
+    delete all[mockId];
   }
+  safeLocalStorageSet(MOCK_LEAKS_STORAGE_KEY, JSON.stringify(all), storage);
   return normalized;
 }
 
@@ -208,15 +209,11 @@ export function deleteMockLeaks(
   mockId: string,
   storage: StorageLike | null = getDefaultStorage()
 ): void {
-  if (!mockId || !storage) return;
-  try {
-    const all = loadAllMockLeaks(storage);
-    if (mockId in all) {
-      delete all[mockId];
-      storage.setItem(MOCK_LEAKS_STORAGE_KEY, JSON.stringify(all));
-    }
-  } catch {
-    // ignore storage errors
+  if (!mockId || !storage || isDangerousKey(mockId)) return;
+  const all = loadAllMockLeaks(storage);
+  if (mockId in all) {
+    delete all[mockId];
+    safeLocalStorageSet(MOCK_LEAKS_STORAGE_KEY, JSON.stringify(all), storage);
   }
 }
 
