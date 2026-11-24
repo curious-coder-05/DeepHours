@@ -43,6 +43,7 @@ import {
 import { computeMinDayStreak } from '../utils/insights';
 import { useTimerTick } from '../utils/timerTicker';
 import { triggerHaptic } from '../utils/haptics';
+import { requestDeskFullscreen } from '../hooks/useWakeLock';
 import {
   AMBIENT_CHANNEL_META,
   AMBIENT_MIXER_EVENT,
@@ -576,6 +577,7 @@ export const FocusView: React.FC<FocusViewProps> = ({
           onResetIdle={handleResetExamIdle}
           onOpenDeskMode={() => {
             setDeskOverlayMode('exam');
+            void requestDeskFullscreen();
             onSetDeskMode(true);
           }}
           onOpenParkingLot={() => setParkingSheetOpen(true)}
@@ -1167,6 +1169,9 @@ export const FocusView: React.FC<FocusViewProps> = ({
             onClick={() => {
               triggerHaptic('tap');
               setDeskOverlayMode('focus');
+              if (!deskMode) {
+                void requestDeskFullscreen();
+              }
               onToggleDeskMode();
             }}
           >

@@ -177,6 +177,10 @@ export interface Scene3DProps {
   style?: React.CSSProperties;
   fov?: number;
   cameraPosition?: [number, number, number];
+  /** Optional per-scene thermal DPR cap (e.g. 1.5 for Desk Mode). */
+  maxDpr?: number;
+  /** Optional per-scene thermal FPS cap (e.g. 30 for Desk Mode). */
+  maxFps?: number;
   setup: (ctx: Scene3DContext) => Scene3DControllers | void;
   fallback?: React.ReactNode;
   children?: React.ReactNode;
@@ -252,6 +256,8 @@ const Scene3DInner: React.FC<Scene3DProps> = ({
   style,
   fov = 45,
   cameraPosition = [0, 0, 6],
+  maxDpr,
+  maxFps,
   setup,
   fallback = null,
   children,
@@ -374,10 +380,14 @@ const Scene3DInner: React.FC<Scene3DProps> = ({
         renderer.outputColorSpace = THREE.SRGBColorSpace;
         renderer.toneMapping = THREE.ACESFilmicToneMapping;
         renderer.toneMappingExposure = 1.08;
+        const cappedDpr =
+          typeof maxDpr === 'number' && maxDpr > 0
+            ? Math.min(resolution.maxDpr, maxDpr)
+            : resolution.maxDpr;
         renderer.setPixelRatio(
           resolution.isSoftwareGl
             ? 1
-            : Math.min(window.devicePixelRatio || 1, resolution.maxDpr)
+            : Math.min(window.devicePixelRatio || 1, cappedDpr)
         );
         renderer.setSize(initW, initH, false);
         renderer.setClearColor(0x000000, 0);
@@ -403,8 +413,14 @@ const Scene3DInner: React.FC<Scene3DProps> = ({
         let elapsedTotal = 0;
         let renderBusy = false;
         let renderDirty = false;
+        const effectiveTargetFps =
+          typeof maxFps === 'number' && maxFps > 0
+            ? resolution.targetFps > 0
+              ? Math.min(resolution.targetFps, maxFps)
+              : maxFps
+            : resolution.targetFps;
         const minFrameIntervalMs =
-          resolution.targetFps > 0 ? 1000 / resolution.targetFps : 16.6;
+          effectiveTargetFps > 0 ? 1000 / effectiveTargetFps : 16.6;
         let lastRenderTs = 0;
 
         // FPS Governor state (only active when ui3dQuality === 'auto' on hardware GL)
@@ -699,6 +715,8 @@ const Scene3DInner: React.FC<Scene3DProps> = ({
     resolution.particleBudget,
     resolution.isSoftwareGl,
     ui3dQuality,
+    maxDpr,
+    maxFps,
     webglFailed,
     overlaySuppressed,
     fov,

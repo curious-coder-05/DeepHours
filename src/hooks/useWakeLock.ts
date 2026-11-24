@@ -142,21 +142,36 @@ export function useWakeLock(active: boolean): WakeLockStatus {
   };
 }
 
+let fullscreenRequestPending = false;
+
 /**
- * Requests browser fullscreen for StandBy Desk Mode with graceful silent fallback
- * when blocked by mobile browser or iframe policy.
+ * Requests browser fullscreen for StandBy Desk Mode ONCE inside an explicit user click.
+ * Uses `{ navigationUI: 'hide' }` with graceful fallback when blocked by mobile/iframe policy.
  */
 export async function requestDeskFullscreen(): Promise<boolean> {
+  if (fullscreenRequestPending) return false;
   try {
     if (typeof document === 'undefined') return false;
     if (document.fullscreenElement) return true;
     const el = document.documentElement;
     if (typeof el.requestFullscreen === 'function') {
-      await el.requestFullscreen();
-      return true;
+      fullscreenRequestPending = true;
+      try {
+        await el.requestFullscreen({ navigationUI: 'hide' });
+        return true;
+      } catch {
+        try {
+          await el.requestFullscreen();
+          return true;
+        } catch {
+          return false;
+        }
+      } finally {
+        fullscreenRequestPending = false;
+      }
     }
   } catch {
-    // Graceful silent fallback when policy blocks fullscreen
+    fullscreenRequestPending = false;
   }
   return false;
 }
@@ -177,3 +192,107 @@ export async function exitDeskFullscreen(): Promise<void> {
     // ignore fullscreen exit errors
   }
 }
+
+/**
+ * Attempts native Screen Orientation landscape lock. Returns false cleanly if rejected or unsupported.
+ */
+export async function lockLandscapeOrientation(): Promise<boolean> {
+  try {
+    const orient =
+      typeof screen !== 'undefined'
+        ? (screen.orientation as ScreenOrientation & {
+            lock?: (orientation: string) => Promise<void>;
+          })
+        : undefined;
+    if (orient && typeof orient.lock === 'function') {
+      await orient.lock('landscape');
+      return true;
+    }
+  } catch {
+    // Graceful fallback to CSS Simulated Landscape Stage when OS auto-rotate/fullscreen blocks lock
+  }
+  return false;
+}
+
+/**
+ * Unlocks screen orientation cleanly on Desk Mode exit. Never throws.
+ */
+export function unlockScreenOrientation(): void {
+  try {
+    const orient =
+      typeof screen !== 'undefined'
+        ? (screen.orientation as ScreenOrientation & { unlock?: () => void })
+        : undefined;
+    if (orient && typeof orient.unlock === 'function') {
+      orient.unlock();
+    }
+  } catch {
+    // ignore orientation unlock errors
+  }
+}
+
+interface BatteryManagerLike extends EventTarget {
+  level: number;
+  charging: boolean;
+}
+
+export interface DeskBatteryStatus {
+  level: number;
+  charging: boolean;
+}
+
+/**
+ * Feature-detected Web Battery Status hook (zero permissions, zero network calls).
+ * Subscribes only while `active` is true and cleans up all listeners on unmount/close.
+ */
+export function useBatteryStatus(active: boolean): DeskBatteryStatus | null {
+  const [battery, setBattery] = useState<DeskBatteryStatus | null>(null);
+
+  useEffect(() => {
+    if (!active || typeof navigator === 'undefined') {
+      setBattery(null);
+      return;
+    }
+    const nav = navigator as Navigator & {
+      getBattery?: () => Promise<BatteryManagerLike>;
+    };
+    if (typeof nav.getBattery !== 'function') {
+      setBattery(null);
+      return;
+    }
+
+    let cancelled = false;
+    let manager: BatteryManagerLike | null = null;
+    const sync = () => {
+      if (cancelled || !manager) return;
+      setBattery({
+        level: Number.isFinite(manager.level) ? manager.level : 0,
+        charging: Boolean(manager.charging),
+      });
+    };
+
+    nav
+      .getBattery()
+      .then((bm) => {
+        if (cancelled || !bm) return;
+        manager = bm;
+        sync();
+        bm.addEventListener('levelchange', sync);
+        bm.addEventListener('chargingchange', sync);
+      })
+      .catch(() => {
+        if (!cancelled) setBattery(null);
+      });
+
+    return () => {
+      cancelled = true;
+      if (manager) {
+        manager.removeEventListener('levelchange', sync);
+        manager.removeEventListener('chargingchange', sync);
+      }
+    };
+  }, [active]);
+
+  return battery;
+}
+

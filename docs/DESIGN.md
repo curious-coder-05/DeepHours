@@ -1,4 +1,4 @@
-# Deep Hours — Design System Specification (v42 Rose Copper AMOLED)
+# Deep Hours — Design System Specification (v43 Rose Copper AMOLED & StandBy Desk Mode)
 
 ## 1. Art Direction
 - **Flagship OLED Hardware Restraint**: Deep Hours is a precision daily study instrument for NEET preparation. Dark and AMOLED modes anchor directly onto pure `#000000` black so timers, chapters, mock analytics, and canvas instruments stay crisp and battery-friendly over multi-hour sessions.
@@ -76,9 +76,10 @@
 ---
 
 ## 6. Three.js Scenes Policy (`settings.ui3d` & `settings.ui3dQuality`)
-- `three` is strictly lazy-loaded and isolated from the entry bundle. Active WebGL contexts stay `<= 1` (`priority="overlay"` suspends background stage; `StandByDeskOverlay` unmounts `FocusOrbitScene` completely; `Insights` uses `0` WebGL canvases).
+- `three` is strictly lazy-loaded and isolated from the entry bundle. Active WebGL contexts stay `<= 1` (`priority="overlay"` suspends background stage; `StandByDeskOverlay` unmounts `FocusOrbitScene` completely and guarantees `0` WebGL canvases whenever `Night dim` is ON, `3D` toggle is OFF, `settings.ui3d === 'off'`, or `prefers-reduced-motion: reduce`; `Insights` uses `0` WebGL canvases).
 - Respects `settings.ui3d` (`Auto | On | Off`), `settings.ui3dQuality` (`Auto | High | Lite`), `prefers-reduced-motion`, and the 2-second FPS Governor (`evaluateFpsGovernor`). Every Three.js scene is wrapped in a silent `ErrorBoundary` so driver failures degrade gracefully.
 - **Active 3D Scenes**:
   - `FocusOrbitScene` (**Solar Eclipse Focus Core** in `FocusView` & `OnboardingSheet`): Continuous-Fresnel volcanic obsidian-ember sphere (`SphereGeometry(1.48)`), BackSide corona fading strictly to `0.0` at silhouette, subtle geodesic cage & 72-tick champagne ring, circular ember dust, live Session Heat progression, and local `Solar Eclipse | Lumen Gold | Crimson Ember` palettes.
+  - `DeskChronoScene` (**3D Orbital Chronometer** in `StandByDeskOverlay`): Pure pitch-black `#000000` (`setClearColor(0x000000, 1)`, zero haze/fog) landscape-first architectural chronometer (`priority="overlay"`, capped at `dpr <= 1.5` and `30 fps` for cool multi-hour sessions) with tilted champagne-gold / dark-titanium orbital ring, 60 instanced 3D second ticks, glowing Lumen Gold (`#F5C542`) live sweeping second marker, two counter-rotating Fresnel meridian gimbal arcs around a dark obsidian center shield, sparse warm-gold micro-motes, and zero-re-render `propsRef` state shifts (Lumen Gold running, dimmed obsidian-copper paused, solar crimson `#F43F5E` overtime/Exam Hall bleed). Completely unmounted (`0` WebGL canvases) when `Night dim` is ON, `3D` is OFF, `settings.ui3d === 'off'`, or `prefers-reduced-motion: reduce`.
   - `SyllabusAstrolabeScene` (**3D Gyroscopic Astrolabe** in `Prep > Syllabus`): Full-bleed `#000000` borderless stage with molten-gold Fresnel geodesic sun core, champagne-gold tilted orbital rings, 4-state PBR faceted octahedron chapter crystals (`RoomEnvironment` reflections), dual-torus target reticle, and floating top/bottom scrim overlays.
   - `RewardBurstDialog`: Lazy milestone overlay (`ExtrudeGeometry` 3D medal + `InstancedMesh` confetti) with 2D reduced-motion fallback.

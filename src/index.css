@@ -4849,70 +4849,169 @@ body.desk-mode .retro-dial-svg {
   font-weight: 600;
 }
 
+/* Ensure ParkingLotSheet / BottomSheet portals cleanly above StandBy Desk Mode (z-index: 9999) */
+body.desk-mode .dh-glass-backdrop {
+  z-index: 10020;
+}
+
 /* ============================================================================
-   AMOLED StandBy Desk Mode Overlay (Pure #000000, Zero WebGL, OLED Shift)
+   AMOLED StandBy Desk Mode Overlay v43 (Pure #000000, 3D Orbital Chronometer,
+   Bulletproof Simulated Landscape, Persistent Exit, 2px Progress Filament)
    ============================================================================ */
 .dh-standby-overlay {
   position: fixed;
   inset: 0;
-  z-index: 60;
+  width: 100vw;
+  height: 100dvh;
+  z-index: 9999;
   background: #000000;
-  color: #f3f5f8;
-  display: flex;
-  flex-direction: column;
-  justify-content: space-between;
-  align-items: center;
-  padding: calc(14px + var(--sa)) calc(16px + env(safe-area-inset-right, 0px))
-    calc(18px + var(--sb)) calc(16px + env(safe-area-inset-left, 0px));
+  color: #ffffff;
   overflow: hidden;
   user-select: none;
   -webkit-user-select: none;
   touch-action: manipulation;
+  overscroll-behavior: none;
 }
 
+.dh-standby-viewport {
+  position: relative;
+  width: 100%;
+  height: 100%;
+  background: #000000;
+  display: flex;
+  flex-direction: column;
+  justify-content: space-between;
+  align-items: center;
+  padding: calc(12px + var(--sa)) calc(16px + env(safe-area-inset-right, 0px))
+    calc(12px + var(--sb)) calc(16px + env(safe-area-inset-left, 0px));
+  overflow: hidden;
+  container-type: size;
+}
+
+/* Bulletproof CSS Hardware-Rotated Simulated Landscape Stage (always works even when OS Auto-Rotate is off) */
+.dh-standby-viewport.is-sim-landscape {
+  position: fixed;
+  top: 50%;
+  left: 50%;
+  width: 100dvh;
+  height: 100dvw;
+  transform: translate(-50%, -50%) rotate(90deg);
+  transform-origin: center center;
+  padding: calc(10px + env(safe-area-inset-right, 0px))
+    calc(18px + var(--sb))
+    calc(10px + env(safe-area-inset-left, 0px))
+    calc(18px + var(--sa));
+}
+
+.dh-standby-3d-layer {
+  position: absolute;
+  inset: 0;
+  z-index: 0;
+  pointer-events: none;
+  background: #000000;
+}
+
+/* Always-Reachable Low-Glare Corner Exit (×) when Main HUD Fades Out */
+.dh-standby-corner-exit {
+  position: absolute;
+  top: calc(10px + var(--sa));
+  right: calc(12px + env(safe-area-inset-right, 0px));
+  z-index: 6;
+  width: 44px;
+  height: 44px;
+  min-width: 44px;
+  min-height: 44px;
+  padding: 0;
+  border-radius: 999px;
+  border: 1px solid rgba(161, 161, 170, 0.22);
+  background: rgba(12, 12, 14, 0.72);
+  color: #a1a1aa;
+  opacity: 0.24;
+  display: grid;
+  place-items: center;
+  cursor: pointer;
+  transition:
+    opacity var(--dur-fast) var(--ease-out),
+    transform var(--dur-fast) var(--ease-out);
+}
+
+.dh-standby-viewport.is-sim-landscape .dh-standby-corner-exit {
+  top: calc(10px + env(safe-area-inset-right, 0px));
+  right: calc(14px + var(--sb));
+}
+
+.dh-standby-corner-exit:hover,
+.dh-standby-corner-exit:focus-visible {
+  opacity: 0.85;
+}
+
+.dh-standby-corner-exit:active {
+  transform: scale(0.94);
+}
+
+/* Night Dim Mode: Pure #000000 AMOLED void + classic deep red-amber #DC2626 low-glare digits */
 .dh-standby-overlay.is-night-dim {
-  color: #c2512b;
+  color: #dc2626;
 }
 
 .dh-standby-overlay.is-night-dim .dh-standby-subject-label,
 .dh-standby-overlay.is-night-dim .dh-standby-exam-label,
 .dh-standby-overlay.is-night-dim .dh-standby-pad-name,
 .dh-standby-overlay.is-night-dim .dh-standby-pad-foot,
-.dh-standby-overlay.is-night-dim .dh-standby-pad-visits {
-  color: #8f371c;
+.dh-standby-overlay.is-night-dim .dh-standby-pad-visits,
+.dh-standby-overlay.is-night-dim .dh-standby-filament-meta,
+.dh-standby-overlay.is-night-dim .dh-standby-battery {
+  color: #991b1b;
 }
 
 .dh-standby-overlay.is-night-dim .dh-standby-clock,
 .dh-standby-overlay.is-night-dim .dh-standby-exam-total,
 .dh-standby-overlay.is-night-dim .dh-standby-pad-clock {
-  color: #c9562e;
+  color: #dc2626;
+  text-shadow: 0 4px 24px rgba(0, 0, 0, 0.96);
+}
+
+.dh-standby-overlay.is-night-dim .dh-standby-filament-fill {
+  background: #dc2626;
 }
 
 .dh-standby-overlay.is-night-dim .dh-standby-pad {
-  background: #050201;
-  border-color: rgba(184, 74, 39, 0.24);
+  background: #050101;
+  border-color: rgba(220, 38, 38, 0.24);
 }
 
 .dh-standby-overlay.is-night-dim .dh-standby-pad.is-active {
-  background: #0d0402;
-  border-color: rgba(201, 86, 46, 0.65);
+  background: #0d0202;
+  border-color: rgba(220, 38, 38, 0.65);
 }
 
+.dh-standby-overlay.is-night-dim .dh-standby-corner-exit {
+  color: #991b1b;
+  border-color: rgba(153, 27, 27, 0.28);
+}
+
+.dh-standby-overlay.is-night-dim .dh-standby-pill.is-active {
+  background: rgba(220, 38, 38, 0.16);
+  border-color: rgba(220, 38, 38, 0.48);
+  color: #dc2626;
+}
+
+/* Auto-Fading Monochrome HUD Docks (No backdrop-filter over active WebGL) */
 .dh-standby-bar {
+  position: relative;
   width: 100%;
-  max-width: 960px;
+  max-width: 1080px;
   display: flex;
   align-items: center;
   justify-content: space-between;
   gap: 8px;
-  flex-wrap: wrap;
   opacity: 0;
   pointer-events: none;
   transform: translateY(-6px);
   transition:
     opacity var(--dur-mid) var(--ease-out),
     transform var(--dur-mid) var(--ease-out);
-  z-index: 4;
+  z-index: 5;
 }
 
 .dh-standby-bar-top {
@@ -4941,6 +5040,19 @@ body.desk-mode .retro-dial-svg {
   min-width: 0;
 }
 
+.dh-standby-battery {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  min-height: 36px;
+  padding: 0 8px;
+  color: #a1a1aa;
+  font-size: 13px;
+  font-weight: 500;
+  white-space: nowrap;
+  flex-shrink: 0;
+}
+
 .dh-standby-exit-pill {
   flex-shrink: 0;
 }
@@ -4952,39 +5064,77 @@ body.desk-mode .retro-dial-svg {
   gap: 5px;
   min-height: 40px;
   padding: 0 11px;
-  border-radius: 12px;
-  background: rgba(20, 23, 29, 0.78);
+  border-radius: 11px;
+  background: rgba(16, 17, 21, 0.88);
   border: 1px solid rgba(255, 255, 255, 0.12);
-  color: #e6ebf2;
+  color: #e4e4e7;
   font-size: 13px;
   font-weight: 600;
   white-space: nowrap;
-  backdrop-filter: blur(16px);
-  -webkit-backdrop-filter: blur(16px);
+  cursor: pointer;
+  transition:
+    transform var(--dur-fast) var(--ease-out),
+    background-color var(--dur-fast) var(--ease-out),
+    border-color var(--dur-fast) var(--ease-out);
+}
+
+.dh-standby-pill:active:not(:disabled) {
+  transform: scale(0.97);
+}
+
+.dh-standby-pill:disabled {
+  opacity: 0.4;
+  cursor: not-allowed;
 }
 
 .dh-standby-pill.is-active {
-  background: rgba(245, 196, 81, 0.16);
-  border-color: rgba(245, 196, 81, 0.44);
-  color: #f5c451;
+  background: rgba(245, 197, 66, 0.14);
+  border-color: rgba(245, 197, 66, 0.42);
+  color: #f5c542;
 }
 
 .dh-standby-transport-pill {
-  min-height: 48px;
+  min-height: 46px;
   padding: 0 18px;
   font-size: 14px;
 }
 
-.dh-standby-hint {
-  font-size: 13px;
-  color: rgba(255, 255, 255, 0.45);
+@container (max-width: 440px) {
+  .dh-standby-bar-group {
+    gap: 5px;
+  }
+
+  .dh-standby-battery {
+    padding: 0 4px;
+    font-size: 12.5px;
+  }
+
+  .dh-standby-pill {
+    padding: 0 9px;
+    gap: 4px;
+    font-size: 12.5px;
+    min-height: 38px;
+  }
+
+  .dh-standby-transport-pill {
+    min-height: 44px;
+    padding: 0 16px;
+    font-size: 14px;
+  }
 }
 
+.dh-standby-hint {
+  font-size: 13px;
+  color: rgba(161, 161, 170, 0.65);
+}
+
+/* Main Burn-In Protected Typography Stage (±6px GPU translate3d every 60s) */
 .dh-standby-stage {
   position: relative;
-  flex: 1;
+  z-index: 2;
+  flex: 1 1 auto;
   width: 100%;
-  max-width: 980px;
+  max-width: 1080px;
   min-height: 0;
   display: flex;
   flex-direction: column;
@@ -4992,94 +5142,6 @@ body.desk-mode .retro-dial-svg {
   justify-content: center;
   will-change: transform;
   transition: transform 1.2s var(--ease-out);
-}
-
-/* Zero-WebGL Crimson + Solar Gold Eclipse Backdrop inside StandBy OLED Pixel-Shift Stage */
-.dh-standby-eclipse-backdrop {
-  position: absolute;
-  left: 50%;
-  top: 50%;
-  width: min(86vmin, 460px);
-  height: min(86vmin, 460px);
-  transform: translate(-50%, -50%);
-  z-index: 0;
-  pointer-events: none;
-  display: grid;
-  place-items: center;
-  color: #f5c451;
-  transition: opacity var(--dur-slow) var(--ease-out);
-}
-
-.dh-standby-eclipse-glow {
-  position: absolute;
-  inset: 0;
-  border-radius: 50%;
-  background:
-    radial-gradient(
-      circle at 50% 50%,
-      rgba(245, 158, 11, 0.16) 0%,
-      rgba(225, 29, 72, 0.22) 34%,
-      rgba(159, 18, 57, 0.1) 56%,
-      rgba(0, 0, 0, 0) 76%
-    );
-}
-
-.dh-standby-eclipse-rings {
-  position: relative;
-  width: 100%;
-  height: 100%;
-  overflow: visible;
-}
-
-.dh-standby-ring-cw {
-  transform-origin: 210px 210px;
-  animation: dhStandbySpinCW 56s linear infinite;
-}
-
-.dh-standby-ring-ccw {
-  transform-origin: 210px 210px;
-  animation: dhStandbySpinCCW 74s linear infinite;
-}
-
-@keyframes dhStandbySpinCW {
-  from {
-    transform: rotate(0deg);
-  }
-  to {
-    transform: rotate(360deg);
-  }
-}
-
-@keyframes dhStandbySpinCCW {
-  from {
-    transform: rotate(360deg);
-  }
-  to {
-    transform: rotate(0deg);
-  }
-}
-
-.dh-standby-overlay.is-night-dim .dh-standby-eclipse-backdrop {
-  opacity: 0.35;
-  color: #991b1b;
-  --standby-ring-crimson: rgba(153, 27, 27, 0.24);
-}
-
-.dh-standby-overlay.is-night-dim .dh-standby-eclipse-glow {
-  background:
-    radial-gradient(
-      circle at 50% 50%,
-      rgba(153, 27, 27, 0.28) 0%,
-      rgba(127, 29, 29, 0.16) 42%,
-      rgba(0, 0, 0, 0) 74%
-    );
-}
-
-@media (prefers-reduced-motion: reduce) {
-  .dh-standby-ring-cw,
-  .dh-standby-ring-ccw {
-    animation: none !important;
-  }
 }
 
 .dh-standby-focus-core {
@@ -5090,9 +5152,9 @@ body.desk-mode .retro-dial-svg {
   align-items: center;
   justify-content: center;
   text-align: center;
-  gap: 12px;
+  gap: 10px;
   width: 100%;
-  padding: 0 8px;
+  padding: 0 6px;
 }
 
 .dh-standby-meta {
@@ -5100,15 +5162,15 @@ body.desk-mode .retro-dial-svg {
   align-items: center;
   justify-content: center;
   gap: 8px;
-  max-width: 92vw;
-  font-size: 15px;
+  max-width: 92cqw;
+  font-size: 14px;
   font-weight: 500;
-  color: rgba(243, 245, 248, 0.62);
+  color: #a1a1aa;
 }
 
 .dh-standby-subject-dot {
-  width: 9px;
-  height: 9px;
+  width: 6px;
+  height: 6px;
   border-radius: 50%;
   flex-shrink: 0;
 }
@@ -5119,32 +5181,99 @@ body.desk-mode .retro-dial-svg {
   white-space: nowrap;
 }
 
-.dh-standby-paused-tag {
+.dh-standby-state-chip {
   padding: 2px 8px;
-  border-radius: 99px;
-  background: rgba(245, 196, 81, 0.14);
-  border: 1px solid rgba(245, 196, 81, 0.34);
-  color: #f5c451;
+  border-radius: 6px;
   font-size: 13px;
   font-weight: 600;
+  letter-spacing: 0.01em;
   flex-shrink: 0;
 }
 
+.dh-standby-state-chip.is-paused {
+  background: rgba(245, 197, 66, 0.12);
+  border: 1px solid rgba(245, 197, 66, 0.34);
+  color: #f5c542;
+}
+
+.dh-standby-state-chip.is-overtime {
+  background: rgba(244, 63, 94, 0.14);
+  border: 1px solid rgba(244, 63, 94, 0.42);
+  color: #fb7185;
+}
+
+/* Giant Hardware Clock Typography (Portrait baseline; scales up in Landscape & Simulated Landscape) */
 .dh-standby-clock {
   font-family: var(--font-mono);
-  font-size: clamp(4.1rem, 20vw, 10rem);
+  font-size: clamp(3.6rem, 17cqw, 6rem);
   font-weight: 700;
-  line-height: 1;
+  line-height: 0.96;
   letter-spacing: -0.04em;
-  color: #f5f7fa;
+  color: #ffffff;
+  text-shadow: 0 4px 28px rgba(0, 0, 0, 0.96);
   white-space: nowrap;
 }
 
-.dh-standby-overtime {
-  font-family: var(--font-mono);
-  font-size: 15px;
-  font-weight: 600;
-  color: var(--ok-ink);
+.dh-standby-clock.is-hms {
+  font-size: clamp(3.15rem, 15.2cqw, 5.4rem);
+}
+
+.dh-standby-clock.is-hide-sec {
+  font-size: clamp(4.2rem, 21cqw, 7.2rem);
+}
+
+/* Bottom Footer Zone: Transport Bar + Razor-Thin 2px Lumen Gold Progress Filament */
+.dh-standby-footer-zone {
+  position: relative;
+  z-index: 5;
+  width: 100%;
+  max-width: 1080px;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 10px;
+}
+
+.dh-standby-filament-wrap {
+  width: 100%;
+  display: flex;
+  flex-direction: column;
+  gap: 5px;
+  pointer-events: none;
+}
+
+.dh-standby-filament-meta {
+  width: 100%;
+  text-align: right;
+  font-size: 13px;
+  font-weight: 500;
+  color: rgba(161, 161, 170, 0.72);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.dh-standby-filament-track {
+  width: 100%;
+  height: 2px;
+  border-radius: 999px;
+  background: rgba(255, 255, 255, 0.1);
+  overflow: hidden;
+}
+
+.dh-standby-filament-fill {
+  height: 100%;
+  border-radius: 999px;
+  background: #f5c542;
+  transition: width 0.5s linear, background-color var(--dur-mid) var(--ease-out);
+}
+
+.dh-standby-filament-fill.tone-crimson {
+  background: #f43f5e;
+}
+
+.dh-standby-filament-fill.tone-paused {
+  background: rgba(212, 162, 118, 0.65);
 }
 
 /* StandBy Exam Mode Layout (Portrait & Landscape Responsive) */
@@ -5160,29 +5289,30 @@ body.desk-mode .retro-dial-svg {
 
 .dh-standby-exam-header {
   display: flex;
-  align-items: baseline;
+  align-items: center;
   justify-content: center;
-  gap: 12px;
+  gap: 10px;
   flex-wrap: wrap;
 }
 
 .dh-standby-exam-label {
   font-size: 14px;
   font-weight: 600;
-  color: rgba(243, 245, 248, 0.56);
+  color: #a1a1aa;
 }
 
 .dh-standby-exam-total {
   font-family: var(--font-mono);
-  font-size: clamp(1.65rem, 6vw, 2.5rem);
+  font-size: clamp(1.65rem, 6cqw, 2.5rem);
   font-weight: 700;
   line-height: 1.05;
   letter-spacing: -0.03em;
-  color: #f5f7fa;
+  color: #ffffff;
+  text-shadow: 0 4px 24px rgba(0, 0, 0, 0.96);
 }
 
 .dh-standby-exam-total.is-overtime {
-  color: var(--err-ink);
+  color: #fb7185;
 }
 
 .dh-standby-exam-grid {
@@ -5198,12 +5328,12 @@ body.desk-mode .retro-dial-svg {
   justify-content: space-between;
   align-items: flex-start;
   gap: 8px;
-  min-height: 124px;
+  min-height: 120px;
   padding: 14px;
-  border-radius: 18px;
-  background: #08090c;
-  border: 1.5px solid rgba(255, 255, 255, 0.1);
-  color: #f3f5f8;
+  border-radius: 16px;
+  background: rgba(10, 11, 14, 0.88);
+  border: 1.5px solid rgba(255, 255, 255, 0.11);
+  color: #ffffff;
   text-align: left;
   transition:
     transform var(--dur-fast) var(--ease-out),
@@ -5216,8 +5346,8 @@ body.desk-mode .retro-dial-svg {
 }
 
 .dh-standby-pad.is-active {
-  background: color-mix(in srgb, var(--pad-color, var(--ac)) 12%, #07080a);
-  border-color: var(--pad-color, var(--ac));
+  background: color-mix(in srgb, var(--pad-color, #f5c542) 12%, #07080a);
+  border-color: var(--pad-color, #f5c542);
 }
 
 .dh-standby-pad-top {
@@ -5231,7 +5361,7 @@ body.desk-mode .retro-dial-svg {
 .dh-standby-pad-name {
   font-size: 14px;
   font-weight: 600;
-  color: rgba(243, 245, 248, 0.85);
+  color: rgba(255, 255, 255, 0.88);
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
@@ -5240,13 +5370,13 @@ body.desk-mode .retro-dial-svg {
 .dh-standby-pad-visits {
   font-size: 13px;
   font-weight: 600;
-  color: rgba(243, 245, 248, 0.5);
+  color: #a1a1aa;
   flex-shrink: 0;
 }
 
 .dh-standby-pad-clock {
   font-family: var(--font-mono);
-  font-size: clamp(1.35rem, 6.2vw, 2.35rem);
+  font-size: clamp(1.35rem, 6cqw, 2.35rem);
   font-weight: 700;
   line-height: 1.05;
   letter-spacing: -0.03em;
@@ -5255,29 +5385,57 @@ body.desk-mode .retro-dial-svg {
 }
 
 .dh-standby-pad.is-overtime .dh-standby-pad-clock {
-  color: var(--err-ink);
-  font-size: clamp(1rem, 4.15vw, 2.05rem);
+  color: #fb7185;
+  font-size: clamp(1rem, 4.1cqw, 2.05rem);
 }
 
 .dh-standby-pad-foot {
   font-size: 13px;
-  color: rgba(243, 245, 248, 0.52);
+  color: #a1a1aa;
   line-height: 1.2;
 }
 
-/* Landscape Mobile StandBy Optimization (e.g. 800x360) */
-@media (orientation: landscape) and (max-height: 460px) {
-  .dh-standby-overlay {
-    padding: 8px 16px 10px;
-  }
+/* Landscape Hardware Clock Scaling (Native Landscape + Desktop Wide + Simulated Landscape Stage) */
+@media (orientation: landscape) and (min-width: 540px) {
   .dh-standby-clock {
-    font-size: clamp(3.6rem, 15vw, 6.8rem);
+    font-size: min(clamp(5rem, 20cqw, 13rem), 46cqh);
+  }
+  .dh-standby-clock.is-hms {
+    font-size: min(clamp(4.4rem, 16.8cqw, 11.8rem), 44cqh);
+  }
+  .dh-standby-clock.is-hide-sec {
+    font-size: min(clamp(6.5rem, 26cqw, 15.5rem), 50cqh);
+  }
+}
+
+.dh-standby-viewport.is-sim-landscape .dh-standby-clock {
+  font-size: min(clamp(5rem, 20cqw, 13rem), 44cqh);
+}
+
+.dh-standby-viewport.is-sim-landscape .dh-standby-clock.is-hms {
+  font-size: min(clamp(4.4rem, 16.8cqw, 11.8rem), 42cqh);
+}
+
+.dh-standby-viewport.is-sim-landscape .dh-standby-clock.is-hide-sec {
+  font-size: min(clamp(6.5rem, 26cqw, 15.5rem), 48cqh);
+}
+
+/* Compact Landscape Mobile & Simulated Landscape Layout (e.g. 800x360 or rotated 360x800) */
+@media (orientation: landscape) and (max-height: 460px) {
+  .dh-standby-viewport {
+    padding: 8px 16px 8px;
+  }
+  .dh-standby-focus-core {
+    gap: 6px;
+  }
+  .dh-standby-footer-zone {
+    gap: 6px;
   }
   .dh-standby-exam-core {
     gap: 8px;
   }
   .dh-standby-exam-total {
-    font-size: 1.55rem;
+    font-size: 1.5rem;
   }
   .dh-standby-exam-grid {
     grid-template-columns: repeat(4, minmax(0, 1fr));
@@ -5287,13 +5445,13 @@ body.desk-mode .retro-dial-svg {
     grid-template-columns: repeat(3, minmax(0, 1fr));
   }
   .dh-standby-pad {
-    min-height: 108px;
+    min-height: 102px;
     padding: 10px 12px;
     gap: 4px;
   }
   .dh-standby-pad-clock,
   .dh-standby-pad.is-overtime .dh-standby-pad-clock {
-    font-size: clamp(1.08rem, 2.75vw, 1.75rem);
+    font-size: clamp(1.05rem, 2.75cqw, 1.75rem);
   }
   .dh-standby-pill {
     min-height: 36px;
@@ -5303,6 +5461,52 @@ body.desk-mode .retro-dial-svg {
   .dh-standby-overlay .dh-hold-btn {
     min-height: 40px;
   }
+}
+
+.dh-standby-viewport.is-sim-landscape .dh-standby-focus-core {
+  gap: 6px;
+}
+
+.dh-standby-viewport.is-sim-landscape .dh-standby-footer-zone {
+  gap: 6px;
+}
+
+.dh-standby-viewport.is-sim-landscape .dh-standby-exam-core {
+  gap: 8px;
+}
+
+.dh-standby-viewport.is-sim-landscape .dh-standby-exam-total {
+  font-size: 1.5rem;
+}
+
+.dh-standby-viewport.is-sim-landscape .dh-standby-exam-grid {
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 8px;
+}
+
+.dh-standby-viewport.is-sim-landscape .dh-standby-exam-grid.cols-3 {
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+}
+
+.dh-standby-viewport.is-sim-landscape .dh-standby-pad {
+  min-height: 102px;
+  padding: 10px 12px;
+  gap: 4px;
+}
+
+.dh-standby-viewport.is-sim-landscape .dh-standby-pad-clock,
+.dh-standby-viewport.is-sim-landscape .dh-standby-pad.is-overtime .dh-standby-pad-clock {
+  font-size: clamp(1.05rem, 2.75cqw, 1.75rem);
+}
+
+.dh-standby-viewport.is-sim-landscape .dh-standby-pill {
+  min-height: 36px;
+  padding: 0 10px;
+}
+
+.dh-standby-viewport.is-sim-landscape .dh-standby-transport-pill,
+.dh-standby-viewport.is-sim-landscape .dh-hold-btn {
+  min-height: 40px;
 }
 
 /* ============================================================================

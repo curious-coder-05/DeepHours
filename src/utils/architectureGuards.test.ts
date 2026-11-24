@@ -154,3 +154,75 @@ describe('v36 pure chart & label helpers', () => {
     assert.equal(formatChapterConfidence(5), '5/5');
   });
 });
+
+describe('v43 StandBy Desk Mode architectural guardrails', () => {
+  it('unmounts FocusOrbitScene whenever Desk Mode is active so WebGL contexts remain <= 1', () => {
+    const focusSource = readRepoFile('src/components/FocusView.tsx');
+    assert.match(
+      focusSource,
+      /const\s+show3dCore\s*=\s*!deskMode\b/,
+      'FocusView.tsx must gate show3dCore on !deskMode'
+    );
+    assert.match(
+      focusSource,
+      /show3dCore\s*&&\s*\([\s\S]*?<FocusOrbitScene/,
+      'FocusView.tsx must keep FocusOrbitScene unmounted while deskMode is true'
+    );
+  });
+
+  it('prevents fullscreen ping-pong flicker and gates DeskChronoScene strictly on Night dim / 3D / ui3d / reduced motion', () => {
+    const deskSource = readRepoFile('src/components/StandByDeskOverlay.tsx');
+    assert.doesNotMatch(
+      deskSource,
+      /\brequestDeskFullscreen\b/,
+      'StandByDeskOverlay.tsx must never auto-request fullscreen inside effects or taps (only the opening user click in FocusView may request fullscreen)'
+    );
+    assert.doesNotMatch(
+      deskSource,
+      /addEventListener\s*\(\s*['"]fullscreenchange['"]/,
+      'StandByDeskOverlay.tsx must not listen to fullscreenchange to close or re-request fullscreen'
+    );
+    assert.match(
+      deskSource,
+      /const\s+mount3D\s*=\s*shouldMountDeskChrono3D\s*\(/,
+      'StandByDeskOverlay.tsx must gate DeskChronoScene via shouldMountDeskChrono3D'
+    );
+    assert.match(
+      deskSource,
+      /mount3D\s*&&\s*\([\s\S]*?<DeskChronoScene/,
+      'StandByDeskOverlay.tsx must completely unmount DeskChronoScene when mount3D is false (0 WebGL canvases)'
+    );
+    assert.doesNotMatch(
+      deskSource,
+      /dh-standby-eclipse-/,
+      'StandByDeskOverlay.tsx must not render the legacy muddy red eclipse CSS backdrop'
+    );
+  });
+
+  it('enforces pitch-black #000000 backdrop, overlay priority, and battery-safe DPR/FPS caps on DeskChronoScene', () => {
+    const chronoSource = readRepoFile('src/components/three/DeskChronoScene.tsx');
+    assert.match(chronoSource, /setClearColor\(\s*0x000000\s*,\s*1\s*\)/);
+    assert.match(chronoSource, /priority="overlay"/);
+    assert.match(chronoSource, /maxDpr=\{1\.5\}/);
+    assert.match(chronoSource, /maxFps=\{30\}/);
+  });
+
+  it('unlocks PWA manifest orientation for sideways desk mode and bumps Service Worker cache to v43', () => {
+    const manifest = JSON.parse(readRepoFile('public/manifest.webmanifest')) as {
+      orientation?: string;
+    };
+    assert.equal(
+      manifest.orientation,
+      'any',
+      'public/manifest.webmanifest must set "orientation": "any" so Desk Mode rotates naturally'
+    );
+
+    const swSource = readRepoFile('public/sw.js');
+    assert.match(
+      swSource,
+      /const CACHE_NAME = 'deep-hours-v43';/,
+      'public/sw.js must bump CACHE_NAME to deep-hours-v43'
+    );
+  });
+});
+
