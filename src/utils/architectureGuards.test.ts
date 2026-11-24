@@ -155,7 +155,7 @@ describe('v36 pure chart & label helpers', () => {
   });
 });
 
-describe('v43 StandBy Desk Mode architectural guardrails', () => {
+describe('v45 StandBy Desk Mode architectural guardrails', () => {
   it('unmounts FocusOrbitScene whenever Desk Mode is active so WebGL contexts remain <= 1', () => {
     const focusSource = readRepoFile('src/components/FocusView.tsx');
     assert.match(
@@ -170,12 +170,12 @@ describe('v43 StandBy Desk Mode architectural guardrails', () => {
     );
   });
 
-  it('prevents fullscreen ping-pong flicker and gates DeskChronoScene strictly on Night dim / 3D / ui3d / reduced motion', () => {
+  it('prevents fullscreen ping-pong flicker, strips v43 scrubber/pill chrome, and isolates 1Hz timer ticks from DeskChronoScene', () => {
     const deskSource = readRepoFile('src/components/StandByDeskOverlay.tsx');
     assert.doesNotMatch(
       deskSource,
       /\brequestDeskFullscreen\b/,
-      'StandByDeskOverlay.tsx must never auto-request fullscreen inside effects or taps (only the opening user click in FocusView may request fullscreen)'
+      'StandByDeskOverlay.tsx must never auto-request fullscreen inside effects or taps'
     );
     assert.doesNotMatch(
       deskSource,
@@ -194,20 +194,35 @@ describe('v43 StandBy Desk Mode architectural guardrails', () => {
     );
     assert.doesNotMatch(
       deskSource,
-      /dh-standby-eclipse-/,
-      'StandByDeskOverlay.tsx must not render the legacy muddy red eclipse CSS backdrop'
+      /dh-standby-filament|dh-standby-eclipse-/,
+      'StandByDeskOverlay.tsx must not render the legacy v43 progress filament bar or muddy red eclipse backdrop'
+    );
+    assert.match(
+      deskSource,
+      /pickRandomDeskSculpture\(/,
+      'StandByDeskOverlay.tsx must randomly select a sculpture on Desk Mode entry'
     );
   });
 
-  it('enforces pitch-black #000000 backdrop, overlay priority, and battery-safe DPR/FPS caps on DeskChronoScene', () => {
+  it('enforces pure #000000 backdrop, procedural RoomEnvironment PMREM, DPR<=2 cap, document.hidden pause, and strict Three.js disposal on DeskChronoScene', () => {
     const chronoSource = readRepoFile('src/components/three/DeskChronoScene.tsx');
     assert.match(chronoSource, /setClearColor\(\s*0x000000\s*,\s*1\s*\)/);
-    assert.match(chronoSource, /priority="overlay"/);
-    assert.match(chronoSource, /maxDpr=\{1\.5\}/);
-    assert.match(chronoSource, /maxFps=\{30\}/);
+    assert.match(chronoSource, /PMREMGenerator/);
+    assert.match(chronoSource, /RoomEnvironment/);
+    assert.match(chronoSource, /Math\.min\(window\.devicePixelRatio\s*\|\|\s*1,\s*2\)/);
+    assert.match(chronoSource, /document\.hidden/);
+    assert.match(chronoSource, /renderer\.dispose\(\)/);
+    assert.match(chronoSource, /envRenderTarget\.dispose\(\)/);
+    assert.match(chronoSource, /buildMonolithSculpture/);
+    assert.match(chronoSource, /buildKineticWaveSculpture/);
+    assert.doesNotMatch(
+      chronoSource,
+      /\buseTimerTick\b|\bclockMs\b/,
+      'DeskChronoScene.tsx must remain completely isolated from 1-second timer ticks'
+    );
   });
 
-  it('unlocks PWA manifest orientation for sideways desk mode and bumps Service Worker cache to v43', () => {
+  it('unlocks PWA manifest orientation for sideways desk mode and bumps Service Worker cache to v45', () => {
     const manifest = JSON.parse(readRepoFile('public/manifest.webmanifest')) as {
       orientation?: string;
     };
@@ -220,8 +235,15 @@ describe('v43 StandBy Desk Mode architectural guardrails', () => {
     const swSource = readRepoFile('public/sw.js');
     assert.match(
       swSource,
-      /const CACHE_NAME = 'deep-hours-v43';/,
-      'public/sw.js must bump CACHE_NAME to deep-hours-v43'
+      /const CACHE_NAME = 'deep-hours-v45';/,
+      'public/sw.js must bump CACHE_NAME to deep-hours-v45'
+    );
+
+    const targetsViewSource = readRepoFile('src/components/TargetsCalendarView.tsx');
+    assert.doesNotMatch(
+      targetsViewSource,
+      /Scene3D|from 'three'|getContext\(['"]webgl/,
+      'TargetsCalendarView.tsx must stay strictly zero-WebGL'
     );
   });
 });

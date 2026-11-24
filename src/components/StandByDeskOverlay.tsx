@@ -5,25 +5,14 @@ import {
   BatteryFull,
   BatteryLow,
   BatteryMedium,
-  Box,
-  Eye,
-  EyeOff,
-  Lightbulb,
-  Minimize2,
-  Moon,
+  Layers,
   Pause,
   Play,
   RotateCw,
-  Sun,
   X,
 } from 'lucide-react';
 import type { PulseHabitState } from '../types';
-import {
-  fmtHMS,
-  fmtMS,
-  getSubject,
-  getTimerMetrics,
-} from '../utils/studyLogic';
+import { getSubject, getTimerMetrics } from '../utils/studyLogic';
 import { useTimerTick } from '../utils/timerTicker';
 import {
   computeExamClockSnapshot,
@@ -35,13 +24,16 @@ import {
 import {
   DESK_HUD_AUTO_HIDE_MS,
   DESK_MOUNT_GRACE_MS,
-  computeDeskProgressFilament,
   formatBatteryPercent,
+  formatDeskPrecisionClock,
+  formatDeskSubjectLabel,
+  getDeskSculptureLabel,
+  getOppositeDeskSculpture,
   isWithinMountGraceWindow,
-  loadDesk3dPreference,
-  saveDesk3dPreference,
+  pickRandomDeskSculpture,
   shouldAutoHideDeskHud,
   shouldMountDeskChrono3D,
+  type DeskSculptureKind,
 } from '../utils/deskModeHelpers';
 import {
   exitDeskFullscreen,
@@ -91,6 +83,122 @@ export interface StandByDeskOverlayProps {
   onFinishExam: () => void;
 }
 
+/**
+ * Isolated 1Hz Focus Timer Readout.
+ * Keeps `useTimerTick` strictly scoped here so 1-second timer ticks NEVER re-render
+ * `StandByDeskOverlay` or `DeskChronoScene`.
+ */
+const StandByFocusClock: React.FC<{ state: PulseHabitState }> = ({ state }) => {
+  const t = state.activeTimer;
+  const isRunning = t?.status === 'running';
+  useTimerTick(isRunning);
+
+  const metrics = getTimerMetrics(state);
+  const curSubject = t ? getSubject(state, t.subjectId) : state.subjects[0];
+  const defaultIdleMs = (state.set.pomoWork || 25) * 60_000;
+  const displayMs = metrics ? metrics.displayMs : defaultIdleMs;
+  const clockStr = formatDeskPrecisionClock(displayMs, {
+    overtimeMs: metrics?.overtimeMs ?? 0,
+  });
+  const subjectMicroLabel = formatDeskSubjectLabel(curSubject?.name);
+
+  return (
+    <div className="dh-standby-focus-core">
+      <div
+        className="dh-standby-subject-label"
+        data-testid="standby-subject-label"
+      >
+        {subjectMicroLabel}
+      </div>
+      <div
+        className="dh-standby-clock tabular-nums"
+        data-testid="standby-focus-clock"
+      >
+        {clockStr}
+      </div>
+    </div>
+  );
+};
+
+/**
+ * Isolated 1Hz Exam Hall Stage (only mounts when `mode === 'exam'`).
+ */
+const StandByExamStage: React.FC<{
+  examState: ExamClockState;
+  onSwitchExamSection: (sectionId: ExamSectionId) => void;
+}> = ({ examState, onSwitchExamSection }) => {
+  const [examTick, setExamTick] = useState(0);
+  const isExamRunning = examState.status === 'running';
+
+  useEffect(() => {
+    if (!isExamRunning) return;
+    const id = setInterval(() => {
+      setExamTick((n) => n + 1);
+    }, 1000);
+    return () => clearInterval(id);
+  }, [isExamRunning]);
+  void examTick;
+
+  const examSnapshot = computeExamClockSnapshot(examState);
+  const totalExamStr =
+    examSnapshot.totalOvertimeMs > 0
+      ? `+${formatExamClockMs(examSnapshot.totalOvertimeMs)} over`
+      : formatExamClockMs(examSnapshot.totalRemainingMs, { forceHours: true });
+
+  return (
+    <div className="dh-standby-exam-core">
+      <div className="dh-standby-exam-header">
+        <span className="dh-standby-subject-label">EXAM HALL</span>
+        <span
+          className={`dh-standby-exam-total tabular-nums ${
+            examSnapshot.totalOvertimeMs > 0 ? 'is-overtime' : ''
+          }`}
+          data-testid="standby-exam-total"
+        >
+          {totalExamStr}
+        </span>
+      </div>
+
+      <div
+        className={`dh-standby-exam-grid cols-${examSnapshot.sections.length}`}
+        onClick={(e) => e.stopPropagation()}
+      >
+        {examSnapshot.sections.map((sec) => {
+          const clockText = formatExamSectionDisplay(sec.remainingMs, sec.overtimeMs);
+          return (
+            <button
+              key={sec.id}
+              type="button"
+              className={`dh-standby-pad ${sec.isActive ? 'is-active' : ''} ${
+                sec.isOvertime ? 'is-overtime' : ''
+              }`.trim()}
+              aria-pressed={sec.isActive}
+              onClick={(e) => {
+                e.stopPropagation();
+                triggerHaptic('tap');
+                onSwitchExamSection(sec.id);
+              }}
+            >
+              <span className="dh-standby-pad-top">
+                <span className="dh-standby-pad-name">{sec.label}</span>
+                <span className="dh-standby-pad-visits tabular-nums">{sec.visits}×</span>
+              </span>
+              <span className="dh-standby-pad-clock tabular-nums">{clockText}</span>
+              <span className="dh-standby-pad-foot tabular-nums">
+                {sec.isActive
+                  ? examState.status === 'paused'
+                    ? 'Paused'
+                    : 'Active'
+                  : `${Math.round(sec.budgetMs / 60_000)}m`}
+              </span>
+            </button>
+          );
+        })}
+      </div>
+    </div>
+  );
+};
+
 export const StandByDeskOverlay: React.FC<StandByDeskOverlayProps> = ({
   open,
   mode,
@@ -106,18 +214,21 @@ export const StandByDeskOverlay: React.FC<StandByDeskOverlayProps> = ({
   onToggleExamPause,
   onFinishExam,
 }) => {
+  // Retained in prop signature for FocusView compatibility
+  void parkedCount;
+  void onOpenParkingLot;
+  void onStopFocus;
+
   const ui3dSetting = state.set.ui3d || 'auto';
   const ui3dQuality = state.set.ui3dQuality || 'auto';
 
-  const [nightDim, setNightDim] = useState(false);
-  const [hideSeconds, setHideSeconds] = useState(false);
-  const [desk3dEnabled, setDesk3dEnabled] = useState<boolean>(() =>
-    loadDesk3dPreference(ui3dSetting)
+  const [sculpture, setSculpture] = useState<DeskSculptureKind>(() =>
+    pickRandomDeskSculpture()
   );
   const [simLandscape, setSimLandscape] = useState(false);
-  const [controlsVisible, setControlsVisible] = useState(true);
+  // 100% clean by default on entry; tapping anywhere reveals the minimal frameless HUD for 3s
+  const [controlsVisible, setControlsVisible] = useState(false);
   const [orbitIdx, setOrbitIdx] = useState(0);
-  const [examTick, setExamTick] = useState(0);
 
   const holdingRef = useRef(false);
   const hideTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
@@ -128,40 +239,21 @@ export const StandByDeskOverlay: React.FC<StandByDeskOverlayProps> = ({
   const parkingOpenRef = useRef(parkingSheetOpen);
   parkingOpenRef.current = parkingSheetOpen;
 
-  // Keep Desk 3D state synced if user toggles global settings.ui3d
-  useEffect(() => {
-    setDesk3dEnabled(loadDesk3dPreference(ui3dSetting));
-  }, [ui3dSetting]);
-
   // Screen Wake Lock while StandBy Desk Mode is active
   useWakeLock(open);
 
-  // Low-glare Battery API status (zero permissions, zero network calls, full cleanup on unmount)
+  // Subtle low-glare Battery API status (zero permissions, zero network calls)
   const battery = useBatteryStatus(open);
-
-  // Isolated 1Hz subscription for Focus timer (0 re-renders when paused/idle)
-  const isFocusRunning =
-    open && mode === 'focus' && state.activeTimer?.status === 'running';
-  useTimerTick(isFocusRunning);
-
-  // Isolated 1Hz local tick ONLY when Desk Mode is displaying a running Exam clock
-  const isExamRunning =
-    open && mode === 'exam' && examState.status === 'running';
-  useEffect(() => {
-    if (!isExamRunning) return;
-    const id = setInterval(() => {
-      setExamTick((n) => n + 1);
-    }, 1000);
-    return () => clearInterval(id);
-  }, [isExamRunning]);
-  void examTick;
 
   // Lifecycle strictly keyed to `open` ONLY (never re-runs on parent re-renders or fullscreenchange).
   // Native fullscreen is requested ONCE inside the click that opens Desk Mode — NEVER auto-re-requested here.
   useEffect(() => {
     if (!open) return;
     mountedAtRef.current = performance.now();
-    setControlsVisible(true);
+    // Randomly select either 'monolith' or 'kinetic-wave' on every Desk Mode entry
+    setSculpture(pickRandomDeskSculpture());
+    // Default idle screen is 100% pure & uncluttered
+    setControlsVisible(false);
     setSimLandscape(false);
 
     const prevOverflow = document.body.style.overflow;
@@ -198,33 +290,6 @@ export const StandByDeskOverlay: React.FC<StandByDeskOverlayProps> = ({
     return () => clearInterval(id);
   }, [open]);
 
-  // Derive active timer & exam states for HUD auto-hide and 3D reactivity
-  const t = state.activeTimer;
-  const focusMetrics = open && mode === 'focus' ? getTimerMetrics(state) : null;
-  const examSnapshot = open && mode === 'exam' ? computeExamClockSnapshot(examState) : null;
-
-  const isRunning =
-    mode === 'focus' ? t?.status === 'running' : examState.status === 'running';
-  const isPaused =
-    mode === 'focus' ? t?.status === 'paused' : examState.status === 'paused';
-  const isOvertime =
-    mode === 'focus'
-      ? Boolean(focusMetrics && focusMetrics.overtimeMs > 0)
-      : Boolean(
-          examSnapshot &&
-            (examSnapshot.totalOvertimeMs > 0 ||
-              examSnapshot.sections.some((s) => s.isOvertime))
-        );
-
-  const canAutoHide = shouldAutoHideDeskHud({
-    open,
-    isRunning,
-    isPaused,
-    isOvertime,
-    holding: holdingRef.current,
-    parkingSheetOpen,
-  });
-
   const clearAutoFade = useCallback(() => {
     if (hideTimeoutRef.current) {
       clearTimeout(hideTimeoutRef.current);
@@ -234,50 +299,34 @@ export const StandByDeskOverlay: React.FC<StandByDeskOverlayProps> = ({
 
   const scheduleAutoFade = useCallback(() => {
     clearAutoFade();
-    if (!canAutoHide || holdingRef.current || parkingOpenRef.current) return;
+    if (holdingRef.current || parkingOpenRef.current) return;
     hideTimeoutRef.current = setTimeout(() => {
       if (!holdingRef.current && !parkingOpenRef.current) {
         setControlsVisible(false);
       }
     }, DESK_HUD_AUTO_HIDE_MS);
-  }, [clearAutoFade, canAutoHide]);
+  }, [clearAutoFade]);
 
   const revealControls = useCallback(() => {
     setControlsVisible(true);
     scheduleAutoFade();
   }, [scheduleAutoFade]);
 
-  // Keep controls visible whenever Paused, Overtime, or Parking Lot opens; auto-hide after 4.5s while running
-  useEffect(() => {
-    if (!open) {
-      clearAutoFade();
-      return;
-    }
-    if (isPaused || isOvertime) {
-      clearAutoFade();
-      setControlsVisible(true);
-      return;
-    }
-    if (parkingSheetOpen) {
-      clearAutoFade();
-      return;
-    }
-    if (controlsVisible && canAutoHide) {
-      scheduleAutoFade();
-    } else {
-      clearAutoFade();
-    }
-    return clearAutoFade;
-  }, [
+  const canAutoHide = shouldAutoHideDeskHud({
     open,
-    isPaused,
-    isOvertime,
-    parkingSheetOpen,
     controlsVisible,
-    canAutoHide,
-    clearAutoFade,
-    scheduleAutoFade,
-  ]);
+    holding: holdingRef.current,
+    parkingSheetOpen,
+  });
+
+  useEffect(() => {
+    if (!canAutoHide) {
+      clearAutoFade();
+      return;
+    }
+    scheduleAutoFade();
+    return clearAutoFade;
+  }, [canAutoHide, clearAutoFade, scheduleAutoFade]);
 
   const handleToggleRotate = useCallback(async () => {
     triggerHaptic('tap');
@@ -300,7 +349,6 @@ export const StandByDeskOverlay: React.FC<StandByDeskOverlayProps> = ({
 
     const locked = await lockLandscapeOrientation();
     if (locked) {
-      // Allow a brief layout tick to verify whether the OS actually rotated the viewport
       await new Promise((resolve) => setTimeout(resolve, 120));
       if (typeof window !== 'undefined' && window.innerWidth > window.innerHeight) {
         nativeLandscapeLockedRef.current = true;
@@ -309,83 +357,30 @@ export const StandByDeskOverlay: React.FC<StandByDeskOverlayProps> = ({
       }
     }
 
-    // Fallback: CSS hardware-rotated Simulated Landscape Stage works on demand even if OS Auto-Rotate is off
+    // Fallback: CSS hardware-rotated Simulated Landscape Stage when OS Auto-Rotate is off
     setSimLandscape(true);
   }, [simLandscape, revealControls]);
 
-  const handleToggle3d = useCallback(() => {
+  const handleSwitchSculpture = useCallback(() => {
     triggerHaptic('tap');
-    if (ui3dSetting === 'off') return;
-    setDesk3dEnabled((prev) => {
-      const next = !prev;
-      saveDesk3dPreference(next);
-      return next;
-    });
+    setSculpture((prev) => getOppositeDeskSculpture(prev));
     revealControls();
-  }, [ui3dSetting, revealControls]);
+  }, [revealControls]);
 
   if (!open) return null;
 
+  const t = state.activeTimer;
+  const isRunning =
+    mode === 'focus' ? t?.status === 'running' : examState.status === 'running';
+  const isPaused =
+    mode === 'focus' ? t?.status === 'paused' : examState.status === 'paused';
+
   const [shiftX, shiftY] = BURN_IN_ORBIT[orbitIdx];
-  const curSubject = t ? getSubject(state, t.subjectId) : state.subjects[0];
-  const curChapter = t?.chapterId
-    ? state.chapters.find((c) => c.id === t.chapterId)
-    : undefined;
-
-  const defaultIdleMs = (state.set.pomoWork || 25) * 60_000;
-  const displayMs = focusMetrics ? focusMetrics.displayMs : defaultIdleMs;
-  const isStopwatch = t?.mode === 'stopwatch';
-  const isCountdown = mode === 'focus' ? !isStopwatch : true;
-
-  const focusClockStr = hideSeconds
-    ? formatExamClockMs(displayMs, { hideSeconds: true })
-    : isStopwatch || displayMs >= 3_600_000
-      ? fmtHMS(displayMs)
-      : fmtMS(displayMs);
-
-  const isHmsFormat = !hideSeconds && focusClockStr.length >= 7;
-
-  const totalExamStr = examSnapshot
-    ? examSnapshot.totalOvertimeMs > 0
-      ? `+${formatExamClockMs(examSnapshot.totalOvertimeMs, { hideSeconds })} over`
-      : formatExamClockMs(examSnapshot.totalRemainingMs, {
-          hideSeconds,
-          forceHours: true,
-        })
-    : '03:00:00';
-
-  const activeExamSection = examSnapshot?.sections.find((s) => s.isActive);
-
-  // Strict 0-WebGL guarantee when Night dim is ON, 3D is OFF, settings.ui3d === 'off', or prefers-reduced-motion
   const reducedMotion = prefersReducedMotion();
   const mount3D = shouldMountDeskChrono3D({
     open,
-    nightDim,
-    desk3dEnabled,
     ui3dSetting,
     reducedMotion,
-  });
-
-  const chronoClockMs =
-    mode === 'focus'
-      ? isStopwatch
-        ? focusMetrics?.totalActiveMs ?? 0
-        : displayMs
-      : examSnapshot?.totalRemainingMs ?? 0;
-
-  const filament = computeDeskProgressFilament({
-    mode,
-    isStopwatch,
-    isRunning,
-    isPaused,
-    isOvertime,
-    progressPct: focusMetrics?.progressPct ?? 0,
-    remainingMs: focusMetrics ? Math.max(0, focusMetrics.displayMs) : 0,
-    totalActiveMs: focusMetrics?.totalActiveMs ?? 0,
-    overtimeMs: focusMetrics?.overtimeMs ?? 0,
-    activeExamLabel: activeExamSection?.label,
-    examTotalElapsedMs: examSnapshot?.totalElapsedMs ?? 0,
-    examTotalBudgetMs: (examState.totalDurationMins || 180) * 60_000,
   });
 
   const batteryPct = battery !== null ? formatBatteryPercent(battery.level) : null;
@@ -404,7 +399,7 @@ export const StandByDeskOverlay: React.FC<StandByDeskOverlayProps> = ({
   };
 
   const handleStageClick = () => {
-    // 400ms mount grace window so opening tap from FocusView never leaks through to hide controls
+    // 400ms mount grace window so opening tap from FocusView never leaks through
     if (isWithinMountGraceWindow(performance.now(), mountedAtRef.current, DESK_MOUNT_GRACE_MS)) {
       return;
     }
@@ -416,15 +411,18 @@ export const StandByDeskOverlay: React.FC<StandByDeskOverlayProps> = ({
     }
   };
 
+  const nextSculptureLabel = getDeskSculptureLabel(getOppositeDeskSculpture(sculpture));
+
   const overlayNode = (
     <div
-      className={`dh-standby-overlay ${nightDim ? 'is-night-dim' : ''} ${
-        controlsVisible ? 'controls-visible' : ''
-      } ${mode === 'exam' ? 'is-exam-mode' : 'is-focus-mode'}`.trim()}
+      className={`dh-standby-overlay ${controlsVisible ? 'controls-visible' : ''} ${
+        mode === 'exam' ? 'is-exam-mode' : 'is-focus-mode'
+      }`.trim()}
       data-testid="standby-desk-overlay"
       data-sim-landscape={simLandscape ? 'true' : 'false'}
-      data-night-dim={nightDim ? 'true' : 'false'}
       data-3d-mounted={mount3D ? 'true' : 'false'}
+      data-sculpture={sculpture}
+      data-hud-visible={controlsVisible ? 'true' : 'false'}
       role="dialog"
       aria-modal="true"
       aria-label={
@@ -434,29 +432,27 @@ export const StandByDeskOverlay: React.FC<StandByDeskOverlayProps> = ({
       }
       onClick={handleStageClick}
     >
-      {/* Viewport container: full-screen or hardware-rotated Simulated Landscape Stage centered on #000000 */}
+      {/* Viewport container: pure #000000 or hardware-rotated Simulated Landscape Stage */}
       <div
         className={`dh-standby-viewport ${simLandscape ? 'is-sim-landscape' : ''}`.trim()}
         data-testid="standby-viewport"
       >
-        {/* Pitch-Black #000000 3D Orbital Chronometer Backdrop (unmounted completely in Night dim / 3D off / reduced motion) */}
+        {/* Centered Procedural Obsidian Steel 3D Sculpture (only one geometry resident in GPU memory) */}
         {mount3D && (
           <div className="dh-standby-3d-layer" aria-hidden="true">
             <ErrorBoundary
               variant="section"
-              scopeLabel="Desk 3D chronometer"
-              resetKey={`${ui3dSetting}-${ui3dQuality}-${simLandscape}`}
+              scopeLabel="Desk 3D sculpture"
+              resetKey={`${sculpture}-${ui3dSetting}-${ui3dQuality}`}
               silentFallback={null}
             >
               <Suspense fallback={null}>
                 <DeskChronoScene
+                  sculpture={sculpture}
                   ui3dSetting={ui3dSetting}
                   ui3dQuality={ui3dQuality}
                   isRunning={isRunning}
                   isPaused={isPaused}
-                  isOvertime={isOvertime}
-                  isCountdown={isCountdown}
-                  clockMs={chronoClockMs}
                   simLandscape={simLandscape}
                 />
               </Suspense>
@@ -464,37 +460,144 @@ export const StandByDeskOverlay: React.FC<StandByDeskOverlayProps> = ({
           </div>
         )}
 
-        {/* Always-Reachable Low-Glare Persistent Corner Exit (×) when Main HUD Fades Out */}
-        {!controlsVisible && (
-          <button
-            type="button"
-            className="dh-standby-corner-exit"
-            data-testid="standby-corner-exit"
-            aria-label="Exit desk mode"
-            onClick={(e) => {
-              e.stopPropagation();
-              triggerHaptic('tap');
-              onExit();
-            }}
-          >
-            <X size={20} strokeWidth={1.75} aria-hidden="true" />
-          </button>
-        )}
-
-        {/* Top Auto-Fading Monochrome HUD Dock */}
+        {/* Burn-In Protected Typography Layer: Subject Micro-Label + Massive Precision Clock */}
         <div
-          className={`dh-standby-bar dh-standby-bar-top ${
-            controlsVisible ? 'is-visible' : ''
-          }`}
-          data-testid="standby-top-hud"
+          className="dh-standby-stage"
+          style={{
+            transform: `translate3d(${shiftX}px, ${shiftY}px, 0)`,
+          }}
+        >
+          {mode === 'focus' ? (
+            <StandByFocusClock state={state} />
+          ) : (
+            <StandByExamStage
+              examState={examState}
+              onSwitchExamSection={onSwitchExamSection}
+            />
+          )}
+        </div>
+
+        {/* Minimal Frameless Auto-Hiding Floating Control Bar (Tap Anywhere -> 3s Auto-Fade) */}
+        <div
+          className={`dh-standby-hud ${controlsVisible ? 'is-visible' : ''}`}
+          data-testid="standby-floating-hud"
           aria-hidden={!controlsVisible}
           onClick={(e) => {
             e.stopPropagation();
             revealControls();
           }}
         >
-          <div className="dh-standby-bar-group">
-            {battery !== null && batteryPct !== null && (
+          {mode === 'focus' && t && (
+            <>
+              <button
+                type="button"
+                className="dh-standby-action"
+                data-testid="standby-pause-btn"
+                tabIndex={controlsVisible ? 0 : -1}
+                onClick={() => {
+                  triggerHaptic('tap');
+                  onToggleFocusPause();
+                  revealControls();
+                }}
+              >
+                {t.status === 'running' ? (
+                  <>
+                    <Pause size={15} strokeWidth={1.75} aria-hidden="true" />
+                    <span>Pause</span>
+                  </>
+                ) : (
+                  <>
+                    <Play size={15} strokeWidth={1.75} aria-hidden="true" />
+                    <span>Resume</span>
+                  </>
+                )}
+              </button>
+              <span className="dh-standby-sep" aria-hidden="true" />
+            </>
+          )}
+
+          {mode === 'exam' && (
+            <>
+              <button
+                type="button"
+                className="dh-standby-action"
+                data-testid="standby-pause-btn"
+                tabIndex={controlsVisible ? 0 : -1}
+                onClick={() => {
+                  triggerHaptic('tap');
+                  onToggleExamPause();
+                  revealControls();
+                }}
+              >
+                {examState.status === 'running' ? (
+                  <>
+                    <Pause size={15} strokeWidth={1.75} aria-hidden="true" />
+                    <span>Pause</span>
+                  </>
+                ) : (
+                  <>
+                    <Play size={15} strokeWidth={1.75} aria-hidden="true" />
+                    <span>Resume</span>
+                  </>
+                )}
+              </button>
+              <span className="dh-standby-sep" aria-hidden="true" />
+              <HoldProgressButton
+                label="Hold to finish"
+                holdingLabel="Finishing…"
+                durationMs={1500}
+                onHoldStart={() => {
+                  holdingRef.current = true;
+                  clearAutoFade();
+                }}
+                onHoldEnd={() => {
+                  holdingRef.current = false;
+                  scheduleAutoFade();
+                }}
+                onComplete={() => {
+                  onExit();
+                  onFinishExam();
+                }}
+              />
+              <span className="dh-standby-sep" aria-hidden="true" />
+            </>
+          )}
+
+          {mount3D && (
+            <>
+              <button
+                type="button"
+                className="dh-standby-action"
+                data-testid="standby-switch-sculpture-btn"
+                tabIndex={controlsVisible ? 0 : -1}
+                aria-label={`Switch sculpture to ${nextSculptureLabel}`}
+                onClick={handleSwitchSculpture}
+              >
+                <Layers size={15} strokeWidth={1.75} aria-hidden="true" />
+                <span>Sculpture</span>
+              </button>
+              <span className="dh-standby-sep" aria-hidden="true" />
+            </>
+          )}
+
+          <button
+            type="button"
+            className={`dh-standby-action ${simLandscape ? 'is-active' : ''}`}
+            data-testid="standby-rotate-btn"
+            tabIndex={controlsVisible ? 0 : -1}
+            aria-pressed={simLandscape}
+            aria-label="Toggle landscape rotation"
+            onClick={() => {
+              void handleToggleRotate();
+            }}
+          >
+            <RotateCw size={15} strokeWidth={1.75} aria-hidden="true" />
+            <span>Rotate</span>
+          </button>
+
+          {battery !== null && batteryPct !== null && (
+            <>
+              <span className="dh-standby-sep" aria-hidden="true" />
               <span
                 className="dh-standby-battery tabular-nums"
                 data-testid="standby-battery"
@@ -503,97 +606,14 @@ export const StandByDeskOverlay: React.FC<StandByDeskOverlayProps> = ({
                 {renderBatteryIcon()}
                 <span>{batteryPct}%</span>
               </span>
-            )}
+            </>
+          )}
 
-            <button
-              type="button"
-              className={`dh-standby-pill ${simLandscape ? 'is-active' : ''}`}
-              data-testid="standby-rotate-btn"
-              tabIndex={controlsVisible ? 0 : -1}
-              aria-pressed={simLandscape}
-              onClick={() => {
-                void handleToggleRotate();
-              }}
-            >
-              <RotateCw size={14} strokeWidth={1.75} aria-hidden="true" />
-              <span>Rotate</span>
-            </button>
-
-            <button
-              type="button"
-              className={`dh-standby-pill ${desk3dEnabled && ui3dSetting !== 'off' && !nightDim ? 'is-active' : ''}`}
-              data-testid="standby-3d-btn"
-              tabIndex={controlsVisible ? 0 : -1}
-              disabled={ui3dSetting === 'off'}
-              aria-pressed={desk3dEnabled && ui3dSetting !== 'off'}
-              title={ui3dSetting === 'off' ? '3D scenes disabled in Settings' : 'Toggle 3D chronometer'}
-              onClick={handleToggle3d}
-            >
-              <Box size={14} strokeWidth={1.75} aria-hidden="true" />
-              <span>3D</span>
-            </button>
-
-            <button
-              type="button"
-              className={`dh-standby-pill ${nightDim ? 'is-active' : ''}`}
-              data-testid="standby-night-dim-btn"
-              tabIndex={controlsVisible ? 0 : -1}
-              aria-pressed={nightDim}
-              onClick={() => {
-                triggerHaptic('tap');
-                setNightDim((v) => !v);
-                revealControls();
-              }}
-            >
-              {nightDim ? (
-                <Sun size={14} strokeWidth={1.75} aria-hidden="true" />
-              ) : (
-                <Moon size={14} strokeWidth={1.75} aria-hidden="true" />
-              )}
-              <span>Night dim</span>
-            </button>
-
-            <button
-              type="button"
-              className={`dh-standby-pill ${hideSeconds ? 'is-active' : ''}`}
-              data-testid="standby-hide-sec-btn"
-              tabIndex={controlsVisible ? 0 : -1}
-              aria-pressed={hideSeconds}
-              onClick={() => {
-                triggerHaptic('tap');
-                setHideSeconds((v) => !v);
-                revealControls();
-              }}
-            >
-              {hideSeconds ? (
-                <Eye size={14} strokeWidth={1.75} aria-hidden="true" />
-              ) : (
-                <EyeOff size={14} strokeWidth={1.75} aria-hidden="true" />
-              )}
-              <span>{hideSeconds ? 'Show sec' : 'Hide sec'}</span>
-            </button>
-
-            <button
-              type="button"
-              className="dh-standby-pill"
-              data-testid="standby-park-btn"
-              tabIndex={controlsVisible ? 0 : -1}
-              onClick={() => {
-                triggerHaptic('tap');
-                onOpenParkingLot();
-              }}
-            >
-              <Lightbulb size={14} strokeWidth={1.75} aria-hidden="true" />
-              <span>Park thought</span>
-              {parkedCount > 0 && (
-                <span className="dh-park-badge tabular-nums">{parkedCount}</span>
-              )}
-            </button>
-          </div>
+          <span className="dh-standby-sep" aria-hidden="true" />
 
           <button
             type="button"
-            className="dh-standby-pill dh-standby-exit-pill"
+            className="dh-standby-action dh-standby-action-exit"
             data-testid="standby-exit-btn"
             tabIndex={controlsVisible ? 0 : -1}
             aria-label="Exit desk mode"
@@ -602,249 +622,9 @@ export const StandByDeskOverlay: React.FC<StandByDeskOverlayProps> = ({
               onExit();
             }}
           >
-            <Minimize2 size={14} strokeWidth={1.75} aria-hidden="true" />
+            <X size={15} strokeWidth={1.75} aria-hidden="true" />
             <span>Exit</span>
           </button>
-        </div>
-
-        {/* Main OLED Burn-In Protected Hardware Typography Stage (±6px every 60s) */}
-        <div
-          className="dh-standby-stage"
-          style={{
-            transform: `translate3d(${shiftX}px, ${shiftY}px, 0)`,
-          }}
-        >
-          {mode === 'focus' ? (
-            <div className="dh-standby-focus-core">
-              <div className="dh-standby-meta">
-                <span
-                  className="dh-standby-subject-dot"
-                  style={{
-                    background: nightDim
-                      ? '#DC2626'
-                      : curSubject?.color || '#F5C542',
-                  }}
-                  aria-hidden="true"
-                />
-                <span className="dh-standby-subject-label">
-                  {curSubject?.name || 'Deep Study'}
-                  {curChapter
-                    ? ` · ${curChapter.name}`
-                    : t?.heading
-                      ? ` · ${t.heading}`
-                      : ''}
-                </span>
-                {t?.status === 'paused' && (
-                  <span className="dh-standby-state-chip is-paused">Paused</span>
-                )}
-                {focusMetrics && focusMetrics.overtimeMs > 0 && (
-                  <span className="dh-standby-state-chip is-overtime tabular-nums">
-                    +{formatExamClockMs(focusMetrics.overtimeMs, { hideSeconds })} over
-                  </span>
-                )}
-              </div>
-
-              <div
-                className={`dh-standby-clock tabular-nums ${
-                  hideSeconds ? 'is-hide-sec' : ''
-                } ${isHmsFormat ? 'is-hms' : ''}`.trim()}
-                data-testid="standby-focus-clock"
-              >
-                {focusClockStr}
-              </div>
-            </div>
-          ) : (
-            examSnapshot && (
-              <div className="dh-standby-exam-core">
-                <div className="dh-standby-exam-header">
-                  <span className="dh-standby-exam-label">
-                    NEET Exam Hall
-                  </span>
-                  {examState.status === 'paused' && (
-                    <span className="dh-standby-state-chip is-paused">Paused</span>
-                  )}
-                  <span
-                    className={`dh-standby-exam-total tabular-nums ${
-                      examSnapshot.totalOvertimeMs > 0 ? 'is-overtime' : ''
-                    }`}
-                    data-testid="standby-exam-total"
-                  >
-                    {totalExamStr}
-                  </span>
-                </div>
-
-                <div
-                  className={`dh-standby-exam-grid cols-${examSnapshot.sections.length}`}
-                  onClick={(e) => e.stopPropagation()}
-                >
-                  {examSnapshot.sections.map((sec) => {
-                    const clockText = formatExamSectionDisplay(
-                      sec.remainingMs,
-                      sec.overtimeMs,
-                      { hideSeconds }
-                    );
-                    return (
-                      <button
-                        key={sec.id}
-                        type="button"
-                        className={`dh-standby-pad ${sec.isActive ? 'is-active' : ''} ${
-                          sec.isOvertime ? 'is-overtime dh-exam-overtime-pulse' : ''
-                        }`.trim()}
-                        style={
-                          {
-                            '--pad-color': nightDim ? '#DC2626' : sec.color,
-                          } as React.CSSProperties
-                        }
-                        aria-pressed={sec.isActive}
-                        onClick={(e) => {
-                          e.stopPropagation();
-                          triggerHaptic('tap');
-                          onSwitchExamSection(sec.id);
-                        }}
-                      >
-                        <span className="dh-standby-pad-top">
-                          <span className="dh-standby-pad-name">{sec.label}</span>
-                          <span className="dh-standby-pad-visits tabular-nums">
-                            {sec.visits}×
-                          </span>
-                        </span>
-                        <span className="dh-standby-pad-clock tabular-nums">
-                          {clockText}
-                        </span>
-                        <span className="dh-standby-pad-foot tabular-nums">
-                          {sec.isActive
-                            ? examState.status === 'paused'
-                              ? 'Paused · tap to resume'
-                              : 'Active'
-                            : `${Math.round(sec.budgetMs / 60_000)}m budget`}
-                        </span>
-                      </button>
-                    );
-                  })}
-                </div>
-              </div>
-            )
-          )}
-        </div>
-
-        {/* Bottom Dock Wrapper: Transport Controls + Razor-Thin 2px Lumen Progress Filament */}
-        <div className="dh-standby-footer-zone">
-          <div
-            className={`dh-standby-bar dh-standby-bar-bottom ${
-              controlsVisible ? 'is-visible' : ''
-            }`}
-            data-testid="standby-bottom-hud"
-            aria-hidden={!controlsVisible}
-            onClick={(e) => {
-              e.stopPropagation();
-              revealControls();
-            }}
-          >
-            {mode === 'focus' ? (
-              t ? (
-                <>
-                  <button
-                    type="button"
-                    className="dh-standby-pill dh-standby-transport-pill"
-                    tabIndex={controlsVisible ? 0 : -1}
-                    onClick={() => {
-                      triggerHaptic('tap');
-                      onToggleFocusPause();
-                      revealControls();
-                    }}
-                  >
-                    {t.status === 'running' ? (
-                      <>
-                        <Pause size={16} strokeWidth={1.75} aria-hidden="true" />
-                        <span>Pause</span>
-                      </>
-                    ) : (
-                      <>
-                        <Play size={16} strokeWidth={1.75} aria-hidden="true" />
-                        <span>Resume</span>
-                      </>
-                    )}
-                  </button>
-
-                  <HoldProgressButton
-                    label="Hold to stop"
-                    holdingLabel="Stopping…"
-                    durationMs={1500}
-                    onHoldStart={() => {
-                      holdingRef.current = true;
-                      clearAutoFade();
-                    }}
-                    onHoldEnd={() => {
-                      holdingRef.current = false;
-                      scheduleAutoFade();
-                    }}
-                    onComplete={() => {
-                      onExit();
-                      onStopFocus();
-                    }}
-                  />
-                </>
-              ) : (
-                <span className="dh-standby-hint">Tap stage to toggle controls</span>
-              )
-            ) : (
-              <>
-                <button
-                  type="button"
-                  className="dh-standby-pill dh-standby-transport-pill"
-                  tabIndex={controlsVisible ? 0 : -1}
-                  onClick={() => {
-                    triggerHaptic('tap');
-                    onToggleExamPause();
-                    revealControls();
-                  }}
-                >
-                  {examState.status === 'running' ? (
-                    <>
-                      <Pause size={16} strokeWidth={1.75} aria-hidden="true" />
-                      <span>Pause exam</span>
-                    </>
-                  ) : (
-                    <>
-                      <Play size={16} strokeWidth={1.75} aria-hidden="true" />
-                      <span>Resume exam</span>
-                    </>
-                  )}
-                </button>
-
-                <HoldProgressButton
-                  label="Hold to finish paper"
-                  holdingLabel="Finishing…"
-                  durationMs={1500}
-                  onHoldStart={() => {
-                    holdingRef.current = true;
-                    clearAutoFade();
-                  }}
-                  onHoldEnd={() => {
-                    holdingRef.current = false;
-                    scheduleAutoFade();
-                  }}
-                  onComplete={() => {
-                    onExit();
-                    onFinishExam();
-                  }}
-                />
-              </>
-            )}
-          </div>
-
-          {/* Bottom Edge: Razor-Thin 2px Lumen Gold Progress Filament + Right-Aligned ETA / Milestone Meta */}
-          <div className="dh-standby-filament-wrap" data-testid="standby-progress-filament">
-            <div className="dh-standby-filament-meta tabular-nums">
-              {filament.metaLabel}
-            </div>
-            <div className="dh-standby-filament-track" aria-hidden="true">
-              <div
-                className={`dh-standby-filament-fill tone-${filament.tone}`}
-                style={{ width: `${filament.pct}%` }}
-              />
-            </div>
-          </div>
         </div>
       </div>
     </div>

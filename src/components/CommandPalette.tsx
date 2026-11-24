@@ -1,6 +1,7 @@
 import React, { useEffect, useMemo, useRef, useState } from 'react';
 import {
   BarChart3,
+  Bell,
   BookOpen,
   Calendar,
   Camera,
@@ -13,6 +14,7 @@ import {
   Search,
   Settings,
   Sparkles,
+  Target,
   Timer,
   Users,
   X,
@@ -128,6 +130,17 @@ export const CommandPalette: React.FC<CommandPaletteProps> = ({
         onSelect: () => onSelectTab('groups'),
       },
       {
+        id: 'nav-targets',
+        group: 'Screens',
+        label: 'Go to Prep → Targets & Calendar',
+        sublabel: 'Deadline target sprints, custom reminders & monthly calendar',
+        icon: <Target size={17} strokeWidth={1.75} />,
+        onSelect: () => {
+          onSelectPrepSubTab('targets');
+          onSelectTab('prep');
+        },
+      },
+      {
         id: 'nav-mocks',
         group: 'Screens',
         label: 'Go to Prep → Mocks',
@@ -199,6 +212,22 @@ export const CommandPalette: React.FC<CommandPaletteProps> = ({
         shortcut: 'N',
         icon: <CheckSquare size={17} strokeWidth={1.75} />,
         onSelect: () => onQuickAction('addTask'),
+      },
+      {
+        id: 'act-add-target',
+        group: 'Quick actions',
+        label: 'Add target sprint',
+        sublabel: 'Set a deadline date and freeform checklist in Prep → Targets',
+        icon: <Target size={17} strokeWidth={1.75} />,
+        onSelect: () => onQuickAction('addTarget'),
+      },
+      {
+        id: 'act-add-reminder',
+        group: 'Quick actions',
+        label: 'Add custom reminder',
+        sublabel: 'Create a dated reminder with 7d/3d/1d lead alerts & .ics export',
+        icon: <Bell size={17} strokeWidth={1.75} />,
+        onSelect: () => onQuickAction('addReminder'),
       },
       {
         id: 'act-log-session',

@@ -6,6 +6,7 @@ import {
   safeLocalStorageSet,
 } from './security.ts';
 import { logicalKey, norm } from './studyLogic.ts';
+import { attachNormalizedTargetsAndReminders } from './targetsLogic.ts';
 
 export class StorageLoadError extends Error {
   constructor(message = 'Your saved data could not be loaded') {
@@ -282,10 +283,11 @@ export async function restoreFromLatestBackup(): Promise<PulseHabitState | null>
     const valid = await readValidBackups();
     if (!valid.length) return null;
 
-    const restored = norm({
+    const restoredBase = norm({
       ...valid[0].state,
       savedAt: Date.now(),
     });
+    const restored = attachNormalizedTargetsAndReminders(restoredBase, valid[0].state);
     if (safeLocalStorageSet('dh', JSON.stringify(restored)).ok) {
       markDataSeen();
     }
@@ -473,7 +475,8 @@ export async function loadInitialState(): Promise<PulseHabitState> {
     needsResave = true;
   }
 
-  const state = norm(chosenRaw);
+  const stateBase = norm(chosenRaw);
+  const state = attachNormalizedTargetsAndReminders(stateBase, chosenRaw);
   if (chosenRaw && !state.savedAt) {
     state.savedAt = Date.now();
   }

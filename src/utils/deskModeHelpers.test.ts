@@ -1,71 +1,82 @@
 import { describe, it } from 'node:test';
 import assert from 'node:assert/strict';
 import {
-  DESK_3D_STORAGE_KEY,
   DESK_HUD_AUTO_HIDE_MS,
   DESK_MOUNT_GRACE_MS,
-  computeChronoState,
-  computeDeskProgressFilament,
+  KINETIC_WAVE_RIB_COUNT,
+  computeKineticWaveRibTransform,
+  computeMonolithMotion,
   formatBatteryPercent,
+  formatDeskPrecisionClock,
+  formatDeskSubjectLabel,
+  getDeskSculptureLabel,
+  getOppositeDeskSculpture,
   isWithinMountGraceWindow,
-  loadDesk3dPreference,
-  saveDesk3dPreference,
+  pickRandomDeskSculpture,
   shouldAutoHideDeskHud,
   shouldMountDeskChrono3D,
 } from './deskModeHelpers.ts';
 
-function createMemoryStorage(initial: Record<string, string> = {}) {
-  const map = new Map<string, string>(Object.entries(initial));
-  return {
-    getItem: (key: string) => (map.has(key) ? map.get(key)! : null),
-    setItem: (key: string, value: string) => {
-      map.set(key, String(value));
-    },
-  };
-}
+describe('v45 StandBy Desk Mode pure helpers', () => {
+  it('randomly selects monolith or kinetic-wave at 0.5 split and toggles cleanly', () => {
+    assert.equal(pickRandomDeskSculpture(() => 0.0), 'monolith');
+    assert.equal(pickRandomDeskSculpture(() => 0.499), 'monolith');
+    assert.equal(pickRandomDeskSculpture(() => 0.5), 'kinetic-wave');
+    assert.equal(pickRandomDeskSculpture(() => 0.99), 'kinetic-wave');
 
-describe('v43 StandBy Desk Mode pure helpers', () => {
-  it('defaults Desk 3D ON when ui3d !== off and persists toggle cleanly', () => {
-    const store = createMemoryStorage();
-    assert.equal(loadDesk3dPreference('auto', store), true);
-    assert.equal(loadDesk3dPreference('on', store), true);
-    assert.equal(loadDesk3dPreference('off', store), false);
-
-    saveDesk3dPreference(false, store);
-    assert.equal(store.getItem(DESK_3D_STORAGE_KEY), '0');
-    assert.equal(loadDesk3dPreference('auto', store), false);
-
-    saveDesk3dPreference(true, store);
-    assert.equal(store.getItem(DESK_3D_STORAGE_KEY), '1');
-    assert.equal(loadDesk3dPreference('auto', store), true);
-    // Global ui3d='off' always overrides local Desk 3D preference
-    assert.equal(loadDesk3dPreference('off', store), false);
+    assert.equal(getOppositeDeskSculpture('monolith'), 'kinetic-wave');
+    assert.equal(getOppositeDeskSculpture('kinetic-wave'), 'monolith');
+    assert.equal(getDeskSculptureLabel('monolith'), 'Monolith');
+    assert.equal(getDeskSculptureLabel('kinetic-wave'), 'Kinetic wave');
   });
 
-  it('strictly unmounts DeskChronoScene (0 WebGL canvases) when Night dim, 3D OFF, ui3d off, or reduced motion is active', () => {
-    const base = {
-      open: true,
-      nightDim: false,
-      desk3dEnabled: true,
-      ui3dSetting: 'auto' as const,
-      reducedMotion: false,
-    };
-    assert.equal(shouldMountDeskChrono3D(base), true);
-    assert.equal(shouldMountDeskChrono3D({ ...base, open: false }), false);
-    assert.equal(shouldMountDeskChrono3D({ ...base, nightDim: true }), false);
-    assert.equal(shouldMountDeskChrono3D({ ...base, desk3dEnabled: false }), false);
-    assert.equal(shouldMountDeskChrono3D({ ...base, ui3dSetting: 'off' }), false);
-    assert.equal(shouldMountDeskChrono3D({ ...base, reducedMotion: true }), false);
+  it('formats space-separated Swiss-horology HH MM SS precision clock and overtime cleanly', () => {
+    assert.equal(formatDeskPrecisionClock(0), '00 00 00');
+    assert.equal(formatDeskPrecisionClock((43 * 60 + 3) * 1000), '00 43 03');
+    assert.equal(formatDeskPrecisionClock((3600 + 5 * 60 + 9) * 1000), '01 05 09');
+    assert.equal(formatDeskPrecisionClock(-5000), '00 00 00');
+    assert.equal(
+      formatDeskPrecisionClock(0, { overtimeMs: (2 * 60 + 15) * 1000 }),
+      '+00 02 15'
+    );
   });
 
-  it('enforces 4.5s HUD auto-hide ONLY while running and never when Paused, Overtime, Holding, or Parking Lot open', () => {
-    assert.equal(DESK_HUD_AUTO_HIDE_MS, 4500);
+  it('normalizes uppercase tracked subject micro-label and strips emojis', () => {
+    assert.equal(formatDeskSubjectLabel('Physics'), 'PHYSICS');
+    assert.equal(formatDeskSubjectLabel('  ⚡ Chemistry  '), 'CHEMISTRY');
+    assert.equal(formatDeskSubjectLabel(''), 'DEEP STUDY');
+    assert.equal(formatDeskSubjectLabel(undefined), 'DEEP STUDY');
+  });
+
+  it('strictly unmounts DeskChronoScene when closed, ui3d is off, or reduced motion is active', () => {
+    assert.equal(
+      shouldMountDeskChrono3D({ open: true, ui3dSetting: 'auto', reducedMotion: false }),
+      true
+    );
+    assert.equal(
+      shouldMountDeskChrono3D({ open: true, ui3dSetting: 'on', reducedMotion: false }),
+      true
+    );
+    assert.equal(
+      shouldMountDeskChrono3D({ open: false, ui3dSetting: 'auto', reducedMotion: false }),
+      false
+    );
+    assert.equal(
+      shouldMountDeskChrono3D({ open: true, ui3dSetting: 'off', reducedMotion: false }),
+      false
+    );
+    assert.equal(
+      shouldMountDeskChrono3D({ open: true, ui3dSetting: 'auto', reducedMotion: true }),
+      false
+    );
+  });
+
+  it('enforces 3s HUD auto-hide when visible and blocks hide during hold or open sheet', () => {
+    assert.equal(DESK_HUD_AUTO_HIDE_MS, 3000);
     assert.equal(
       shouldAutoHideDeskHud({
         open: true,
-        isRunning: true,
-        isPaused: false,
-        isOvertime: false,
+        controlsVisible: true,
         holding: false,
         parkingSheetOpen: false,
       }),
@@ -74,9 +85,7 @@ describe('v43 StandBy Desk Mode pure helpers', () => {
     assert.equal(
       shouldAutoHideDeskHud({
         open: true,
-        isRunning: false,
-        isPaused: true,
-        isOvertime: false,
+        controlsVisible: false,
         holding: false,
         parkingSheetOpen: false,
       }),
@@ -85,20 +94,7 @@ describe('v43 StandBy Desk Mode pure helpers', () => {
     assert.equal(
       shouldAutoHideDeskHud({
         open: true,
-        isRunning: true,
-        isPaused: false,
-        isOvertime: true,
-        holding: false,
-        parkingSheetOpen: false,
-      }),
-      false
-    );
-    assert.equal(
-      shouldAutoHideDeskHud({
-        open: true,
-        isRunning: true,
-        isPaused: false,
-        isOvertime: false,
+        controlsVisible: true,
         holding: true,
         parkingSheetOpen: false,
       }),
@@ -107,9 +103,7 @@ describe('v43 StandBy Desk Mode pure helpers', () => {
     assert.equal(
       shouldAutoHideDeskHud({
         open: true,
-        isRunning: true,
-        isPaused: false,
-        isOvertime: false,
+        controlsVisible: true,
         holding: false,
         parkingSheetOpen: true,
       }),
@@ -125,74 +119,29 @@ describe('v43 StandBy Desk Mode pure helpers', () => {
     assert.equal(isWithinMountGraceWindow(2500, 1000), false);
   });
 
-  it('maps running, paused, and overtime states to crisp chronometer visual palettes and tick indices', () => {
-    const running = computeChronoState({
-      isRunning: true,
-      isPaused: false,
-      isOvertime: false,
-      clockMs: 15_000,
-    });
-    assert.equal(running.visualMode, 'running');
-    assert.equal(running.accentHex, '#F5C542');
-    assert.equal(running.activeTickIndex, 15);
-    assert.equal(running.intensity, 1.0);
-
-    const paused = computeChronoState({
-      isRunning: false,
-      isPaused: true,
-      isOvertime: false,
-      clockMs: 30_000,
-    });
-    assert.equal(paused.visualMode, 'paused');
-    assert.equal(paused.activeTickIndex, 30);
-    assert.ok(paused.intensity < 0.6);
-
-    const overtime = computeChronoState({
-      isRunning: true,
-      isPaused: false,
-      isOvertime: true,
-      clockMs: 45_000,
-    });
-    assert.equal(overtime.visualMode, 'overtime');
-    assert.equal(overtime.accentHex, '#F43F5E');
-    assert.equal(overtime.activeTickIndex, 45);
+  it('dims and settles Monolith internal core smoothly when paused (energy 0 vs 1)', () => {
+    const running = computeMonolithMotion(1.2, 1);
+    const paused = computeMonolithMotion(1.2, 0);
+    assert.ok(running.coreEmissiveIntensity > paused.coreEmissiveIntensity);
+    assert.ok(running.coreLightIntensity > paused.coreLightIntensity);
+    assert.ok(running.coreHaloOpacity > paused.coreHaloOpacity);
+    assert.ok(Number.isFinite(running.rotX) && Number.isFinite(running.rotY));
   });
 
-  it('computes progress filament percentages and stopwatch 15m pulse cleanly', () => {
-    const sw = computeDeskProgressFilament({
-      mode: 'focus',
-      isStopwatch: true,
-      isRunning: true,
-      isPaused: false,
-      isOvertime: false,
-      totalActiveMs: 1_350_000, // 22.5 min -> 1 hit, 50% into second 15m cycle
-    });
-    assert.equal(sw.pct, 50);
-    assert.equal(sw.tone, 'gold');
-    assert.match(sw.metaLabel, /1×15m/);
+  it('computes 22-rib Kinetic Wave transforms symmetrically along spine with phase propagation', () => {
+    assert.equal(KINETIC_WAVE_RIB_COUNT, 22);
+    const first = computeKineticWaveRibTransform(0, KINETIC_WAVE_RIB_COUNT, 1.0, 1);
+    const mid = computeKineticWaveRibTransform(10, KINETIC_WAVE_RIB_COUNT, 1.0, 1);
+    const last = computeKineticWaveRibTransform(21, KINETIC_WAVE_RIB_COUNT, 1.0, 1);
 
-    const ot = computeDeskProgressFilament({
-      mode: 'focus',
-      isRunning: true,
-      isPaused: false,
-      isOvertime: true,
-      overtimeMs: 125_000,
-    });
-    assert.equal(ot.pct, 100);
-    assert.equal(ot.tone, 'crimson');
-    assert.match(ot.metaLabel, /\+02:05/);
+    assert.ok(first.x < 0 && last.x > 0);
+    assert.ok(Math.abs(first.x + last.x) < 1e-6);
+    assert.ok(mid.scaleY > first.scaleY);
 
-    const exam = computeDeskProgressFilament({
-      mode: 'exam',
-      isRunning: true,
-      isPaused: false,
-      isOvertime: false,
-      activeExamLabel: 'Physics',
-      examTotalElapsedMs: 5_400_000,
-      examTotalBudgetMs: 10_800_000,
-    });
-    assert.equal(exam.pct, 50);
-    assert.match(exam.metaLabel, /Physics/);
+    // Paused (energy=0) softens wave amplitude compared to running (energy=1)
+    const runRib = computeKineticWaveRibTransform(5, KINETIC_WAVE_RIB_COUNT, 2.0, 1);
+    const pauseRib = computeKineticWaveRibTransform(5, KINETIC_WAVE_RIB_COUNT, 2.0, 0);
+    assert.ok(Math.abs(pauseRib.yOffset) < Math.abs(runRib.yOffset) || Math.abs(runRib.yOffset) < 1e-3);
   });
 
   it('formats battery percentages with safe clamping', () => {

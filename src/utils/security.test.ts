@@ -26,8 +26,8 @@ import {
   validateRasterImageMetadata,
   type SafeStorageLike,
 } from './security.ts';
-import { createDefaultState, logicalKey } from './studyLogic.ts';
-import { partitionStateToCloudDocs } from './cloudSync.ts';
+import { createDefaultState, logicalKey, norm } from './studyLogic.ts';
+import { mergeStateWithCloudDocs, partitionStateToCloudDocs } from './cloudSync.ts';
 import {
   buildActiveSessionAuraPayload,
   buildMyMemberEntry,
@@ -592,4 +592,90 @@ test('insightsCanvas helpers handle 0m days, single-session day, 24h midnight wr
   assert.equal(Number.isFinite(rhythm30d.goalHitRatePct), true);
   assert.equal(Number.isFinite(rhythm30d.maxDayMin), true);
 });
+
+// ---------------------------------------------------------------------------
+// 9. v44 Deadline Target Sprints & Custom Reminders Firestore Contract
+// ---------------------------------------------------------------------------
+test('v44 meta/tasks doc with deadlineTargets and reminders passes Firestore contract and LWW merges cleanly', () => {
+  const baseTs = Date.now() - 60_000;
+  const localState = norm({
+    tasks: [],
+  });
+  localState.deadlineTargets = [
+    {
+      id: 'tgt_alpha',
+      title: 'Finish Electrostatics',
+      startDate: '2026-11-24',
+      deadlineDate: '2026-11-30',
+      subjectId: 'sub_phy',
+      items: [
+        { id: 'i1', text: 'Read NCERT', done: true, doneAt: baseTs + 1000 },
+        { id: 'i2', text: 'Solve 50 PYQs', done: false },
+      ],
+      createdAt: baseTs,
+      updatedAt: baseTs + 2000,
+    },
+  ];
+  localState.reminders = [
+    {
+      id: 'rem_fee',
+      title: 'NEET registration fee payment',
+      date: '2026-11-29',
+      time: '14:00',
+      leadDays: [3, 1, 0],
+      category: 'admin',
+      done: false,
+      createdAt: baseTs,
+      updatedAt: baseTs + 2000,
+    },
+  ];
+
+  const { docs } = partitionStateToCloudDocs(localState);
+  const tasksDoc = docs['meta/tasks'];
+  assert.ok(tasksDoc, 'Expected meta/tasks doc to be generated');
+  const contract = validateFirestoreUserDocContract('meta', 'tasks', tasksDoc);
+  assert.equal(contract.ok, true, `meta/tasks violated Firestore rule: ${contract.errors.join(', ')}`);
+  assert.ok(Object.keys(tasksDoc).length <= 20);
+
+  // Simulate another device merging from cloud with a newer reminder + tombstone deletion
+  const otherDeviceLocal = norm({});
+  const remoteDocsWithUpdate = {
+    ...docs,
+    'meta/tasks': {
+      ...tasksDoc,
+      reminders: {
+        ...(tasksDoc.reminders as Record<string, unknown>),
+        rem_fee: {
+          id: 'rem_fee',
+          title: 'NEET registration fee payment (Updated)',
+          date: '2026-11-29',
+          leadDays: [7, 3, 1, 0],
+          category: 'admin',
+          done: true,
+          createdAt: baseTs,
+          updatedAt: baseTs + 9000,
+        },
+      },
+    },
+  };
+
+  const merged = mergeStateWithCloudDocs(otherDeviceLocal, remoteDocsWithUpdate);
+  assert.equal(merged.deadlineTargets?.length, 1);
+  assert.equal(merged.deadlineTargets?.[0].title, 'Finish Electrostatics');
+  assert.equal(merged.deadlineTargets?.[0].items.length, 2);
+  assert.equal(merged.reminders?.length, 1);
+  assert.equal(merged.reminders?.[0].done, true);
+  assert.equal(merged.reminders?.[0].title, 'NEET registration fee payment (Updated)');
+
+  // Tombstone deletion on local device suppresses stale remote reminder
+  const deletedLocal = {
+    ...merged,
+    reminders: [],
+    del: ['rem_fee'],
+    delAt: { rem_fee: baseTs + 20_000 },
+  };
+  const afterDeleteMerge = mergeStateWithCloudDocs(deletedLocal, remoteDocsWithUpdate);
+  assert.equal(afterDeleteMerge.reminders?.length, 0);
+});
+
 

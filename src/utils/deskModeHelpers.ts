@@ -1,121 +1,129 @@
-import { fmtClockTime, fmtMS } from './studyLogic.ts';
 import type { Ui3dSetting } from './uiHelpers.ts';
 
-export const DESK_3D_STORAGE_KEY = 'dh_desk_3d_v1';
-export const DESK_HUD_AUTO_HIDE_MS = 4500;
+export const DESK_HUD_AUTO_HIDE_MS = 3000;
 export const DESK_MOUNT_GRACE_MS = 400;
+export const KINETIC_WAVE_RIB_COUNT = 22;
 
-export type DeskChronoVisualMode = 'running' | 'paused' | 'overtime';
+export type DeskSculptureKind = 'monolith' | 'kinetic-wave';
 
-export interface DeskChronoState {
-  visualMode: DeskChronoVisualMode;
-  /** Normalized 0..1 position of the live sweeping second marker within the 60s dial. */
-  secondFraction: number;
-  /** Integer 0..59 index of the active second tick on the 60-tick orbital ring. */
-  activeTickIndex: number;
-  /** Primary accent hex for the sweeping marker and active ticks. */
-  accentHex: string;
-  /** Secondary meridian gimbal hex. */
-  meridianHex: string;
-  /** Global luminance scalar for the 3D chronometer (low when paused, vivid in overtime). */
-  intensity: number;
+export interface MonolithMotionSnapshot {
+  rotX: number;
+  rotY: number;
+  rotZ: number;
+  coreRotY: number;
+  corePulse: number;
+  coreEmissiveIntensity: number;
+  coreLightIntensity: number;
+  coreHaloOpacity: number;
 }
 
-export interface DeskProgressFilament {
-  /** Normalized 0..100 fill percentage for the bottom 2px filament. */
-  pct: number;
-  /** Semantic filament tone. */
-  tone: 'gold' | 'crimson' | 'paused';
-  /** Muted right-aligned ETA / milestone meta string. */
-  metaLabel: string;
+export interface KineticWaveRibTransform {
+  x: number;
+  yOffset: number;
+  rotX: number;
+  rotY: number;
+  rotZ: number;
+  scaleY: number;
 }
 
 /**
- * Loads the user's Desk Mode 3D backdrop preference from localStorage.
- * Defaults to ON whenever `settings.ui3d !== 'off'`, and strictly OFF if global 3D is off.
+ * Randomly selects one of the two procedural Obsidian Steel sculptures on Desk Mode entry.
+ * Uses `Math.random() < 0.5` by default so only one sculpture is ever instantiated per session.
  */
-export function loadDesk3dPreference(
-  ui3dSetting: Ui3dSetting = 'auto',
-  storage?: Pick<Storage, 'getItem'> | null
-): boolean {
-  if (ui3dSetting === 'off') return false;
-  try {
-    const store =
-      storage !== undefined
-        ? storage
-        : typeof window !== 'undefined'
-          ? window.localStorage
-          : null;
-    if (!store) return true;
-    const raw = store.getItem(DESK_3D_STORAGE_KEY);
-    if (raw === '0' || raw === 'false') return false;
-    if (raw === '1' || raw === 'true') return true;
-    return true;
-  } catch {
-    return true;
-  }
+export function pickRandomDeskSculpture(
+  randFn: () => number = Math.random
+): DeskSculptureKind {
+  return randFn() < 0.5 ? 'monolith' : 'kinetic-wave';
 }
 
 /**
- * Persists the Desk Mode 3D backdrop toggle strictly in localStorage.
+ * Returns the alternate sculpture when the user taps "Switch Sculpture".
  */
-export function saveDesk3dPreference(
-  enabled: boolean,
-  storage?: Pick<Storage, 'setItem'> | null
-): void {
-  try {
-    const store =
-      storage !== undefined
-        ? storage
-        : typeof window !== 'undefined'
-          ? window.localStorage
-          : null;
-    store?.setItem(DESK_3D_STORAGE_KEY, enabled ? '1' : '0');
-  } catch {
-    // Ignore storage quota / private mode errors
-  }
+export function getOppositeDeskSculpture(
+  current: DeskSculptureKind
+): DeskSculptureKind {
+  return current === 'monolith' ? 'kinetic-wave' : 'monolith';
 }
 
 /**
- * Strict single-source-of-truth gate for mounting `DeskChronoScene`.
- * Guarantees 0 WebGL canvases whenever Desk Mode is closed, Night dim is ON,
- * 3D toggle is OFF, global `settings.ui3d === 'off'`, or `prefers-reduced-motion` is active.
+ * Human-readable sentence-case label for the active 3D sculpture.
+ */
+export function getDeskSculptureLabel(sculpture: DeskSculptureKind): string {
+  return sculpture === 'monolith' ? 'Monolith' : 'Kinetic wave';
+}
+
+/**
+ * Formats elapsed or remaining milliseconds into Swiss-horology space-separated
+ * `HH MM SS` tabular numerals (e.g. `00 43 03`, `01 12 08`, or `+00 02 15` in overtime).
+ */
+export function formatDeskPrecisionClock(
+  ms: number,
+  opts?: { overtimeMs?: number }
+): string {
+  const overtimeMs = opts?.overtimeMs ?? 0;
+  const isOvertime = Number.isFinite(overtimeMs) && overtimeMs > 0;
+  const sourceMs = isOvertime ? overtimeMs : ms;
+  const safeMs = Number.isFinite(sourceMs) ? Math.max(0, sourceMs) : 0;
+  const totalSec = Math.floor(safeMs / 1000);
+  const hours = Math.floor(totalSec / 3600);
+  const minutes = Math.floor((totalSec % 3600) / 60);
+  const seconds = totalSec % 60;
+
+  const hh = String(hours).padStart(2, '0');
+  const mm = String(minutes).padStart(2, '0');
+  const ss = String(seconds).padStart(2, '0');
+  const formatted = `${hh} ${mm} ${ss}`;
+  return isOvertime ? `+${formatted}` : formatted;
+}
+
+/**
+ * Formats the quiet tracked uppercase subject micro-label centered above the timer.
+ * Strips emojis and control characters to keep the AMOLED hardware aesthetic pure.
+ */
+export function formatDeskSubjectLabel(subjectName?: string | null): string {
+  const raw = typeof subjectName === 'string' ? subjectName : '';
+  const cleaned = raw
+    .replace(/[\p{Extended_Pictographic}\p{Emoji_Presentation}\uFE0F]/gu, '')
+    .replace(/[\u0000-\u001F\u007F]/g, '')
+    .replace(/\s+/g, ' ')
+    .trim();
+  return (cleaned || 'DEEP STUDY').toUpperCase();
+}
+
+/**
+ * Single-source-of-truth gate for mounting the Desk Mode WebGL sculpture.
+ * Guarantees 0 WebGL canvases when Desk Mode is closed, `settings.ui3d === 'off'`,
+ * or `prefers-reduced-motion` is enabled.
  */
 export function shouldMountDeskChrono3D(params: {
   open: boolean;
-  nightDim: boolean;
-  desk3dEnabled: boolean;
   ui3dSetting?: Ui3dSetting;
   reducedMotion: boolean;
 }): boolean {
-  const { open, nightDim, desk3dEnabled, ui3dSetting = 'auto', reducedMotion } = params;
+  const { open, ui3dSetting = 'auto', reducedMotion } = params;
   if (!open) return false;
-  if (nightDim) return false;
-  if (!desk3dEnabled) return false;
   if (ui3dSetting === 'off') return false;
   if (reducedMotion) return false;
   return true;
 }
 
 /**
- * Auto-hide HUD controls after 4.5s ONLY while the timer is actively running
- * and no sub-sheet or hold gesture is active. Keeps controls visible when Paused or Overtime.
+ * Auto-hides the frameless floating HUD back to `opacity: 0` after 3s of inactivity
+ * whenever Desk Mode is open and no hold gesture or parking sheet is active.
  */
 export function shouldAutoHideDeskHud(params: {
   open: boolean;
-  isRunning: boolean;
-  isPaused: boolean;
-  isOvertime: boolean;
+  controlsVisible: boolean;
   holding: boolean;
   parkingSheetOpen: boolean;
 }): boolean {
-  const { open, isRunning, isPaused, isOvertime, holding, parkingSheetOpen } = params;
-  return open && isRunning && !isPaused && !isOvertime && !holding && !parkingSheetOpen;
+  const { open, controlsVisible, holding, parkingSheetOpen } = params;
+  return open && controlsVisible && !holding && !parkingSheetOpen;
 }
 
 /**
  * Ignores stage background clicks during the initial 400ms mount grace window
- * so the tap opening Desk Mode from FocusView can never leak through and hide the HUD.
+ * so the tap opening Desk Mode from FocusView never leaks through to toggle the HUD.
  */
 export function isWithinMountGraceWindow(
   nowMs: number,
@@ -127,152 +135,67 @@ export function isWithinMountGraceWindow(
 }
 
 /**
- * Computes pure visual parameters for the 3D Orbital Chronometer backdrop.
+ * Pure kinematic snapshot for the Smoked Obsidian Monolith sculpture.
+ * `energy` smoothly interpolates between `1` (running) and `0` (paused) inside the render loop.
  */
-export function computeChronoState(params: {
-  isRunning: boolean;
-  isPaused: boolean;
-  isOvertime: boolean;
-  /** Milliseconds driving the sweeping second position (active elapsed or remaining ms). */
-  clockMs: number;
-  /** True when counting down (sweeps clockwise with elapsed time when false, or ticking seconds). */
-  isCountdown?: boolean;
-}): DeskChronoState {
-  const { isRunning, isPaused, isOvertime, clockMs, isCountdown = false } = params;
-  const safeMs = Math.max(0, Number.isFinite(clockMs) ? clockMs : 0);
-  const rawSec = (safeMs % 60_000) / 60_000;
-  // For countdowns, sweep smoothly clockwise as seconds decrease from 60 -> 0
-  const secondFraction = isCountdown ? (1 - rawSec) % 1 : rawSec;
-  const activeTickIndex = Math.floor(secondFraction * 60) % 60;
+export function computeMonolithMotion(
+  phase: number,
+  energy: number
+): MonolithMotionSnapshot {
+  const e = Math.max(0, Math.min(1, Number.isFinite(energy) ? energy : 0));
+  const p = Number.isFinite(phase) ? phase : 0;
 
-  if (isOvertime) {
-    return {
-      visualMode: 'overtime',
-      secondFraction,
-      activeTickIndex,
-      accentHex: '#F43F5E',
-      meridianHex: '#FB7185',
-      intensity: 1.16,
-    };
-  }
-
-  if (isPaused || !isRunning) {
-    return {
-      visualMode: 'paused',
-      secondFraction,
-      activeTickIndex,
-      accentHex: '#C28263',
-      meridianHex: '#7A4B38',
-      intensity: 0.44,
-    };
-  }
+  const breath = 0.5 + 0.5 * Math.sin(p * 1.35);
+  const corePulse = 0.92 + breath * (0.04 + 0.1 * e);
 
   return {
-    visualMode: 'running',
-    secondFraction,
-    activeTickIndex,
-    accentHex: '#F5C542',
-    meridianHex: '#E88D67',
-    intensity: 1.0,
+    rotX: 0.22 + Math.sin(p * 0.42) * (0.06 + 0.12 * e),
+    rotY: p * 0.34,
+    rotZ: -0.08 + Math.cos(p * 0.31) * (0.04 + 0.08 * e),
+    coreRotY: -p * 0.62,
+    corePulse,
+    coreEmissiveIntensity: 0.24 + e * (0.72 + breath * 0.48),
+    coreLightIntensity: 0.55 + e * (1.85 + breath * 0.95),
+    coreHaloOpacity: 0.05 + e * (0.12 + breath * 0.08),
   };
 }
 
 /**
- * Computes the razor-thin bottom 2px progress filament and muted ETA / milestone meta.
+ * Pure kinematic transform for rib `index` of the 22-Rib Kinetic Wave sculpture.
+ * Produces a smooth continuous sinusoidal wave propagating across the horizontal spine,
+ * tapering gracefully near the ends and slowing to a serene drift when paused (`energy -> 0`).
  */
-export function computeDeskProgressFilament(params: {
-  mode: 'focus' | 'exam';
-  isStopwatch?: boolean;
-  isRunning: boolean;
-  isPaused: boolean;
-  isOvertime: boolean;
-  progressPct?: number;
-  remainingMs?: number;
-  totalActiveMs?: number;
-  overtimeMs?: number;
-  activeExamLabel?: string;
-  examTotalElapsedMs?: number;
-  examTotalBudgetMs?: number;
-  nowMs?: number;
-}): DeskProgressFilament {
-  const {
-    mode,
-    isStopwatch = false,
-    isRunning,
-    isPaused,
-    isOvertime,
-    progressPct = 0,
-    remainingMs = 0,
-    totalActiveMs = 0,
-    overtimeMs = 0,
-    activeExamLabel,
-    examTotalElapsedMs = 0,
-    examTotalBudgetMs = 10_800_000,
-    nowMs = Date.now(),
-  } = params;
+export function computeKineticWaveRibTransform(
+  index: number,
+  totalRibs: number,
+  phase: number,
+  energy: number
+): KineticWaveRibTransform {
+  const count = Math.max(1, Math.floor(totalRibs));
+  const clampedIdx = Math.max(0, Math.min(count - 1, index));
+  const e = Math.max(0, Math.min(1, Number.isFinite(energy) ? energy : 0));
+  const p = Number.isFinite(phase) ? phase : 0;
 
-  const tone: DeskProgressFilament['tone'] = isOvertime
-    ? 'crimson'
-    : isPaused
-      ? 'paused'
-      : 'gold';
+  // Normalized -1 .. +1 position along the horizontal spine
+  const u = count === 1 ? 0 : (clampedIdx / (count - 1)) * 2 - 1;
+  const spineHalfWidth = 3.52;
+  const x = u * spineHalfWidth;
 
-  if (mode === 'exam') {
-    const safeBudget = Math.max(1, examTotalBudgetMs);
-    const pct = Math.max(0, Math.min(100, (Math.max(0, examTotalElapsedMs) / safeBudget) * 100));
-    const rem = Math.max(0, safeBudget - Math.max(0, examTotalElapsedMs));
-    const metaLabel = isOvertime
-      ? `${activeExamLabel ? `${activeExamLabel} · ` : ''}Overtime`
-      : isPaused
-        ? `${activeExamLabel ? `${activeExamLabel} · ` : ''}Paused`
-        : `${activeExamLabel ? `${activeExamLabel} · ` : ''}Ends ${fmtClockTime(nowMs + rem)}`;
-    return { pct, tone, metaLabel };
-  }
+  // Gentle architectural bell envelope so end ribs taper subtly
+  const envelope = 0.72 + 0.28 * Math.cos(u * Math.PI * 0.46);
 
-  if (isStopwatch) {
-    const safeActive = Math.max(0, totalActiveMs);
-    const cycleMs = 900_000; // 15-minute milestone pulse
-    const hits = Math.floor(safeActive / cycleMs);
-    const intoCycle = safeActive % cycleMs;
-    const pct = Math.max(0, Math.min(100, (intoCycle / cycleMs) * 100));
-    const nextIn = Math.max(0, cycleMs - intoCycle);
-    const metaLabel = isPaused
-      ? hits > 0
-        ? `${hits}×15m · Paused`
-        : 'Stopwatch · Paused'
-      : hits > 0
-        ? `${hits}×15m · next in ${fmtMS(nextIn)}`
-        : `15m pulse · next in ${fmtMS(nextIn)}`;
-    return { pct, tone, metaLabel };
-  }
+  // Traveling sinusoidal wave with continuous phase offset across all 22 ribs
+  const waveArg = clampedIdx * 0.31 - p * 1.45;
+  const secondaryArg = clampedIdx * 0.15 + p * 0.55;
+  const ampScale = 0.34 + 0.66 * e;
 
-  const pct = Math.max(0, Math.min(100, Number.isFinite(progressPct) ? progressPct : 0));
-  if (isOvertime) {
-    return {
-      pct: 100,
-      tone: 'crimson',
-      metaLabel: `+${fmtMS(Math.max(0, overtimeMs))} over target`,
-    };
-  }
-  if (isPaused) {
-    return {
-      pct,
-      tone: 'paused',
-      metaLabel: `${Math.round(pct)}% · Paused`,
-    };
-  }
-  if (!isRunning) {
-    return {
-      pct: 0,
-      tone: 'paused',
-      metaLabel: 'Ready',
-    };
-  }
-  return {
-    pct,
-    tone: 'gold',
-    metaLabel: `Ends ${fmtClockTime(nowMs + Math.max(0, remainingMs))}`,
-  };
+  const rotX = Math.sin(waveArg) * 0.88 * ampScale + u * 0.18;
+  const rotY = Math.cos(waveArg * 0.5) * 0.16 * ampScale;
+  const rotZ = Math.sin(secondaryArg) * 0.04 * ampScale;
+  const yOffset = Math.sin(waveArg + 0.55) * 0.16 * ampScale * envelope;
+  const scaleY = envelope * (0.94 + 0.08 * Math.sin(waveArg) * ampScale);
+
+  return { x, yOffset, rotX, rotY, rotZ, scaleY };
 }
 
 /**

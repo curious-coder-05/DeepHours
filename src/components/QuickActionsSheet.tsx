@@ -1,5 +1,6 @@
 import React from 'react';
 import {
+  Bell,
   BookOpen,
   CalendarPlus,
   Camera,
@@ -9,6 +10,7 @@ import {
   Layers,
   Play,
   Repeat,
+  Target,
 } from 'lucide-react';
 import { ListGroup, ListRow, Sheet } from './ui';
 
@@ -16,6 +18,8 @@ export type QuickActionKind =
   | 'startSession'
   | 'logSession'
   | 'addTask'
+  | 'addTarget'
+  | 'addReminder'
   | 'addHabit'
   | 'addChapter'
   | 'logMock'
@@ -52,6 +56,18 @@ const ACTIONS: Array<{
     title: 'Add task',
     subtitle: 'Add a one-off study task to Today',
     Icon: CheckSquare,
+  },
+  {
+    id: 'addTarget',
+    title: 'Add target sprint',
+    subtitle: 'Set a deadline with a freeform checklist underneath',
+    Icon: Target,
+  },
+  {
+    id: 'addReminder',
+    title: 'Add reminder',
+    subtitle: 'Set a dated alert with lead notices and calendar push',
+    Icon: Bell,
   },
   {
     id: 'addHabit',

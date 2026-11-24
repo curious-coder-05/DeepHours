@@ -23,9 +23,11 @@ import {
 import firebaseConfig from '../../firebase-applet-config.json' with { type: 'json' };
 import type {
   Chapter,
+  CustomReminder,
   DailyTask,
   DayPlanSlots,
   DDay,
+  DeadlineTarget,
   Doubt,
   Habit,
   HabitLogDay,
@@ -39,6 +41,7 @@ import type {
   WellbeingEntry,
 } from '../types';
 import { cloneLog, norm } from './studyLogic.ts';
+import { attachNormalizedTargetsAndReminders } from './targetsLogic.ts';
 import { writeSafetyBackupSnapshot } from './storage.ts';
 import {
   safeJsonParse,
@@ -359,9 +362,14 @@ export function splitDocIfOversized(
     return { docs: { [baseKey]: payload } };
   }
 
-  // Case 1: EntityMapDoc with `items` map
+  // Case 1: EntityMapDoc with `items` map (preserving extra sibling maps such as deadlineTargets/reminders on chunk 1)
   if (payload.items && typeof payload.items === 'object') {
     const entries = Object.entries(payload.items as Record<string, unknown>);
+    const extraChunk1Fields: Record<string, unknown> = {};
+    for (const [ek, ev] of Object.entries(payload)) {
+      if (ek === 'items' || ek === 'updatedAt' || ek === 'chunkIndex') continue;
+      extraChunk1Fields[ek] = ev;
+    }
     const chunks: Record<string, Record<string, unknown>> = {};
     const chunkKeys: string[] = [];
     let currentItems: Record<string, unknown> = {};
@@ -370,6 +378,7 @@ export function splitDocIfOversized(
     for (const [k, v] of entries) {
       currentItems[k] = v;
       const candidate = {
+        ...(chunkIndex === 1 ? extraChunk1Fields : {}),
         items: currentItems,
         updatedAt: payload.updatedAt,
         chunkIndex,
@@ -378,6 +387,7 @@ export function splitDocIfOversized(
         delete currentItems[k];
         const key = chunkIndex === 1 ? baseKey : `${baseKey}__${chunkIndex}`;
         chunks[key] = {
+          ...(chunkIndex === 1 ? extraChunk1Fields : {}),
           items: currentItems,
           updatedAt: payload.updatedAt,
           chunkIndex,
@@ -387,9 +397,10 @@ export function splitDocIfOversized(
         currentItems = { [k]: v };
       }
     }
-    if (Object.keys(currentItems).length > 0) {
+    if (Object.keys(currentItems).length > 0 || chunkIndex === 1) {
       const key = chunkIndex === 1 ? baseKey : `${baseKey}__${chunkIndex}`;
       chunks[key] = {
+        ...(chunkIndex === 1 ? extraChunk1Fields : {}),
         items: currentItems,
         updatedAt: payload.updatedAt,
         chunkIndex,
@@ -573,9 +584,19 @@ export function partitionStateToCloudDocs(
     items: sanitizeForFirestore(arrayToIdMap(state.pyq || [])),
     updatedAt: Math.max(maxUpdatedAt(state.pyq || [], 1), maxTombstoneTs),
   };
-  const tasksDoc: EntityMapDoc<DailyTask> = {
+  const tasksDoc: EntityMapDoc<DailyTask> & {
+    deadlineTargets: Record<string, DeadlineTarget>;
+    reminders: Record<string, CustomReminder>;
+  } = {
     items: sanitizeForFirestore(arrayToIdMap(state.tasks || [])),
-    updatedAt: Math.max(maxUpdatedAt(state.tasks || [], 1), maxTombstoneTs),
+    deadlineTargets: sanitizeForFirestore(arrayToIdMap(state.deadlineTargets || [])),
+    reminders: sanitizeForFirestore(arrayToIdMap(state.reminders || [])),
+    updatedAt: Math.max(
+      maxUpdatedAt(state.tasks || [], 1),
+      maxUpdatedAt(state.deadlineTargets || [], 1),
+      maxUpdatedAt(state.reminders || [], 1),
+      maxTombstoneTs
+    ),
   };
 
   // Group time-based data by YYYY-MM
@@ -942,9 +963,28 @@ export function mergeStateWithCloudDocs(
     mergedTombstones
   );
 
-  // Gather remote monthly data & tasks
+  // Gather remote monthly data, tasks, deadlineTargets, & reminders (stored inside meta/tasks)
   const remoteSessionsMap: Record<string, StudySession> = {};
   const remoteTasksMap: Record<string, DailyTask> = collectChunkedItems<DailyTask>('meta/tasks');
+  const remoteDeadlineTargetsMap: Record<string, DeadlineTarget> = {};
+  const remoteRemindersMap: Record<string, CustomReminder> = {};
+  for (const [docKey, payload] of Object.entries(cloudDocs)) {
+    if (docKey !== 'meta/tasks' && !docKey.startsWith('meta/tasks__')) continue;
+    const rawTargets = (payload as { deadlineTargets?: Record<string, DeadlineTarget> })?.deadlineTargets;
+    if (rawTargets && typeof rawTargets === 'object') {
+      for (const [k, v] of Object.entries(rawTargets)) {
+        if (k === '__proto__' || k === 'constructor' || k === 'prototype' || !v) continue;
+        remoteDeadlineTargetsMap[k] = v;
+      }
+    }
+    const rawReminders = (payload as { reminders?: Record<string, CustomReminder> })?.reminders;
+    if (rawReminders && typeof rawReminders === 'object') {
+      for (const [k, v] of Object.entries(rawReminders)) {
+        if (k === '__proto__' || k === 'constructor' || k === 'prototype' || !v) continue;
+        remoteRemindersMap[k] = v;
+      }
+    }
+  }
   const mergedLog = cloneLog(localState.log);
   const mergedNotes: Record<string, string> = { ...(localState.notes || {}) };
   const mergedNoteUpdatedAt: Record<string, number> = {
@@ -1069,6 +1109,16 @@ export function mergeStateWithCloudDocs(
     remoteTasksMap,
     mergedTombstones
   );
+  const mergedDeadlineTargets = mergeEntityCollectionsLWW<DeadlineTarget>(
+    localState.deadlineTargets || [],
+    remoteDeadlineTargetsMap,
+    mergedTombstones
+  );
+  const mergedReminders = mergeEntityCollectionsLWW<CustomReminder>(
+    localState.reminders || [],
+    remoteRemindersMap,
+    mergedTombstones
+  );
 
   // Remove any tombstone-deleted habits from mergedLog
   for (const hid of Object.keys(mergedLog)) {
@@ -1170,7 +1220,7 @@ export function mergeStateWithCloudDocs(
     }
   }
 
-  const candidate: PulseHabitState = norm({
+  const candidateBase: PulseHabitState = norm({
     ...localState,
     set: mergedSet,
     subjects: mergedSubjects,
@@ -1203,6 +1253,10 @@ export function mergeStateWithCloudDocs(
     activeTimer: preservedActiveTimer,
   });
 
+  const candidate = attachNormalizedTargetsAndReminders(candidateBase, {
+    deadlineTargets: mergedDeadlineTargets,
+    reminders: mergedReminders,
+  });
   candidate.activeTimer = preservedActiveTimer;
   return candidate;
 }

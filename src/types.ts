@@ -7,7 +7,7 @@ export type SoundscapeMode = 'off' | 'brown' | 'pink' | 'rain';
 export type PiPPreference = 'video' | 'doc';
 export type TimerAesthetic = 'neon' | 'minimal' | 'retro';
 export type AppTab = 'today' | 'prep' | 'focus' | 'groups' | 'stats' | 'more' | 'planner';
-export type PrepSubTab = 'syllabus' | 'mocks' | 'mistakes' | 'doubts';
+export type PrepSubTab = 'syllabus' | 'targets' | 'mocks' | 'mistakes' | 'doubts';
 export type StatsSubTab = 'summary' | 'history' | 'timeline' | 'review';
 export type ChapterStatus = 'notStarted' | 'inProgress' | 'completed';
 export type MistakeReason = 'concept' | 'silly' | 'time' | 'guess' | 'forgot';
@@ -310,12 +310,49 @@ export interface GroupsUserConfig {
   updatedAt?: number;
 }
 
+export interface DeadlineChecklistItem {
+  id: string;
+  text: string;
+  done: boolean;
+  doneAt?: number;
+}
+
+export interface DeadlineTarget {
+  id: string;
+  title: string;
+  startDate: string; // YYYY-MM-DD (local date when created)
+  deadlineDate: string; // YYYY-MM-DD (target finish date)
+  subjectId?: string; // optional link to Subject
+  notes?: string;
+  items: DeadlineChecklistItem[];
+  archived?: boolean;
+  createdAt: number;
+  updatedAt?: number;
+}
+
+export type ReminderCategory = 'exam' | 'admin' | 'study' | 'personal';
+
+export interface CustomReminder {
+  id: string;
+  title: string;
+  date: string; // YYYY-MM-DD (local date)
+  time?: string; // optional HH:MM (24h)
+  leadDays: number[]; // e.g. [0, 1, 3] => on day, 1d before, 3d before
+  category: ReminderCategory;
+  notes?: string;
+  done?: boolean;
+  createdAt: number;
+  updatedAt?: number;
+}
+
 export interface PulseHabitState {
   habits: Habit[];
   log: HabitLogMap;
   subjects: Subject[];
   todos?: StudyTodo[];
   tasks: DailyTask[];
+  deadlineTargets?: DeadlineTarget[];
+  reminders?: CustomReminder[];
   sessions: StudySession[];
   plans: PlansMap;
   ddays: DDay[];

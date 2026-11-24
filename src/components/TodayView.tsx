@@ -2,6 +2,7 @@ import React, { useMemo, useState } from 'react';
 import {
   Plus,
   Check,
+  Bell,
   Flame,
   SkipForward,
   MoreHorizontal,
@@ -80,6 +81,18 @@ import { formatChapterConfidence } from '../utils/chartHelpers';
 import { triggerHaptic } from '../utils/haptics';
 import { ConsistencyDetailSheet, ExamCountdownCard } from './StatusRow';
 import { BottomSheet } from './BottomSheet';
+import { CalendarPushSheet } from './TargetsCalendarView';
+import {
+  computeDaysUntilDate,
+  computeTargetProgress,
+  formatDeadlineUrgency,
+  formatShortDateLabel,
+  getUpcomingAlerts,
+} from '../utils/targetsLogic';
+import {
+  buildReminderCalendarInput,
+  type CalendarEventInput,
+} from '../utils/calendarExport';
 import {
   Button,
   Card,
@@ -139,6 +152,10 @@ export interface TodayViewProps {
   onSetMood: (val: number) => void;
   onSetNote: (txt: string) => void;
   onShareTodayProof?: () => void;
+  onOpenTargetsTab?: () => void;
+  onToggleTargetItem?: (targetId: string, itemId: string) => void;
+  onToggleReminderDone?: (reminderId: string) => void;
+  onShowToast?: (msg: string) => void;
 }
 
 const MOOD_ITEMS: Array<[number, string, string]> = [
@@ -185,6 +202,10 @@ export const TodayView: React.FC<TodayViewProps> = ({
   onSetMood,
   onSetNote,
   onShareTodayProof,
+  onOpenTargetsTab,
+  onToggleTargetItem,
+  onToggleReminderDone,
+  onShowToast,
 }) => {
   const [quickSubjectId, setQuickSubjectId] = useState<string>(
     () => state.subjects.find((s) => !s.arch)?.id || 'sub_phy'
@@ -200,6 +221,21 @@ export const TodayView: React.FC<TodayViewProps> = ({
   const [taskComposerOpen, setTaskComposerOpen] = useState<boolean>(false);
   const [calendarTrayOpen, setCalendarTrayOpen] = useState<boolean>(false);
   const [consistencySheetOpen, setConsistencySheetOpen] = useState<boolean>(false);
+  const [expandedTodayTargets, setExpandedTodayTargets] = useState<Record<string, boolean>>({});
+  const [todayPushEvent, setTodayPushEvent] = useState<CalendarEventInput | null>(null);
+
+  const activeDeadlineTargets = useMemo(() => {
+    return (state.deadlineTargets || [])
+      .filter((t) => !t.archived && !computeTargetProgress(t).isComplete)
+      .sort((a, b) => a.deadlineDate.localeCompare(b.deadlineDate))
+      .slice(0, 3);
+  }, [state.deadlineTargets]);
+
+  const activeLeadReminders = useMemo(() => {
+    return getUpcomingAlerts(state, todayKey, 7)
+      .filter((a) => a.kind === 'reminder' && a.reminder && !a.reminder.done)
+      .slice(0, 3);
+  }, [state, todayKey]);
 
   // Daily Tasks local UI state
   const [newTaskTitle, setNewTaskTitle] = useState<string>('');
@@ -1255,6 +1291,158 @@ export const TodayView: React.FC<TodayViewProps> = ({
               )}
             </div>
           </Card>
+
+          {/* 4b. Targets & Upcoming (Compact hairline section; hidden cleanly when empty) */}
+          {(activeDeadlineTargets.length > 0 || activeLeadReminders.length > 0) && (
+            <section className="dh-amoled-section" aria-label="Targets and upcoming alerts">
+              <div className="dh-eyebrow-row">
+                <h3 className="dh-eyebrow">Targets & upcoming</h3>
+                <button
+                  type="button"
+                  className="dh-eyebrow-link"
+                  onClick={() => (onOpenTargetsTab ? onOpenTargetsTab() : onSwitchTab('prep'))}
+                >
+                  <span>Manage all</span>
+                  <ChevronRight size={14} strokeWidth={1.6} aria-hidden="true" />
+                </button>
+              </div>
+
+              <div className="dh-hairline-list">
+                {activeLeadReminders.map((alert) => {
+                  const rem = alert.reminder!;
+                  return (
+                    <div key={alert.id} className="dh-hairline-row dh-today-alert-row">
+                      <div className="dh-today-alert-copy">
+                        <Bell
+                          size={14}
+                          strokeWidth={1.75}
+                          className="dh-cal-lead-icon"
+                          aria-hidden="true"
+                        />
+                        <div className="dh-today-alert-text">
+                          <span className="dh-today-alert-title">{alert.leadNotice}</span>
+                          <span className="dh-today-alert-sub tnum">
+                            Due {formatShortDateLabel(rem.date)}
+                          </span>
+                        </div>
+                      </div>
+                      <div className="dh-today-alert-actions">
+                        <button
+                          type="button"
+                          className="dh-ghost-pill"
+                          onClick={() => onToggleReminderDone?.(rem.id)}
+                        >
+                          Done
+                        </button>
+                        <button
+                          type="button"
+                          className="dh-targets-icon-btn"
+                          aria-label={`Push ${rem.title} to Calendar`}
+                          onClick={() => setTodayPushEvent(buildReminderCalendarInput(rem))}
+                        >
+                          <Calendar size={15} strokeWidth={1.75} aria-hidden="true" />
+                        </button>
+                      </div>
+                    </div>
+                  );
+                })}
+
+                {activeDeadlineTargets.map((target) => {
+                  const progress = computeTargetProgress(target);
+                  const daysUntil = computeDaysUntilDate(target.deadlineDate, todayKey);
+                  const urgency = formatDeadlineUrgency(daysUntil);
+                  const sub = target.subjectId ? getSubject(state, target.subjectId) : undefined;
+                  const expanded = Boolean(expandedTodayTargets[target.id]);
+
+                  return (
+                    <div key={target.id} className="dh-today-target-block">
+                      <button
+                        type="button"
+                        className="dh-today-target-head"
+                        aria-expanded={expanded}
+                        onClick={() =>
+                          setExpandedTodayTargets((prev) => ({
+                            ...prev,
+                            [target.id]: !prev[target.id],
+                          }))
+                        }
+                      >
+                        <div className="dh-today-target-title-wrap">
+                          <div className="dh-target-title-row">
+                            {sub && (
+                              <span
+                                className="dh-sub-dot"
+                                style={{ background: sub.color }}
+                                aria-hidden="true"
+                              />
+                            )}
+                            <span className="dh-target-title">{target.title}</span>
+                          </div>
+                          <div className="dh-target-meta-row">
+                            <span className={`dh-target-urgency dh-tone-${urgency.tone} tnum`}>
+                              {urgency.label}
+                            </span>
+                            <span className="dh-target-dates tnum">
+                              Due {formatShortDateLabel(target.deadlineDate)}
+                            </span>
+                            <span className="dh-target-ratio tnum">
+                              {progress.doneCount}/{progress.totalCount} ({progress.percent}%)
+                            </span>
+                          </div>
+                        </div>
+                        <ChevronDown
+                          size={16}
+                          strokeWidth={1.75}
+                          className={`dh-chevron-rot ${expanded ? 'open' : ''}`}
+                          aria-hidden="true"
+                        />
+                      </button>
+
+                      <div
+                        className="dh-target-progress-track"
+                        role="progressbar"
+                        aria-valuenow={progress.percent}
+                        aria-valuemin={0}
+                        aria-valuemax={100}
+                        aria-label={`${target.title} progress ${progress.percent}%`}
+                      >
+                        <div
+                          className="dh-target-progress-fill"
+                          style={{ width: `${progress.percent}%` }}
+                        />
+                      </div>
+
+                      {expanded && target.items.length > 0 && (
+                        <ul className="dh-target-checklist dh-today-target-list">
+                          {target.items.map((item) => (
+                            <li
+                              key={item.id}
+                              className={`dh-target-check-row ${item.done ? 'done' : ''}`}
+                            >
+                              <button
+                                type="button"
+                                role="checkbox"
+                                aria-checked={item.done}
+                                className="dh-target-check-btn"
+                                onClick={() => onToggleTargetItem?.(target.id, item.id)}
+                              >
+                                <span className={`dh-check-box ${item.done ? 'checked' : ''}`}>
+                                  {item.done && (
+                                    <Check size={12} strokeWidth={2.5} aria-hidden="true" />
+                                  )}
+                                </span>
+                                <span className="dh-target-check-text">{item.text}</span>
+                              </button>
+                            </li>
+                          ))}
+                        </ul>
+                      )}
+                    </div>
+                  );
+                })}
+              </div>
+            </section>
+          )}
 
           {/* 5. Subject Daily Targets (Borderless Tier-0 Section on #000000) */}
           {subjectTargets.length > 0 && (
@@ -2817,6 +3005,12 @@ export const TodayView: React.FC<TodayViewProps> = ({
           </div>
         </form>
       </BottomSheet>
+
+      <CalendarPushSheet
+        event={todayPushEvent}
+        onClose={() => setTodayPushEvent(null)}
+        onDownloaded={onShowToast}
+      />
     </div>
   );
 };

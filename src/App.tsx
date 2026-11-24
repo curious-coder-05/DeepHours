@@ -66,6 +66,19 @@ import {
 import { computeMinDayStreak, toggleRestDay } from './utils/insights';
 import { computeLevelInfo, computeTotalXp } from './utils/xp';
 import {
+  attachNormalizedTargetsAndReminders,
+  createCustomReminder,
+  createDeadlineTarget,
+  isValidDateKey,
+  isValidTime24h,
+  normalizeLeadDays,
+} from './utils/targetsLogic';
+import { sanitizeTextControlChars } from './utils/security';
+import type {
+  ReminderDraftInput,
+  TargetDraftInput,
+} from './components/TargetsCalendarView';
+import {
   SETTINGS_SECTION_META,
   resolveReturnTab,
   type MainNavTab,
@@ -309,6 +322,10 @@ export default function App() {
   const [pyqJumpNonce, setPyqJumpNonce] = useState<number>(0);
   const [vaultCaptureRequest, setVaultCaptureRequest] =
     useState<VaultCaptureRequest | null>(null);
+  const [targetComposerRequest, setTargetComposerRequest] = useState<{
+    kind: 'target' | 'reminder';
+    nonce: number;
+  } | null>(null);
   const [sessionWrapUp, setSessionWrapUp] = useState<SessionWrapUpSummary | null>(null);
   const [parkedThoughts, setParkedThoughts] = useState<ParkedThought[]>(() =>
     loadParkedThoughts()
@@ -2899,6 +2916,274 @@ export default function App() {
     updateAndSave((cur) => moveUnfinishedTasksToToday(cur, todayKey));
   }, [todayKey, updateAndSave]);
 
+  // Deadline Target Sprints & Custom Reminders handlers (v44)
+  const handleAddTarget = useCallback(
+    (draft: TargetDraftInput) => {
+      const created = createDeadlineTarget({
+        title: draft.title,
+        startDate: todayKey,
+        deadlineDate: draft.deadlineDate,
+        subjectId: draft.subjectId,
+        notes: draft.notes,
+        itemTexts: draft.itemTexts,
+      });
+      if (!created.title) return;
+      updateAndSave((cur) => ({
+        ...cur,
+        deadlineTargets: [created, ...(cur.deadlineTargets || [])],
+      }));
+      showToast(`Target created: ${created.title}`);
+    },
+    [showToast, todayKey, updateAndSave]
+  );
+
+  const handleUpdateTarget = useCallback(
+    (id: string, draft: TargetDraftInput) => {
+      const cleanTitle = sanitizeTextControlChars(draft.title, 140);
+      if (!cleanTitle || !isValidDateKey(draft.deadlineDate)) return;
+      const cleanNotes = draft.notes
+        ? sanitizeTextControlChars(draft.notes, 800, { allowNewlines: true })
+        : undefined;
+      const now = Date.now();
+      updateAndSave((cur) => ({
+        ...cur,
+        deadlineTargets: (cur.deadlineTargets || []).map((t) =>
+          t.id === id
+            ? {
+                ...t,
+                title: cleanTitle,
+                deadlineDate: draft.deadlineDate,
+                subjectId: draft.subjectId || undefined,
+                notes: cleanNotes || undefined,
+                updatedAt: now,
+              }
+            : t
+        ),
+      }));
+      showToast('Target updated');
+    },
+    [showToast, updateAndSave]
+  );
+
+  const handleToggleTargetItem = useCallback(
+    (targetId: string, itemId: string) => {
+      const now = Date.now();
+      updateAndSave((cur) => ({
+        ...cur,
+        deadlineTargets: (cur.deadlineTargets || []).map((t) => {
+          if (t.id !== targetId) return t;
+          return {
+            ...t,
+            updatedAt: now,
+            items: t.items.map((item) =>
+              item.id === itemId
+                ? {
+                    ...item,
+                    done: !item.done,
+                    doneAt: !item.done ? now : undefined,
+                  }
+                : item
+            ),
+          };
+        }),
+      }));
+    },
+    [updateAndSave]
+  );
+
+  const handleAddTargetItem = useCallback(
+    (targetId: string, text: string) => {
+      const cleanText = sanitizeTextControlChars(text, 200);
+      if (!cleanText) return;
+      const now = Date.now();
+      const newItem = {
+        id: uid('tci'),
+        text: cleanText,
+        done: false,
+      };
+      updateAndSave((cur) => ({
+        ...cur,
+        deadlineTargets: (cur.deadlineTargets || []).map((t) =>
+          t.id === targetId
+            ? {
+                ...t,
+                updatedAt: now,
+                items: [...t.items, newItem],
+              }
+            : t
+        ),
+      }));
+    },
+    [updateAndSave]
+  );
+
+  const handleDeleteTargetItem = useCallback(
+    (targetId: string, itemId: string) => {
+      const now = Date.now();
+      updateAndSave((cur) => ({
+        ...cur,
+        deadlineTargets: (cur.deadlineTargets || []).map((t) =>
+          t.id === targetId
+            ? {
+                ...t,
+                updatedAt: now,
+                items: t.items.filter((item) => item.id !== itemId),
+              }
+            : t
+        ),
+      }));
+    },
+    [updateAndSave]
+  );
+
+  const handleToggleArchiveTarget = useCallback(
+    (targetId: string) => {
+      const now = Date.now();
+      updateAndSave((cur) => ({
+        ...cur,
+        deadlineTargets: (cur.deadlineTargets || []).map((t) =>
+          t.id === targetId ? { ...t, archived: !t.archived, updatedAt: now } : t
+        ),
+      }));
+    },
+    [updateAndSave]
+  );
+
+  const handleDeleteTarget = useCallback(
+    (targetId: string) => {
+      const prev = stateRef.current;
+      const list = prev.deadlineTargets || [];
+      const index = list.findIndex((t) => t.id === targetId);
+      if (index === -1) return;
+      const snapshot = JSON.parse(JSON.stringify(list[index]));
+      updateAndSave((cur) => ({
+        ...addTombstone(cur, targetId),
+        deadlineTargets: (cur.deadlineTargets || []).filter((t) => t.id !== targetId),
+      }));
+      showToast('Target deleted', () => {
+        updateAndSave((cur) => {
+          const nextDel = (cur.del || []).filter((k) => k !== targetId);
+          const nextDelAt = { ...(cur.delAt || {}) };
+          delete nextDelAt[targetId];
+          const existing = cur.deadlineTargets || [];
+          const restored = existing.some((t) => t.id === targetId)
+            ? existing
+            : [
+                ...existing.slice(0, index),
+                { ...snapshot, updatedAt: Date.now() },
+                ...existing.slice(index),
+              ];
+          return {
+            ...cur,
+            del: nextDel,
+            delAt: nextDelAt,
+            deadlineTargets: restored,
+          };
+        });
+      });
+    },
+    [showToast, updateAndSave]
+  );
+
+  const handleAddReminder = useCallback(
+    (draft: ReminderDraftInput) => {
+      const created = createCustomReminder({
+        title: draft.title,
+        date: draft.date,
+        time: draft.time,
+        leadDays: draft.leadDays,
+        category: draft.category,
+        notes: draft.notes,
+      });
+      if (!created.title) return;
+      updateAndSave((cur) => ({
+        ...cur,
+        reminders: [created, ...(cur.reminders || [])],
+      }));
+      showToast(`Reminder saved: ${created.title}`);
+    },
+    [showToast, updateAndSave]
+  );
+
+  const handleUpdateReminder = useCallback(
+    (id: string, draft: ReminderDraftInput) => {
+      const cleanTitle = sanitizeTextControlChars(draft.title, 140);
+      if (!cleanTitle || !isValidDateKey(draft.date)) return;
+      const cleanNotes = draft.notes
+        ? sanitizeTextControlChars(draft.notes, 800, { allowNewlines: true })
+        : undefined;
+      const now = Date.now();
+      updateAndSave((cur) => ({
+        ...cur,
+        reminders: (cur.reminders || []).map((r) =>
+          r.id === id
+            ? {
+                ...r,
+                title: cleanTitle,
+                date: draft.date,
+                time: draft.time && isValidTime24h(draft.time) ? draft.time.trim() : undefined,
+                leadDays: normalizeLeadDays(draft.leadDays),
+                category: draft.category,
+                notes: cleanNotes || undefined,
+                updatedAt: now,
+              }
+            : r
+        ),
+      }));
+      showToast('Reminder updated');
+    },
+    [showToast, updateAndSave]
+  );
+
+  const handleToggleReminderDone = useCallback(
+    (id: string) => {
+      const now = Date.now();
+      updateAndSave((cur) => ({
+        ...cur,
+        reminders: (cur.reminders || []).map((r) =>
+          r.id === id ? { ...r, done: !r.done, updatedAt: now } : r
+        ),
+      }));
+    },
+    [updateAndSave]
+  );
+
+  const handleDeleteReminder = useCallback(
+    (id: string) => {
+      const prev = stateRef.current;
+      const list = prev.reminders || [];
+      const index = list.findIndex((r) => r.id === id);
+      if (index === -1) return;
+      const snapshot = JSON.parse(JSON.stringify(list[index]));
+      updateAndSave((cur) => ({
+        ...addTombstone(cur, id),
+        reminders: (cur.reminders || []).filter((r) => r.id !== id),
+      }));
+      showToast('Reminder deleted', () => {
+        updateAndSave((cur) => {
+          const nextDel = (cur.del || []).filter((k) => k !== id);
+          const nextDelAt = { ...(cur.delAt || {}) };
+          delete nextDelAt[id];
+          const existing = cur.reminders || [];
+          const restored = existing.some((r) => r.id === id)
+            ? existing
+            : [
+                ...existing.slice(0, index),
+                { ...snapshot, updatedAt: Date.now() },
+                ...existing.slice(index),
+              ];
+          return {
+            ...cur,
+            del: nextDel,
+            delAt: nextDelAt,
+            reminders: restored,
+          };
+        });
+      });
+    },
+    [showToast, updateAndSave]
+  );
+
   const handleQuickAction = useCallback(
     (action: QuickActionKind) => {
       setSettingsOpen(false);
@@ -2919,6 +3204,18 @@ export default function App() {
             el?.scrollIntoView({ behavior: 'smooth', block: 'center' });
             el?.focus();
           }, 120);
+          break;
+        case 'addTarget':
+          setPrepSubTab('targets');
+          setTab('prep');
+          setTargetComposerRequest({ kind: 'target', nonce: Date.now() });
+          window.scrollTo(0, 0);
+          break;
+        case 'addReminder':
+          setPrepSubTab('targets');
+          setTab('prep');
+          setTargetComposerRequest({ kind: 'reminder', nonce: Date.now() });
+          window.scrollTo(0, 0);
           break;
         case 'addHabit':
           setModal({ type: 'habit' });
@@ -3322,6 +3619,14 @@ export default function App() {
               });
             }}
             onShareTodayProof={() => handleOpenDailyProofCard(sel)}
+            onOpenTargetsTab={() => {
+              setPrepSubTab('targets');
+              switchTabWithTransition('prep');
+              window.scrollTo(0, 0);
+            }}
+            onToggleTargetItem={handleToggleTargetItem}
+            onToggleReminderDone={handleToggleReminderDone}
+            onShowToast={showToast}
           />
           </ErrorBoundary>
         )}
@@ -3335,6 +3640,7 @@ export default function App() {
               subTab={prepSubTab}
               pyqJumpNonce={pyqJumpNonce}
               vaultCaptureRequest={vaultCaptureRequest}
+              targetComposerRequest={targetComposerRequest}
               activeTimerText={
                 activeMetrics
                   ? `${activeMetrics.status === 'paused' ? 'Paused ' : ''}${fmtHMS(activeMetrics.totalActiveMs)}`
@@ -3372,6 +3678,17 @@ export default function App() {
                 handleAddPYQ(entry.chapterId, entry.attempted, entry.correct, entry.dayKey)
               }
               onDeletePYQ={handleDeletePYQ}
+              onAddTarget={handleAddTarget}
+              onUpdateTarget={handleUpdateTarget}
+              onToggleTargetItem={handleToggleTargetItem}
+              onAddTargetItem={handleAddTargetItem}
+              onDeleteTargetItem={handleDeleteTargetItem}
+              onToggleArchiveTarget={handleToggleArchiveTarget}
+              onDeleteTarget={handleDeleteTarget}
+              onAddReminder={handleAddReminder}
+              onUpdateReminder={handleUpdateReminder}
+              onToggleReminderDone={handleToggleReminderDone}
+              onDeleteReminder={handleDeleteReminder}
               onStartChapterFocus={(
                 subjectId: string,
                 chapterId: string,
@@ -3968,8 +4285,13 @@ export default function App() {
                 if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) {
                   throw new Error('Invalid schema');
                 }
-                const restored = norm(parsed);
-                const newToday = logicalKey(new Date(), restored.set.dayResetHour);
+                const restoredBase = norm(parsed);
+                const newToday = logicalKey(new Date(), restoredBase.set.dayResetHour);
+                const restored = attachNormalizedTargetsAndReminders(
+                  restoredBase,
+                  parsed,
+                  newToday
+                );
                 const allDays = new Set<string>([
                   newToday,
                   ...restored.sessions.map((s) => s.dayKey),
@@ -3978,7 +4300,11 @@ export default function App() {
                 setSel(newToday);
                 saveNextState(restored, { suppressMilestones: true });
                 showToast('Full backup restored!', () => {
-                  const reverted = norm(safeJsonParseStrict(snapJson));
+                  const snapParsed = safeJsonParseStrict(snapJson);
+                  const reverted = attachNormalizedTargetsAndReminders(
+                    norm(snapParsed),
+                    snapParsed
+                  );
                   saveNextState(reverted, { suppressMilestones: true });
                 });
               } catch {
@@ -4323,7 +4649,8 @@ export default function App() {
               ? 'All device data and local Vault erased'
               : 'All device data reset to a clean slate',
             () => {
-              const reverted = norm(JSON.parse(snapJson));
+              const snapParsed = JSON.parse(snapJson);
+              const reverted = attachNormalizedTargetsAndReminders(norm(snapParsed), snapParsed);
               replaceAllMockDiagnostics(diagSnap);
               for (const [mId, rep] of Object.entries(reportSnap)) {
                 saveMockReportDetails(mId, rep);

@@ -69,6 +69,11 @@ import { listVaultItems } from '../utils/vaultStore';
 import { MockReportSheet } from './MockReportSheet';
 import { PYQView } from './PYQView';
 import { ScoreLabSheet } from './ScoreLabSheet';
+import {
+  TargetsCalendarView,
+  type ReminderDraftInput,
+  type TargetDraftInput,
+} from './TargetsCalendarView';
 import type { VaultCaptureRequest } from './VaultView';
 import { SyllabusAstrolabeScene } from './three/SyllabusAstrolabeScene';
 import {
@@ -98,6 +103,7 @@ interface PrepViewProps {
   subTab: PrepSubTab;
   pyqJumpNonce?: number;
   vaultCaptureRequest?: VaultCaptureRequest | null;
+  targetComposerRequest?: { kind: 'target' | 'reminder'; nonce: number } | null;
   activeTimerText?: string | null;
   onNotify?: (msg: string, undo?: () => void) => void;
   onChangeSubTab: (sub: PrepSubTab) => void;
@@ -133,9 +139,20 @@ interface PrepViewProps {
     chapterId: string,
     chapterName: string
   ) => void;
+  onAddTarget?: (draft: TargetDraftInput) => void;
+  onUpdateTarget?: (id: string, draft: TargetDraftInput) => void;
+  onToggleTargetItem?: (targetId: string, itemId: string) => void;
+  onAddTargetItem?: (targetId: string, text: string) => void;
+  onDeleteTargetItem?: (targetId: string, itemId: string) => void;
+  onToggleArchiveTarget?: (targetId: string) => void;
+  onDeleteTarget?: (targetId: string) => void;
+  onAddReminder?: (draft: ReminderDraftInput) => void;
+  onUpdateReminder?: (id: string, draft: ReminderDraftInput) => void;
+  onToggleReminderDone?: (id: string) => void;
+  onDeleteReminder?: (id: string) => void;
 }
 
-export type PrepUiTab = 'syllabus' | 'mocks' | 'vault' | 'pyqs';
+export type PrepUiTab = 'syllabus' | 'targets' | 'mocks' | 'vault' | 'pyqs';
 
 const STATUS_OPTIONS: Array<{ value: ChapterStatus; label: string }> = [
   { value: 'notStarted', label: 'Not started' },
@@ -149,6 +166,7 @@ export const PrepView: React.FC<PrepViewProps> = ({
   subTab,
   pyqJumpNonce,
   vaultCaptureRequest,
+  targetComposerRequest,
   activeTimerText,
   onNotify,
   onChangeSubTab,
@@ -171,6 +189,17 @@ export const PrepView: React.FC<PrepViewProps> = ({
   onAddPYQ,
   onDeletePYQ,
   onStartChapterFocus,
+  onAddTarget,
+  onUpdateTarget,
+  onToggleTargetItem,
+  onAddTargetItem,
+  onDeleteTargetItem,
+  onToggleArchiveTarget,
+  onDeleteTarget,
+  onAddReminder,
+  onUpdateReminder,
+  onToggleReminderDone,
+  onDeleteReminder,
 }) => {
   const [showPyqsTab, setShowPyqsTab] = useState<boolean>(false);
   const [vaultChapterJump, setVaultChapterJump] = useState<{
@@ -197,6 +226,18 @@ export const PrepView: React.FC<PrepViewProps> = ({
       setShowPyqsTab(false);
     }
   }, [vaultCaptureRequest]);
+
+  useEffect(() => {
+    if (targetComposerRequest && targetComposerRequest.nonce > 0) {
+      setShowPyqsTab(false);
+    }
+  }, [targetComposerRequest]);
+
+  useEffect(() => {
+    if (subTab === 'targets') {
+      setShowPyqsTab(false);
+    }
+  }, [subTab]);
 
   useEffect(() => {
     let cancelled = false;
@@ -432,18 +473,42 @@ export const PrepView: React.FC<PrepViewProps> = ({
 
   return (
     <div className="space-y-4">
-      {/* Top 4-Option Segmented Navigation */}
+      {/* Top 5-Option Segmented Navigation */}
       <Segmented<PrepUiTab>
         value={activeUiTab}
         onChange={handleSelectUiTab}
         ariaLabel="Preparation sections"
         options={[
           { value: 'syllabus', label: 'Syllabus' },
+          { value: 'targets', label: 'Targets' },
           { value: 'mocks', label: 'Mocks' },
           { value: 'vault', label: 'Vault' },
           { value: 'pyqs', label: 'PYQs' },
         ]}
       />
+
+      {/* ==========================================
+          SUB-VIEW 0: TARGET SPRINTS, REMINDERS & CALENDAR
+          ========================================== */}
+      {activeUiTab === 'targets' && (
+        <TargetsCalendarView
+          state={state}
+          todayKey={todayKey}
+          composerRequest={targetComposerRequest}
+          onAddTarget={(draft) => onAddTarget?.(draft)}
+          onUpdateTarget={(id, draft) => onUpdateTarget?.(id, draft)}
+          onToggleTargetItem={(targetId, itemId) => onToggleTargetItem?.(targetId, itemId)}
+          onAddTargetItem={(targetId, text) => onAddTargetItem?.(targetId, text)}
+          onDeleteTargetItem={(targetId, itemId) => onDeleteTargetItem?.(targetId, itemId)}
+          onToggleArchiveTarget={(targetId) => onToggleArchiveTarget?.(targetId)}
+          onDeleteTarget={(targetId) => onDeleteTarget?.(targetId)}
+          onAddReminder={(draft) => onAddReminder?.(draft)}
+          onUpdateReminder={(id, draft) => onUpdateReminder?.(id, draft)}
+          onToggleReminderDone={(id) => onToggleReminderDone?.(id)}
+          onDeleteReminder={(id) => onDeleteReminder?.(id)}
+          onShowToast={(msg) => onNotify?.(msg)}
+        />
+      )}
 
       {/* ==========================================
           SUB-VIEW 1: SYLLABUS & REVISIONS
