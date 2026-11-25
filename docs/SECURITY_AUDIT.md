@@ -114,3 +114,28 @@ Permissions-Policy: camera=(self), microphone=(), geolocation=()
 | `SettingsView-*.js` (lazy) | `46.6 kB` | `10.9 kB` | Settings Stack + Sound Lab |
 | `firebase-*.js` (lazy) | `569.5 kB` | `171.0 kB` | Loaded on demand for Cloud Sync / Squads |
 | `three-*.js` (lazy) | `744.7 kB` | `188.2 kB` | Loaded on demand only on Focus & Syllabus |
+
+---
+
+## 8. v47 Pre-Publish Security, Bug & Dead-File Cleanup Sweep
+
+1. **Vault Image Upload Defense (`src/utils/vaultImage.ts`, `src/utils/security.ts`, `src/utils/vaultStore.ts`)**:
+   - Tightened pre-compression image upload cap from `25 MB` to `10 MB` (`MAX_IMAGE_FILE_BYTES = 10 * 1024 * 1024`) across both metadata pre-checks and binary magic-byte verification (strict JPEG `FF D8 FF`, PNG `89 50 4E 47`, and WebP `RIFF...WEBP` headers; SVG, HTML, scripts, and spoofed files are blocked with a calm inline alert).
+   - Verified every `URL.createObjectURL` across Vault capture, list, cropper, and revision deck is revoked on replace, close, delete, or unmount.
+   - Added IndexedDB `QuotaExceededError` detection inside `vaultStore.ts` (`waitTx`) and `storage.ts` (`persistState`) so full-device storage triggers the throttled backup warning toast instead of failing silently.
+2. **XSS, Prototype Pollution, Backup Clamping & `.ics` Injection Defense (`src/utils/security.ts`, `src/utils/calendarExport.ts`, `src/components/TargetsCalendarView.tsx`, `src/App.tsx`)**:
+   - Audited `src/` and confirmed zero `dangerouslySetInnerHTML`, `innerHTML`, `outerHTML`, `eval`, `new Function`, or `window.open` sinks.
+   - Added `safeExternalHttpsUrl` to restrict external anchor targets (such as the Google Calendar quick-add link in `TargetsCalendarView.tsx`) strictly to validated `https://` URLs with `rel="noopener noreferrer"`.
+   - Added `sanitizeImportedStatePayload` in `security.ts` and wired it into `App.tsx` JSON backup import (`onImportJson`), recursively stripping `__proto__`, `constructor`, and `prototype` keys and clamping `sessions`, `chapters`, `mocks`, `deadlineTargets`, `reminders`, and `profile` (finite positive timestamps, bounded non-negative durations, control-character-stripped length-capped strings).
+   - Added `escapeIcsSingleLine` and CR/LF stripping inside `foldIcsLine` (`calendarExport.ts`) so single-line `.ics` properties (`SUMMARY`, `UID`, `CATEGORIES`, `VALARM DESCRIPTION`) cannot be broken by injected newlines while escaping RFC-5545 delimiters (`\`, `;`, `,`).
+3. **Cloud Sync Dirty-Tracking & Sharding Bug Fix for `v44` Targets/Reminders (`src/utils/cloudSync.ts`)**:
+   - Fixed a real sync bug where `detectDirtyDocKeys` only checked `prevState.tasks !== nextState.tasks`, omitting `deadlineTargets` and `reminders` changes from automatic `meta/tasks` dirty marking; also added both collections to `hasMeaningfulLocalData`.
+   - Upgraded `splitDocIfOversized` so oversized `meta/tasks` documents shard `items`, `deadlineTargets`, and `reminders` cleanly across `meta/tasks__N` documents while staying under `MAX_DOC_BYTES` and Firestore's `<= 20` keys rule (`firestore.rules` left completely intact).
+4. **Security Headers, Repository Hygiene & Dead-Code Cleanup (`index.html`, `.gitignore`, `public/sw.js`)**:
+   - Added a strict `<meta http-equiv="Content-Security-Policy">` header alongside `<meta name="referrer" content="strict-origin-when-cross-origin" />` in `index.html`.
+   - Expanded `.gitignore` to cover `*.keystore`, `*.jks`, `google-services.json`, and `.playwright-cli/`.
+   - Routed remaining direct `localStorage.setItem` writes (`App.tsx`, `SettingsView.tsx`, `VaultView.tsx`, `uiHelpers.ts`) through `safeLocalStorageSet` for uniform quota handling.
+   - Removed duplicate stale `/bun.lock` and 8 provably unused symbols/imports (`GroupsUserConfig`, `parseKey`, `syncLiveStatusForState` in `App.tsx`; `Award`, `Check`, `Illustration` in `GroupsView.tsx`; `total` in `StatsView.tsx`; `ConcentricRingSegment` in `TodayView.tsx`). Verified zero `console.log` statements in `src/` and zero hardcoded secrets.
+   - `npm audit --omit=dev` reports only transitive advisories inside `@grpc/grpc-js` (Node.js server transport inside the `firebase` package, never bundled into the browser client).
+   - Bumped `public/sw.js` `CACHE_NAME` to `'deep-hours-v47'`.
+

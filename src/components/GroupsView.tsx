@@ -1,7 +1,5 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
-  Award,
-  Check,
   ChevronDown,
   ChevronUp,
   Copy,
@@ -85,7 +83,6 @@ import { Card } from './ui/Card';
 import { Chip } from './ui/Chip';
 import { EmptyState } from './ui/EmptyState';
 import { Field } from './ui/Field';
-import { Illustration } from './ui/Illustrations';
 import { Meter } from './ui/Meter';
 import { SectionHeader } from './ui/SectionHeader';
 import { Segmented } from './ui/Segmented';

@@ -7,7 +7,7 @@ import {
   type AllowedRasterImageMime,
 } from './security.ts';
 
-export const MAX_IMAGE_FILE_BYTES = 25 * 1024 * 1024;
+export const MAX_IMAGE_FILE_BYTES = 10 * 1024 * 1024;
 export const TARGET_BLOB_BYTES = 150 * 1024;
 export const MAX_OUTPUT_WIDTH = 1080;
 export const MAX_OUTPUT_HEIGHT = 2400;

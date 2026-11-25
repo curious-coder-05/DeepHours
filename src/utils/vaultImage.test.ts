@@ -16,7 +16,8 @@ import {
 } from './vaultImage.ts';
 
 describe('vaultImage pure image pipeline helpers', () => {
-  it('validates image MIME types, extensions, non-empty size, and 25 MB limit', () => {
+  it('validates image MIME types, extensions, non-empty size, and 10 MB limit', () => {
+    assert.equal(MAX_IMAGE_FILE_BYTES, 10 * 1024 * 1024);
     assert.equal(
       validateImageFileCandidate({ type: 'image/jpeg', size: 1024, name: 'q.jpg' }).ok,
       true
@@ -31,6 +32,20 @@ describe('vaultImage pure image pipeline helpers', () => {
       name: 'notes.pdf',
     });
     assert.equal(nonImg.ok, false);
+
+    const svgImg = validateImageFileCandidate({
+      type: 'image/svg+xml',
+      size: 512,
+      name: 'diagram.svg',
+    });
+    assert.equal(svgImg.ok, false);
+
+    const htmlSpoof = validateImageFileCandidate({
+      type: 'text/html',
+      size: 512,
+      name: 'page.html',
+    });
+    assert.equal(htmlSpoof.ok, false);
 
     const tooBig = validateImageFileCandidate({
       type: 'image/png',

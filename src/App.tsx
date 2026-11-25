@@ -12,7 +12,6 @@ import type {
   ChapterStatus,
   DDay,
   Doubt,
-  GroupsUserConfig,
   Habit,
   HabitCategory,
   MistakeEntry,
@@ -55,7 +54,6 @@ import {
   moveUnfinishedTasksToToday,
   norm,
   pad,
-  parseKey,
   restoreDeletedItem,
   shouldFireFiveMinWarning,
   syncStudyHabitsForDays,
@@ -171,6 +169,7 @@ import {
   onStorageQuotaExceeded,
   safeJsonParseStrict,
   safeLocalStorageSet,
+  sanitizeImportedStatePayload,
 } from './utils/security';
 import { Modals, type ModalState } from './components/Modals';
 import { CommandPalette } from './components/CommandPalette';
@@ -431,7 +430,6 @@ export default function App() {
   authUserRef.current = authUser;
   const syncControllerRef = useRef<SyncBudgetController | null>(null);
   const liveStatusRef = useRef<GroupLiveStatus | null>(null);
-  const lastActiveLiveRef = useRef<GroupLiveStatus | null>(null);
   const groupBudgetRef = useRef<GroupPublishBudgetController | null>(null);
 
   const [proofCardPayload, setProofCardPayload] = useState<ProofCardPayload | null>(null);
@@ -452,46 +450,6 @@ export default function App() {
   } | null>(null);
   const publishedAuraRef = useRef<ActiveSessionAura | null>(null);
   const auraControllerRef = useRef<LiveAuraPresenceController | null>(null);
-
-  const syncLiveStatusForState = useCallback(
-    (targetState: PulseHabitState, liveDurationMs = 60 * 60_000): GroupLiveStatus | null => {
-      const hasLiveGroup = (targetState.groupsConfig?.joined || []).some(
-        (g) => g.sh.l && !g.paused
-      );
-      if (!hasLiveGroup || !liveAuraEnabledRef.current) {
-        liveStatusRef.current = null;
-        return null;
-      }
-      const t = targetState.activeTimer;
-      if (t && t.status === 'running' && t.phase !== 'break') {
-        const now = Date.now();
-        const reusable =
-          liveStatusRef.current?.since === t.startTs
-            ? liveStatusRef.current
-            : lastActiveLiveRef.current?.since === t.startTs
-              ? lastActiveLiveRef.current
-              : null;
-        if (reusable && reusable.until - now > 15 * 60_000) {
-          liveStatusRef.current = reusable;
-          lastActiveLiveRef.current = reusable;
-          return reusable;
-        }
-        const fresh: GroupLiveStatus = {
-          since: t.startTs,
-          until: now + liveDurationMs,
-        };
-        liveStatusRef.current = fresh;
-        lastActiveLiveRef.current = fresh;
-        return fresh;
-      }
-      liveStatusRef.current = null;
-      if (!t || t.phase === 'break') {
-        lastActiveLiveRef.current = null;
-      }
-      return null;
-    },
-    []
-  );
 
   const ensureGroupBudget = useCallback(async (): Promise<GroupPublishBudgetController> => {
     if (groupBudgetRef.current) return groupBudgetRef.current;
@@ -4285,11 +4243,12 @@ export default function App() {
                 if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) {
                   throw new Error('Invalid schema');
                 }
-                const restoredBase = norm(parsed);
+                const sanitized = sanitizeImportedStatePayload(parsed);
+                const restoredBase = norm(sanitized);
                 const newToday = logicalKey(new Date(), restoredBase.set.dayResetHour);
                 const restored = attachNormalizedTargetsAndReminders(
                   restoredBase,
-                  parsed,
+                  sanitized,
                   newToday
                 );
                 const allDays = new Set<string>([
@@ -4781,19 +4740,11 @@ export default function App() {
             state={state}
             todayKey={todayKey}
             onClose={() => {
-              try {
-                localStorage.setItem('dh_onboarded_v2', '1');
-              } catch {
-                // Ignore storage errors
-              }
+              safeLocalStorageSet('dh_onboarded_v2', '1');
               setOnboardingOpen(false);
             }}
             onComplete={(result: OnboardingResult) => {
-              try {
-                localStorage.setItem('dh_onboarded_v2', '1');
-              } catch {
-                // Ignore storage errors
-              }
+              safeLocalStorageSet('dh_onboarded_v2', '1');
               const now = Date.now();
               const activeSet = new Set(result.activeSubjectIds);
               updateAndSave((prev) => {

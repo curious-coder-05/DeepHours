@@ -55,6 +55,7 @@ import {
   downloadIcsFile,
   type CalendarEventInput,
 } from '../utils/calendarExport';
+import { safeExternalHttpsUrl } from '../utils/security';
 
 export interface TargetDraftInput {
   title: string;
@@ -84,7 +85,10 @@ export const CalendarPushSheet: React.FC<CalendarPushSheetProps> = ({
   onClose,
   onDownloaded,
 }) => {
-  const gcalUrl = useMemo(() => (event ? buildGoogleCalendarUrl(event) : ''), [event]);
+  const gcalUrl = useMemo(
+    () => (event ? safeExternalHttpsUrl(buildGoogleCalendarUrl(event)) : null),
+    [event]
+  );
 
   const handleDownloadIcs = () => {
     if (!event) return;
@@ -130,16 +134,18 @@ export const CalendarPushSheet: React.FC<CalendarPushSheetProps> = ({
               Opens in Apple Calendar, Google Calendar, or Samsung Calendar with native offline
               notifications.
             </div>
-            <a
-              href={gcalUrl}
-              target="_blank"
-              rel="noopener noreferrer"
-              className="dh-btn dh-btn-secondary dh-targets-gcal-link"
-              onClick={onClose}
-            >
-              <ExternalLink size={16} strokeWidth={1.75} aria-hidden="true" />
-              <span>Open in Google Calendar</span>
-            </a>
+            {gcalUrl && (
+              <a
+                href={gcalUrl}
+                target="_blank"
+                rel="noopener noreferrer"
+                className="dh-btn dh-btn-secondary dh-targets-gcal-link"
+                onClick={onClose}
+              >
+                <ExternalLink size={16} strokeWidth={1.75} aria-hidden="true" />
+                <span>Open in Google Calendar</span>
+              </a>
+            )}
           </div>
         </div>
       )}

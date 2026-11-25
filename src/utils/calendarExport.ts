@@ -27,6 +27,7 @@ const MAX_LINE_OCTETS = 75;
 export function escapeIcsText(raw: string): string {
   return String(raw || '')
     .replace(/\r\n|\r|\n/g, '\n')
+    .replace(/[\u0000-\u0008\u000B\u000C\u000E-\u001F\u007F]/g, '')
     .replace(/\\/g, '\\\\')
     .replace(/;/g, '\\;')
     .replace(/,/g, '\\,')
@@ -34,10 +35,30 @@ export function escapeIcsText(raw: string): string {
 }
 
 /**
+ * Escapes single-line RFC-5545 fields (SUMMARY, CATEGORIES, VALARM DESCRIPTION).
+ * Strips CR/LF and ASCII control characters completely so injected line breaks
+ * cannot forge new ICS properties.
+ */
+export function escapeIcsSingleLine(raw: string): string {
+  return String(raw || '')
+    .replace(/[\r\n]+/g, ' ')
+    .replace(/[\u0000-\u001F\u007F]/g, '')
+    .replace(/\s+/g, ' ')
+    .trim()
+    .replace(/\\/g, '\\\\')
+    .replace(/;/g, '\\;')
+    .replace(/,/g, '\\,');
+}
+
+/**
  * Folds a single ICS content line at <= 75 UTF-8 octets per RFC-5545 §3.1,
  * never splitting multi-byte UTF-8 code points across folded lines.
+ * Strips raw CR/LF/control chars as defense-in-depth against property injection.
  */
-export function foldIcsLine(line: string): string {
+export function foldIcsLine(rawLine: string): string {
+  const line = String(rawLine || '')
+    .replace(/[\r\n]+/g, ' ')
+    .replace(/[\u0000-\u001F\u007F]/g, '');
   const encoder = new TextEncoder();
   if (encoder.encode(line).length <= MAX_LINE_OCTETS) {
     return line;
@@ -130,7 +151,7 @@ function buildValarmLines(
 
     lines.push('BEGIN:VALARM');
     lines.push('ACTION:DISPLAY');
-    lines.push(`DESCRIPTION:${escapeIcsText(label)}`);
+    lines.push(`DESCRIPTION:${escapeIcsSingleLine(label)}`);
     lines.push(`TRIGGER:${trigger}`);
     lines.push('END:VALARM');
   }
@@ -147,7 +168,7 @@ export function buildIcsEvent(input: CalendarEventInput, now = new Date()): stri
     .slice(0, 64) || 'event';
   const uid = `dh-${safeId}@deephours.app`;
   const dtStamp = formatIcsUtcStamp(now);
-  const summary = escapeIcsText(input.title || 'Deep Hours Event');
+  const summary = escapeIcsSingleLine(input.title || 'Deep Hours Event') || 'Deep Hours Event';
   const hasValidTime = Boolean(input.time && isValidTime24h(input.time));
 
   const lines: string[] = [
@@ -178,7 +199,10 @@ export function buildIcsEvent(input: CalendarEventInput, now = new Date()): stri
   }
 
   if (input.category && input.category.trim()) {
-    lines.push(`CATEGORIES:${escapeIcsText(input.category.trim().toUpperCase())}`);
+    const safeCat = escapeIcsSingleLine(input.category.trim().toUpperCase());
+    if (safeCat) {
+      lines.push(`CATEGORIES:${safeCat}`);
+    }
   }
 
   const leadDays = input.leadDays && input.leadDays.length > 0 ? input.leadDays : [0];

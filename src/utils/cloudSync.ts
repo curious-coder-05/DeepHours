@@ -362,51 +362,89 @@ export function splitDocIfOversized(
     return { docs: { [baseKey]: payload } };
   }
 
-  // Case 1: EntityMapDoc with `items` map (preserving extra sibling maps such as deadlineTargets/reminders on chunk 1)
+  // Case 1: EntityMapDoc with `items` map (and optional sibling entity maps such as deadlineTargets/reminders)
   if (payload.items && typeof payload.items === 'object') {
-    const entries = Object.entries(payload.items as Record<string, unknown>);
-    const extraChunk1Fields: Record<string, unknown> = {};
+    const mapFieldNames: string[] = ['items'];
+    const scalarChunk1Fields: Record<string, unknown> = {};
     for (const [ek, ev] of Object.entries(payload)) {
       if (ek === 'items' || ek === 'updatedAt' || ek === 'chunkIndex') continue;
-      extraChunk1Fields[ek] = ev;
-    }
-    const chunks: Record<string, Record<string, unknown>> = {};
-    const chunkKeys: string[] = [];
-    let currentItems: Record<string, unknown> = {};
-    let chunkIndex = 1;
-
-    for (const [k, v] of entries) {
-      currentItems[k] = v;
-      const candidate = {
-        ...(chunkIndex === 1 ? extraChunk1Fields : {}),
-        items: currentItems,
-        updatedAt: payload.updatedAt,
-        chunkIndex,
-      };
-      if (byteLengthOf(candidate) > maxBytes && Object.keys(currentItems).length > 1) {
-        delete currentItems[k];
-        const key = chunkIndex === 1 ? baseKey : `${baseKey}__${chunkIndex}`;
-        chunks[key] = {
-          ...(chunkIndex === 1 ? extraChunk1Fields : {}),
-          items: currentItems,
-          updatedAt: payload.updatedAt,
-          chunkIndex,
-        };
-        chunkKeys.push(key);
-        chunkIndex += 1;
-        currentItems = { [k]: v };
+      if (ev && typeof ev === 'object' && !Array.isArray(ev)) {
+        mapFieldNames.push(ek);
+      } else {
+        scalarChunk1Fields[ek] = ev;
       }
     }
-    if (Object.keys(currentItems).length > 0 || chunkIndex === 1) {
-      const key = chunkIndex === 1 ? baseKey : `${baseKey}__${chunkIndex}`;
-      chunks[key] = {
-        ...(chunkIndex === 1 ? extraChunk1Fields : {}),
-        items: currentItems,
-        updatedAt: payload.updatedAt,
-        chunkIndex,
-      };
-      chunkKeys.push(key);
+
+    const flatEntries: Array<{ field: string; key: string; value: unknown }> = [];
+    for (const field of mapFieldNames) {
+      const mapObj = payload[field] as Record<string, unknown> | undefined;
+      if (!mapObj || typeof mapObj !== 'object') continue;
+      for (const [k, v] of Object.entries(mapObj)) {
+        flatEntries.push({ field, key: k, value: v });
+      }
     }
+
+    const chunks: Record<string, Record<string, unknown>> = {};
+    const chunkKeys: string[] = [];
+    let chunkIndex = 1;
+
+    const createEmptyBucket = (idx: number): Record<string, unknown> => {
+      const bucket: Record<string, unknown> = {
+        ...(idx === 1 ? scalarChunk1Fields : {}),
+        items: {},
+        updatedAt: payload.updatedAt,
+        chunkIndex: idx,
+      };
+      if (idx === 1) {
+        for (const field of mapFieldNames) {
+          if (field !== 'items') bucket[field] = {};
+        }
+      }
+      return bucket;
+    };
+
+    const countEntriesInBucket = (bucket: Record<string, unknown>): number => {
+      let count = 0;
+      for (const field of mapFieldNames) {
+        const m = bucket[field] as Record<string, unknown> | undefined;
+        if (m && typeof m === 'object') count += Object.keys(m).length;
+      }
+      return count;
+    };
+
+    let currentBucket = createEmptyBucket(chunkIndex);
+
+    for (const entry of flatEntries) {
+      let targetMap = currentBucket[entry.field] as Record<string, unknown> | undefined;
+      if (!targetMap) {
+        targetMap = {};
+        currentBucket[entry.field] = targetMap;
+      }
+      targetMap[entry.key] = entry.value;
+
+      if (byteLengthOf(currentBucket) > maxBytes && countEntriesInBucket(currentBucket) > 1) {
+        delete targetMap[entry.key];
+        if (entry.field !== 'items' && chunkIndex > 1 && Object.keys(targetMap).length === 0) {
+          delete currentBucket[entry.field];
+        }
+        const docKey = chunkIndex === 1 ? baseKey : `${baseKey}__${chunkIndex}`;
+        chunks[docKey] = currentBucket;
+        chunkKeys.push(docKey);
+        chunkIndex += 1;
+        currentBucket = createEmptyBucket(chunkIndex);
+        const nextMap =
+          (currentBucket[entry.field] as Record<string, unknown> | undefined) || {};
+        nextMap[entry.key] = entry.value;
+        currentBucket[entry.field] = nextMap;
+      }
+    }
+
+    if (countEntriesInBucket(currentBucket) > 0 || chunkIndex === 1) {
+      const docKey = chunkIndex === 1 ? baseKey : `${baseKey}__${chunkIndex}`;
+      chunks[docKey] = currentBucket;
+      chunkKeys.push(docKey);
+    }
+
     return { docs: chunks, chunkKeys: chunkKeys.length > 1 ? chunkKeys : undefined };
   }
 
@@ -1929,6 +1967,8 @@ export function hasMeaningfulLocalData(state: PulseHabitState): boolean {
     state.chapters.length > 0 ||
     state.mocks.length > 0 ||
     (state.tasks || []).length > 0 ||
+    (state.deadlineTargets || []).length > 0 ||
+    (state.reminders || []).length > 0 ||
     (state.mistakes || []).length > 0 ||
     (state.doubts || []).length > 0 ||
     Object.keys(state.log || {}).length > 0
@@ -1967,7 +2007,13 @@ export function detectDirtyDocKeys(
   if (prevState.mistakes !== nextState.mistakes) dirty.add('meta/mistakes');
   if (prevState.doubts !== nextState.doubts) dirty.add('meta/doubts');
   if (prevState.pyq !== nextState.pyq) dirty.add('meta/pyq');
-  if (prevState.tasks !== nextState.tasks) dirty.add('meta/tasks');
+  if (
+    prevState.tasks !== nextState.tasks ||
+    prevState.deadlineTargets !== nextState.deadlineTargets ||
+    prevState.reminders !== nextState.reminders
+  ) {
+    dirty.add('meta/tasks');
+  }
 
   const addYm = (dk?: string) => {
     if (dk && /^\d{4}-\d{2}/.test(dk)) {

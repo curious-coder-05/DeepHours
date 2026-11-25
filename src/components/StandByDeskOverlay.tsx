@@ -6,6 +6,7 @@ import {
   BatteryLow,
   BatteryMedium,
   Layers,
+  Moon,
   Pause,
   Play,
   RotateCw,
@@ -25,7 +26,7 @@ import {
   DESK_HUD_AUTO_HIDE_MS,
   DESK_MOUNT_GRACE_MS,
   formatBatteryPercent,
-  formatDeskPrecisionClock,
+  formatDeskPrecisionClockParts,
   formatDeskSubjectLabel,
   getDeskSculptureLabel,
   getOppositeDeskSculpture,
@@ -50,20 +51,25 @@ const DeskChronoScene = lazy(() =>
   import('./three/DeskChronoScene').then((m) => ({ default: m.DeskChronoScene }))
 );
 
-/**
- * 8-step subtle OLED burn-in protection micro-orbit (±6px shifts every 60s,
- * GPU-only translate3d strictly on the typography layer).
- */
-const BURN_IN_ORBIT: ReadonlyArray<readonly [number, number]> = [
-  [0, 0],
-  [6, 2],
-  [4, 6],
-  [-4, 5],
-  [-6, 0],
-  [-4, -5],
-  [3, -6],
-  [6, -2],
-];
+const DESK_NIGHT_DIM_STORAGE_KEY = 'dh_desk_night_dim_v1';
+
+function readStoredNightDim(): boolean {
+  try {
+    if (typeof window === 'undefined' || !window.localStorage) return false;
+    return window.localStorage.getItem(DESK_NIGHT_DIM_STORAGE_KEY) === '1';
+  } catch {
+    return false;
+  }
+}
+
+function writeStoredNightDim(enabled: boolean): void {
+  try {
+    if (typeof window === 'undefined' || !window.localStorage) return;
+    window.localStorage.setItem(DESK_NIGHT_DIM_STORAGE_KEY, enabled ? '1' : '0');
+  } catch {
+    // ignore storage quota/privacy errors
+  }
+}
 
 export interface StandByDeskOverlayProps {
   open: boolean;
@@ -97,7 +103,7 @@ const StandByFocusClock: React.FC<{ state: PulseHabitState }> = ({ state }) => {
   const curSubject = t ? getSubject(state, t.subjectId) : state.subjects[0];
   const defaultIdleMs = (state.set.pomoWork || 25) * 60_000;
   const displayMs = metrics ? metrics.displayMs : defaultIdleMs;
-  const clockStr = formatDeskPrecisionClock(displayMs, {
+  const parts = formatDeskPrecisionClockParts(displayMs, {
     overtimeMs: metrics?.overtimeMs ?? 0,
   });
   const subjectMicroLabel = formatDeskSubjectLabel(curSubject?.name);
@@ -113,8 +119,14 @@ const StandByFocusClock: React.FC<{ state: PulseHabitState }> = ({ state }) => {
       <div
         className="dh-standby-clock tabular-nums"
         data-testid="standby-focus-clock"
+        aria-label={`${parts.prefix}${parts.hours} ${parts.minutes} ${parts.seconds}`}
       >
-        {clockStr}
+        <span className="dh-standby-clock-group">
+          {parts.prefix}
+          {parts.hours}
+        </span>
+        <span className="dh-standby-clock-group">{parts.minutes}</span>
+        <span className="dh-standby-clock-group">{parts.seconds}</span>
       </div>
     </div>
   );
@@ -226,14 +238,15 @@ export const StandByDeskOverlay: React.FC<StandByDeskOverlayProps> = ({
     pickRandomDeskSculpture()
   );
   const [simLandscape, setSimLandscape] = useState(false);
+  const [nightDim, setNightDim] = useState<boolean>(() => readStoredNightDim());
   // 100% clean by default on entry; tapping anywhere reveals the minimal frameless HUD for 3s
   const [controlsVisible, setControlsVisible] = useState(false);
-  const [orbitIdx, setOrbitIdx] = useState(0);
 
   const holdingRef = useRef(false);
   const hideTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const mountedAtRef = useRef<number>(0);
   const nativeLandscapeLockedRef = useRef<boolean>(false);
+  const viewportRef = useRef<HTMLDivElement | null>(null);
   const onExitRef = useRef(onExit);
   onExitRef.current = onExit;
   const parkingOpenRef = useRef(parkingSheetOpen);
@@ -275,19 +288,6 @@ export const StandByDeskOverlay: React.FC<StandByDeskOverlayProps> = ({
       unlockScreenOrientation();
       void exitDeskFullscreen();
     };
-  }, [open]);
-
-  // Subtle 60-second OLED pixel-shift micro-orbit (±6px, disabled for prefers-reduced-motion)
-  useEffect(() => {
-    if (!open) return;
-    if (prefersReducedMotion()) {
-      setOrbitIdx(0);
-      return;
-    }
-    const id = setInterval(() => {
-      setOrbitIdx((i) => (i + 1) % BURN_IN_ORBIT.length);
-    }, 60_000);
-    return () => clearInterval(id);
   }, [open]);
 
   const clearAutoFade = useCallback(() => {
@@ -367,6 +367,16 @@ export const StandByDeskOverlay: React.FC<StandByDeskOverlayProps> = ({
     revealControls();
   }, [revealControls]);
 
+  const handleToggleNightDim = useCallback(() => {
+    triggerHaptic('tap');
+    setNightDim((prev) => {
+      const next = !prev;
+      writeStoredNightDim(next);
+      return next;
+    });
+    revealControls();
+  }, [revealControls]);
+
   if (!open) return null;
 
   const t = state.activeTimer;
@@ -375,7 +385,6 @@ export const StandByDeskOverlay: React.FC<StandByDeskOverlayProps> = ({
   const isPaused =
     mode === 'focus' ? t?.status === 'paused' : examState.status === 'paused';
 
-  const [shiftX, shiftY] = BURN_IN_ORBIT[orbitIdx];
   const reducedMotion = prefersReducedMotion();
   const mount3D = shouldMountDeskChrono3D({
     open,
@@ -416,12 +425,13 @@ export const StandByDeskOverlay: React.FC<StandByDeskOverlayProps> = ({
   const overlayNode = (
     <div
       className={`dh-standby-overlay ${controlsVisible ? 'controls-visible' : ''} ${
-        mode === 'exam' ? 'is-exam-mode' : 'is-focus-mode'
-      }`.trim()}
+        nightDim ? 'is-night-dim' : ''
+      } ${mode === 'exam' ? 'is-exam-mode' : 'is-focus-mode'}`.trim()}
       data-testid="standby-desk-overlay"
       data-sim-landscape={simLandscape ? 'true' : 'false'}
       data-3d-mounted={mount3D ? 'true' : 'false'}
       data-sculpture={sculpture}
+      data-night-dim={nightDim ? 'true' : 'false'}
       data-hud-visible={controlsVisible ? 'true' : 'false'}
       role="dialog"
       aria-modal="true"
@@ -434,16 +444,17 @@ export const StandByDeskOverlay: React.FC<StandByDeskOverlayProps> = ({
     >
       {/* Viewport container: pure #000000 or hardware-rotated Simulated Landscape Stage */}
       <div
+        ref={viewportRef}
         className={`dh-standby-viewport ${simLandscape ? 'is-sim-landscape' : ''}`.trim()}
         data-testid="standby-viewport"
       >
-        {/* Centered Procedural Obsidian Steel 3D Sculpture (only one geometry resident in GPU memory) */}
+        {/* Centered Procedural 3D Sculpture (only one geometry resident in GPU memory) */}
         {mount3D && (
           <div className="dh-standby-3d-layer" aria-hidden="true">
             <ErrorBoundary
               variant="section"
               scopeLabel="Desk 3D sculpture"
-              resetKey={`${sculpture}-${ui3dSetting}-${ui3dQuality}`}
+              resetKey={`${ui3dSetting}-${ui3dQuality}`}
               silentFallback={null}
             >
               <Suspense fallback={null}>
@@ -453,19 +464,20 @@ export const StandByDeskOverlay: React.FC<StandByDeskOverlayProps> = ({
                   ui3dQuality={ui3dQuality}
                   isRunning={isRunning}
                   isPaused={isPaused}
+                  nightDim={nightDim}
+                  battery={battery}
                   simLandscape={simLandscape}
+                  stageRef={viewportRef}
                 />
               </Suspense>
             </ErrorBoundary>
           </div>
         )}
 
-        {/* Burn-In Protected Typography Layer: Subject Micro-Label + Massive Precision Clock */}
+        {/* Burn-In Protected Typography Layer: 60s smooth ±3px GPU translate3d micro-orbit */}
         <div
-          className="dh-standby-stage"
-          style={{
-            transform: `translate3d(${shiftX}px, ${shiftY}px, 0)`,
-          }}
+          className={`dh-standby-stage ${reducedMotion ? 'is-reduced-motion' : ''}`.trim()}
+          data-testid="standby-typography-stage"
         >
           {mode === 'focus' ? (
             <StandByFocusClock state={state} />
@@ -579,6 +591,21 @@ export const StandByDeskOverlay: React.FC<StandByDeskOverlayProps> = ({
               <span className="dh-standby-sep" aria-hidden="true" />
             </>
           )}
+
+          <button
+            type="button"
+            className={`dh-standby-action ${nightDim ? 'is-active' : ''}`}
+            data-testid="standby-dim-btn"
+            tabIndex={controlsVisible ? 0 : -1}
+            aria-pressed={nightDim}
+            aria-label={nightDim ? 'Disable night dim' : 'Enable night dim'}
+            onClick={handleToggleNightDim}
+          >
+            <Moon size={15} strokeWidth={1.75} aria-hidden="true" />
+            <span>Dim</span>
+          </button>
+
+          <span className="dh-standby-sep" aria-hidden="true" />
 
           <button
             type="button"

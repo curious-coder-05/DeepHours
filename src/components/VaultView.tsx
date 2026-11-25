@@ -26,6 +26,7 @@ import {
 import type { Chapter, PulseHabitState, Subject } from '../types';
 import { getSubject } from '../utils/studyLogic';
 import { triggerHaptic } from '../utils/haptics';
+import { safeLocalStorageSet } from '../utils/security';
 import {
   MAX_VAULT_ARCHIVE_BYTES,
   buildVaultArchiveFilename,
@@ -1263,13 +1264,7 @@ export const VaultView: React.FC<VaultViewProps> = ({
 
   // Persist density
   useEffect(() => {
-    try {
-      if (typeof window !== 'undefined') {
-        window.localStorage.setItem(DENSITY_STORAGE_KEY, density);
-      }
-    } catch {
-      // ignore
-    }
+    safeLocalStorageSet(DENSITY_STORAGE_KEY, density);
   }, [density]);
 
   const counts = useMemo(() => computeVaultCounts(items), [items]);

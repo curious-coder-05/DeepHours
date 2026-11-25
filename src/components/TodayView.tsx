@@ -104,7 +104,6 @@ import {
   SectionHeader,
   SwipeableRow,
   WindowedList,
-  type ConcentricRingSegment,
 } from './ui';
 
 export interface TodayViewProps {

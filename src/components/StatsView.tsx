@@ -23,7 +23,6 @@ import {
   live,
   rate,
   streak,
-  total,
 } from '../utils/studyLogic';
 import { computeConsistencyScore } from '../utils/insights';
 import { computeLevelInfo, computeTotalXp } from '../utils/xp';

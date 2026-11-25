@@ -6,4 +6,8 @@ coverage/
 *.log
 .env*
 !.env.example
+*.keystore
+*.jks
+google-services.json
+.playwright-cli/
 .aistudio/

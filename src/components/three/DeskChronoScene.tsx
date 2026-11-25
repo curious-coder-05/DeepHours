@@ -1,15 +1,15 @@
 import React, { memo, useEffect, useRef, useState } from 'react';
-import {
-  KINETIC_WAVE_RIB_COUNT,
-  computeKineticWaveRibTransform,
-  computeMonolithMotion,
-  type DeskSculptureKind,
-} from '../../utils/deskModeHelpers';
+import type { DeskSculptureKind } from '../../utils/deskModeHelpers';
 import {
   resolveRuntimeUi3d,
   type Ui3dQuality,
   type Ui3dSetting,
 } from './Scene3D';
+
+export interface DeskBatteryStatus {
+  level: number;
+  charging: boolean;
+}
 
 export interface DeskChronoSceneProps {
   sculpture: DeskSculptureKind;
@@ -17,118 +17,125 @@ export interface DeskChronoSceneProps {
   ui3dQuality?: Ui3dQuality;
   isRunning: boolean;
   isPaused: boolean;
+  nightDim?: boolean;
+  battery?: DeskBatteryStatus | null;
   simLandscape?: boolean;
+  stageRef?: React.RefObject<HTMLDivElement | null>;
+}
+
+export const DESK_NIGHT_DIM_FACTOR = 0.45;
+
+/**
+ * Battery-aware 3D frame pacing resolver:
+ * - Unplugged (< 20%) + Night Dim ON -> 20 fps
+ * - Unplugged (< 20%) + Normal       -> 30 fps
+ * - Charging, >= 20%, or unavailable -> null (normal native RAF pacing)
+ */
+export function resolveDeskTargetFps(
+  battery: DeskBatteryStatus | null | undefined,
+  nightDim: boolean
+): number | null {
+  if (!battery || battery.charging) return null;
+  if (!Number.isFinite(battery.level) || battery.level >= 0.2) return null;
+  return nightDim ? 20 : 30;
 }
 
 type ThreeModule = typeof import('three');
 
 interface SculptureRigController {
-  fitCamera: (width: number, height: number) => void;
-  update: (dt: number, isRunning: boolean, isPaused: boolean) => void;
-  disposeExtra: () => void;
+  root: import('three').Group;
+  update: (dt: number, isRunning: boolean, isPaused: boolean, dimFactor: number) => void;
+  disposeExtra?: () => void;
 }
 
+interface EnvPanelSpec {
+  readonly pos: readonly [number, number, number];
+  readonly scale: readonly [number, number, number];
+  readonly color: number;
+  readonly boost?: number;
+  readonly roll?: number;
+}
+
+interface StudioLightSpec {
+  readonly color: number;
+  readonly intensity: number;
+  readonly pos: readonly [number, number, number];
+}
+
+const ENV_STRIPS = {
+  monolith: {
+    // High-contrast crisp white + warm Rose Copper specular reflection cards on pure 0x000000 black
+    panels: [
+      { pos: [1.8, 7.2, 5.5], scale: [7.5, 3.0, 1], color: 0xffffff, boost: 2.3, roll: -0.15 },
+      { pos: [6.5, -2.0, 4.8], scale: [6.5, 3.8, 1], color: 0xf2b598, boost: 2.1, roll: 0.2 },
+      { pos: [-6.5, 2.5, 4.2], scale: [5.8, 3.2, 1], color: 0xe39b7d, boost: 2.0, roll: -0.1 },
+      { pos: [4.8, 3.2, 6.2], scale: [4.8, 2.6, 1], color: 0xffe9dc, boost: 1.8, roll: 0.12 },
+      { pos: [-2.4, -6.5, 4.2], scale: [6.0, 2.8, 1], color: 0xb86a4c, boost: 1.7, roll: 0.18 },
+      { pos: [0, 4.2, -6.5], scale: [6.5, 2.8, 1], color: 0xffe8da, boost: 1.6, roll: 0 },
+    ] as readonly EnvPanelSpec[],
+    lights: [
+      { color: 0xfff8f2, intensity: 3.4, pos: [4, 7, 6] as [number, number, number] },
+      { color: 0xe89b79, intensity: 3.0, pos: [6, -4, 4] as [number, number, number] },
+      { color: 0xd48a6a, intensity: 2.2, pos: [-6, 2, -4] as [number, number, number] },
+    ] as readonly StudioLightSpec[],
+  },
+  'kinetic-wave': {
+    // High-contrast studio strip softboxes aligned with the 22-rib reflection vectors on pure 0x000000 black
+    panels: [
+      { pos: [8.5, -1.2, 2.2], scale: [5.5, 9.5, 1], color: 0xe4ecf8, boost: 2.0, roll: -0.18 },
+      { pos: [5.2, 6.8, 5.2], scale: [11.5, 2.6, 1], color: 0xffffff, boost: 2.6, roll: -0.25 },
+      { pos: [-6.5, 4.5, 4.8], scale: [9.5, 2.4, 1], color: 0xdce6f5, boost: 2.1, roll: 0.22 },
+      { pos: [0.5, -7.2, 4.6], scale: [10.5, 2.2, 1], color: 0xc8d4e6, boost: 1.85, roll: 0 },
+      { pos: [-7.0, -3.5, 2.8], scale: [6.2, 4.2, 1], color: 0x7b8ca8, boost: 1.45, roll: 0.15 },
+      { pos: [2.0, 8.0, -2.5], scale: [9.0, 2.2, 1], color: 0xfffaf2, boost: 1.9, roll: 0 },
+    ] as readonly EnvPanelSpec[],
+    lights: [
+      { color: 0xffffff, intensity: 3.6, pos: [5, 7, 6] as [number, number, number] },
+      { color: 0xe4e8f0, intensity: 2.8, pos: [-6, -2, 4] as [number, number, number] },
+      { color: 0xf7f2eb, intensity: 2.4, pos: [0, 6, -5] as [number, number, number] },
+    ] as readonly StudioLightSpec[],
+  },
+} as const;
+
 /**
- * Generates an offline procedural brushed Obsidian Steel grayscale texture for
- * subtle micro-anisotropic roughness & bump detail (zero external fetches).
+ * High-contrast studio strip PMREM builder on pure 0x000000 black (sigma = 0.02, zero ambient wash).
+ * Every strip softbox aims directly at the origin (`lookAt(0, 0, 0)`) with HDR radiance boost.
+ * Immediately disposes temporary plane geometry, panel materials, and PMREMGenerator.
  */
-function createBrushedSteelTexture(
+function buildStudioEnv(
   THREE: ThreeModule,
-  maxAnisotropy: number
-): import('three').CanvasTexture {
-  const size = 256;
-  const canvas = document.createElement('canvas');
-  canvas.width = size;
-  canvas.height = size;
-  const ctx = canvas.getContext('2d');
-  if (ctx) {
-    ctx.fillStyle = '#888888';
-    ctx.fillRect(0, 0, size, size);
+  renderer: import('three').WebGLRenderer,
+  panels: readonly EnvPanelSpec[]
+): import('three').WebGLRenderTarget {
+  const pmrem = new THREE.PMREMGenerator(renderer);
+  const envScene = new THREE.Scene();
+  envScene.background = new THREE.Color(0x000000);
 
-    // Deterministic fine horizontal brushed grain lines
-    let seed = 1337;
-    const rand = () => {
-      seed = (seed * 16807) % 2147483647;
-      return (seed - 1) / 2147483646;
-    };
-
-    for (let y = 0; y < size; y++) {
-      const lum = Math.floor(110 + rand() * 58);
-      ctx.fillStyle = `rgb(${lum},${lum},${lum})`;
-      ctx.fillRect(0, y, size, 1);
+  const planeGeo = new THREE.PlaneGeometry(1, 1);
+  const mats: import('three').Material[] = [];
+  for (const s of panels) {
+    const hdrColor = new THREE.Color(s.color).multiplyScalar(s.boost ?? 1.0);
+    const mat = new THREE.MeshBasicMaterial({ color: hdrColor, side: THREE.DoubleSide });
+    mats.push(mat);
+    const mesh = new THREE.Mesh(planeGeo, mat);
+    mesh.position.set(s.pos[0], s.pos[1], s.pos[2]);
+    mesh.lookAt(0, 0, 0);
+    if (s.roll) {
+      mesh.rotateZ(s.roll);
     }
-
-    // Subtle micro-scratches for specular breakup across chamfered edges
-    for (let i = 0; i < 180; i++) {
-      const y = Math.floor(rand() * size);
-      const x = Math.floor(rand() * size);
-      const w = 18 + Math.floor(rand() * 72);
-      const bright = rand() > 0.45 ? 190 : 82;
-      ctx.fillStyle = `rgba(${bright},${bright},${bright},0.22)`;
-      ctx.fillRect(x, y, w, 1);
-    }
+    mesh.scale.set(s.scale[0], s.scale[1], s.scale[2]);
+    envScene.add(mesh);
   }
-  const tex = new THREE.CanvasTexture(canvas);
-  tex.wrapS = THREE.RepeatWrapping;
-  tex.wrapT = THREE.RepeatWrapping;
-  tex.repeat.set(2, 2);
-  tex.anisotropy = Math.min(8, Math.max(1, maxAnisotropy));
-  tex.needsUpdate = true;
-  return tex;
+
+  const rt = pmrem.fromScene(envScene, 0.02);
+  planeGeo.dispose();
+  mats.forEach((m) => m.dispose());
+  pmrem.dispose();
+  return rt;
 }
 
 /**
- * Generates a soft cool-silver volumetric glow sprite for the Monolith's suspended core.
- */
-function createCoreGlowTexture(THREE: ThreeModule): import('three').CanvasTexture {
-  const size = 128;
-  const canvas = document.createElement('canvas');
-  canvas.width = size;
-  canvas.height = size;
-  const ctx = canvas.getContext('2d');
-  if (ctx) {
-    const half = size / 2;
-    const g = ctx.createRadialGradient(half, half, 0, half, half, half);
-    g.addColorStop(0.0, 'rgba(232, 240, 250, 0.92)');
-    g.addColorStop(0.24, 'rgba(196, 212, 232, 0.46)');
-    g.addColorStop(0.58, 'rgba(128, 148, 176, 0.14)');
-    g.addColorStop(1.0, 'rgba(0, 0, 0, 0.0)');
-    ctx.fillStyle = g;
-    ctx.fillRect(0, 0, size, size);
-  }
-  const tex = new THREE.CanvasTexture(canvas);
-  tex.colorSpace = THREE.SRGBColorSpace;
-  tex.needsUpdate = true;
-  return tex;
-}
-
-/**
- * Builds a chamfered octagonal shape for extruded Obsidian Steel blocks and collars.
- */
-function createChamferRectShape(
-  THREE: ThreeModule,
-  width: number,
-  height: number,
-  chamfer: number
-): import('three').Shape {
-  const hw = width / 2;
-  const hh = height / 2;
-  const c = Math.min(chamfer, hw * 0.45, hh * 0.45);
-  const shape = new THREE.Shape();
-  shape.moveTo(-hw + c, -hh);
-  shape.lineTo(hw - c, -hh);
-  shape.lineTo(hw, -hh + c);
-  shape.lineTo(hw, hh - c);
-  shape.lineTo(hw - c, hh);
-  shape.lineTo(-hw + c, hh);
-  shape.lineTo(-hw, hh - c);
-  shape.lineTo(-hw, -hh + c);
-  shape.closePath();
-  return shape;
-}
-
-/**
- * Recursively disposes every geometry, material, and material texture inside a Three.js scene/group.
+ * Recursively disposes every geometry, material, and material texture inside a Three.js Object3D tree.
  */
 function disposeObjectTree(root: import('three').Object3D): void {
   const disposedGeometries = new Set<import('three').BufferGeometry>();
@@ -175,440 +182,213 @@ function disposeObjectTree(root: import('three').Object3D): void {
 }
 
 /**
- * Sculpture 1: Smoked Obsidian Monolith (`monolith`)
- * Chamfered dark obsidian glass & brushed-gunmetal monolith enclosing a suspended
- * cool-silver internal glowing core that breathes while running and dims/settles when paused.
+ * Sculpture A (`monolith` — Mirror-Faceted Rose Copper Obsidian Crystal with Soft Recessed Glow):
+ * Glossy 80-face (`detail = 1`) smoked obsidian crystal + fine Rose Copper facet wireframe +
+ * soft feathered CanvasTexture radial ember glow sprite + tiny deep faceted nucleus (0.30).
  */
-function buildMonolithSculpture(
-  THREE: ThreeModule,
-  scene: import('three').Scene,
-  camera: import('three').PerspectiveCamera,
-  brushedTex: import('three').CanvasTexture,
-  isSoftwareGl: boolean
-): SculptureRigController {
+function buildMonolithSculpture(THREE: ThreeModule): SculptureRigController {
   const root = new THREE.Group();
-  scene.add(root);
 
-  // 1. Primary Silhouette: Chamfered Smoked Obsidian Outer Shell
-  const shellShape = createChamferRectShape(THREE, 1.82, 2.92, 0.24);
-  const shellGeo = new THREE.ExtrudeGeometry(shellShape, {
-    depth: 1.06,
-    bevelEnabled: true,
-    bevelThickness: 0.14,
-    bevelSize: 0.11,
-    bevelSegments: 4,
-    curveSegments: 8,
-  });
-  shellGeo.center();
-
+  // 1. Glossy flat-shaded obsidian geodesic crystal (80 triangular facets)
+  const shellGeo = new THREE.IcosahedronGeometry(1.48, 1);
   const shellMat = new THREE.MeshPhysicalMaterial({
-    color: new THREE.Color('#080A0F'),
-    metalness: 0.22,
-    roughness: 0.11,
+    color: 0x0e0a09,
+    metalness: 0.88,
+    roughness: 0.12,
+    flatShading: true,
     clearcoat: 1.0,
-    clearcoatRoughness: 0.06,
-    ior: 1.56,
-    reflectivity: 0.92,
-    envMapIntensity: 1.05,
+    clearcoatRoughness: 0.05,
     transparent: true,
-    opacity: isSoftwareGl ? 0.44 : 0.4,
-    depthWrite: false,
+    opacity: 0.9,
+    envMapIntensity: 3.1,
     side: THREE.FrontSide,
   });
   const shellMesh = new THREE.Mesh(shellGeo, shellMat);
-  shellMesh.renderOrder = 3;
+  shellMesh.rotation.set(0.24, 0.42, 0);
   root.add(shellMesh);
 
-  // Subtle dark inner smoked shell lining for architectural depth
-  const innerShellMat = new THREE.MeshPhysicalMaterial({
-    color: new THREE.Color('#07090D'),
-    metalness: 0.32,
-    roughness: 0.16,
-    clearcoat: 0.85,
+  // 2. Fine Rose Copper facet wireframe hugging the crystal
+  const wireGeo = new THREE.EdgesGeometry(shellGeo, 1);
+  const wireMat = new THREE.LineBasicMaterial({
+    color: 0xd99b82,
     transparent: true,
-    opacity: 0.22,
-    depthWrite: false,
-    side: THREE.BackSide,
+    opacity: 0.52,
   });
-  const innerShellMesh = new THREE.Mesh(shellGeo, innerShellMat);
-  innerShellMesh.scale.set(0.985, 0.985, 0.985);
-  innerShellMesh.renderOrder = 2;
-  root.add(innerShellMesh);
+  const wireMesh = new THREE.LineSegments(wireGeo, wireMat);
+  wireMesh.scale.setScalar(1.003);
+  wireMesh.rotation.copy(shellMesh.rotation);
+  root.add(wireMesh);
 
-  // Restrained specular silver-steel hairline bevel edges
-  const edgesGeo = new THREE.EdgesGeometry(shellGeo, 28);
-  const edgesMat = new THREE.LineBasicMaterial({
-    color: new THREE.Color('#BAC6D6'),
-    transparent: true,
-    opacity: 0.22,
-  });
-  const edgesLines = new THREE.LineSegments(edgesGeo, edgesMat);
-  edgesLines.renderOrder = 4;
-  root.add(edgesLines);
-
-  // 2. Secondary Read: Brushed Gunmetal Machined Exoskeleton Collars & End Caps
-  const gunmetalMat = new THREE.MeshPhysicalMaterial({
-    color: new THREE.Color('#1B212C'),
-    metalness: 0.94,
-    roughness: 0.28,
-    roughnessMap: brushedTex,
-    bumpMap: brushedTex,
-    bumpScale: 0.012,
-    clearcoat: 0.36,
-    clearcoatRoughness: 0.2,
-    envMapIntensity: 1.15,
-  });
-
-  const trimSteelMat = new THREE.MeshPhysicalMaterial({
-    color: new THREE.Color('#C8D2DE'),
-    metalness: 0.98,
-    roughness: 0.14,
-    envMapIntensity: 1.25,
-  });
-
-  // Top & bottom chamfered machined end-cap plates
-  const capShape = createChamferRectShape(THREE, 1.56, 0.96, 0.2);
-  const capGeo = new THREE.ExtrudeGeometry(capShape, {
-    depth: 0.14,
-    bevelEnabled: true,
-    bevelThickness: 0.035,
-    bevelSize: 0.035,
-    bevelSegments: 2,
-  });
-  capGeo.center();
-  capGeo.rotateX(Math.PI / 2);
-
-  const topCap = new THREE.Mesh(capGeo, gunmetalMat);
-  topCap.position.y = 1.54;
-  root.add(topCap);
-
-  const bottomCap = new THREE.Mesh(capGeo, gunmetalMat);
-  bottomCap.position.y = -1.54;
-  root.add(bottomCap);
-
-  // Twin vertical brushed-gunmetal corner rails flanking the smoked chamber
-  const railGeo = new THREE.BoxGeometry(0.085, 2.96, 0.085);
-  const railOffsets: ReadonlyArray<readonly [number, number]> = [
-    [-0.86, 0.52],
-    [0.86, 0.52],
-    [-0.86, -0.52],
-    [0.86, -0.52],
-  ];
-  for (const [rx, rz] of railOffsets) {
-    const rail = new THREE.Mesh(railGeo, gunmetalMat);
-    rail.position.set(rx, 0, rz);
-    root.add(rail);
+  // 3. Soft feathered internal copper ember glow (CanvasTexture radial gradient -> ZERO hard circle edge)
+  const glowCanvas = document.createElement('canvas');
+  glowCanvas.width = 128;
+  glowCanvas.height = 128;
+  const gctx = glowCanvas.getContext('2d');
+  if (gctx) {
+    const grad = gctx.createRadialGradient(64, 64, 2, 64, 64, 64);
+    grad.addColorStop(0.0, 'rgba(232, 148, 108, 0.58)');
+    grad.addColorStop(0.35, 'rgba(182, 92, 58, 0.24)');
+    grad.addColorStop(0.7, 'rgba(95, 42, 24, 0.06)');
+    grad.addColorStop(1.0, 'rgba(0, 0, 0, 0.0)');
+    gctx.fillStyle = grad;
+    gctx.fillRect(0, 0, 128, 128);
   }
-
-  // Slim machined end-frame collars flanking the open smoked chamber
-  const collarShape = createChamferRectShape(THREE, 2.0, 1.3, 0.24);
-  const collarHole = createChamferRectShape(THREE, 1.84, 1.14, 0.2);
-  collarShape.holes.push(collarHole);
-  const collarGeo = new THREE.ExtrudeGeometry(collarShape, {
-    depth: 0.052,
-    bevelEnabled: true,
-    bevelThickness: 0.014,
-    bevelSize: 0.014,
-    bevelSegments: 2,
+  const glowTex = new THREE.CanvasTexture(glowCanvas);
+  const glowMat = new THREE.SpriteMaterial({
+    map: glowTex,
+    transparent: true,
+    blending: THREE.AdditiveBlending,
+    depthWrite: false,
+    depthTest: false,
   });
-  collarGeo.center();
-  collarGeo.rotateX(Math.PI / 2);
+  const glowSprite = new THREE.Sprite(glowMat);
+  glowSprite.scale.set(1.55, 1.55, 1);
+  root.add(glowSprite);
 
-  const upperCollar = new THREE.Mesh(collarGeo, gunmetalMat);
-  upperCollar.position.y = 1.16;
-  root.add(upperCollar);
-
-  const lowerCollar = new THREE.Mesh(collarGeo, gunmetalMat);
-  lowerCollar.position.y = -1.16;
-  root.add(lowerCollar);
-
-  // Central suspension axis needles anchoring the floating core
-  const needleGeo = new THREE.CylinderGeometry(0.011, 0.011, 2.86, 10);
-  const needleMesh = new THREE.Mesh(needleGeo, trimSteelMat);
-  root.add(needleMesh);
-
-  // 3. Accent Detail: Suspended Internal Glowing Obsidian Steel Core
-  const coreGroup = new THREE.Group();
-  root.add(coreGroup);
-
-  const coreCrystalGeo = new THREE.OctahedronGeometry(0.46, 0);
-  const coreCrystalMat = new THREE.MeshStandardMaterial({
-    color: new THREE.Color('#CFD8E3'),
-    emissive: new THREE.Color('#D8E6F5'),
-    emissiveIntensity: 1.05,
-    metalness: 0.35,
-    roughness: 0.22,
+  // 4. Tiny deep faceted nucleus (radius 0.30) + subtle warm internal point light
+  const coreGeo = new THREE.IcosahedronGeometry(0.3, 0);
+  const coreMat = new THREE.MeshStandardMaterial({
+    color: 0x3b1d14,
+    emissive: 0xc26c48,
+    emissiveIntensity: 0.85,
+    roughness: 0.3,
+    metalness: 0.4,
     flatShading: true,
   });
-  const coreCrystal = new THREE.Mesh(coreCrystalGeo, coreCrystalMat);
-  coreCrystal.scale.set(0.76, 1.58, 0.76);
-  coreGroup.add(coreCrystal);
+  const coreMesh = new THREE.Mesh(coreGeo, coreMat);
+  root.add(coreMesh);
 
-  const coreEquatorialRingGeo = new THREE.TorusGeometry(0.48, 0.013, 12, 48);
-  const coreEquatorialRing = new THREE.Mesh(coreEquatorialRingGeo, trimSteelMat);
-  coreEquatorialRing.rotation.x = Math.PI / 2;
-  coreGroup.add(coreEquatorialRing);
-
-  const coreHaloGeo = new THREE.OctahedronGeometry(0.62, 1);
-  const coreHaloMat = new THREE.MeshBasicMaterial({
-    color: new THREE.Color('#A8BCD4'),
-    transparent: true,
-    opacity: 0.16,
-    blending: THREE.AdditiveBlending,
-    depthWrite: false,
-  });
-  const coreHalo = new THREE.Mesh(coreHaloGeo, coreHaloMat);
-  coreHalo.scale.set(0.84, 1.52, 0.84);
-  coreHalo.renderOrder = 2;
-  coreGroup.add(coreHalo);
-
-  const coreGlowTex = createCoreGlowTexture(THREE);
-  const coreSpriteMat = new THREE.SpriteMaterial({
-    map: coreGlowTex,
-    color: new THREE.Color('#D8E5F4'),
-    transparent: true,
-    opacity: 0.42,
-    blending: THREE.AdditiveBlending,
-    depthWrite: false,
-  });
-  const coreSprite = new THREE.Sprite(coreSpriteMat);
-  coreSprite.scale.set(2.15, 2.95, 1);
-  coreSprite.renderOrder = 1;
-  coreGroup.add(coreSprite);
-
-  const coreLight = new THREE.PointLight(0xdce8f7, 2.2, 5.5, 2);
-  coreLight.position.set(0, 0, 0);
+  const coreLight = new THREE.PointLight(0xe69570, 2.2, 4.5);
   root.add(coreLight);
 
-  let phase = 0.65;
-  let energy = 1.0;
-
-  const fitCamera = (width: number, height: number) => {
-    const aspect = Math.max(0.35, width / Math.max(1, height));
-    // Frame the tall monolith gracefully in both landscape (800x360, 1440x900) and portrait
-    const zVert = 6.35;
-    const zHoriz = 4.9 / aspect;
-    const safeZ = Math.max(zVert, zHoriz);
-    camera.position.set(0, 0.08, safeZ);
-    camera.lookAt(0, 0, 0);
-  };
-
-  const update = (dt: number, isRunning: boolean, isPaused: boolean) => {
-    const targetEnergy = isRunning && !isPaused ? 1.0 : 0.0;
-    const damp = 1 - Math.exp(-3.2 * dt);
-    energy += (targetEnergy - energy) * damp;
-
-    const speed = 0.18 + 0.82 * energy;
-    phase += dt * speed;
-
-    const motion = computeMonolithMotion(phase, energy);
-    root.rotation.set(motion.rotX, motion.rotY, motion.rotZ);
-    coreGroup.rotation.y = motion.coreRotY;
-    coreGroup.rotation.z = Math.sin(phase * 0.55) * 0.08;
-    coreGroup.scale.setScalar(motion.corePulse);
-
-    coreCrystalMat.emissiveIntensity = motion.coreEmissiveIntensity;
-    coreLight.intensity = motion.coreLightIntensity;
-    coreHaloMat.opacity = motion.coreHaloOpacity;
-    coreSpriteMat.opacity = 0.2 + energy * 0.42;
-    edgesMat.opacity = 0.14 + energy * 0.11;
-  };
+  let elapsed = 0;
 
   return {
-    fitCamera,
-    update,
+    root,
+    update: (dt: number, isRunning: boolean, isPaused: boolean, dimFactor: number) => {
+      const active = isRunning && !isPaused;
+      const speed = active ? 1 : 0.2;
+      elapsed += dt;
+      shellMesh.rotation.y += dt * 0.18 * speed;
+      shellMesh.rotation.x += dt * 0.07 * speed;
+      wireMesh.rotation.copy(shellMesh.rotation);
+      coreMesh.rotation.y -= dt * 0.16 * speed;
+      coreMesh.rotation.x += dt * 0.08 * speed;
+      const pulse = active ? 0.85 + Math.sin(elapsed * 1.25) * 0.22 : 0.55;
+      shellMat.envMapIntensity = 3.1 * dimFactor;
+      wireMat.opacity = 0.52 * dimFactor;
+      glowMat.opacity = pulse * dimFactor;
+      coreMat.emissiveIntensity = pulse * dimFactor;
+      coreLight.intensity = pulse * 2.2 * dimFactor;
+    },
     disposeExtra: () => {
-      coreGlowTex.dispose();
+      glowTex.dispose();
+      glowMat.dispose();
     },
   };
 }
 
 /**
- * Sculpture 2: 22-Rib Kinetic Wave (`kinetic-wave`)
- * 22 precision-machined, thin chamfered Obsidian Steel ribs arranged along a
- * horizontal spine with continuous sinusoidal wave propagation and brushed specular edges.
+ * Sculpture B (`kinetic-wave` — Razor-Thin High-Contrast Obsidian Steel 22-Rib Horizontal-Diagonal Coil):
+ * 22 razor-thin (`0.045` wall) hollow rounded-square dark obsidian-steel loops sweeping sleekly
+ * upper-left to lower-right (~1.7:1 horizontal ratio).
  */
-function buildKineticWaveSculpture(
-  THREE: ThreeModule,
-  scene: import('three').Scene,
-  camera: import('three').PerspectiveCamera,
-  brushedTex: import('three').CanvasTexture
-): SculptureRigController {
-  const root = new THREE.Group();
-  // Subtle architectural 3/4 pitch so brushed chamfers & silver rims catch studio light cleanly
-  root.rotation.set(0.24, -0.15, 0.02);
-  scene.add(root);
+function buildKineticWaveSculpture(THREE: ThreeModule): SculptureRigController {
+  const createRoundedSquarePath = (half: number, radius: number, isHole: boolean) => {
+    const p = isHole ? new THREE.Path() : new THREE.Shape();
+    const r = Math.min(radius, half * 0.9);
+    p.moveTo(-half + r, -half);
+    p.lineTo(half - r, -half);
+    p.quadraticCurveTo(half, -half, half, -half + r);
+    p.lineTo(half, half - r);
+    p.quadraticCurveTo(half, half, half - r, half);
+    p.lineTo(-half + r, half);
+    p.quadraticCurveTo(-half, half, -half, half - r);
+    p.lineTo(-half, -half + r);
+    p.quadraticCurveTo(-half, -half, -half + r, -half);
+    return p;
+  };
 
-  // 1. Secondary Read: Horizontal Precision Machined Central Spine & End Caps
-  const spineMat = new THREE.MeshPhysicalMaterial({
-    color: new THREE.Color('#0E121A'),
-    metalness: 0.9,
-    roughness: 0.34,
-    roughnessMap: brushedTex,
-    envMapIntensity: 1.0,
-  });
-  const capMat = new THREE.MeshPhysicalMaterial({
-    color: new THREE.Color('#202734'),
-    metalness: 0.96,
-    roughness: 0.2,
-    clearcoat: 0.4,
-    envMapIntensity: 1.2,
-  });
+  // Razor-thin precision frame (0.045 wall thickness)
+  const ribShape = createRoundedSquarePath(0.72, 0.24, false) as import('three').Shape;
+  ribShape.holes.push(createRoundedSquarePath(0.675, 0.205, true));
 
-  const spineGeo = new THREE.CylinderGeometry(0.036, 0.036, 7.68, 20);
-  spineGeo.rotateZ(Math.PI / 2);
-  const spineMesh = new THREE.Mesh(spineGeo, spineMat);
-  root.add(spineMesh);
-
-  const endCapGeo = new THREE.CylinderGeometry(0.088, 0.068, 0.2, 24);
-  endCapGeo.rotateZ(Math.PI / 2);
-  const leftCap = new THREE.Mesh(endCapGeo, capMat);
-  leftCap.position.x = -3.86;
-  root.add(leftCap);
-
-  const rightCap = new THREE.Mesh(endCapGeo, capMat);
-  rightCap.position.x = 3.86;
-  rightCap.rotation.y = Math.PI;
-  root.add(rightCap);
-
-  // 2. Primary Silhouette: 22 Precision-Machined Chamfered Metallic Ribs (InstancedMesh)
-  // Built in YZ plane (height=2.32, depth=0.64) extruded thin along X (thickness=0.062)
-  const ribShape = createChamferRectShape(THREE, 0.62, 2.28, 0.14);
   const ribGeo = new THREE.ExtrudeGeometry(ribShape, {
-    depth: 0.056,
+    depth: 0.028,
     bevelEnabled: true,
-    bevelThickness: 0.016,
-    bevelSize: 0.015,
+    bevelThickness: 0.01,
+    bevelSize: 0.011,
     bevelSegments: 2,
-    curveSegments: 6,
+    curveSegments: 18,
   });
   ribGeo.center();
-  // Rotate so extrusion thickness lies along X (horizontal spine axis) and blade sweeps in YZ
-  ribGeo.rotateY(Math.PI / 2);
 
   const ribMat = new THREE.MeshPhysicalMaterial({
-    color: new THREE.Color('#141922'),
-    metalness: 0.95,
-    roughness: 0.24,
-    roughnessMap: brushedTex,
-    bumpMap: brushedTex,
-    bumpScale: 0.01,
-    clearcoat: 0.52,
+    color: 0x3a4350,
+    metalness: 0.92,
+    roughness: 0.22,
+    clearcoat: 0.85,
     clearcoatRoughness: 0.14,
-    envMapIntensity: 1.25,
+    envMapIntensity: 2.9,
   });
 
-  const ribInstances = new THREE.InstancedMesh(
-    ribGeo,
-    ribMat,
-    KINETIC_WAVE_RIB_COUNT
-  );
-  ribInstances.frustumCulled = false;
-  root.add(ribInstances);
+  const root = new THREE.Group();
+  // Sleek horizontal-diagonal sweep (upper-left to lower-right, wider than tall)
+  root.rotation.set(0.24, 0.78, -0.22);
 
-  // 3. Accent Detail: 22 Restrained Anodized Cool Silver-Steel Specular Leading-Edge Strips
-  const rimGeo = new THREE.BoxGeometry(0.02, 1.98, 0.652);
-  const rimMat = new THREE.MeshPhysicalMaterial({
-    color: new THREE.Color('#9AA8BA'),
-    metalness: 0.96,
-    roughness: 0.2,
-    clearcoat: 0.65,
-    clearcoatRoughness: 0.14,
-    envMapIntensity: 1.05,
-  });
+  const RIB_COUNT = 22;
+  const SPACING = 0.138;
+  const ribs: import('three').Mesh[] = [];
+  for (let i = 0; i < RIB_COUNT; i++) {
+    const u = i / (RIB_COUNT - 1) - 0.5;
+    const mesh = new THREE.Mesh(ribGeo, ribMat);
+    mesh.position.z = u * (RIB_COUNT - 1) * SPACING;
+    const taper = 0.82 + 0.18 * Math.cos(u * Math.PI);
+    mesh.scale.setScalar(taper);
+    root.add(mesh);
+    ribs.push(mesh);
+  }
 
-  const rimInstances = new THREE.InstancedMesh(
-    rimGeo,
-    rimMat,
-    KINETIC_WAVE_RIB_COUNT
-  );
-  rimInstances.frustumCulled = false;
-  root.add(rimInstances);
+  let phase = 0.8;
 
-  // Pre-allocated scratch math helpers (zero GC inside animation loop)
-  const scratchMat4 = new THREE.Matrix4();
-  const scratchPos = new THREE.Vector3();
-  const scratchQuat = new THREE.Quaternion();
-  const scratchEuler = new THREE.Euler();
-  const scratchScale = new THREE.Vector3();
-  const scratchRimScale = new THREE.Vector3();
-
-  let phase = 1.4;
-  let energy = 1.0;
-
-  const applyRibMatrices = (currentPhase: number, currentEnergy: number) => {
-    for (let i = 0; i < KINETIC_WAVE_RIB_COUNT; i++) {
-      const tr = computeKineticWaveRibTransform(
-        i,
-        KINETIC_WAVE_RIB_COUNT,
-        currentPhase,
-        currentEnergy
-      );
-      scratchPos.set(tr.x, tr.yOffset, 0);
-      scratchEuler.set(tr.rotX, tr.rotY, tr.rotZ);
-      scratchQuat.setFromEuler(scratchEuler);
-      scratchScale.set(1, tr.scaleY, 1);
-      scratchMat4.compose(scratchPos, scratchQuat, scratchScale);
-      ribInstances.setMatrixAt(i, scratchMat4);
-
-      scratchRimScale.set(1, tr.scaleY * 0.985, 1.015);
-      scratchMat4.compose(scratchPos, scratchQuat, scratchRimScale);
-      rimInstances.setMatrixAt(i, scratchMat4);
+  const applyPhase = (curPhase: number) => {
+    for (let i = 0; i < ribs.length; i++) {
+      ribs[i].rotation.z = i * 0.16 + Math.sin(curPhase * 0.95 - i * 0.24) * 0.36;
+      ribs[i].position.y = Math.sin(curPhase * 1.15 - i * 0.26) * 0.1;
     }
-    ribInstances.instanceMatrix.needsUpdate = true;
-    rimInstances.instanceMatrix.needsUpdate = true;
   };
-
-  // Initialize matrices & bounds before first render
-  applyRibMatrices(phase, energy);
-  ribInstances.computeBoundingSphere();
-  rimInstances.computeBoundingSphere();
-
-  const fitCamera = (width: number, height: number) => {
-    const aspect = Math.max(0.35, width / Math.max(1, height));
-    // Generous framing so all 22 ribs + machined end-caps sit with pure #000000 breathing room
-    const zVert = 6.0;
-    const zHoriz = 12.8 / aspect;
-    const safeZ = Math.max(zVert, zHoriz);
-    camera.position.set(0, 0.14, safeZ);
-    camera.lookAt(0, 0, 0);
-  };
-
-  const update = (dt: number, isRunning: boolean, isPaused: boolean) => {
-    const targetEnergy = isRunning && !isPaused ? 1.0 : 0.0;
-    const damp = 1 - Math.exp(-3.0 * dt);
-    energy += (targetEnergy - energy) * damp;
-
-    // Smoothly slows to a calm idle drift when paused
-    const speed = 0.14 + 0.86 * energy;
-    phase += dt * speed;
-
-    root.rotation.x = 0.24 + Math.sin(phase * 0.28) * (0.03 + 0.04 * energy);
-    root.rotation.y = -0.15 + Math.cos(phase * 0.22) * (0.04 + 0.05 * energy);
-    applyRibMatrices(phase, energy);
-  };
+  applyPhase(phase);
 
   return {
-    fitCamera,
-    update,
-    disposeExtra: () => {
-      // Geometries & materials disposed via disposeObjectTree
+    root,
+    update: (dt: number, isRunning: boolean, isPaused: boolean, dimFactor: number) => {
+      const active = isRunning && !isPaused;
+      phase += dt * (active ? 1.0 : 0.18);
+      applyPhase(phase);
+      ribMat.envMapIntensity = 2.9 * dimFactor;
     },
   };
+}
+
+interface PersistentEngineHandle {
+  swapSculpture: (kind: DeskSculptureKind) => void;
+  syncViewport: () => void;
 }
 
 /**
  * StandBy Desk Mode Procedural 3D Sculpture Renderer (v45).
- * Instantiates ONLY the selected sculpture (`monolith` or `kinetic-wave`) with procedural
- * `PMREMGenerator` + `RoomEnvironment` studio lighting on pure `#000000` AMOLED black.
+ * Initializes WebGLRenderer, PerspectiveCamera, ResizeObserver, and the render loop ONCE on mount,
+ * and hot-swaps sculptures synchronously in-place (`useEffect([sculpture])`) with ZERO blank flash.
  *
  * Performance & Lifecycle Guardrails:
- * - Zero React re-renders on 1-second timer ticks (no per-second timer prop; live running/paused via ref)
- * - Strictly lazy-loads `three` and `RoomEnvironment` inside `useEffect`
- * - Caps pixel ratio at `Math.min(window.devicePixelRatio, 2)` (1 on software WebGL)
+ * - Zero React re-renders on 1-second timer ticks (live running/paused via ref)
+ * - Strictly lazy-loads `three` inside mount `useEffect`
+ * - Zero ambient light: pure 0x000000 PMREM strip softboxes (sigma = 0.02) for jet-black shadows
+ * - Caps pixel ratio at `Math.min(window.devicePixelRatio || 1, 2)` (1 on software WebGL)
+ * - Observes inner active Desk Mode stage (`clientWidth x clientHeight`) via ResizeObserver
  * - Pauses render loop when `document.hidden === true`
  * - Paces frames via GPU fence `afterDraw()` on software WebGL so headless renders never stall
- * - Recursively disposes all geometries, materials, textures, PMREM targets, and renderer on unmount or switch
+ * - Recursively disposes all geometries, materials, textures, PMREM targets, and renderer on swap/unmount
  */
 export const DeskChronoScene: React.FC<DeskChronoSceneProps> = memo(
   ({
@@ -617,30 +397,43 @@ export const DeskChronoScene: React.FC<DeskChronoSceneProps> = memo(
     ui3dQuality = 'auto',
     isRunning,
     isPaused,
+    nightDim = false,
+    battery = null,
     simLandscape = false,
+    stageRef,
   }) => {
     const mountRef = useRef<HTMLDivElement | null>(null);
-    const syncViewportRef = useRef<(() => void) | null>(null);
+    const engineRef = useRef<PersistentEngineHandle | null>(null);
+    const sculptureRef = useRef<DeskSculptureKind>(sculpture);
+    sculptureRef.current = sculpture;
+
     const [webglFailed, setWebglFailed] = useState(false);
 
-    // Keep live timer running/paused state in ref so pausing never tears down WebGL
-    const liveStateRef = useRef({ isRunning, isPaused });
-    liveStateRef.current = { isRunning, isPaused };
+    // Keep live timer, Night Dim, and Battery state in propsRef so changes NEVER tear down WebGL
+    const propsRef = useRef({ isRunning, isPaused, nightDim, battery });
+    propsRef.current = { isRunning, isPaused, nightDim, battery };
 
     const resolution = resolveRuntimeUi3d(ui3dSetting, false, ui3dQuality);
+
+    // Hot-swap sculpture synchronously inside the existing WebGL context (ZERO blank black flash)
+    useEffect(() => {
+      engineRef.current?.swapSculpture(sculpture);
+    }, [sculpture]);
 
     // Sync canvas aspect smoothly when toggling CSS Simulated Landscape without tearing down WebGL
     useEffect(() => {
       const id = window.requestAnimationFrame(() => {
-        syncViewportRef.current?.();
+        engineRef.current?.syncViewport();
       });
       return () => window.cancelAnimationFrame(id);
     }, [simLandscape]);
 
+    // Initialize WebGLRenderer, PerspectiveCamera, ResizeObserver, and RAF loop ONCE on mount
     useEffect(() => {
       if (!resolution.enabled || webglFailed) return;
       const container = mountRef.current;
       if (!container) return;
+      const observedStage = stageRef?.current || container;
 
       let disposed = false;
       let rafId = 0;
@@ -648,11 +441,14 @@ export const DeskChronoScene: React.FC<DeskChronoSceneProps> = memo(
       let isContextLost = false;
       let renderer: import('three').WebGLRenderer | null = null;
       let scene: import('three').Scene | null = null;
-      let pmremGenerator: import('three').PMREMGenerator | null = null;
+      let camera: import('three').PerspectiveCamera | null = null;
       let envRenderTarget: import('three').WebGLRenderTarget | null = null;
-      let roomEnv: { dispose?: () => void } | null = null;
-      let brushedTex: import('three').CanvasTexture | null = null;
       let rig: SculptureRigController | null = null;
+      let activeLights: Array<{
+        light: import('three').DirectionalLight;
+        baseIntensity: number;
+      }> = [];
+      let dimFactor = propsRef.current.nightDim ? DESK_NIGHT_DIM_FACTOR : 1.0;
       let resizeObserver: ResizeObserver | null = null;
       let cleanupListeners: (() => void) | null = null;
 
@@ -667,23 +463,54 @@ export const DeskChronoScene: React.FC<DeskChronoSceneProps> = memo(
         }
       };
 
-      Promise.all([
-        import('three'),
-        import('three/addons/environments/RoomEnvironment.js'),
-      ])
-        .then(([THREE, envMod]) => {
+      const readStageSize = () => {
+        const target = stageRef?.current || container;
+        const w = Math.max(
+          1,
+          Math.floor(target.clientWidth || container.clientWidth || window.innerWidth || 800)
+        );
+        const h = Math.max(
+          1,
+          Math.floor(target.clientHeight || container.clientHeight || window.innerHeight || 360)
+        );
+        return { w, h };
+      };
+
+      const disposeActiveSculpture = () => {
+        if (rig) {
+          if (scene) {
+            scene.remove(rig.root);
+          }
+          try {
+            rig.disposeExtra?.();
+          } catch {
+            // ignore disposal errors
+          }
+          disposeObjectTree(rig.root);
+          rig = null;
+        }
+        if (activeLights.length > 0) {
+          if (scene) {
+            for (const entry of activeLights) {
+              scene.remove(entry.light);
+            }
+          }
+          activeLights = [];
+        }
+        if (scene) {
+          scene.environment = null;
+        }
+        if (envRenderTarget) {
+          envRenderTarget.dispose();
+          envRenderTarget = null;
+        }
+      };
+
+      import('three')
+        .then((THREE) => {
           if (disposed || !mountRef.current) return;
 
-          // Use local clientWidth/clientHeight first so CSS rotate(90deg) in Simulated Landscape never swaps dimensions
-          const rect = container.getBoundingClientRect();
-          const initW = Math.max(
-            1,
-            Math.floor(container.clientWidth || rect.width || window.innerWidth || 800)
-          );
-          const initH = Math.max(
-            1,
-            Math.floor(container.clientHeight || rect.height || window.innerHeight || 360)
-          );
+          const { w: initW, h: initH } = readStageSize();
           const isSoftwareGl = resolution.isSoftwareGl;
 
           renderer = new THREE.WebGLRenderer({
@@ -693,8 +520,7 @@ export const DeskChronoScene: React.FC<DeskChronoSceneProps> = memo(
           });
           renderer.outputColorSpace = THREE.SRGBColorSpace;
           renderer.toneMapping = THREE.ACESFilmicToneMapping;
-          // Restrained studio exposure so foreground #F2F4F8 numerals command top luminance
-          renderer.toneMappingExposure = 0.96;
+          renderer.toneMappingExposure = 1.0;
           renderer.setPixelRatio(
             isSoftwareGl ? 1 : Math.min(window.devicePixelRatio || 1, 2)
           );
@@ -714,69 +540,94 @@ export const DeskChronoScene: React.FC<DeskChronoSceneProps> = memo(
           scene = new THREE.Scene();
           scene.background = new THREE.Color(0x000000);
 
-          // Procedural Studio Environment via PMREMGenerator + RoomEnvironment (zero external fetches)
-          const RoomEnvCtor = envMod.RoomEnvironment;
-          pmremGenerator = new THREE.PMREMGenerator(renderer);
-          pmremGenerator.compileEquirectangularShader();
-          const roomScene = new RoomEnvCtor();
-          roomEnv = roomScene;
-          envRenderTarget = pmremGenerator.fromScene(roomScene, 0.04);
-          scene.environment = envRenderTarget.texture;
-          if ('environmentIntensity' in scene) {
-            (scene as import('three').Scene & { environmentIntensity: number }).environmentIntensity = 0.66;
-          }
-          // PMREMGenerator and RoomEnvironment scene are no longer needed after baking target
-          if (typeof roomScene.dispose === 'function') {
-            roomScene.dispose();
-          }
-          roomEnv = null;
-          pmremGenerator.dispose();
-          pmremGenerator = null;
+          camera = new THREE.PerspectiveCamera(36, initW / initH, 0.1, 100);
 
-          // Restrained Obsidian Steel 3-Point Studio Lighting Rig
-          const hemiLight = new THREE.HemisphereLight(0x52627a, 0x05070b, 0.34);
-          scene.add(hemiLight);
-
-          const keyLight = new THREE.DirectionalLight(0xe4edf7, 2.25);
-          keyLight.position.set(4.2, 5.2, 4.6);
-          scene.add(keyLight);
-
-          const rimLight = new THREE.DirectionalLight(0xb8cae0, 1.55);
-          rimLight.position.set(-4.8, -1.6, -3.2);
-          scene.add(rimLight);
-
-          const topEdgeLight = new THREE.DirectionalLight(0x94a7bd, 0.85);
-          topEdgeLight.position.set(0.4, 6.0, -2.6);
-          scene.add(topEdgeLight);
-
-          const camera = new THREE.PerspectiveCamera(36, initW / initH, 0.1, 100);
-          brushedTex = createBrushedSteelTexture(
-            THREE,
-            renderer.capabilities.getMaxAnisotropy()
-          );
-
-          // Instantiate ONLY the active sculpture (never hold both in GPU memory)
-          rig =
-            sculpture === 'monolith'
-              ? buildMonolithSculpture(THREE, scene, camera, brushedTex, isSoftwareGl)
-              : buildKineticWaveSculpture(THREE, scene, camera, brushedTex);
-
-          rig.fitCamera(initW, initH);
-
-          if (!isSoftwareGl) {
-            try {
-              renderer.compile(scene, camera);
-            } catch {
-              // Ignore shader pre-warm quirks
-            }
-          }
-
-          let lastTime = performance.now();
+          const updateCameraFraming = (
+            w: number,
+            h: number,
+            kind: 'monolith' | 'kinetic-wave'
+          ) => {
+            if (!camera) return;
+            const aspect = Math.max(w, 1) / Math.max(h, 1);
+            camera.aspect = aspect;
+            const baseZ = kind === 'monolith' ? 7.6 : 7.5;
+            camera.position.set(
+              0,
+              0,
+              aspect >= 1 ? baseZ : (baseZ * 1.2) / Math.max(aspect, 0.46)
+            );
+            camera.lookAt(0, 0, 0);
+            camera.updateProjectionMatrix();
+          };
 
           const canRender = () =>
             !disposed &&
             !isContextLost &&
             (typeof document === 'undefined' || !document.hidden);
+
+          const applyLightDamping = (factor: number) => {
+            for (const entry of activeLights) {
+              entry.light.intensity = entry.baseIntensity * factor;
+            }
+          };
+
+          const swapSculpture = (kind: DeskSculptureKind) => {
+            if (disposed || !renderer || !scene || !camera) return;
+
+            // Dispose ONLY previous sculpture group, its lights, and its PMREM target
+            disposeActiveSculpture();
+
+            // Build per-sculpture high-contrast studio strip PMREM (pure 0x000000 bg, zero ambient wash)
+            const stripCfg = ENV_STRIPS[kind];
+            envRenderTarget = buildStudioEnv(THREE, renderer, stripCfg.panels);
+            scene.environment = envRenderTarget.texture;
+
+            dimFactor = propsRef.current.nightDim ? DESK_NIGHT_DIM_FACTOR : 1.0;
+            for (const l of stripCfg.lights) {
+              const dl = new THREE.DirectionalLight(l.color, l.intensity * dimFactor);
+              dl.position.set(l.pos[0], l.pos[1], l.pos[2]);
+              scene.add(dl);
+              activeLights.push({ light: dl, baseIntensity: l.intensity });
+            }
+
+            rig =
+              kind === 'monolith'
+                ? buildMonolithSculpture(THREE)
+                : buildKineticWaveSculpture(THREE);
+            scene.add(rig.root);
+
+            const { w, h } = readStageSize();
+            updateCameraFraming(w, h, kind);
+            renderer.setSize(w, h, false);
+
+            // Render immediately & synchronously so switching has ZERO blank black flash
+            if (canRender()) {
+              rig.update(
+                0.016,
+                propsRef.current.isRunning,
+                propsRef.current.isPaused,
+                dimFactor
+              );
+              renderer.render(scene, camera);
+            }
+          };
+
+          const syncViewport = () => {
+            if (disposed || !renderer || !scene || !camera) return;
+            const { w, h } = readStageSize();
+            updateCameraFraming(w, h, sculptureRef.current);
+            renderer.setSize(w, h, false);
+            if (canRender()) {
+              renderer.render(scene, camera);
+            }
+          };
+
+          engineRef.current = { swapSculpture, syncViewport };
+
+          // Mount initial sculpture and render frame 0 synchronously
+          swapSculpture(sculptureRef.current);
+
+          let lastRenderTime = performance.now();
 
           const afterDraw = (cb: () => void) => {
             if (disposed || !renderer) return;
@@ -805,13 +656,38 @@ export const DeskChronoScene: React.FC<DeskChronoSceneProps> = memo(
 
           const tick = (now: number) => {
             rafId = 0;
-            if (!canRender() || !renderer || !scene || !rig) return;
+            if (!canRender() || !renderer || !scene || !camera || !rig) return;
 
-            const dt = Math.min(0.08, Math.max(0.001, (now - lastTime) / 1000));
-            lastTime = now;
+            const {
+              isRunning: running,
+              isPaused: paused,
+              nightDim: dimEnabled,
+              battery: curBattery,
+            } = propsRef.current;
 
-            const { isRunning: running, isPaused: paused } = liveStateRef.current;
-            rig.update(dt, running, paused);
+            // Battery-aware frame-delta pacing (30fps when unplugged < 20%, 20fps if Dim is also ON)
+            const targetFps = resolveDeskTargetFps(curBattery, dimEnabled);
+            if (!isSoftwareGl && targetFps !== null) {
+              const minFrameMs = 1000 / targetFps;
+              if (now - lastRenderTime < minFrameMs - 1) {
+                rafId = window.requestAnimationFrame(tick);
+                return;
+              }
+            }
+
+            const dt = Math.min(0.12, Math.max(0.001, (now - lastRenderTime) / 1000));
+            lastRenderTime = now;
+
+            // Smoothly damp studio strip specular & directional lights by ~55% when Night Dim is ON
+            const targetDim = dimEnabled ? DESK_NIGHT_DIM_FACTOR : 1.0;
+            if (Math.abs(dimFactor - targetDim) > 0.002) {
+              dimFactor += (targetDim - dimFactor) * Math.min(1, dt * 8);
+            } else {
+              dimFactor = targetDim;
+            }
+            applyLightDamping(dimFactor);
+
+            rig.update(dt, running, paused, dimFactor);
             renderer.render(scene, camera);
 
             if (isSoftwareGl) {
@@ -828,7 +704,7 @@ export const DeskChronoScene: React.FC<DeskChronoSceneProps> = memo(
           const startLoop = () => {
             cancelScheduledFrame();
             if (!canRender()) return;
-            lastTime = performance.now();
+            lastRenderTime = performance.now();
             rafId = window.requestAnimationFrame(tick);
           };
 
@@ -860,33 +736,14 @@ export const DeskChronoScene: React.FC<DeskChronoSceneProps> = memo(
             canvas.removeEventListener('webglcontextrestored', handleContextRestored);
           };
 
-          const syncViewport = (nextW?: number, nextH?: number) => {
-            if (disposed || !renderer || !rig || !scene) return;
-            const w = Math.max(1, Math.floor(nextW ?? container.clientWidth ?? initW));
-            const h = Math.max(1, Math.floor(nextH ?? container.clientHeight ?? initH));
-            camera.aspect = w / h;
-            camera.updateProjectionMatrix();
-            renderer.setSize(w, h, false);
-            rig.fitCamera(w, h);
-            if (canRender()) {
-              renderer.render(scene, camera);
-            }
-          };
-          syncViewportRef.current = () => syncViewport();
-
           if (typeof ResizeObserver !== 'undefined') {
-            resizeObserver = new ResizeObserver((entries) => {
-              const entry = entries[0];
-              if (!entry) return;
-              syncViewport(entry.contentRect.width, entry.contentRect.height);
+            resizeObserver = new ResizeObserver(() => {
+              syncViewport();
             });
-            resizeObserver.observe(container);
+            resizeObserver.observe(observedStage);
           }
 
-          // Render immediate first frame and kick off animation loop
           if (canRender()) {
-            rig.update(0.016, liveStateRef.current.isRunning, liveStateRef.current.isPaused);
-            renderer.render(scene, camera);
             if (isSoftwareGl) {
               afterDraw(() => {
                 if (canRender()) tick(performance.now());
@@ -904,50 +761,26 @@ export const DeskChronoScene: React.FC<DeskChronoSceneProps> = memo(
 
       return () => {
         disposed = true;
+        engineRef.current = null;
         cancelScheduledFrame();
         resizeObserver?.disconnect();
         cleanupListeners?.();
 
-        if (rig) {
-          try {
-            rig.disposeExtra();
-          } catch {
-            // ignore disposal errors
-          }
-          rig = null;
-        }
+        disposeActiveSculpture();
         if (scene) {
-          disposeObjectTree(scene);
-          scene.environment = null;
           scene.clear();
           scene = null;
         }
-        if (brushedTex) {
-          brushedTex.dispose();
-          brushedTex = null;
-        }
-        if (envRenderTarget) {
-          envRenderTarget.dispose();
-          envRenderTarget = null;
-        }
-        if (pmremGenerator) {
-          pmremGenerator.dispose();
-          pmremGenerator = null;
-        }
-        if (roomEnv && typeof roomEnv.dispose === 'function') {
-          roomEnv.dispose();
-          roomEnv = null;
-        }
+        camera = null;
         if (renderer) {
           renderer.dispose();
           renderer = null;
         }
-        syncViewportRef.current = null;
         if (container) {
           container.replaceChildren();
         }
       };
-    }, [sculpture, resolution.enabled, resolution.isSoftwareGl, webglFailed]);
+    }, [resolution.enabled, resolution.isSoftwareGl, webglFailed, stageRef]);
 
     if (!resolution.enabled || webglFailed) {
       return null;

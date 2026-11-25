@@ -10,11 +10,13 @@ import {
   encodeCsvRow,
   formatLocalDateKey,
   onStorageQuotaExceeded,
+  safeExternalHttpsUrl,
   safeJsonParse,
   safeJsonParseStrict,
   safeLocalStorageGetJson,
   safeLocalStorageSet,
   sanitizeCsvCell,
+  sanitizeImportedStatePayload,
   sanitizeTextControlChars,
   stripDangerousKeys,
   validateFirestoreCheerContract,
@@ -27,7 +29,14 @@ import {
   type SafeStorageLike,
 } from './security.ts';
 import { createDefaultState, logicalKey, norm } from './studyLogic.ts';
-import { mergeStateWithCloudDocs, partitionStateToCloudDocs } from './cloudSync.ts';
+import {
+  detectDirtyDocKeys,
+  hasMeaningfulLocalData,
+  mergeStateWithCloudDocs,
+  partitionStateToCloudDocs,
+  splitDocIfOversized,
+} from './cloudSync.ts';
+import { buildIcsEvent, escapeIcsSingleLine } from './calendarExport.ts';
 import {
   buildActiveSessionAuraPayload,
   buildMyMemberEntry,
@@ -677,5 +686,286 @@ test('v44 meta/tasks doc with deadlineTargets and reminders passes Firestore con
   const afterDeleteMerge = mergeStateWithCloudDocs(deletedLocal, remoteDocsWithUpdate);
   assert.equal(afterDeleteMerge.reminders?.length, 0);
 });
+
+// ---------------------------------------------------------------------------
+// 10. v47 Pre-Publish Hardening: Vault 10 MB + Spoof Defense, ICS CRLF Injection,
+//     External HTTPS Links, Backup Clamping & Cloud Sync Dirty/Sharding
+// ---------------------------------------------------------------------------
+test('v47 Vault signature validator enforces 10 MB cap and rejects spoofed SVG/HTML/JS payloads', async () => {
+  const oversized = validateRasterImageMetadata({
+    type: 'image/jpeg',
+    size: 10 * 1024 * 1024 + 1,
+    name: 'oversized.jpg',
+  });
+  assert.equal(oversized.ok, false);
+
+  const svgSpoofedAsJpg = new Blob(['<svg xmlns="http://www.w3.org/2000/svg"><script>alert(1)</script></svg>'], {
+    type: 'image/jpeg',
+  });
+  Object.defineProperty(svgSpoofedAsJpg, 'name', { value: 'photo.jpg' });
+  const svgRes = await validateImageFileSignature(svgSpoofedAsJpg);
+  assert.equal(svgRes.ok, false);
+
+  const htmlSpoofedAsPng = new Blob(['<!doctype html><script>alert(1)</script>'], {
+    type: 'image/png',
+  });
+  Object.defineProperty(htmlSpoofedAsPng, 'name', { value: 'notes.png' });
+  const htmlRes = await validateImageFileSignature(htmlSpoofedAsPng);
+  assert.equal(htmlRes.ok, false);
+
+  const validWebpBytes = new Uint8Array([
+    0x52, 0x49, 0x46, 0x46, 0x24, 0x00, 0x00, 0x00, 0x57, 0x45, 0x42, 0x50, 0x56, 0x50, 0x38, 0x20,
+  ]);
+  const validWebp = new Blob([validWebpBytes], { type: 'image/webp' });
+  Object.defineProperty(validWebp, 'name', { value: 'card.webp' });
+  const webpRes = await validateImageFileSignature(validWebp);
+  assert.equal(webpRes.ok, true);
+  assert.equal(webpRes.detectedMime, 'image/webp');
+});
+
+test('v47 safeExternalHttpsUrl strictly allows https:// URLs and blocks javascript:/data:/http:', () => {
+  assert.equal(
+    safeExternalHttpsUrl('https://calendar.google.com/calendar/render?action=TEMPLATE'),
+    'https://calendar.google.com/calendar/render?action=TEMPLATE'
+  );
+  assert.equal(safeExternalHttpsUrl('javascript:alert(1)'), null);
+  assert.equal(safeExternalHttpsUrl('data:text/html,<script>alert(1)</script>'), null);
+  assert.equal(safeExternalHttpsUrl('http://example.com/insecure'), null);
+  assert.equal(safeExternalHttpsUrl('https://example.com/bad\r\nheader'), null);
+  assert.equal(safeExternalHttpsUrl('not-a-url'), null);
+});
+
+test('v47 sanitizeImportedStatePayload strips prototype pollution keys and clamps malformed fields', () => {
+  const maliciousPayload = JSON.parse(
+    JSON.stringify({
+      sessions: [
+        {
+          id: 's1\u0000bad',
+          subjectId: 'phy',
+          dayKey: '2026-11-24',
+          startTs: -500,
+          endTs: Number.NaN,
+          activeMs: -9999,
+          pausedMs: 999_999_999,
+          purity: 420,
+          rating: -3,
+          note: 'A'.repeat(900),
+          updatedAt: -1,
+        },
+      ],
+      chapters: [
+        {
+          id: 'c1',
+          subjectId: 'phy',
+          name: 'Electro\u0007statics' + 'x'.repeat(300),
+          confidence: 99,
+          updatedAt: 0,
+        },
+      ],
+      mocks: [
+        {
+          id: 'm1',
+          title: 'Full Mock\u0000' + 'y'.repeat(300),
+          date: 'not-a-date',
+          score: 99999,
+          maxScore: -50,
+          durationMins: 99999,
+          wrong: -10,
+        },
+      ],
+      deadlineTargets: [
+        {
+          id: 't1',
+          title: 'Sprint\r\nTitle' + 'z'.repeat(300),
+          startDate: '2026-11-24',
+          deadlineDate: '2026-12-01',
+          items: [{ id: 'i1', text: 'Task\u0000' + 'k'.repeat(300), done: 1 }],
+          createdAt: -10,
+          updatedAt: 0,
+        },
+      ],
+      reminders: [
+        {
+          id: 'r1',
+          title: 'Fee\u0007Payment',
+          date: '2026-11-29',
+          leadDays: [-5, 999, 3],
+          createdAt: -1,
+          updatedAt: -2,
+        },
+      ],
+      profile: {
+        nick: '<script>Aarav</script>',
+        emoji: '🎯',
+        examYear: 9999,
+        updatedAt: -5,
+      },
+    })
+  );
+  // Inject dangerous key directly
+  Object.defineProperty(maliciousPayload, 'constructor', {
+    value: { prototype: { hacked: true } },
+    enumerable: true,
+  });
+
+  const clean = sanitizeImportedStatePayload(maliciousPayload, 1_760_000_000_000);
+  assert.equal(Object.prototype.hasOwnProperty.call(clean, 'constructor'), false);
+  assert.equal(({} as { hacked?: boolean }).hacked, undefined);
+
+  const s = (clean.sessions as Array<Record<string, unknown>>)[0];
+  assert.equal(s.activeMs, 0);
+  assert.equal(s.pausedMs, 86_400_000);
+  assert.equal(s.purity, 100);
+  assert.equal(s.rating, 0);
+  assert.equal((s.note as string).length, 500);
+  assert.equal((s.startTs as number) > 0, true);
+
+  const ch = (clean.chapters as Array<Record<string, unknown>>)[0];
+  assert.equal((ch.name as string).length, 160);
+  assert.equal(ch.confidence, 5);
+
+  const m = (clean.mocks as Array<Record<string, unknown>>)[0];
+  assert.equal(m.date, undefined);
+  assert.equal(m.score, 2000);
+  assert.equal(m.maxScore, 1);
+  assert.equal(m.durationMins, 1440);
+  assert.equal(m.wrong, 0);
+
+  const t = (clean.deadlineTargets as Array<Record<string, unknown>>)[0];
+  assert.equal((t.title as string).length, 140);
+  assert.equal((t.createdAt as number) > 0, true);
+
+  const r = (clean.reminders as Array<Record<string, unknown>>)[0];
+  assert.deepEqual(r.leadDays, [0, 30, 3]);
+
+  const p = clean.profile as Record<string, unknown>;
+  assert.equal(p.nick, 'scriptAarav/script');
+  assert.equal(p.examYear, 2035);
+});
+
+test('v47 ICS export strips CR/LF injection on SUMMARY, UID, CATEGORIES, and VALARM DESCRIPTION', () => {
+  assert.equal(
+    escapeIcsSingleLine('Exam\r\nATTENDEE:evil@attacker.test;semi,comma\\slash'),
+    'Exam ATTENDEE:evil@attacker.test\\;semi\\,comma\\\\slash'
+  );
+
+  const vevent = buildIcsEvent(
+    {
+      id: 'bad\r\nUID:forged',
+      title: 'NEET Fee\r\nBEGIN:VALARM\r\nACTION:EMAIL',
+      date: '2026-11-29',
+      category: 'admin\r\nSUMMARY:Injected',
+      leadDays: [1, 0],
+    },
+    new Date('2026-11-24T10:00:00Z')
+  );
+
+  // Unfold RFC-5545 folded lines and ensure no injected property line exists
+  const unfoldedLines = vevent.replace(/\r\n /g, '').split('\r\n');
+  assert.equal(
+    unfoldedLines.some((line) => line.startsWith('ACTION:EMAIL')),
+    false,
+    'Injected ACTION:EMAIL property must not appear on its own line'
+  );
+  assert.equal(
+    unfoldedLines.filter((line) => line.startsWith('SUMMARY:')).length,
+    1,
+    'Exactly one SUMMARY property must exist'
+  );
+  assert.equal(
+    unfoldedLines.filter((line) => line.startsWith('UID:')).length,
+    1,
+    'Exactly one UID property must exist'
+  );
+});
+
+test('v47 cloudSync marks meta/tasks dirty on deadlineTargets/reminders edits and shards oversized maps safely', () => {
+  const baseTs = Date.now();
+  const prev = norm({});
+  const withTarget = {
+    ...prev,
+    deadlineTargets: [
+      {
+        id: 't_sync_1',
+        title: 'Optics Sprint',
+        startDate: '2026-11-24',
+        deadlineDate: '2026-11-30',
+        items: [{ id: 'i1', text: 'Ray Optics NCERT', done: false }],
+        createdAt: baseTs,
+        updatedAt: baseTs,
+      },
+    ],
+  };
+  assert.equal(hasMeaningfulLocalData(withTarget), true);
+  assert.equal(detectDirtyDocKeys(prev, withTarget).includes('meta/tasks'), true);
+
+  const withReminder = {
+    ...prev,
+    reminders: [
+      {
+        id: 'r_sync_1',
+        title: 'Admit card download',
+        date: '2026-12-05',
+        leadDays: [3, 1, 0],
+        category: 'admin' as const,
+        done: false,
+        createdAt: baseTs,
+        updatedAt: baseTs,
+      },
+    ],
+  };
+  assert.equal(hasMeaningfulLocalData(withReminder), true);
+  assert.equal(detectDirtyDocKeys(prev, withReminder).includes('meta/tasks'), true);
+
+  // Oversized meta/tasks with many targets & reminders shards cleanly under maxBytes and <= 20 keys
+  const manyTargets: Record<string, unknown> = {};
+  const manyReminders: Record<string, unknown> = {};
+  for (let i = 0; i < 12; i++) {
+    manyTargets[`tgt_${i}`] = {
+      id: `tgt_${i}`,
+      title: `Target ${i}`,
+      startDate: '2026-11-24',
+      deadlineDate: '2026-12-10',
+      notes: 'N'.repeat(400),
+      items: [{ id: `it_${i}`, text: 'Checklist item', done: false }],
+      createdAt: baseTs,
+      updatedAt: baseTs,
+    };
+    manyReminders[`rem_${i}`] = {
+      id: `rem_${i}`,
+      title: `Reminder ${i}`,
+      date: '2026-12-05',
+      leadDays: [1, 0],
+      category: 'admin',
+      notes: 'R'.repeat(400),
+      done: false,
+      createdAt: baseTs,
+      updatedAt: baseTs,
+    };
+  }
+  const split = splitDocIfOversized(
+    'meta/tasks',
+    {
+      items: {},
+      deadlineTargets: manyTargets,
+      reminders: manyReminders,
+      updatedAt: baseTs,
+    },
+    2_500
+  );
+  const shardKeys = Object.keys(split.docs);
+  assert.ok(shardKeys.length > 1, 'Oversized targets/reminders payload should split into multiple shards');
+  for (const key of shardKeys) {
+    const docId = key.replace(/^meta\//, '');
+    const contract = validateFirestoreUserDocContract('meta', docId, split.docs[key]);
+    assert.equal(contract.ok, true, `Shard ${key} failed contract: ${contract.errors.join(', ')}`);
+  }
+
+  // Sharded meta/tasks docs merge back completely via mergeStateWithCloudDocs
+  const merged = mergeStateWithCloudDocs(norm({}), split.docs);
+  assert.equal(merged.deadlineTargets?.length, 12);
+  assert.equal(merged.reminders?.length, 12);
+});
+
 
 

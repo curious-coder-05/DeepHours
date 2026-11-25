@@ -5,6 +5,7 @@ import {
   planVaultArchiveImport,
   type VaultArchiveBundle,
 } from './vaultArchive';
+import { isQuotaExceededError, notifyQuotaExceeded } from './security';
 import { sanitizeVaultItem } from './vaultLogic';
 import type {
   VaultBlobRecord,
@@ -67,9 +68,20 @@ function idbReq<T>(request: IDBRequest<T>): Promise<T> {
 
 function waitTx(tx: IDBTransaction): Promise<void> {
   return new Promise((resolve, reject) => {
+    const handleFailure = (fallbackMsg: string) => {
+      const err = tx.error || new Error(fallbackMsg);
+      if (isQuotaExceededError(err)) {
+        notifyQuotaExceeded(DB_NAME);
+        reject(
+          new Error('Device storage is full. Export a Vault backup or free space before saving.')
+        );
+        return;
+      }
+      reject(err);
+    };
     tx.oncomplete = () => resolve();
-    tx.onerror = () => reject(tx.error || new Error('Vault transaction failed'));
-    tx.onabort = () => reject(tx.error || new Error('Vault transaction aborted'));
+    tx.onerror = () => handleFailure('Vault transaction failed');
+    tx.onabort = () => handleFailure('Vault transaction aborted');
   });
 }
 

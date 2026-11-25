@@ -1,5 +1,7 @@
 import type { PulseHabitState } from '../types';
 import {
+  isQuotaExceededError,
+  notifyQuotaExceeded,
   safeJsonParse,
   safeJsonParseStrict,
   safeLocalStorageGet,
@@ -525,7 +527,10 @@ export function persistState(state: PulseHabitState, onSaved?: () => void): void
       await kv('put', 's', stamped);
       markDataSeen();
       await maybeWriteDailyBackup(stamped);
-    } catch {
+    } catch (err) {
+      if (isQuotaExceededError(err)) {
+        notifyQuotaExceeded('deephours-idb');
+      }
       // fallback already written to localStorage "dh"
     }
     bc?.postMessage(1);

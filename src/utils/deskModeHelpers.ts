@@ -52,14 +52,22 @@ export function getDeskSculptureLabel(sculpture: DeskSculptureKind): string {
   return sculpture === 'monolith' ? 'Monolith' : 'Kinetic wave';
 }
 
+export interface DeskPrecisionClockParts {
+  prefix: string;
+  hours: string;
+  minutes: string;
+  seconds: string;
+}
+
 /**
- * Formats elapsed or remaining milliseconds into Swiss-horology space-separated
- * `HH MM SS` tabular numerals (e.g. `00 43 03`, `01 12 08`, or `+00 02 15` in overtime).
+ * Splits elapsed or remaining milliseconds into strictly three two-digit groups
+ * (`hours`, `minutes`, `seconds`, plus optional `+` overtime prefix) for row-aligned
+ * Precision numerals without colons.
  */
-export function formatDeskPrecisionClock(
+export function formatDeskPrecisionClockParts(
   ms: number,
   opts?: { overtimeMs?: number }
-): string {
+): DeskPrecisionClockParts {
   const overtimeMs = opts?.overtimeMs ?? 0;
   const isOvertime = Number.isFinite(overtimeMs) && overtimeMs > 0;
   const sourceMs = isOvertime ? overtimeMs : ms;
@@ -69,11 +77,24 @@ export function formatDeskPrecisionClock(
   const minutes = Math.floor((totalSec % 3600) / 60);
   const seconds = totalSec % 60;
 
-  const hh = String(hours).padStart(2, '0');
-  const mm = String(minutes).padStart(2, '0');
-  const ss = String(seconds).padStart(2, '0');
-  const formatted = `${hh} ${mm} ${ss}`;
-  return isOvertime ? `+${formatted}` : formatted;
+  return {
+    prefix: isOvertime ? '+' : '',
+    hours: String(hours).padStart(2, '0'),
+    minutes: String(minutes).padStart(2, '0'),
+    seconds: String(seconds).padStart(2, '0'),
+  };
+}
+
+/**
+ * Formats elapsed or remaining milliseconds into Swiss-horology space-separated
+ * `HH MM SS` tabular numerals (e.g. `00 43 03`, `01 12 08`, or `+00 02 15` in overtime).
+ */
+export function formatDeskPrecisionClock(
+  ms: number,
+  opts?: { overtimeMs?: number }
+): string {
+  const { prefix, hours, minutes, seconds } = formatDeskPrecisionClockParts(ms, opts);
+  return `${prefix}${hours} ${minutes} ${seconds}`;
 }
 
 /**

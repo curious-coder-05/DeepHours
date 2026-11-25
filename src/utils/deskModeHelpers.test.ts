@@ -8,6 +8,7 @@ import {
   computeMonolithMotion,
   formatBatteryPercent,
   formatDeskPrecisionClock,
+  formatDeskPrecisionClockParts,
   formatDeskSubjectLabel,
   getDeskSculptureLabel,
   getOppositeDeskSculpture,
@@ -38,6 +39,21 @@ describe('v45 StandBy Desk Mode pure helpers', () => {
     assert.equal(
       formatDeskPrecisionClock(0, { overtimeMs: (2 * 60 + 15) * 1000 }),
       '+00 02 15'
+    );
+    assert.deepEqual(formatDeskPrecisionClockParts((42 * 60 + 55) * 1000), {
+      prefix: '',
+      hours: '00',
+      minutes: '42',
+      seconds: '55',
+    });
+    assert.deepEqual(
+      formatDeskPrecisionClockParts(0, { overtimeMs: (2 * 60 + 15) * 1000 }),
+      {
+        prefix: '+',
+        hours: '00',
+        minutes: '02',
+        seconds: '15',
+      }
     );
   });
 

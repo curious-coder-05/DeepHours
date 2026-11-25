@@ -17,6 +17,7 @@ import {
 import type { AppSettings, PulseHabitState, SubjectTargets, SyncStatus } from '../types';
 import { usePWAInstall } from '../hooks/usePWAInstall';
 import { ACS, SUB_COLORS, logicalKey, pad, parseKey } from '../utils/studyLogic';
+import { safeLocalStorageSet } from '../utils/security';
 import { UI_ACCENT_SWATCHES, getTimerStyleDisplayLabel, resolveUiExam } from '../utils/uiHelpers';
 import {
   XP_V2_PLAIN_RULES,
@@ -1330,11 +1331,7 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
                     aria-label={`Accent ${sw.label}`}
                     aria-pressed={isSelected}
                     onClick={() => {
-                      try {
-                        window.localStorage.setItem('dh_custom_ac', '1');
-                      } catch {
-                        // ignore storage quota errors
-                      }
+                      safeLocalStorageSet('dh_custom_ac', '1');
                       onUpdateSetting('ac', sw.hex);
                     }}
                     style={{

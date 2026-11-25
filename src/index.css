@@ -4911,78 +4911,145 @@ body.desk-mode .dh-glass-backdrop {
   background: #000000;
 }
 
-/* Main Burn-In Protected Typography Stage (±6px GPU translate3d every 60s) */
+/* Main Burn-In Protected Typography Stage (smooth 60s ±3px GPU translate3d micro-orbit) */
+@keyframes dhStandbyBurnInOrbit {
+  0%,
+  100% {
+    transform: translate3d(0px, 0px, 0);
+  }
+  12.5% {
+    transform: translate3d(3px, 1px, 0);
+  }
+  25% {
+    transform: translate3d(2px, 3px, 0);
+  }
+  37.5% {
+    transform: translate3d(-2px, 3px, 0);
+  }
+  50% {
+    transform: translate3d(-3px, 0px, 0);
+  }
+  62.5% {
+    transform: translate3d(-2px, -3px, 0);
+  }
+  75% {
+    transform: translate3d(2px, -3px, 0);
+  }
+  87.5% {
+    transform: translate3d(3px, -1px, 0);
+  }
+}
+
 .dh-standby-stage {
   position: relative;
-  z-index: 2;
+  z-index: 10;
   width: 100%;
-  max-width: 1240px;
   display: flex;
   flex-direction: column;
   align-items: center;
   justify-content: center;
   pointer-events: none;
   will-change: transform;
-  transition: transform 1.2s var(--ease-out);
+  animation: dhStandbyBurnInOrbit 60s linear infinite;
+}
+
+.dh-standby-stage.is-reduced-motion {
+  animation: none;
+  transform: translate3d(0, 0, 0);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .dh-standby-stage {
+    animation: none;
+    transform: translate3d(0, 0, 0);
+  }
 }
 
 .dh-standby-focus-core {
   position: relative;
-  z-index: 2;
+  z-index: 10;
   display: flex;
   flex-direction: column;
   align-items: center;
   justify-content: center;
   text-align: center;
-  gap: clamp(8px, 1.8cqh, 18px);
+  pointer-events: none;
   width: 100%;
 }
 
-/* Quiet Uppercase Tracked Subject Micro-Label */
+/* Crisp Uppercase Tracked Subject Micro-Label (Optically Anchored Above Middle Digits) */
 .dh-standby-subject-label {
-  font-family: var(--font-ui);
-  font-size: clamp(13px, 1.35cqw, 15px);
+  font-family: 'Inter', 'Plus Jakarta Sans', -apple-system, BlinkMacSystemFont, sans-serif;
+  font-size: clamp(10.5px, min(1.5cqw, 3.0cqh), 13px);
   font-weight: 500;
   line-height: 1.2;
-  letter-spacing: 0.28em;
+  letter-spacing: 0.38em;
   text-transform: uppercase;
-  color: rgba(226, 232, 240, 0.52);
+  color: #d4d4d8;
   text-shadow:
-    0 2px 14px rgba(0, 0, 0, 0.96),
-    0 0 26px rgba(0, 0, 0, 0.9);
+    0 2px 12px rgba(0, 0, 0, 0.96),
+    0 0 22px rgba(0, 0, 0, 0.9);
   max-width: 88cqw;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
-  padding-left: 0.28em;
+  transition: color 280ms var(--ease-out);
 }
 
-/* Massive Ultra-Light Swiss-Horology Precision Numerals (`00 43 03` aesthetic) */
-.dh-standby-clock {
-  font-family: var(--font-mono);
-  font-size: clamp(3.15rem, 15.2cqw, 5.8rem);
-  font-weight: 250;
-  font-variant-numeric: tabular-nums;
-  font-feature-settings: 'tnum' 1, 'zero' 0;
-  line-height: 0.95;
-  letter-spacing: -0.02em;
-  color: #f2f4f8;
-  text-shadow:
-    0 2px 24px rgba(0, 0, 0, 0.92),
-    0 0 44px rgba(0, 0, 0, 0.78);
-  white-space: nowrap;
+/* Keep giant Precision digits mathematically dead-center while lifting subject label cleanly above the upper framing */
+.dh-standby-focus-core > .dh-standby-subject-label {
+  position: absolute;
+  left: 50%;
+  bottom: calc(100% + clamp(0.65rem, 3.2cqh, 1.35rem));
+  transform: translateX(-50%);
+  margin-bottom: 0;
 }
 
-@media (orientation: landscape) and (min-width: 540px) {
-  .dh-standby-clock {
-    font-size: clamp(4.5rem, min(14.5cqw, 36cqh), 11.5rem);
-    font-weight: 200;
+/* In portrait viewports, lift the subject label cleanly above the monolith crystal rim onto pure #000000 black */
+@container (max-aspect-ratio: 1 / 1) {
+  .dh-standby-focus-core > .dh-standby-subject-label {
+    bottom: calc(100% + clamp(4.8rem, 11.5cqh, 6.2rem));
   }
 }
 
-.dh-standby-viewport.is-sim-landscape .dh-standby-clock {
-  font-size: clamp(4.5rem, min(14.5cqw, 36cqh), 11.5rem);
+/* Massive Ultra-Light Precision Numerals: 3 Tight Two-Digit Groups (00 44 06, No Colons) */
+.dh-standby-clock {
+  display: inline-flex;
+  align-items: baseline;
+  justify-content: center;
+  gap: 0.14em;
+  white-space: nowrap;
+  font-family: 'Inter', 'Plus Jakarta Sans', -apple-system, BlinkMacSystemFont, sans-serif;
   font-weight: 200;
+  font-variant-numeric: tabular-nums;
+  line-height: 0.96;
+  font-size: clamp(4.1rem, min(18.2cqw, 36cqh), 11.5rem);
+  color: #f5f7fa;
+  text-shadow:
+    0 2px 26px rgba(0, 0, 0, 0.95),
+    0 0 48px rgba(0, 0, 0, 0.82);
+  transition: color 280ms var(--ease-out);
+}
+
+.dh-standby-clock-group {
+  display: inline-block;
+  font-variant-numeric: tabular-nums;
+  letter-spacing: -0.02em;
+}
+
+/* Night Dim Mode (calm ~48% low-glare typography suited for dark-adapted 2 AM sessions) */
+.dh-standby-overlay.is-night-dim .dh-standby-clock,
+.dh-standby-overlay.is-night-dim .dh-standby-subject-label,
+.dh-standby-overlay.is-night-dim .dh-standby-exam-total {
+  color: rgba(229, 224, 220, 0.48);
+}
+
+.dh-standby-overlay.is-night-dim .dh-standby-action {
+  color: rgba(229, 224, 220, 0.62);
+}
+
+.dh-standby-overlay.is-night-dim .dh-standby-action.is-active {
+  color: rgba(245, 228, 210, 0.86);
 }
 
 /* Frameless Auto-Hiding Floating Control Bar (Zero Card Chrome, Zero Backdrop Blur) */
@@ -4990,8 +5057,8 @@ body.desk-mode .dh-glass-backdrop {
   position: absolute;
   left: 50%;
   bottom: calc(16px + var(--sb));
-  z-index: 6;
-  max-width: calc(100cqw - 16px);
+  z-index: 20;
+  max-width: calc(100cqw - 8px);
   display: inline-flex;
   align-items: center;
   justify-content: center;
@@ -5080,7 +5147,7 @@ body.desk-mode .dh-glass-backdrop {
   flex-shrink: 0;
 }
 
-@container (max-width: 520px) {
+@container (max-width: 560px) {
   .dh-standby-action {
     padding: 0 8px;
     font-size: 13px;
@@ -5089,8 +5156,37 @@ body.desk-mode .dh-glass-backdrop {
 
   .dh-standby-battery {
     padding: 0 6px;
-    font-size: 13px;
+    font-size: 12.5px;
     gap: 4px;
+  }
+}
+
+@container (max-width: 440px) {
+  .dh-standby-hud {
+    gap: 0;
+    padding: 4px 2px;
+  }
+
+  .dh-standby-action {
+    padding: 0 5px;
+    font-size: 11.5px;
+    gap: 3px;
+  }
+
+  .dh-standby-action svg,
+  .dh-standby-battery svg {
+    width: 12px;
+    height: 12px;
+  }
+
+  .dh-standby-battery {
+    padding: 0 4px;
+    font-size: 11.5px;
+    gap: 2px;
+  }
+
+  .dh-standby-sep {
+    height: 12px;
   }
 }
 

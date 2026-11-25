@@ -165,7 +165,7 @@ export function detectImageMagicBytes(
  */
 export function validateRasterImageMetadata(
   file: { type?: string; size: number; name?: string },
-  maxBytes = 25 * 1024 * 1024
+  maxBytes = 10 * 1024 * 1024
 ): { ok: boolean; reason?: string } {
   const type = (file.type || '').trim().toLowerCase();
   const name = (file.name || '').trim().toLowerCase();
@@ -213,7 +213,7 @@ export function validateRasterImageMetadata(
  */
 export async function validateImageFileSignature(
   file: Blob & { name?: string; type?: string },
-  maxBytes = 25 * 1024 * 1024
+  maxBytes = 10 * 1024 * 1024
 ): Promise<{
   ok: boolean;
   detectedMime?: AllowedRasterImageMime;
@@ -347,7 +347,7 @@ export function isQuotaExceededError(err: unknown): boolean {
   return typeof e.message === 'string' && /quota/i.test(e.message);
 }
 
-function notifyQuotaExceeded(key: string): void {
+export function notifyQuotaExceeded(key: string): void {
   const now = Date.now();
   // Throttle to at most once every 10s so rapid saves never spam toasts
   if (now - lastQuotaEmitTs < 10_000) return;
@@ -821,3 +821,224 @@ export function validateFirestoreUserDocContract(
   }
   return { ok: errors.length === 0, errors };
 }
+
+/* ── External URL Validation & Backup Payload Clamping (v47) ── */
+
+/**
+ * Restricts external links strictly to valid `https://` URLs.
+ * Rejects `javascript:`, `data:`, `http:`, protocol-relative, and malformed URLs.
+ */
+export function safeExternalHttpsUrl(raw: unknown): string | null {
+  if (typeof raw !== 'string') return null;
+  const trimmed = raw.trim();
+  if (!trimmed || /[\u0000-\u001F\u007F]/.test(trimmed)) return null;
+  try {
+    const parsed = new URL(trimmed);
+    if (parsed.protocol !== 'https:' || !parsed.hostname) {
+      return null;
+    }
+    return parsed.toString();
+  } catch {
+    return null;
+  }
+}
+
+const MAX_SESSION_MS = 86_400_000; // 24 hours
+const MAX_TIMESTAMP_MS = 4_102_444_800_000; // 2100-01-01T00:00:00Z
+const DATE_KEY_RE = /^\d{4}-\d{2}-\d{2}$/;
+
+function clampFiniteInt(
+  value: unknown,
+  min: number,
+  max: number,
+  fallback: number
+): number {
+  const n = typeof value === 'number' ? value : Number(value);
+  if (!Number.isFinite(n)) return fallback;
+  return Math.max(min, Math.min(max, Math.round(n)));
+}
+
+function clampPositiveTs(value: unknown, fallback: number): number {
+  const n = typeof value === 'number' ? value : Number(value);
+  if (!Number.isFinite(n) || n <= 0) return fallback;
+  return Math.min(MAX_TIMESTAMP_MS, Math.round(n));
+}
+
+function clampOptionalDateKey(value: unknown): string | undefined {
+  if (typeof value !== 'string') return undefined;
+  const cleaned = value.trim();
+  return DATE_KEY_RE.test(cleaned) ? cleaned : undefined;
+}
+
+/**
+ * Hardens an imported JSON backup payload before passing into state normalization:
+ * - Recursively strips `__proto__`, `constructor`, and `prototype` keys.
+ * - Clamps and bounds `sessions`, `chapters`, `mocks`, `deadlineTargets`, `reminders`,
+ *   and `profile` fields (bounded non-negative durations, finite positive timestamps,
+ *   and control-character-stripped length-capped strings).
+ */
+export function sanitizeImportedStatePayload(
+  raw: unknown,
+  now = Date.now()
+): Record<string, unknown> {
+  const safeNow = clampPositiveTs(now, Date.now());
+  const cleaned = stripDangerousKeys(raw);
+  if (!cleaned || typeof cleaned !== 'object' || Array.isArray(cleaned)) {
+    return {};
+  }
+  const src = { ...(cleaned as Record<string, unknown>) };
+
+  // 1. Sessions: finite positive timestamps, bounded non-negative durations, safe strings
+  if (Array.isArray(src.sessions)) {
+    src.sessions = src.sessions
+      .slice(0, 20_000)
+      .filter((item): item is Record<string, unknown> => Boolean(item && typeof item === 'object' && !Array.isArray(item)))
+      .map((s) => {
+        const startTs = clampPositiveTs(s.startTs, safeNow);
+        const endTs = Math.max(startTs, clampPositiveTs(s.endTs, startTs));
+        return {
+          ...s,
+          id: sanitizeTextControlChars(s.id, 80) || undefined,
+          subjectId: sanitizeTextControlChars(s.subjectId, 64),
+          chapterId: s.chapterId ? sanitizeTextControlChars(s.chapterId, 64) : undefined,
+          dayKey: clampOptionalDateKey(s.dayKey),
+          startTs,
+          endTs,
+          activeMs: clampFiniteInt(s.activeMs, 0, MAX_SESSION_MS, 0),
+          pausedMs: clampFiniteInt(s.pausedMs, 0, MAX_SESSION_MS, 0),
+          pauseCount: clampFiniteInt(s.pauseCount, 0, 1000, 0),
+          overtimeMs: clampFiniteInt(s.overtimeMs, 0, MAX_SESSION_MS, 0),
+          purity: clampFiniteInt(s.purity, 0, 100, 100),
+          rating: clampFiniteInt(s.rating, 0, 5, 0),
+          note: sanitizeTextControlChars(s.note, 500, { allowNewlines: true }),
+          updatedAt: clampPositiveTs(s.updatedAt, endTs),
+        };
+      });
+  }
+
+  // 2. Chapters: length-capped names/notes, bounded confidence & revisions
+  if (Array.isArray(src.chapters)) {
+    src.chapters = src.chapters
+      .slice(0, 2_000)
+      .filter((item): item is Record<string, unknown> => Boolean(item && typeof item === 'object' && !Array.isArray(item)))
+      .map((ch) => ({
+        ...ch,
+        id: sanitizeTextControlChars(ch.id, 80) || undefined,
+        subjectId: sanitizeTextControlChars(ch.subjectId, 64),
+        name: sanitizeTextControlChars(ch.name, 160),
+        unit: ch.unit ? sanitizeTextControlChars(ch.unit, 120) : undefined,
+        notes: ch.notes ? sanitizeTextControlChars(ch.notes, 1000, { allowNewlines: true }) : undefined,
+        confidence:
+          ch.confidence === undefined || ch.confidence === null
+            ? undefined
+            : clampFiniteInt(ch.confidence, 0, 5, 0),
+        updatedAt: clampPositiveTs(ch.updatedAt, safeNow),
+      }));
+  }
+
+  // 3. Mocks: bounded scores/counts/durations, length-capped labels
+  if (Array.isArray(src.mocks)) {
+    src.mocks = src.mocks
+      .slice(0, 2_000)
+      .filter((item): item is Record<string, unknown> => Boolean(item && typeof item === 'object' && !Array.isArray(item)))
+      .map((m) => ({
+        ...m,
+        id: sanitizeTextControlChars(m.id, 80) || undefined,
+        title: sanitizeTextControlChars(m.title, 160),
+        date: clampOptionalDateKey(m.date),
+        score: clampFiniteInt(m.score, -1000, 2000, 0),
+        maxScore: clampFiniteInt(m.maxScore, 1, 2000, 720),
+        durationMins:
+          m.durationMins === undefined || m.durationMins === null
+            ? undefined
+            : clampFiniteInt(m.durationMins, 0, 1440, 200),
+        correct:
+          m.correct === undefined || m.correct === null
+            ? undefined
+            : clampFiniteInt(m.correct, 0, 1000, 0),
+        wrong:
+          m.wrong === undefined || m.wrong === null
+            ? undefined
+            : clampFiniteInt(m.wrong, 0, 1000, 0),
+        skipped:
+          m.skipped === undefined || m.skipped === null
+            ? undefined
+            : clampFiniteInt(m.skipped, 0, 1000, 0),
+        notes: m.notes ? sanitizeTextControlChars(m.notes, 1000, { allowNewlines: true }) : undefined,
+        updatedAt: clampPositiveTs(m.updatedAt, safeNow),
+      }));
+  }
+
+  // 4. Deadline targets: length-capped titles/notes/items, finite positive timestamps
+  if (Array.isArray(src.deadlineTargets)) {
+    src.deadlineTargets = src.deadlineTargets
+      .slice(0, 200)
+      .filter((item): item is Record<string, unknown> => Boolean(item && typeof item === 'object' && !Array.isArray(item)))
+      .map((t) => ({
+        ...t,
+        id: sanitizeTextControlChars(t.id, 80) || undefined,
+        title: sanitizeTextControlChars(t.title, 140),
+        subjectId: t.subjectId ? sanitizeTextControlChars(t.subjectId, 64) : undefined,
+        startDate: clampOptionalDateKey(t.startDate),
+        deadlineDate: clampOptionalDateKey(t.deadlineDate),
+        notes: t.notes ? sanitizeTextControlChars(t.notes, 600, { allowNewlines: true }) : undefined,
+        items: Array.isArray(t.items)
+          ? t.items
+              .slice(0, 100)
+              .filter((it): it is Record<string, unknown> => Boolean(it && typeof it === 'object' && !Array.isArray(it)))
+              .map((it) => ({
+                ...it,
+                id: sanitizeTextControlChars(it.id, 80) || undefined,
+                text: sanitizeTextControlChars(it.text, 200),
+                done: Boolean(it.done),
+                doneAt: it.doneAt ? clampPositiveTs(it.doneAt, safeNow) : undefined,
+              }))
+          : [],
+        archived: Boolean(t.archived),
+        createdAt: clampPositiveTs(t.createdAt, safeNow),
+        updatedAt: clampPositiveTs(t.updatedAt, safeNow),
+      }));
+  }
+
+  // 5. Custom reminders: length-capped titles/notes, bounded leadDays, finite positive timestamps
+  if (Array.isArray(src.reminders)) {
+    src.reminders = src.reminders
+      .slice(0, 300)
+      .filter((item): item is Record<string, unknown> => Boolean(item && typeof item === 'object' && !Array.isArray(item)))
+      .map((r) => ({
+        ...r,
+        id: sanitizeTextControlChars(r.id, 80) || undefined,
+        title: sanitizeTextControlChars(r.title, 140),
+        date: clampOptionalDateKey(r.date),
+        time: typeof r.time === 'string' ? sanitizeTextControlChars(r.time, 8) : undefined,
+        leadDays: Array.isArray(r.leadDays)
+          ? r.leadDays
+              .slice(0, 10)
+              .map((d) => clampFiniteInt(d, 0, 30, 0))
+          : [0],
+        notes: r.notes ? sanitizeTextControlChars(r.notes, 600, { allowNewlines: true }) : undefined,
+        done: Boolean(r.done),
+        doneAt: r.doneAt ? clampPositiveTs(r.doneAt, safeNow) : undefined,
+        createdAt: clampPositiveTs(r.createdAt, safeNow),
+        updatedAt: clampPositiveTs(r.updatedAt, safeNow),
+      }));
+  }
+
+  // 6. Profile: length-capped nick/emoji, bounded examYear, finite updatedAt
+  if (src.profile && typeof src.profile === 'object' && !Array.isArray(src.profile)) {
+    const p = src.profile as Record<string, unknown>;
+    src.profile = {
+      ...p,
+      nick: sanitizeTextControlChars(p.nick, 20, { stripAngleBrackets: true }),
+      emoji: sanitizeTextControlChars(p.emoji, 8) || '🎯',
+      examYear:
+        p.examYear === undefined || p.examYear === null
+          ? undefined
+          : clampFiniteInt(p.examYear, 2020, 2035, 2026),
+      updatedAt: clampPositiveTs(p.updatedAt, safeNow),
+    };
+  }
+
+  return src;
+}
+

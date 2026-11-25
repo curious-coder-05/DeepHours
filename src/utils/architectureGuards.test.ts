@@ -204,17 +204,33 @@ describe('v45 StandBy Desk Mode architectural guardrails', () => {
     );
   });
 
-  it('enforces pure #000000 backdrop, procedural RoomEnvironment PMREM, DPR<=2 cap, document.hidden pause, and strict Three.js disposal on DeskChronoScene', () => {
+  it('enforces pure #000000 backdrop, zero-ambient high-contrast PMREM strips, persistent hot-swap, exact Monolith & Kinetic Wave geometry, DPR<=2 cap, document.hidden pause, and strict disposal on DeskChronoScene', () => {
     const chronoSource = readRepoFile('src/components/three/DeskChronoScene.tsx');
+    const deskSource = readRepoFile('src/components/StandByDeskOverlay.tsx');
+    assert.doesNotMatch(
+      deskSource,
+      /<DeskChronoScene[^>]*\bkey=/,
+      'StandByDeskOverlay.tsx must never pass key={sculpture} to DeskChronoScene'
+    );
     assert.match(chronoSource, /setClearColor\(\s*0x000000\s*,\s*1\s*\)/);
     assert.match(chronoSource, /PMREMGenerator/);
-    assert.match(chronoSource, /RoomEnvironment/);
+    assert.match(chronoSource, /buildStudioEnv/);
+    assert.match(chronoSource, /ENV_STRIPS/);
+    assert.match(chronoSource, /swapSculpture/);
+    assert.doesNotMatch(chronoSource, /AmbientLight/);
+    assert.doesNotMatch(chronoSource, /SphereGeometry/);
+    assert.match(chronoSource, /IcosahedronGeometry\(\s*1\.48\s*,\s*1\s*\)/);
+    assert.match(chronoSource, /createRoundedSquarePath/);
+    assert.match(chronoSource, /ExtrudeGeometry/);
     assert.match(chronoSource, /Math\.min\(window\.devicePixelRatio\s*\|\|\s*1,\s*2\)/);
     assert.match(chronoSource, /document\.hidden/);
     assert.match(chronoSource, /renderer\.dispose\(\)/);
     assert.match(chronoSource, /envRenderTarget\.dispose\(\)/);
     assert.match(chronoSource, /buildMonolithSculpture/);
     assert.match(chronoSource, /buildKineticWaveSculpture/);
+    assert.match(chronoSource, /resolveDeskTargetFps/);
+    assert.match(chronoSource, /DESK_NIGHT_DIM_FACTOR/);
+    assert.match(chronoSource, /propsRef/);
     assert.doesNotMatch(
       chronoSource,
       /\buseTimerTick\b|\bclockMs\b/,
@@ -222,7 +238,27 @@ describe('v45 StandBy Desk Mode architectural guardrails', () => {
     );
   });
 
-  it('unlocks PWA manifest orientation for sideways desk mode and bumps Service Worker cache to v45', () => {
+  it('enforces v46 Night Dim persistence, portrait label contrast, 60s ±3px burn-in guard, and battery-aware frame pacing', () => {
+    const deskSource = readRepoFile('src/components/StandByDeskOverlay.tsx');
+    const cssSource = readRepoFile('src/index.css');
+    const chronoSource = readRepoFile('src/components/three/DeskChronoScene.tsx');
+
+    assert.match(deskSource, /dh_desk_night_dim_v1/);
+    assert.match(deskSource, /data-testid="standby-dim-btn"/);
+    assert.match(deskSource, /nightDim=\{nightDim\}/);
+    assert.match(deskSource, /battery=\{battery\}/);
+
+    assert.match(cssSource, /@keyframes dhStandbyBurnInOrbit/);
+    assert.match(cssSource, /translate3d\(3px,\s*1px,\s*0\)/);
+    assert.match(cssSource, /animation:\s*dhStandbyBurnInOrbit 60s linear infinite/);
+    assert.match(cssSource, /rgba\(229,\s*224,\s*220,\s*0\.48\)/);
+    assert.match(cssSource, /color:\s*#d4d4d8;/);
+
+    assert.match(chronoSource, /battery\.level\s*>=\s*0\.2/);
+    assert.match(chronoSource, /return nightDim \? 20 : 30;/);
+  });
+
+  it('unlocks PWA manifest orientation for sideways desk mode, enforces index.html security headers, and bumps Service Worker cache to v47', () => {
     const manifest = JSON.parse(readRepoFile('public/manifest.webmanifest')) as {
       orientation?: string;
     };
@@ -235,9 +271,14 @@ describe('v45 StandBy Desk Mode architectural guardrails', () => {
     const swSource = readRepoFile('public/sw.js');
     assert.match(
       swSource,
-      /const CACHE_NAME = 'deep-hours-v45';/,
-      'public/sw.js must bump CACHE_NAME to deep-hours-v45'
+      /const CACHE_NAME = 'deep-hours-v47';/,
+      'public/sw.js must bump CACHE_NAME to deep-hours-v47'
     );
+
+    const htmlSource = readRepoFile('index.html');
+    assert.match(htmlSource, /name="referrer"\s+content="strict-origin-when-cross-origin"/);
+    assert.match(htmlSource, /http-equiv="Content-Security-Policy"/);
+    assert.match(htmlSource, /object-src 'none'/);
 
     const targetsViewSource = readRepoFile('src/components/TargetsCalendarView.tsx');
     assert.doesNotMatch(

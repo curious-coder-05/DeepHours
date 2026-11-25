@@ -1,5 +1,6 @@
 import type { DDay, PulseHabitState } from '../types.ts';
 import { computePaceReport, type PaceReport } from './pace.ts';
+import { safeLocalStorageGet, safeLocalStorageSet } from './security.ts';
 import { ACS, getDayTotalStudyMs } from './studyLogic.ts';
 
 export const LUMEN_ACCENT = '#F5C451';
@@ -118,21 +119,11 @@ export function getReadableAccentText(
 }
 
 export function getAmoledPref(): boolean {
-  try {
-    if (typeof localStorage === 'undefined') return false;
-    return localStorage.getItem(AMOLED_STORAGE_KEY) === '1';
-  } catch {
-    return false;
-  }
+  return safeLocalStorageGet(AMOLED_STORAGE_KEY) === '1';
 }
 
 export function setAmoledPref(enabled: boolean): void {
-  try {
-    if (typeof localStorage === 'undefined') return;
-    localStorage.setItem(AMOLED_STORAGE_KEY, enabled ? '1' : '0');
-  } catch {
-    // ignore storage errors
-  }
+  safeLocalStorageSet(AMOLED_STORAGE_KEY, enabled ? '1' : '0');
 }
 
 /**
