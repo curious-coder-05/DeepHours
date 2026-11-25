@@ -271,8 +271,8 @@ describe('v45 StandBy Desk Mode architectural guardrails', () => {
     const swSource = readRepoFile('public/sw.js');
     assert.match(
       swSource,
-      /const CACHE_NAME = 'deep-hours-v47';/,
-      'public/sw.js must bump CACHE_NAME to deep-hours-v47'
+      /const CACHE_NAME = 'deep-hours-v48';/,
+      'public/sw.js must bump CACHE_NAME to deep-hours-v48'
     );
 
     const htmlSource = readRepoFile('index.html');

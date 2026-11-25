@@ -1,0 +1,96 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1024 1024" width="1024" height="1024" role="img" aria-label="Deep Hours">
+  <defs>
+    <linearGradient id="bgCase" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" stop-color="#181B26"/>
+      <stop offset="50%" stop-color="#0E1018"/>
+      <stop offset="100%" stop-color="#06070B"/>
+    </linearGradient>
+    <linearGradient id="bezelMetal" gradientUnits="userSpaceOnUse" x1="160" y1="100" x2="860" y2="920">
+      <stop offset="0%" stop-color="#383E54"/>
+      <stop offset="45%" stop-color="#171B28"/>
+      <stop offset="100%" stop-color="#2B3144"/>
+    </linearGradient>
+    <radialGradient id="dialFace" gradientUnits="userSpaceOnUse" cx="512" cy="512" r="424.0" fx="512" fy="320">
+      <stop offset="0%" stop-color="#151928"/>
+      <stop offset="70%" stop-color="#0A0C14"/>
+      <stop offset="100%" stop-color="#05060A"/>
+    </radialGradient>
+    <linearGradient id="handTitanium" x1="0%" y1="0%" x2="0%" y2="100%">
+      <stop offset="0%" stop-color="#FFFFFF"/>
+      <stop offset="55%" stop-color="#E2E8F0"/>
+      <stop offset="100%" stop-color="#94A3B8"/>
+    </linearGradient>
+    <radialGradient id="pinionJewel" cx="35%" cy="35%" r="65%">
+      <stop offset="0%" stop-color="#FEF08A"/>
+      <stop offset="55%" stop-color="#F97316"/>
+      <stop offset="100%" stop-color="#BE123C"/>
+    </radialGradient>
+    <linearGradient id="sw0" gradientUnits="userSpaceOnUse" x1="512.0" y1="238.0" x2="582.9" y2="247.3"><stop offset="0%" stop-color="#38BDF8"/><stop offset="100%" stop-color="#43A7F6"/></linearGradient>
+    <linearGradient id="sw1" gradientUnits="userSpaceOnUse" x1="578.3" y1="246.1" x2="644.8" y2="272.4"><stop offset="0%" stop-color="#43A7F6"/><stop offset="100%" stop-color="#4E91F4"/></linearGradient>
+    <linearGradient id="sw2" gradientUnits="userSpaceOnUse" x1="640.6" y1="270.1" x2="698.9" y2="311.6"><stop offset="0%" stop-color="#4E91F4"/><stop offset="100%" stop-color="#597BF3"/></linearGradient>
+    <linearGradient id="sw3" gradientUnits="userSpaceOnUse" x1="695.3" y1="308.4" x2="741.8" y2="362.8"><stop offset="0%" stop-color="#597BF3"/><stop offset="100%" stop-color="#6466F1"/></linearGradient>
+    <linearGradient id="sw4" gradientUnits="userSpaceOnUse" x1="739.2" y1="358.8" x2="771.1" y2="422.8"><stop offset="0%" stop-color="#6466F1"/><stop offset="100%" stop-color="#7462F2"/></linearGradient>
+    <linearGradient id="sw5" gradientUnits="userSpaceOnUse" x1="769.5" y1="418.3" x2="785.0" y2="488.1"><stop offset="0%" stop-color="#7462F2"/><stop offset="100%" stop-color="#845EF4"/></linearGradient>
+    <linearGradient id="sw6" gradientUnits="userSpaceOnUse" x1="784.5" y1="483.4" x2="782.6" y2="554.9"><stop offset="0%" stop-color="#845EF4"/><stop offset="100%" stop-color="#945AF5"/></linearGradient>
+    <linearGradient id="sw7" gradientUnits="userSpaceOnUse" x1="783.3" y1="550.1" x2="764.2" y2="619.1"><stop offset="0%" stop-color="#945AF5"/><stop offset="100%" stop-color="#A456F7"/></linearGradient>
+    <linearGradient id="sw8" gradientUnits="userSpaceOnUse" x1="766.0" y1="614.6" x2="730.8" y2="676.9"><stop offset="0%" stop-color="#A456F7"/><stop offset="100%" stop-color="#B651DB"/></linearGradient>
+    <linearGradient id="sw9" gradientUnits="userSpaceOnUse" x1="733.7" y1="673.1" x2="684.4" y2="724.9"><stop offset="0%" stop-color="#B651DB"/><stop offset="100%" stop-color="#C94BB5"/></linearGradient>
+    <linearGradient id="sw10" gradientUnits="userSpaceOnUse" x1="688.1" y1="721.9" x2="627.8" y2="760.3"><stop offset="0%" stop-color="#C94BB5"/><stop offset="100%" stop-color="#DC468E"/></linearGradient>
+    <linearGradient id="sw11" gradientUnits="userSpaceOnUse" x1="632.1" y1="758.3" x2="564.3" y2="781.0"><stop offset="0%" stop-color="#DC468E"/><stop offset="100%" stop-color="#EF4067"/></linearGradient>
+    <linearGradient id="sw12" gradientUnits="userSpaceOnUse" x1="569.0" y1="780.0" x2="497.7" y2="785.6"><stop offset="0%" stop-color="#EF4067"/><stop offset="100%" stop-color="#F54B4D"/></linearGradient>
+    <linearGradient id="sw13" gradientUnits="userSpaceOnUse" x1="502.4" y1="785.8" x2="431.9" y2="774.0"><stop offset="0%" stop-color="#F54B4D"/><stop offset="100%" stop-color="#F75B37"/></linearGradient>
+    <linearGradient id="sw14" gradientUnits="userSpaceOnUse" x1="436.5" y1="775.4" x2="370.9" y2="746.9"><stop offset="0%" stop-color="#F75B37"/><stop offset="100%" stop-color="#F86B21"/></linearGradient>
+    <linearGradient id="sw15" gradientUnits="userSpaceOnUse" x1="375.0" y1="749.3" x2="318.3" y2="705.7"><stop offset="0%" stop-color="#F86B21"/><stop offset="100%" stop-color="#F98516"/></linearGradient>
+    <linearGradient id="sw16" gradientUnits="userSpaceOnUse" x1="321.7" y1="709.1" x2="277.1" y2="653.1"><stop offset="0%" stop-color="#F98516"/><stop offset="100%" stop-color="#FAA915"/></linearGradient>
+    <linearGradient id="sw17" gradientUnits="userSpaceOnUse" x1="279.6" y1="657.2" x2="251.4" y2="596.7"><stop offset="0%" stop-color="#FAA915"/><stop offset="100%" stop-color="#FACC15"/></linearGradient>
+  </defs>
+
+  <rect width="1024" height="1024" fill="url(#bgCase)"/>
+
+  <g transform="translate(512,512) scale(1.100) translate(-512,-512)">
+    <circle cx="512" cy="512" r="442.0" fill="url(#bezelMetal)"/>
+    <circle cx="512" cy="512" r="408.0" fill="none" stroke="#E2E8F0" stroke-opacity="0.16" stroke-width="3"/>
+    <circle cx="512" cy="512" r="404.0" fill="url(#dialFace)"/>
+
+    <g id="ticks">
+      <line x1="512.0" y1="162.0" x2="512.0" y2="130.0" stroke="#38BDF8" stroke-opacity="0.92" stroke-width="18.0" stroke-linecap="round"/>
+      <line x1="862.0" y1="512.0" x2="894.0" y2="512.0" stroke="#E2E8F0" stroke-opacity="0.92" stroke-width="14.0" stroke-linecap="round"/>
+      <line x1="512.0" y1="862.0" x2="512.0" y2="894.0" stroke="#E2E8F0" stroke-opacity="0.92" stroke-width="14.0" stroke-linecap="round"/>
+      <line x1="162.0" y1="512.0" x2="130.0" y2="512.0" stroke="#E2E8F0" stroke-opacity="0.92" stroke-width="14.0" stroke-linecap="round"/>
+    </g>
+
+    <circle cx="512" cy="512" r="274.0" fill="none" stroke="#1A2033" stroke-opacity="0.95" stroke-width="92.0"/>
+
+    <g id="aurora-arc">
+      <circle cx="512.00" cy="238.00" r="46.0" fill="#38BDF8"/>
+      <path d="M 207.66 610.89 A 46.0 46.0 0 0 1 295.16 582.46 Z" fill="#FACC15"/>
+      <path d="M 512.00 238.00 A 274.0 274.0 0 0 1 582.92 247.34" fill="none" stroke="url(#sw0)" stroke-width="92.0" stroke-linecap="butt"/>
+      <path d="M 578.29 246.14 A 274.0 274.0 0 0 1 644.84 272.35" fill="none" stroke="url(#sw1)" stroke-width="92.0" stroke-linecap="butt"/>
+      <path d="M 640.64 270.07 A 274.0 274.0 0 0 1 698.87 311.61" fill="none" stroke="url(#sw2)" stroke-width="92.0" stroke-linecap="butt"/>
+      <path d="M 695.34 308.38 A 274.0 274.0 0 0 1 741.80 362.77" fill="none" stroke="url(#sw3)" stroke-width="92.0" stroke-linecap="butt"/>
+      <path d="M 739.16 358.78 A 274.0 274.0 0 0 1 771.07 422.79" fill="none" stroke="url(#sw4)" stroke-width="92.0" stroke-linecap="butt"/>
+      <path d="M 769.48 418.29 A 274.0 274.0 0 0 1 784.96 488.12" fill="none" stroke="url(#sw5)" stroke-width="92.0" stroke-linecap="butt"/>
+      <path d="M 784.50 483.36 A 274.0 274.0 0 0 1 782.63 554.86" fill="none" stroke="url(#sw6)" stroke-width="92.0" stroke-linecap="butt"/>
+      <path d="M 783.33 550.13 A 274.0 274.0 0 0 1 764.22 619.06" fill="none" stroke="url(#sw7)" stroke-width="92.0" stroke-linecap="butt"/>
+      <path d="M 766.05 614.64 A 274.0 274.0 0 0 1 730.83 676.90" fill="none" stroke="url(#sw8)" stroke-width="92.0" stroke-linecap="butt"/>
+      <path d="M 733.67 673.05 A 274.0 274.0 0 0 1 684.43 724.94" fill="none" stroke="url(#sw9)" stroke-width="92.0" stroke-linecap="butt"/>
+      <path d="M 688.12 721.90 A 274.0 274.0 0 0 1 627.80 760.33" fill="none" stroke="url(#sw10)" stroke-width="92.0" stroke-linecap="butt"/>
+      <path d="M 632.11 758.27 A 274.0 274.0 0 0 1 564.28 780.97" fill="none" stroke="url(#sw11)" stroke-width="92.0" stroke-linecap="butt"/>
+      <path d="M 568.97 780.01 A 274.0 274.0 0 0 1 497.66 785.62" fill="none" stroke="url(#sw12)" stroke-width="92.0" stroke-linecap="butt"/>
+      <path d="M 502.44 785.83 A 274.0 274.0 0 0 1 431.89 774.03" fill="none" stroke="url(#sw13)" stroke-width="92.0" stroke-linecap="butt"/>
+      <path d="M 436.48 775.39 A 274.0 274.0 0 0 1 370.88 746.86" fill="none" stroke="url(#sw14)" stroke-width="92.0" stroke-linecap="butt"/>
+      <path d="M 375.00 749.29 A 274.0 274.0 0 0 1 318.25 705.75" fill="none" stroke="url(#sw15)" stroke-width="92.0" stroke-linecap="butt"/>
+      <path d="M 321.66 709.10 A 274.0 274.0 0 0 1 277.14 653.12" fill="none" stroke="url(#sw16)" stroke-width="92.0" stroke-linecap="butt"/>
+      <path d="M 279.63 657.20 A 274.0 274.0 0 0 1 251.41 596.67" fill="none" stroke="url(#sw17)" stroke-width="92.0" stroke-linecap="butt"/>
+      <path d="M 532.65 216.64 A 296.1 296.1 0 1 1 237.48 622.91" fill="none" stroke="#FFFFFF" stroke-opacity="0.30" stroke-width="6" stroke-linecap="round"/>
+    </g>
+
+    <g transform="translate(512,512) rotate(162.0)">
+      <path d="M -52.0 -18.0 L 288.0 -10.0 A 10.0 10.0 0 0 1 288.0 10.0 L -52.0 18.0 A 18.0 18.0 0 0 1 -52.0 -18.0 Z" transform="translate(0,12)" fill="#000000" fill-opacity="0.45"/>
+      <path d="M -52.0 -18.0 L 288.0 -10.0 A 10.0 10.0 0 0 1 288.0 10.0 L -52.0 18.0 A 18.0 18.0 0 0 1 -52.0 -18.0 Z" fill="url(#handTitanium)"/>
+    </g>
+
+    <circle cx="512" cy="512" r="50.0" fill="#1A1E2D" stroke="#F8FAFC" stroke-opacity="0.92" stroke-width="7"/>
+    <circle cx="512" cy="512" r="24.0" fill="url(#pinionJewel)"/>
+  </g>
+</svg>

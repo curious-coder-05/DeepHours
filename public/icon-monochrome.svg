@@ -1,0 +1,29 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1024 1024" width="1024" height="1024" role="img" aria-label="Deep Hours Monochrome">
+  <defs>
+    <mask id="arcCut">
+      <rect width="1024" height="1024" fill="#FFFFFF"/>
+      <g transform="translate(512,512) rotate(162.0)">
+        <path d="M 0 -26 L 282.0 -22 A 22 22 0 0 1 282.0 22 L 0 26 Z" fill="#000000"/>
+      </g>
+      <circle cx="512" cy="512" r="66" fill="#000000"/>
+    </mask>
+    <mask id="pinionHole">
+      <rect width="1024" height="1024" fill="#FFFFFF"/>
+      <circle cx="512" cy="512" r="20" fill="#000000"/>
+    </mask>
+  </defs>
+  <g transform="translate(512,512) scale(0.800) translate(-512,-512)">
+    <circle cx="512" cy="512" r="408" fill="none" stroke="#FFFFFF" stroke-width="24"/>
+      <line x1="512.0" y1="174.0" x2="512.0" y2="138.0" stroke="#FFFFFF" stroke-width="22" stroke-linecap="round"/>
+      <line x1="856.0" y1="512.0" x2="886.0" y2="512.0" stroke="#FFFFFF" stroke-width="16" stroke-linecap="round"/>
+      <line x1="512.0" y1="856.0" x2="512.0" y2="886.0" stroke="#FFFFFF" stroke-width="16" stroke-linecap="round"/>
+      <line x1="168.0" y1="512.0" x2="138.0" y2="512.0" stroke="#FFFFFF" stroke-width="16" stroke-linecap="round"/>
+    <path d="M 512.00 254.00 A 258.0 258.0 0 1 1 266.63 591.73" fill="none" stroke="#FFFFFF" stroke-width="78.0" stroke-linecap="round" mask="url(#arcCut)"/>
+    <g mask="url(#pinionHole)">
+      <g transform="translate(512,512) rotate(162.0)">
+        <path d="M 0 -16 L 268.0 -10 A 10 10 0 0 1 268.0 10 L 0 16 Z" fill="#FFFFFF"/>
+      </g>
+      <circle cx="512" cy="512" r="46" fill="#FFFFFF"/>
+    </g>
+  </g>
+</svg>

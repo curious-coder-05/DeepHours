@@ -1,12 +1,17 @@
-const CACHE_NAME = 'deep-hours-v47';
+const CACHE_NAME = 'deep-hours-v48';
 const ASSETS = [
   '/',
   '/index.html',
   '/manifest.webmanifest',
+  '/icon-192.png?v=48',
+  '/icon-512.png?v=48',
   '/icon-512.png',
-  '/icon-192.png',
-  '/icon.svg',
-  '/icon-maskable.svg'
+  '/icon-maskable-512.png?v=48',
+  '/icon-monochrome-512.png?v=48',
+  '/apple-touch-icon.png?v=48',
+  '/favicon.svg?v=48',
+  '/favicon-32.png?v=48',
+  '/favicon-16.png?v=48'
 ];
 
 function extractSameOriginAssetUrls(html, origin) {
